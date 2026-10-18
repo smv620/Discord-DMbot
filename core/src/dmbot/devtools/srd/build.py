@@ -28,6 +28,8 @@ from typing import Any
 from dmbot.devtools.srd import (
     classes,
     classes51,
+    equipment,
+    gear,
     items,
     items51,
     monsters,
@@ -99,6 +101,13 @@ CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
 FEATS_HEADING = "Feats"
 AFTER_FEATS_HEADING = "Equipment"
+WEAPONS_HEADING = "Weapons"
+ARMOR_HEADING = "Armor"
+AFTER_ARMOR_HEADING = "Tools"
+GEAR_HEADING_52 = "Adventuring Gear"
+MOUNTS_HEADING = "Mounts and Vehicles"
+LIFESTYLE_HEADING = "Lifestyle Expenses"  # starts in the middle of the vehicles table's page
+EQUIPMENT_SECTION = "Equipment"
 ORIGINS_SECTION = "Character Origins"
 ITEMS_HEADING = "Magic Items A–Z"
 AFTER_ITEMS_HEADING = "Monsters"
@@ -231,6 +240,16 @@ def build_files(
     species = origins.parse_species(origin_lines)
     backgrounds = origins.parse_backgrounds(origin_lines)
     feats = origins.parse_feats(lines_between(pages, feats_at, equipment_at))
+    weapons_at = first_page_of(pages, WEAPONS_HEADING, after=equipment_at)
+    armor_at = first_page_of(pages, ARMOR_HEADING, after=weapons_at)
+    tools_at = first_page_of(pages, AFTER_ARMOR_HEADING, after=armor_at)
+    properties = equipment.parse_properties(lines_between(pages, equipment_at, weapons_at))
+    weapons = equipment.parse_weapons(lines_between(pages, weapons_at, armor_at))
+    armors = equipment.parse_armor(lines_between(pages, armor_at, tools_at))
+    tool_lines, gear_lines, mount_lines = equipment_lines(pages, tools_at)
+    tools = gear.parse_tools(tool_lines)
+    adventuring_gear = gear.parse_gear(gear_lines)
+    mounts_and_vehicles = gear.parse_mounts(mount_lines)
     items_at = first_page_of(pages, ITEMS_HEADING, after=CONTENTS_PAGES)
     after_items_at = first_page_of(pages, AFTER_ITEMS_HEADING, after=items_at)
     magic_items = items.parse_items(lines_between(pages, items_at, after_items_at))
@@ -278,6 +297,17 @@ def build_files(
                 *({"kind": "background", **asdict(b)} for b in backgrounds),
             ],
         },
+        # Three kinds in one file: each entry says its own (and the properties their section).
+        "equipment.json": {
+            **header("equipment", EQUIPMENT_SECTION),
+            "entries": [
+                *(equipment_entry("weapon", w) for w in weapons),
+                *(equipment_entry("armor", a) for a in armors),
+                *(equipment_entry("rule", p) for p in properties),
+                *(tool_entry(t) for t in tools),
+                *(gear_entry(g) for g in (*adventuring_gear, *mounts_and_vehicles)),
+            ],
+        },
         "items.json": {
             **header("item", ITEMS_SECTION),
             "entries": [item_entry(i) for i in magic_items],
@@ -286,6 +316,116 @@ def build_files(
             **header("monster", None),
             "entries": [monster_entry(m, EDITION) for m in creatures],
         },
+    }
+
+
+def title_index(lines: Sequence[Line], title: str, start: int = 0) -> int:
+    """The index of the first title line with exactly these words, at or after `start`."""
+    for i in range(start, len(lines)):
+        if parse.is_title(lines[i]) and parse._clean(lines[i].text) == title:
+            return i
+    raise parse.SrdError(f"Can't find the heading {title!r}: is this the SRD it should be?")
+
+
+def equipment_lines(
+    pages: Sequence[Sequence[Line]], tools_at: int
+) -> tuple[list[Line], list[Line], list[Line]]:
+    """The lines of the tools, of the adventuring gear and of the mounts and vehicles. The next
+    section (lifestyle expenses) starts in the middle of a page, and the right-hand cells of the
+    vehicles table come after it in reading order, so the mounts' lines run to the page's end
+    (the reader ignores everything that is not a table row)."""
+    after = next(
+        n
+        for n in range(tools_at + 1, len(pages) + 1)
+        if any(
+            parse.is_title(ln) and parse._clean(ln.text) == LIFESTYLE_HEADING for ln in pages[n - 1]
+        )
+    )
+    lines = lines_between(pages, tools_at, after + 1)
+    gear_at = title_index(lines, GEAR_HEADING_52)
+    mounts_at = title_index(lines, MOUNTS_HEADING, gear_at)
+    tools_from = title_index(lines, "Artisan’s Tools")
+    return lines[tools_from:gear_at], lines[gear_at:mounts_at], lines[mounts_at:]
+
+
+def tool_entry(tool: gear.Tool) -> dict[str, Any]:
+    """A tool as the equipment file holds it: its fields, and its Utilize, Craft and Variants
+    lines as printed (the ability, weight and cost are in the fields)."""
+    lines = [f"Utilize: {tool.utilize}"]
+    if tool.craft:
+        lines.append(f"Craft: {tool.craft}")
+    if tool.variants:
+        lines.append(f"Variants: {tool.variants}")
+    return {"kind": "tool", **asdict(tool), "text": "\n".join(lines)}
+
+
+def gear_entry(entry: gear.Gear) -> dict[str, Any]:
+    """An adventuring gear entry, a mount or a vehicle. A mount's or a vehicle's table row is read
+    out as words (it has none of its own); a gear entry has its printed words."""
+    fields = dict(entry.extra)
+    if entry.group == "Mount":
+        text = f"Carrying capacity {fields['capacity']}"
+    elif entry.group == "Vehicle" and "speed" in fields:
+        text = _ship_words(fields)
+    elif entry.group == "Vehicle":
+        text = f"Weighs {entry.weight}"
+    else:
+        text = entry.text
+    data = {k: v for k, v in asdict(entry).items() if k != "extra"}
+    return {"kind": "gear", **data, **fields, "text": text}
+
+
+def _ship_words(fields: dict[str, str]) -> str:
+    """A ship's row as words; a cell with a dash (it has none) is left out."""
+    parts = [f"Speed {fields['speed']}."]
+    for key, label in (("crew", "Crew"), ("passengers", "Passengers")):
+        if fields[key] != "—":
+            parts.append(f"{label} {fields[key]}.")
+    if fields["cargo"] != "—":
+        tons = "ton" if fields["cargo"] in ("1", "1/2") else "tons"
+        parts.append(f"Cargo {fields['cargo']} {tons}.")
+    parts.append(f"AC {fields['ac']}. HP {fields['hp']}.")
+    if fields["damage_threshold"] != "—":
+        parts.append(f"Damage threshold {fields['damage_threshold']}.")
+    return " ".join(parts)
+
+
+def _weight_and_cost(entry: Any) -> str:
+    """ "3 lb., 15 GP." (a weight of "—" is left out: there is none to say)."""
+    parts = [entry.weight if entry.weight != "—" else "", entry.cost]
+    return ", ".join(p for p in parts if p) + "."
+
+
+def equipment_entry(kind: str, entry: Any) -> dict[str, Any]:
+    """A weapon, an armor or a weapon property as the equipment file holds it: its kind, name and
+    the fields of its table row, then the row read out as words, and its page."""
+    if kind == "weapon":  # the number a DM wants first; the heading already says the category
+        parts = [f"{entry.damage} {entry.damage_type}."]
+        if entry.properties:
+            parts.append(f"Properties: {entry.properties}.")
+        parts.append(f"Mastery: {entry.mastery}.")
+        parts.append(_weight_and_cost(entry))
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
+    if kind == "armor":
+        parts = [f"AC {entry.ac}."]
+        if entry.strength != "—":
+            parts.append(f"Needs {entry.strength.replace('Str ', 'Strength ')}.")
+        if entry.stealth != "—":
+            parts.append(f"{entry.stealth} on Stealth.")
+        parts.append(_weight_and_cost(entry))
+        if entry.category == "Shield":
+            parts.append("Use the Utilize action to don or doff.")
+        else:
+            parts.append(f"Takes {entry.don_doff.lower()}.")
+        return {"kind": kind, **asdict(entry), "text": " ".join(parts)}
+    return {
+        "kind": "rule",
+        "section": EQUIPMENT_SECTION,
+        "name": entry.name,
+        "tag": entry.tag,
+        "text": entry.text,
+        "page": entry.page,
+        "see_also": [],
     }
 
 

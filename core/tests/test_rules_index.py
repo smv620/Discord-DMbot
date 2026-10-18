@@ -39,6 +39,7 @@ FILES = (
 FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
+    "equipment.json",
     "feats.json",
     "features.json",
     "items.json",
@@ -217,7 +218,9 @@ class TheRulesGlossary(unittest.TestCase):
         self.assertIn("cover", index.names_pool("2024"))
 
     def test_the_shipped_glossary_is_cited_and_read_only(self) -> None:
-        rules = [e for e in index.srd().entries if e.kind == "rule"]
+        rules = [
+            e for e in index.srd().entries if e.kind == "rule" and e.section == "Rules Glossary"
+        ]  # (the weapon properties are rules of the "Equipment" section, #1919)
         self.assertEqual(len(rules), 140)
         self.assertTrue(all(e.edition == "2024" and e.section == "Rules Glossary" for e in rules))
         self.assertFalse([e.name for e in rules if not e.text or e.page < 176 or e.page > 191])
@@ -395,6 +398,142 @@ class ClassFeatures(unittest.TestCase):
         ):
             feat = index.srd().lookup(background.details["feat"], "2024", "2014", kind="feat")
             self.assertIsNotNone(feat, background.name)  # the feat each background gives exists
+
+    def test_the_shipped_equipment_is_complete_and_found_only_when_asked_for(self) -> None:
+        srd = index.srd()
+
+        def of(kind: str, section: str | None = None) -> list[Entry]:
+            return [
+                e
+                for e in srd.entries
+                if e.kind == kind and (section is None or e.section == section)
+            ]
+
+        self.assertEqual((len(of("weapon")), len(of("armor"))), (38, 13))
+        self.assertEqual(len(of("rule", "Equipment")), 18)
+        self.assertEqual(len(of("rule", "Rules Glossary")), 140)  # the glossary is untouched
+        names = [e.name for e in of("rule")]
+        self.assertEqual(len(names), len(set(names)))  # no property shadows a glossary entry
+        pool = srd.names_pool("2024", "2014").values()
+        self.assertFalse(any(e.kind in ("weapon", "armor") for e in pool))
+        self.assertIsNone(srd.lookup("Longsword", "2024", "2014"))
+        shield = srd.lookup("Shield", "2024", "2014")
+        assert shield is not None
+        self.assertEqual(shield.entry.kind, "spell")  # the spell still answers a bare "Shield"
+
+    def test_golden_weapons_and_armor(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2024", "2014", kind=kind)
+            assert hit is not None, name
+            return hit.entry
+
+        from dmbot.rules import facts
+
+        longsword = get("Longsword", "weapon")
+        self.assertEqual(
+            facts.weapon_line(longsword),
+            "Martial Melee, 1d8 Slashing, Versatile (1d10), mastery Sap",
+        )
+        dagger = get("Dagger", "weapon")
+        self.assertEqual(
+            (dagger.details["properties"], dagger.details["mastery"]),
+            ("Finesse, Light, Thrown (Range 20/60)", "Nick"),
+        )
+        plate = get("Plate Armor", "armor")
+        self.assertEqual(
+            (plate.details["ac"], plate.details["strength"], plate.details["stealth"]),
+            ("18", "Str 15", "Disadvantage"),
+        )
+        self.assertEqual(
+            facts.armor_line(plate),
+            "Heavy armor, AC 18, needs Strength 15, Disadvantage on Stealth",
+        )
+        self.assertEqual(get("Shield", "armor").details["ac"], "+2")
+        self.assertEqual(get("Topple", "rule").details["tag"], "Mastery Property")
+        self.assertEqual(get("Finesse", "rule").citation, "SRD 5.2.1, Equipment, p. 89")
+
+    def test_the_shipped_tools_gear_mounts_and_vehicles_are_complete_and_asked_for(self) -> None:
+        srd = index.srd()
+        tools = [e for e in srd.entries if e.kind == "tool"]
+        gear = [e for e in srd.entries if e.kind == "gear"]
+        self.assertEqual(len(tools), 25)
+        by_group = {
+            g: [e for e in gear if e.details["group"] == g]
+            for g in ("Adventuring Gear", "Mount", "Vehicle")
+        }
+        self.assertEqual(
+            {g: len(v) for g, v in by_group.items()},
+            {"Adventuring Gear": 81, "Mount": 8, "Vehicle": 12},
+        )
+        for kind in ("tool", "gear"):
+            names = [e.name for e in srd.entries if e.kind == kind]
+            self.assertEqual(len(names), len(set(names)), kind)
+        pool = srd.names_pool("2024", "2014").values()
+        self.assertFalse(any(e.kind in ("tool", "gear") for e in pool))
+        self.assertIsNone(srd.lookup("Rope", "2024", "2014"))  # found only when asked for
+        self.assertIsNotNone(srd.lookup("Rope", "2024", "2014", kind="gear"))
+
+    def test_golden_tools_and_gear(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2024", "2014", kind=kind)
+            assert hit is not None, name
+            return hit.entry
+
+        from dmbot.rules import facts
+
+        kit = get("Healer’s Kit", "gear")
+        self.assertIn("ten uses", kit.text)
+        self.assertIn("stabilize", kit.text)
+        self.assertEqual((kit.details["cost"], kit.details["weight"]), ("5 GP", "3 lb."))
+        thieves = get("Thieves’ Tools", "tool")
+        self.assertEqual(
+            (thieves.details["ability"], thieves.details["weight"], thieves.details["cost"]),
+            ("Dexterity", "1 lb.", "25 GP"),
+        )
+        self.assertEqual(
+            facts.tool_line(thieves, card=False), "Other Tools, Dexterity, 25 GP, 1 lb."
+        )
+        rope = get("Rope", "gear")
+        self.assertEqual((rope.details["weight"], rope.details["cost"]), ("5 lb.", "1 GP"))
+        horse = get("Horse, Riding", "gear")
+        self.assertEqual(
+            (horse.details["cost"], horse.details["capacity"], horse.text),
+            ("75 GP", "480 lb.", "Carrying capacity 480 lb."),
+        )
+        self.assertEqual(get("Rowboat", "gear").details["speed"], "1½ mph")
+        self.assertEqual(
+            get("Spell Scroll", "gear").details["cost"], "Cantrip, 30 GP; Level 1, 50 GP"
+        )
+
+    def test_a_fact_line_with_a_weight_does_not_double_its_full_stop(self) -> None:
+        from dmbot.rules import facts
+
+        kit = index.srd().lookup("Healer’s Kit", "2024", "2014", kind="gear")
+        assert kit is not None
+        text = facts.full_text(kit.entry)
+        self.assertTrue(text.startswith("Adventuring Gear, 5 GP, 3 lb. A Healer’s Kit"), text)
+        self.assertNotIn("..", text)
+        focus = index.srd().lookup("Arcane Focus", "2024", "2014", kind="gear")
+        assert focus is not None
+        self.assertEqual(facts.gear_line(focus.entry, card=True), "weight varies")
+        cart = index.srd().lookup("Cart", "2024", "2014", kind="gear")
+        assert cart is not None
+        self.assertEqual(facts.gear_line(cart.entry, card=True), "")  # its text says the weight
+        thieves = index.srd().lookup("Thieves’ Tools", "2024", "2014", kind="tool")
+        assert thieves is not None
+        self.assertEqual(facts.tool_line(thieves.entry, card=True), "25 GP, 1 lb.")
+
+    def test_gear_is_found_by_its_other_names(self) -> None:
+        self.assertEqual(index.gear_keys("Horse, Riding"), ["riding horse"])
+        self.assertEqual(index.gear_keys("Healer’s Kit"), ["healer kit"])
+        self.assertEqual(
+            index.gear_keys("Clothes, Traveler’s"),
+            ["travelers clothes", "clothes traveler", "traveler clothes"],
+        )
+        self.assertEqual(index.gear_keys("Rope"), [])
+        found = index.srd().lookup("riding horse", "2024", "2014", kind="gear")
+        assert found is not None
+        self.assertEqual(found.entry.name, "Horse, Riding")
 
     def test_the_2014_races_background_and_feat_are_the_fallback_only_where_the_target_has_nothing(
         self,
