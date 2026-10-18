@@ -25,7 +25,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dmbot.devtools.srd import monsters, monsters51, parse, parse51
+from dmbot.devtools.srd import classes, monsters, monsters51, parse, parse51
 from dmbot.devtools.srd.pdf import Line, read_pages
 
 SOURCE = "SRD 5.2.1"
@@ -70,6 +70,8 @@ CONTENTS_PAGES = 10  # the table of contents names every heading too: look after
 SPELLS_HEADING = "Spell Descriptions"
 GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
+CLASSES_HEADING = "Classes"
+AFTER_CLASSES_HEADING = "Character Origins"
 
 
 def first_page_of(pages: Sequence[Sequence[Line]], heading: str, after: int = 0) -> int:
@@ -188,6 +190,9 @@ def build_files(
     glossary = lines_between(pages, glossary_at, toolbox_at)
     conditions = parse.parse_conditions(glossary)
     rules = parse.parse_rules(glossary)
+    classes_at = first_page_of(pages, CLASSES_HEADING, after=CONTENTS_PAGES)
+    origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
+    features = classes.parse_features(lines_between(pages, classes_at, origins_at))
 
     monsters_at = first_page_of(pages, MONSTERS_HEADING, after=CONTENTS_PAGES)
     creatures = monsters.parse_monsters(lines_between(pages, monsters_at, len(pages) + 1))
@@ -215,10 +220,27 @@ def build_files(
             **header("rule", GLOSSARY_HEADING),
             "entries": [asdict(r) | {"see_also": list(r.see_also)} for r in rules],
         },
+        "features.json": {
+            **header("feature", CLASSES_HEADING),
+            "entries": [feature_entry(f) for f in features],
+        },
         "monsters.json": {
             **header("monster", None),
             "entries": [monster_entry(m, EDITION) for m in creatures],
         },
+    }
+
+
+def feature_entry(feature: classes.Feature) -> dict[str, Any]:
+    """A class feature as a data file holds it: its name, its class (and subclass when it
+    belongs to one) and level, then its text and page."""
+    return {
+        "name": feature.name,
+        "class": feature.klass,
+        "level": feature.level,
+        "subclass": feature.subclass,
+        "text": feature.text,
+        "page": feature.page,
     }
 
 

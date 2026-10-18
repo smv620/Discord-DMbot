@@ -630,6 +630,72 @@ class Words(unittest.TestCase):
             self.assertIsNotNone(hit, example)  # each example is something DMbot has
 
 
+class FeatureLookup(LookupTest):
+    """Class features on /dmbot rule (#1900), after the glossary's names."""
+
+    async def test_a_feature_gives_its_card_with_class_and_level(self) -> None:
+        text = self.sent(await self.command("rage"))[0]
+        self.assertIn("📖 **Rage** (feature: Barbarian 1)", text)
+        self.assertIn("Source: SRD 5.2.1, Classes, p. 28", text)
+
+    async def test_a_subclass_feature_names_its_subclass(self) -> None:
+        text = self.sent(await self.command("frenzy"))[0]
+        self.assertIn("(feature: Barbarian 3, Path of the Berserker)", text)
+
+    async def test_a_class_in_front_picks_that_classs_feature(self) -> None:
+        self.assertIn("(feature: Rogue 7)", self.sent(await self.command("rogue evasion"))[0])
+        self.assertIn("(feature: Monk 7)", self.sent(await self.command("monk evasion"))[0])
+        self.assertIn("(feature: Monk 7)", self.sent(await self.command("evasion"))[0])  # first
+
+    async def test_a_spell_or_a_glossary_entry_of_the_name_still_wins(self) -> None:
+        self.assertIn("(spell)", self.sent(await self.command("fireball"))[0])
+        self.assertIn("(rule)", self.sent(await self.command("cover"))[0])
+
+    async def test_the_list_names_each_class_and_picking_one_finds_it(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        choices = await ui._typeahead(it, "evasi")
+        self.assertEqual(
+            [(c.name, c.value) for c in choices],
+            [
+                ("Evasion (feature: Monk 7)", "Monk Evasion"),
+                ("Evasion (feature: Rogue 7)", "Rogue Evasion"),
+            ],
+        )
+        picked = self.sent(await self.command(choices[1].value))[0]
+        self.assertIn("(feature: Rogue 7)", picked)
+
+    async def test_the_card_names_the_other_classes_that_have_the_feature(self) -> None:
+        text = self.sent(await self.command("evasion"))[0]
+        self.assertIn("_Other classes with this: Rogue._", text)
+        alone = self.sent(await self.command("rogue evasion"))[0]
+        self.assertIn("_Other classes with this: Monk._", alone)
+        rage = self.sent(await self.command("rage"))[0]
+        self.assertNotIn("Other classes", rage)
+
+    async def test_every_name_in_the_list_leads_back_to_its_own_entry(self) -> None:
+        srd = index.srd()
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for e in srd.entries:
+            if e.kind != "feature":
+                continue
+            value = ui._choice_value(srd, e)
+            found = ui._features(srd, value, "2024", "2014")
+            with self.subTest(value=value):
+                self.assertTrue(any(h.entry is e for h in found), value)
+                self.assertEqual(found[0].entry.details["class"], e.details["class"])
+        # the level breaks a tie inside one class: Improved Brutal Strike at 13 and at 17
+        both = ui._features(srd, "Barbarian Improved Brutal Strike 17", "2024", "2014")
+        self.assertEqual([h.entry.details["level"] for h in both], [17])
+        text = self.sent(await self.command("Barbarian Improved Brutal Strike 17"))[0]
+        self.assertIn("(feature: Barbarian 17)", text)
+        self.assertIsNotNone(it)
+
+    async def test_a_house_rule_on_the_feature_is_shown_first(self) -> None:
+        self.store.rules[C1] = [house(5, "Rage lasts a minute at our table", C1)]
+        text = self.sent(await self.command("rage"))[0]
+        self.assertTrue(text.startswith("🏠 **House rule 5:**"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

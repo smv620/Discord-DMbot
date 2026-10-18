@@ -27,7 +27,14 @@ ATTRIBUTION_51 = (
     "https://creativecommons.org/licenses/by/4.0/legalcode."
 )
 FILES = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "spells.json")
-FILES_52 = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "rules.json", "spells.json")
+FILES_52 = (
+    "ATTRIBUTION.md",
+    "conditions.json",
+    "features.json",
+    "monsters.json",
+    "rules.json",
+    "spells.json",
+)
 
 
 def all_text(entry: Entry) -> str:
@@ -249,6 +256,69 @@ class TheRulesGlossary(unittest.TestCase):
             self.assertIsNone(found.lookup("Cover", "2024", kind="rule"))
         finally:
             index.srd.cache_clear()
+
+
+class ClassFeatures(unittest.TestCase):
+    """Class features (#1900): found only when asked for, one entry per class."""
+
+    def test_rage_is_the_barbarians(self) -> None:
+        (hit,) = index.srd().lookup_all("Rage", "2024", "2014", kind="feature")
+        self.assertEqual((hit.entry.details["class"], hit.entry.details["level"]), ("Barbarian", 1))
+        self.assertEqual(hit.citation, "SRD 5.2.1, Classes, p. 28")
+        self.assertIsNone(index.srd().lookup("Rage", "2024", "2014"))  # not without a kind
+
+    def test_a_name_two_classes_share_gives_both_and_a_class_picks_one(self) -> None:
+        both = index.srd().lookup_all("Evasion", "2024", "2014", kind="feature")
+        self.assertEqual(sorted(h.entry.details["class"] for h in both), ["Monk", "Rogue"])
+        (rogue,) = index.srd().lookup_all("Evasion", "2024", "2014", kind="feature", prefer="rogue")
+        self.assertEqual(rogue.entry.details["class"], "Rogue")
+        # a class that does not have it gives them all, not nothing
+        nobody = index.srd().lookup_all("Evasion", "2024", "2014", kind="feature", prefer="bard")
+        self.assertEqual(len(nobody), 2)
+
+    def test_the_names_are_kept_out_of_the_pool_and_the_list(self) -> None:
+        srd = index.srd()
+        self.assertNotIn("rage", srd.names_pool("2024"))
+        self.assertEqual([e for e in srd.typeahead("evasi", "2024") if e.kind == "feature"], [])
+        listed = srd.asked_names("evasi", "2024", kinds=("feature",))
+        self.assertEqual([e.details["class"] for e in listed], ["Monk", "Rogue"])
+
+    def test_a_subclass_feature_knows_its_subclass_and_a_spell_of_the_name_still_wins(self) -> None:
+        (frenzy,) = index.srd().lookup_all("Frenzy", "2024", "2014", kind="feature")
+        self.assertEqual(frenzy.entry.details["subclass"], "Path of the Berserker")
+        spell = index.srd().lookup("Fireball", "2024", "2014")
+        assert spell is not None
+        self.assertEqual(spell.entry.kind, "spell")
+
+    def test_the_shipped_features_are_complete_and_read_only(self) -> None:
+        features = [e for e in index.srd().entries if e.kind == "feature"]
+        by_class: dict[str, int] = {}
+        for e in features:
+            by_class[str(e.details["class"])] = by_class.get(str(e.details["class"]), 0) + 1
+            self.assertTrue(e.text and 28 <= e.page <= 82, e.name)
+        self.assertEqual(len(features), 220)
+        self.assertEqual(len(by_class), 12)
+        self.assertEqual(by_class["Barbarian"], 23)  # 19 class features and 4 of the Berserker
+
+    def test_no_feature_is_cut_short_and_no_placeholder_is_kept(self) -> None:
+        # Sneak Attack, Spellcasting and Eldritch Invocations were cut where a table sits in
+        # the column (found in review): every text ends a sentence.
+        for e in index.srd().entries:
+            if e.kind != "feature":
+                continue
+            with self.subTest(e.name, klass=e.details["class"]):
+                self.assertRegex(e.text, r"[.)\":!?”]\s*$")
+                self.assertNotEqual(e.name, f"{e.details['class']} Subclass")
+        sneak = index.srd().lookup_all("Sneak Attack", "2024", kind="feature")[0].entry
+        self.assertIn("Advantage", sneak.text)  # the part after the table
+
+    def test_its_facts_line_names_the_class_level_and_subclass(self) -> None:
+        (rage,) = index.srd().lookup_all("Rage", "2024", kind="feature")
+        self.assertEqual(rage.entry.facts, "Class feature, Barbarian level 1")
+        (frenzy,) = index.srd().lookup_all("Frenzy", "2024", kind="feature")
+        self.assertEqual(
+            frenzy.entry.facts, "Class feature, Barbarian level 3, Path of the Berserker"
+        )
 
 
 class TheShippedData(unittest.TestCase):

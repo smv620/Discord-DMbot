@@ -479,8 +479,15 @@ class Building(unittest.TestCase):
                     say("Blinded [Condition]", TITLE, 12), say("You can’t see.", BODY, 12),
                     say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
         toolbox = [say("Gameplay Toolbox", TITLE, 13)]
-        creatures = [say("Monsters A–Z", TITLE, 14), *goblin()]
-        return [contents, *[[]] * 9, spells, glossary, toolbox, creatures]
+        classes = [
+            say("Classes", TITLE, 20),
+            say("Barbarian", TITLE, 20),
+            say("Level 1: Rage", TITLE, 20),
+            say("You can enter a Rage.", BODY, 20),
+        ]
+        origins = [say("Character Origins", TITLE, 21)]
+        creatures = [say("Monsters A–Z", TITLE, 22), *goblin()]
+        return [contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, creatures]
 
     def document(self) -> dict[str, Any]:
         return {"title": "t", "url": "u", "sha256": "s", "pages": 13}
@@ -488,7 +495,8 @@ class Building(unittest.TestCase):
     def test_the_files_are_made_from_the_sections(self) -> None:
         files = build.build_files(self.pages(), self.document())
         self.assertEqual(
-            set(files), {"spells.json", "conditions.json", "rules.json", "monsters.json"}
+            set(files),
+            {"spells.json", "conditions.json", "rules.json", "features.json", "monsters.json"},
         )
         creatures = files["monsters.json"]
         self.assertEqual([e["name"] for e in creatures["entries"]], ["Goblin Warrior"])
@@ -505,6 +513,21 @@ class Building(unittest.TestCase):
         self.assertEqual((spells["kind"], spells["section"]), ("spell", "Spell Descriptions"))
         self.assertEqual([e["name"] for e in conditions["entries"]], ["Blinded"])
         self.assertEqual(conditions["entries"][0]["page"], 12)
+        features = files["features.json"]
+        self.assertEqual((features["kind"], features["section"]), ("feature", "Classes"))
+        self.assertEqual(
+            features["entries"],
+            [
+                {
+                    "name": "Rage",
+                    "class": "Barbarian",
+                    "level": 1,
+                    "subclass": "",
+                    "text": "You can enter a Rage.",
+                    "page": 20,
+                }
+            ],
+        )
         rules = files["rules.json"]
         self.assertEqual((rules["kind"], rules["section"]), ("rule", "Rules Glossary"))
         self.assertEqual([e["name"] for e in rules["entries"]], ["Cover"])  # not the condition

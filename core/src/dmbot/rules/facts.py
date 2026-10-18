@@ -92,6 +92,11 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
                 ("Senses", str(d.get("senses", ""))),
                 ("Initiative", str(d.get("initiative", ""))),
             ]
+    elif entry.kind == "feature":
+        if card:  # the card's heading already says "(feature: Rogue 7)"
+            return []
+        who = f"{d.get('class', '')} level {d.get('level', '')}".strip()
+        found = [("", f"Class feature, {who}" + (f", {d['subclass']}" if has("subclass") else ""))]
     else:
         return []
     return [(label, value) for label, value in found if value]

@@ -40,7 +40,13 @@ OLDER_NOTE = "_From the older 2014 rules (the newer free rules don't have it)._"
 TAG_WORDS = {"[2024]": "[Newer 2024 rules]"}  # a tag as the DM reads it
 ONLY_FREE_RULES = "_Only the free rules are in DMbot so far, not your own books._"
 SEE_ALSO_MAX = 3  # a longer list would push a card into one more message
-KIND_WORDS = {"spell": "spell", "condition": "condition", "monster": "creature", "rule": "rule"}
+KIND_WORDS = {
+    "spell": "spell",
+    "condition": "condition",
+    "monster": "creature",
+    "rule": "rule",
+    "feature": "feature",
+}
 
 
 def _md(text: str) -> str:
@@ -196,6 +202,7 @@ def header(
     *,
     house_max: int = HOUSE_LINE_MAX,
     player: bool = False,
+    also: Sequence[str] = (),
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -207,15 +214,21 @@ def header(
         "tag"
     ):  # a glossary entry's own tag, inside the brackets: "(rule: Action)"
         kind = f"{kind}: {_md(str(entry.details['tag']))}"
+    elif (
+        entry.kind == index.FEATURE
+    ):  # "(feature: Rogue 7)"; a subclass's feature adds its subclass
+        kind = f"{kind}: {_md(feature_place(entry))}"
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
         lines.append(line)
     lines.append(f"_Source: {_md(source(hit))}_")
+    if also:  # a feature other classes have too: the card shows one, and says so
+        lines.append(f"_Other classes with this: {_md(', '.join(also))}._")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
-    elif asked and normalize(typed) != normalize(entry.name):
+    elif asked and normalize(typed) not in {normalize(n) for n in names_shown(entry)}:
         lines.append(f"_Showing {called} (you typed {asked})._")
     if hit.tag and hit.from_fallback and entry.edition == index.LEGACY:
         lines.append(OLDER_NOTE)  # when 2014 is the campaign's own choice, the tag is enough
@@ -257,14 +270,19 @@ def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> s
 
 
 def card_parts(
-    hit: Hit, typed: str, rules: Sequence[HouseRule], *, player: bool = False
+    hit: Hit,
+    typed: str,
+    rules: Sequence[HouseRule],
+    *,
+    player: bool = False,
+    also: Sequence[str] = (),
 ) -> list[str]:
     """The card as messages, each short enough for Discord: the first has the heading and
     as much of the text as fits; the others carry on with the text. Many long house rules
     are cut shorter, then only counted, so the heading never fills a message."""
     head = ""
     for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
-        head = header(hit, typed, rules, house_max=house_max, player=player)
+        head = header(hit, typed, rules, house_max=house_max, player=player, also=also)
         if len(head) <= PART_MAX - MIN_TEXT_ROOM:
             break
     text = _md(hit.entry.text)
@@ -402,10 +420,29 @@ def no_match_text(
     return "\n".join(lines)
 
 
+def names_shown(entry: Entry) -> list[str]:
+    """The ways of typing an entry that need no "Showing ..." note: its name, and for a class
+    feature its name behind its class ("Rogue Evasion", which the list fills in)."""
+    names = [entry.name]
+    if entry.kind == index.FEATURE:
+        names.append(f"{entry.details.get('class', '')} {entry.name}")
+    return names
+
+
+def feature_place(entry: Entry) -> str:
+    """Where a class feature is gained: `Rogue 7`, or `Barbarian 3, Path of the Berserker` for a
+    subclass's feature."""
+    place = f"{entry.details.get('class', '')} {entry.details.get('level', '')}".strip()
+    subclass = entry.details.get("subclass")
+    return f"{place}, {subclass}" if subclass else place
+
+
 def choice_label(entry: Entry) -> str:
     """How a name shows in the list that opens as the DM types: `Fireball (spell)`, and
     `Orc (creature) [Legacy 2014]` for a name only the 2014 rules have."""
     kind = KIND_WORDS.get(entry.kind, entry.kind)
+    if entry.kind == index.FEATURE:  # "Evasion (feature: Rogue 7)": the class tells two apart
+        kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"
