@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.left_out import left_out_view
 from dmbot.transcript import left_out
 from dmbot.transcript.stream import EDIT_WINDOW_S, TranscriptStream, escape
@@ -106,7 +107,7 @@ class MessageTest(unittest.TestCase):
             notes.add([w(DEE, at, "x" * 500)])
         name = {DEE: "N" * 300}
         text, shown = left_out.message_text(notes.runs, name, when)
-        self.assertLessEqual(len(text), left_out.MESSAGE_MAX)
+        self.assertLessEqual(len(text), MESSAGE_MAX)
         self.assertEqual(shown, notes.runs[-len(shown) :])  # the newest whole lines
         self.assertEqual(len(text.splitlines()), len(shown) + 1)
 

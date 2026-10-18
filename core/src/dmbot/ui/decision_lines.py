@@ -18,19 +18,19 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
 KEYS_KEPT = 300  # items remembered; the oldest go first, so the memory stays small
 COPIES = 4  # messages kept per item
-LIMIT = 2000  # Discord's message length
 
 
 def with_outcome(content: str, outcome: str) -> str:
     """The message's words with one short outcome word on a new line, within Discord's limit."""
     tail = f"\n{outcome}"
-    return content[: LIMIT - len(tail)] + tail
+    return fit_message(content, limit=MESSAGE_MAX - len(tail)) + tail
 
 
 class DecisionLines:

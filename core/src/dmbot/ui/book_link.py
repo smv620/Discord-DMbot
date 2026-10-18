@@ -20,6 +20,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import STORY_OFF
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import book_links as links
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import (
@@ -58,7 +59,7 @@ LABEL_MAX = 100  # a menu option's label
 
 
 SHOWN_LINKS = 5  # links listed (and with a Take off) on the picker
-TEXT_MAX = 1990  # a message holds 2000
+TEXT_MAX = MESSAGE_MAX - 10  # a little under a whole message, for the tail the sender adds
 LABEL_SHOWN = 25  # a phone shows about this much of a menu option's label
 
 
@@ -89,7 +90,7 @@ def match_text(pairs: list[links.Pair], note: str = "") -> str:
             f"DMbot remembers: **{_short(pair.entity_name)}**"
         )
     lines.append(HOW)
-    return "\n".join(lines)[:TEXT_MAX]
+    return fit_message("\n".join(lines), limit=TEXT_MAX)
 
 
 async def _dm(interaction: discord.Interaction, campaign_id: str) -> tuple[Any, Any] | None:

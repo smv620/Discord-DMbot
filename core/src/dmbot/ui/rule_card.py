@@ -15,6 +15,7 @@ from collections.abc import Iterable, Sequence
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.rules import facts as rule_facts
 from dmbot.rules import index
 from dmbot.rules.book_rank import BOOK_TAG, LEGACY_TAG
@@ -23,7 +24,7 @@ from dmbot.rules.homebrew import Homebrew, credit_label
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import Entry, Hit, monster_keys, normalize
 
-PART_MAX = 1900  # Discord allows 2,000 characters; the rest is for what never counts
+PART_MAX = MESSAGE_MAX - 100  # the rest is for what never counts
 CONTINUED_MAX = 120  # room for a later part's heading
 HOUSE_LINE_MAX = 250  # one house rule, after escaping
 HOUSE_SHOWN = 3  # most house rules shown; the rest are counted
@@ -282,13 +283,12 @@ PACK_FOOTER = "_From a homebrew pack this campaign follows, as published. You de
 
 
 PLAYER_LINE = "Your DM decides what applies at your table."
-DISCORD_MAX = 2000
 
 
 def for_player(parts: list[str]) -> list[str]:
     """A card read by a player ends with one short line: a rules card is information, and the
     DM decides what applies (CLAUDE.md, DM authority). It joins the last part if it fits."""
-    if parts and len(parts[-1]) + len(PLAYER_LINE) + 1 <= DISCORD_MAX:
+    if parts and len(parts[-1]) + len(PLAYER_LINE) + 1 <= MESSAGE_MAX:
         return [*parts[:-1], f"{parts[-1]}\n{PLAYER_LINE}"]
     return [*parts, PLAYER_LINE]
 

@@ -2,9 +2,9 @@
 
 import unittest
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.transcript.stream import (
     MAX_WAITING,
-    MESSAGE_MAX,
     UNKNOWN_SPEAKER,
     TranscriptStream,
     ended,
