@@ -27,13 +27,15 @@ beforeAll(async () => {
 describe("the consent promises", () => {
   it("say what the hard rules say players agree to", () => {
     const all = consentPromises.map((p) => p.text).join(" ");
-    expect(consentPromises.map((p) => p.id)).toEqual(["only-yes", "ai", "transcript", "stop", "dm-screen"]);
+    expect(consentPromises.map((p) => p.id)).toEqual(["only-yes", "questions", "ai", "cloud", "transcript", "stop", "dm-screen"]);
     expect(all).toContain("records only people who say yes");
     expect(all).toContain("reads what you type");
     expect(all).toContain("not used to train their AI");
     expect(all).toContain("never records another bot");
     expect(all).toContain("Everyone in your Discord server can read and download");
-    expect(all).toContain("Stop recording me");
+    expect(all).toContain("your name and the question are posted there for everyone to read");
+    expect(all).toContain("another company turns your voice into text");
+    expect(all).toContain("Yes, stop recording me");
     expect(all).toContain("never sends the game master's private notes to players");
   });
 

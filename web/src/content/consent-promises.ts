@@ -1,7 +1,9 @@
-// What DMbot's consent request promises every player, in plain sentences (#1882). The /players page and
-// Help's player section both show exactly this list, so the site can't promise something different from
-// the request a player presses "yes" on (core/src/dmbot/consent_dm.py, request_text; CLAUDE.md, Hard rules:
-// consent, transcripts, DM authority).
+// What DMbot's consent request promises every player, in plain sentences, plus the DM-screen rule the site
+// tells players (#1882). The /players page and Help's player section both show exactly this list, so the
+// site can't promise something different from the request a player presses "yes" on
+// (core/src/dmbot/consent_dm.py: request_text, AI_NOTE, cloud_note). Every line comes from the request
+// except "dm-screen", which is the hard rule in CLAUDE.md (Transcripts are shared; the DM screen is not
+// pushed to players).
 //
 // TERMS_VERSION: 6
 // That line must equal TERMS_VERSION in core/src/dmbot/consent.py. core/tests/test_consent_promises.py
@@ -22,8 +24,16 @@ export const consentPromises: ConsentPromise[] = [
     text: "DMbot records only people who say yes. It listens to your voice and reads what you type in the table's chat. It never records another bot.",
   },
   {
+    id: "questions",
+    text: "If you ask DMbot a question in its chat channel, your name and the question are posted there for everyone to read.",
+  },
+  {
     id: "ai",
     text: "The written text goes to an AI company (Anthropic) to give your game master notes. It is not used to train their AI.",
+  },
+  {
+    id: "cloud",
+    text: "On some servers, another company turns your voice into text, and your voice clips and Discord name are sent to them. If yours does, the private message says so.",
   },
   {
     id: "transcript",
@@ -31,7 +41,7 @@ export const consentPromises: ConsentPromise[] = [
   },
   {
     id: "stop",
-    text: "You can stop at any time: press ⚙️ Menu in the private message, then Stop recording me, then Yes.",
+    text: "You can stop at any time: press ⚙️ Menu in the private message, then Stop recording me, then Yes, stop recording me.",
   },
   {
     id: "dm-screen",

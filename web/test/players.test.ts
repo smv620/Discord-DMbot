@@ -35,7 +35,8 @@ describe("the players page", () => {
     expect(page.querySelectorAll("h1").length).toBe(1);
     expect(page.querySelector("h1")?.textContent).toBe(playersHeading);
     expect([...page.querySelectorAll("main h2")].map((h) => h.textContent)).toEqual(["What you agree to", "Saying yes", "What you might see"]);
-    expect(main.split(" ").length).toBeLessThan(400); // about one phone screen of steps
+    // The consent promises (#1882) are on this page too, so it is a little longer than the first version.
+    expect(main.split(" ").length).toBeLessThan(500);
   });
 
   it("shows the Help page's own player steps, word for word", () => {
