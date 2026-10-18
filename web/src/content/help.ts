@@ -412,7 +412,7 @@ export const initiativeStyleDmSteps: Step[] = [
 ];
 
 export const dmSteps: Step[] = [
-  { text: "Add DMbot to your Discord server from the Add to Discord page." },
+  { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
     text: "Type /dmbot start in any text channel. Wait for the list to pop up, pick /dmbot start in it, then send it. Then press ▶ Continue last campaign, or ＋ New campaign if this is your first game.",
     names: [
@@ -733,37 +733,53 @@ export const recapSteps: Step[] = [
 ];
 
 
+// Player steps that the /players page (#1821) shows too: one copy each, so the two pages can't drift.
+export const consentStep: Step = {
+  text: `DMbot sends you a private message. Press ${consent} to say yes.`,
+  names: [{ name: "record me", file: "consent_words.py" }],
+};
+
+export const noThanksStep: Step = {
+  text: "Want to say no? Press No thanks. You can still play.",
+  names: [{ name: "No thanks", file: "consent_dm.py" }],
+};
+
+export const stopStep: Step = {
+  text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
+  names: [
+    { name: "Menu", file: "consent_dm.py" },
+    { name: "Stop recording me", file: "consent_dm.py" },
+    { name: "Yes, stop recording me", file: "consent_dm.py" },
+  ],
+};
+
+export const transcriptStep: Step = {
+  text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
+  names: [{ name: "/transcript", file: "ui/transcripts.py" }],
+};
+
+export const heyDmBotStep: Step = {
+  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
+  names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
+};
+
+export const fightBotStep: Step = {
+  text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
+  names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
+};
+
 export const playerSteps: Step[] = [
-  {
-    text: `DMbot sends you a private message. Press ${consent} to say yes.`,
-    names: [{ name: "record me", file: "consent_words.py" }],
-  },
-  {
-    text: "Want to say no? Press No thanks. You can still play.",
-    names: [{ name: "No thanks", file: "consent_dm.py" }],
-  },
-  {
-    text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
-    names: [
-      { name: "Menu", file: "consent_dm.py" },
-      { name: "Stop recording me", file: "consent_dm.py" },
-      { name: "Yes, stop recording me", file: "consent_dm.py" },
-    ],
-  },
+  consentStep,
+  noThanksStep,
+  stopStep,
   {
     text: "While DMbot is listening, it also reads what you type in the table's chat, if you said yes. Nothing is read from anyone who said no.",
   },
-  {
-    text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
-    names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
-  },
+  heyDmBotStep,
   {
     text: "When you ask DMbot a question in dmb-chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
   },
-  {
-    text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
-    names: [{ name: "/transcript", file: "ui/transcripts.py" }],
-  },
+  transcriptStep,
   {
     text: "Your table's house rules are on this website too. Sign in, open My Account, and read them there. You can save them as a text file. Rules your table follows from another table are listed too. Only your game master can change them, in Discord.",
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
@@ -791,10 +807,7 @@ export const playerSteps: Step[] = [
   {
     text: "A linked sheet must be set to Public on the sheet's own site, so anyone with the link can open it. Your game master sees it on your character's card.",
   },
-  {
-    text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
-    names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
-  },
+  fightBotStep,
   ...(INITIATIVE_STYLE_LIVE ? initiativeStyleSteps : []),
   {
     text: "If your sheet is linked online, your spell slots show on your character card. About a minute after someone at the table says a slot was used, DMbot looks at your sheet again to keep up. It never changes your sheet.",
