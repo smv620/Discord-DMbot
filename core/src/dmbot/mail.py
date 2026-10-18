@@ -29,6 +29,7 @@ from email.utils import formatdate, make_msgid, parseaddr
 from typing import Literal
 
 from dmbot.account_id import to_dmbot_id
+from dmbot.alerts import Problem, raise_alert
 from dmbot.db import Database
 from dmbot.link_tokens import make_unsubscribe_token
 
@@ -36,6 +37,13 @@ log = logging.getLogger(__name__)
 
 KIND_MAX = 60  # the sent_emails column's limit
 DAILY_CAP_DEFAULT = 400
+# Addresses that are a person's own live replies and never an automated sender (#1425: the owner
+# answers from admin@ by hand, so a robot sending as it would look like a person's word).
+RESERVED_SENDERS = ("admin@getdmbot.com",)
+# Daily slots kept back for owner alerts: other mail stops this many short of the cap, so a flood
+# of sign-in links can't starve an alert. Twice dmbot.alerts.ALERT_DAILY_MAX because the bot and
+# the website each send up to that many.
+ALERT_RESERVE = 10
 DAY_S = 86400
 # A Try It's sent notes (the last-day and 30-more-days emails and their private-message
 # records) have no job left after a year: a Try It can't be taken twice, because the DMbot ID
@@ -60,13 +68,22 @@ class MailSettings:
     # team (`info@`), and the alerts to the team (`jarvis@`). Empty: `sender` stands in.
     support_from: str = ""
     alerts_from: str = ""
+    # Where owner alerts go (#1907): the owner's private address, from the server's .env only,
+    # never logged. Empty: no alert emails. `alerts_reply_to` is the Reply-To on them (optional).
+    owner_alert_email: str = field(default="", repr=False)
+    alerts_reply_to: str = ""
     postal_address: str = ""  # required in offer emails; the owner's call (needs: owner)
     daily_cap: int = DAILY_CAP_DEFAULT
 
     @property
+    def mail_cap(self) -> int:
+        """What other mail may use of the day: the cap less the slots kept for alerts."""
+        return max(1, self.daily_cap - ALERT_RESERVE)
+
+    @property
     def offer_cap(self) -> int:
-        """Offer emails stop here; account emails go on up to `daily_cap`."""
-        return min(self.daily_cap * 3 // 4, 300)  # the database door's own ceiling is 300
+        """Offer emails stop here; account emails go on up to `mail_cap`."""
+        return min(self.mail_cap * 3 // 4, 300)  # the database door's own ceiling is 300
 
     @property
     def support_sender(self) -> str:
@@ -93,8 +110,11 @@ def load_mail_settings(env: Mapping[str, str]) -> MailSettings:
     cap_raw = get("MAIL_DAILY_CAP") or str(DAILY_CAP_DEFAULT)
     if not (port_raw.isascii() and port_raw.isdigit() and 0 < int(port_raw) < 65536):
         raise MailConfigError("SMTP_PORT must be a port number, such as 587.")
-    if not (cap_raw.isascii() and cap_raw.isdigit() and 0 < int(cap_raw) <= 10_000):
-        raise MailConfigError("MAIL_DAILY_CAP must be a number from 1 to 10000.")
+    if not (cap_raw.isascii() and cap_raw.isdigit() and ALERT_RESERVE < int(cap_raw) <= 10_000):
+        raise MailConfigError(
+            f"MAIL_DAILY_CAP must be a number from {ALERT_RESERVE + 1} to 10000 "
+            f"({ALERT_RESERVE} are kept back for owner alerts)."
+        )
     address = ", ".join(
         " ".join(part.split()) for part in get("MAIL_POSTAL_ADDRESS").split("|") if part.strip()
     )
@@ -104,7 +124,18 @@ def load_mail_settings(env: Mapping[str, str]) -> MailSettings:
         # "Name <a@b.example>" or a bare address; anything else would send from nowhere.
         if raw and not one_address(parseaddr(raw)[1]):
             raise MailConfigError(f"{name} must be an email address, such as info@example.org.")
+        if parseaddr(raw)[1].lower() in RESERVED_SENDERS:
+            raise MailConfigError(
+                f"{name} can't be {parseaddr(raw)[1]}: that address is for a person's own "
+                f"replies, never for DMbot's automatic emails."
+            )
         senders[name] = raw
+    owner_alert_email = get("OWNER_ALERT_EMAIL")
+    if owner_alert_email and not one_address(owner_alert_email):
+        raise MailConfigError("OWNER_ALERT_EMAIL must be one email address (or empty).")
+    alerts_reply_to = get("MAIL_ALERTS_REPLY_TO")
+    if alerts_reply_to and not one_address(alerts_reply_to):
+        raise MailConfigError("MAIL_ALERTS_REPLY_TO must be one email address (or empty).")
     return MailSettings(
         host=get("SMTP_HOST"),
         port=int(port_raw),
@@ -113,6 +144,8 @@ def load_mail_settings(env: Mapping[str, str]) -> MailSettings:
         sender=senders["MAIL_FROM"],
         support_from=senders["MAIL_SUPPORT_FROM"],
         alerts_from=senders["MAIL_ALERTS_FROM"],
+        owner_alert_email=owner_alert_email,
+        alerts_reply_to=alerts_reply_to,
         postal_address=address,
         daily_cap=int(cap_raw),
     )
@@ -155,6 +188,11 @@ def one_address(to: str | None) -> bool:
         return False
     local, at, domain = to.partition("@")
     return bool(local and at and "." in domain and "@" not in domain and not domain.endswith("."))
+
+
+def _tell_owner_mail_failed() -> None:
+    """The owner hears (on Discord: email is what broke) that a send failed."""
+    raise_alert(Problem.MAIL_FAILED)
 
 
 class Mailer:
@@ -249,7 +287,7 @@ class Mailer:
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT dmbot_claim_email(%s, %s, %s, %s, %s) AS status",
-                (user_id, kind, offer, self._s.daily_cap, self._s.offer_cap),
+                (user_id, kind, offer, self._s.mail_cap, self._s.offer_cap),
             )
             row = await cur.fetchone()
         status = row["status"] if row else "refused"
@@ -262,8 +300,11 @@ class Mailer:
             return "no_address"
         try:
             await self._send(message)
-        except Exception:  # an SMTP error can carry the address: log only the kind
+        except Exception as exc:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
+            # One person's mistyped address is not the mail service failing.
+            if not isinstance(exc, smtplib.SMTPRecipientsRefused):
+                _tell_owner_mail_failed()
             if offer:
                 await self._release(user_id, kind)
             return "failed"
@@ -282,8 +323,10 @@ class Mailer:
         try:
             message = self._build(to, "", subject, body, False, sender)
             await self._send(message)
-        except Exception:  # an SMTP error can carry the address: say only that it failed
+        except Exception as exc:  # an SMTP error can carry the address: say only that it failed
             log.error("Couldn't send a team email", exc_info=False)
+            if not isinstance(exc, smtplib.SMTPRecipientsRefused):
+                _tell_owner_mail_failed()
             return False
         return True
 

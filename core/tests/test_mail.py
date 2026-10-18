@@ -149,7 +149,7 @@ class Sending(DatabaseTest):
         return int((row or {})["n"])
 
     async def test_the_daily_cap_stops_the_flood(self) -> None:
-        made, _ = self.mailer(MAIL_DAILY_CAP=2)
+        made, _ = self.mailer(MAIL_DAILY_CAP=12)  # 12 less the 10 kept for alerts: 2 for other mail
         results = [await self.send(made, f"k{i}") for i in range(3)]
         self.assertEqual(results, ["sent", "sent", "capped"])
         self.assertEqual(await self.count_today(), 2)
@@ -217,7 +217,7 @@ class Sending(DatabaseTest):
         self.assertEqual(await self.send(made, "trial-end:1", offer=True), "sent")
 
     async def test_a_full_day_is_not_reported_as_already_sent(self) -> None:
-        made, _ = self.mailer(MAIL_DAILY_CAP=1)
+        made, _ = self.mailer(MAIL_DAILY_CAP=11)  # 11 less the 10 kept for alerts: one
         self.assertEqual(await self.send(made, "a"), "sent")
         self.assertEqual(await self.send(made, "b"), "capped")
         self.assertEqual(await self.send(made, "a"), "already_sent")
@@ -242,7 +242,7 @@ class Sending(DatabaseTest):
     async def test_offers_stop_at_three_quarters_of_the_cap_so_account_emails_have_room(
         self,
     ) -> None:
-        made, _ = self.mailer(MAIL_DAILY_CAP=4)  # offers stop at 3
+        made, _ = self.mailer(MAIL_DAILY_CAP=14)  # less the 10 kept for alerts: 4; offers stop at 3
         results = [await self.send(made, f"offer{i}", offer=True, user=USER + i) for i in range(4)]
         self.assertEqual(results, ["sent", "sent", "sent", "capped"])
         self.assertEqual(await self.send(made, "sign-in:1"), "sent")  # the 4th slot is theirs

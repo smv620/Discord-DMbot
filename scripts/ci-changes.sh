@@ -31,6 +31,8 @@ ears=false
 web=false
 while IFS= read -r f; do
   case "$f" in
+    # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
+    core/src/dmbot/*.py) core=true web=true ;;
     core/*) core=true ;;
     # the website's owner-check test reads this doc against the held What's new entries
     docs/OWNER_CHECKS.md) web=true ;;

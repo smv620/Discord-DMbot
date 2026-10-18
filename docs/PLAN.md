@@ -3856,6 +3856,12 @@ months.
   and the ticket becomes answered.
 - **Closing:** the website's hourly sweep closes an *answered* ticket the person has not written to
   for 14 days (`SUPPORT_AUTO_CLOSE_DAYS`, #1505); new and escalated ones are never closed that way.
+- **Owner alerts and the reserved sender (2026-10-18, #1907, from #1425, approved by the owner):** when the
+  AI service is out of credit or refuses its key, Deepgram refuses its key or is silent for 10 minutes,
+  Stripe refuses its key, mail fails or the database is down at start-up, the owner gets one short email
+  (fixed sentence, once an hour per problem, 5 a day, slots kept back from `MAIL_DAILY_CAP`) at
+  `OWNER_ALERT_EMAIL`, or a private Discord message when mail is what failed. `admin@getdmbot.com` is
+  refused as any From setting. See docs/EMAIL.md, section C.
   An emailed reply to a closed ticket reopens it (back to waiting, or to the team if a person had
   a hand in it).
 - **Weekly email to the team** (#1514): the first sweep after Monday 08:00 UTC sends `SUPPORT_TEAM_EMAIL`
