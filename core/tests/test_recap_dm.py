@@ -10,9 +10,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+from dmbot.mentions import NO_PINGS
 from dmbot.recaps.store import RecapStore
 from dmbot.ui.decision_lines import DecisionLines
-from dmbot.ui.dmbot_commands import NO_PINGS
 from dmbot.ui.recap_dm import (
     ASK,
     DECIDED,

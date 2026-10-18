@@ -22,10 +22,10 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 
 GONE = "That campaign isn't here any more."

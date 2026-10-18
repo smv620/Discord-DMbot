@@ -21,11 +21,11 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.mentions import NO_PINGS
 from dmbot.transcript import cleaner, export
 from dmbot.transcript.models import Line, TranscriptSession
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
-    NO_PINGS,
     NOT_IN_SERVER,
     _bot,
     _Button,

@@ -36,6 +36,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
@@ -44,7 +45,6 @@ from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 NO_REST_RULE = "xge-no-long-rest"  # the optional rule the 24-hour line follows
 

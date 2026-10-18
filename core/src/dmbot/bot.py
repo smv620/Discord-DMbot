@@ -234,6 +234,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
+from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.audio import names as audio_names
@@ -440,7 +441,6 @@ CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once
 COMBAT_PHRASE_GAP_S = 15  # the same combat words twice (voice and chat) within this: once (#1127)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
 RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
-NO_PINGS = discord.AllowedMentions.none()
 TEST_RECORDINGS_MIN_FREE = 1 << 30  # a test session isn't started with less than 1 GB free
 TEST_SAVES_AT_ONCE = 8  # more than this waiting to be saved are dropped, and the gap noted
 AUDIO_FRAME_MS = 20  # the segmenter's end is the last frame's start; it runs a frame longer
@@ -819,6 +819,10 @@ class DMBot(commands.AutoShardedBot):
             # server would be kept in memory, including those of people who never agreed and
             # channels that are not table chat. Nothing here reads cached messages.
             max_messages=None,
+            # Nothing in DMbot is meant to ping (#1834). Campaign data is posted as typed, so a
+            # name like @everyone must never notify anyone; a call's own allowed_mentions is
+            # merged over this default, so the NO_PINGS arguments keep working.
+            allowed_mentions=NO_PINGS,
         )
         self.settings = settings
         # With an outside speech-to-text company, only yeses given knowing that count
