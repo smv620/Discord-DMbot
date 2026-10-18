@@ -6,9 +6,9 @@ import { loadRenderers } from "astro:container";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { copiedText, couldNotCopy, linkTo, wireCopy } from "../scripts/helplinks.mjs";
-import { wire } from "../scripts/helpsearch.mjs";
+import { applySearch, wire } from "../scripts/helpsearch.mjs";
 import { anchorAliases, aliasesFor, knownAnchors, sectionIds, stepCounter } from "../src/content/help-anchors";
-import { gettingHelp } from "../src/content/help";
+import { emailSteps, gettingHelp, snags } from "../src/content/help";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 import help from "../src/pages/help.astro";
 import { parsePage } from "./dom";
@@ -63,6 +63,14 @@ describe("addresses on the Help page", () => {
     }
   });
 
+  it("keeps a few step addresses on the same words, so a step put in front of them shows up here", () => {
+    const doc = parsePage(html);
+    expect(doc.getElementById("game-master-1")?.textContent).toContain("Add DMbot to your Discord server");
+    expect(doc.getElementById("players-1")?.textContent).toBeTruthy();
+    expect(doc.getElementById("emails-1")?.textContent).toContain(emailSteps[0]!.text.slice(0, 30));
+    expect(doc.getElementById("snags-1")?.textContent).toContain(snags[0]!.question);
+  });
+
   it("numbers steps in the order they are drawn", () => {
     const next = stepCounter("x");
     expect([next(), next(), next()]).toEqual(["x-1", "x-2", "x-3"]);
@@ -87,9 +95,11 @@ describe("without JavaScript", () => {
     expect(buttons).toHaveLength(Object.keys(sectionIds).length);
     for (const b of buttons) {
       expect(b.hasAttribute("hidden")).toBe(true);
-      expect(b.getAttribute("aria-label")).toBe("Copy link to this section");
+      expect(b.getAttribute("aria-label")).toMatch(/^Copy link to this section: \S/);
       expect(doc.getElementById(b.getAttribute("data-copy-link") ?? "")?.tagName).toBe("SECTION");
     }
+    // Each says which section, so a list of the page's buttons can tell them apart.
+    expect(new Set(buttons.map((b) => b.getAttribute("aria-label"))).size).toBe(buttons.length);
     const status = doc.querySelector("#help-copy-status");
     expect(status?.getAttribute("role")).toBe("status");
     expect(status?.getAttribute("aria-live")).toBe("polite");
@@ -122,8 +132,36 @@ describe("Copy link", () => {
     expect(writeText).toHaveBeenCalledWith("https://getdmbot.com/help#game-master");
     expect(status.textContent).toBe(copiedText);
     expect(button.textContent).toBe(copiedText);
+    expect(button.getAttribute("aria-label")).toBe(copiedText); // the spoken name holds the visible words
     await vi.advanceTimersByTimeAsync(2000);
     expect(button.textContent).toBe("Copy link");
+    expect(button.getAttribute("aria-label")).toMatch(/^Copy link to this section: /);
+    expect(status.textContent).toBe(""); // nothing stale left in the reading order
+  });
+
+  it("announces a second press too", async () => {
+    vi.useFakeTimers();
+    const { root, status, button } = page();
+    wireCopy(root, status, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) }, location: { ...loc } });
+    const spoken: string[] = [];
+    new (status.ownerDocument.defaultView as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver(() => spoken.push(status.textContent ?? "")).observe(status, { childList: true, characterData: true });
+    button.click();
+    await vi.advanceTimersByTimeAsync(0);
+    button.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(status.textContent).toBe(copiedText);
+    expect(spoken.filter((t) => t === copiedText).length).toBe(2);
+  });
+
+  it("says so when there is no clipboard at all", async () => {
+    vi.useFakeTimers();
+    const { root, status, button } = page();
+    const location = { ...loc };
+    wireCopy(root, status, { clipboard: undefined as never, location });
+    button.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(status.textContent).toBe(couldNotCopy);
+    expect(location.hash).toBe("game-master");
   });
 
   it("puts the link in the address bar when the clipboard is not allowed", async () => {
@@ -151,5 +189,29 @@ describe("a link and the search box together", () => {
     expect(main.hasAttribute("data-quiet")).toBe(true);
     doc.defaultView!.dispatchEvent(new (doc.defaultView as unknown as { Event: typeof Event }).Event("hashchange"));
     expect(main.hasAttribute("data-quiet")).toBe(false);
+  });
+
+  it("brings the highlight back when a link to the same place is clicked", () => {
+    const doc = parsePage(html);
+    const form = doc.querySelector<HTMLFormElement>("[data-help-search]")!;
+    const main = doc.querySelector("main")!;
+    wire(form, main);
+    main.setAttribute("data-quiet", "");
+    doc.querySelector<HTMLElement>('main section > h2 > a[href="#players"]')!.click();
+    expect(main.hasAttribute("data-quiet")).toBe(false);
+  });
+
+  it("keeps a section's Copy link button and heading while its steps are searched", () => {
+    const doc = parsePage(html);
+    const main = doc.querySelector("main")!;
+    applySearch(main, "stop recording");
+    const section = doc.getElementById("players") ?? doc.getElementById("game-master")!;
+    const visible = [...main.querySelectorAll("section")].filter((s) => !s.hasAttribute("hidden"));
+    expect(visible.length).toBeGreaterThan(0);
+    for (const s of visible) {
+      expect(s.querySelector("h2")?.hasAttribute("hidden")).toBe(false);
+      expect(s.querySelector("[data-copy-link]")?.hasAttribute("data-search-hid")).toBe(false);
+    }
+    expect(section).not.toBeNull();
   });
 });

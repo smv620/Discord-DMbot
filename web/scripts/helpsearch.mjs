@@ -68,7 +68,7 @@ export function applySearch(root, query) {
     for (const child of section.children) {
       if (child.hidden) continue;
       const tag = child.tagName;
-      if (tag === "H2" || child.classList.contains("copy-link")) continue;
+      if (tag === "H2" || tag === "SPAN" || child.classList.contains("copy-link")) continue; // (a span is an old address)
       if (tag === "UL" || tag === "OL") {
         if (child.querySelector("li:not([hidden])") === null) hide(child);
       } else if (tag === "H3") {
@@ -116,6 +116,10 @@ export function wire(form, page, wait = 300) {
   // link brings it back.
   const view = page.ownerDocument?.defaultView;
   view?.addEventListener("hashchange", () => page.removeAttribute("data-quiet"));
+  // A link to the place the address already names fires no hashchange, so clicks count too.
+  page.ownerDocument?.addEventListener("click", (e) => {
+    if (e.target?.closest?.('a[href^="#"]')) page.removeAttribute("data-quiet");
+  });
   input.addEventListener("input", () => {
     page.setAttribute("data-quiet", "");
     run();

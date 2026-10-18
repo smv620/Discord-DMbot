@@ -40,7 +40,11 @@ export const sectionIds = {
   gettingHelp: "getting-help",
 } as const;
 
-/** Hands out "game-master-1", "game-master-2", … in the order the steps are drawn. */
+/**
+ * Hands out "game-master-1", "game-master-2", … in the order the steps are drawn. A step's address is
+ * its place, so a link keeps pointing at the same step only while nothing is put in front of it:
+ * add new steps at the end of a list. (A test pins a few addresses to their words so a shift shows.)
+ */
 export const stepCounter = (section: string): (() => string) => {
   let n = 0;
   return () => `${section}-${++n}`;

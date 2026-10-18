@@ -48,7 +48,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="dm-heading" id={sectionIds.gameMaster}>
     {aliasesFor(sectionIds.gameMaster).map((a) => <span id={a} />)}
     <h2 id="dm-heading"><a href={`#${sectionIds.gameMaster}`}>{dmHeading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.gameMaster} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.gameMaster} aria-label={`Copy link to this section: ${dmHeading}`} hidden>Copy link</button>
     <ol>
       {
         dmSteps.map((s) => (
@@ -87,7 +87,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="player-heading" id={sectionIds.players}>
     {aliasesFor(sectionIds.players).map((a) => <span id={a} />)}
     <h2 id="player-heading"><a href={`#${sectionIds.players}`}>{playerHeading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.players} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.players} aria-label={`Copy link to this section: ${playerHeading}`} hidden>Copy link</button>
     <p>{consentPromisesLead}</p>
     <ul>
       {consentPromises.map((p) => <li id={playerStep()}>{p.text}</li>)}
@@ -114,7 +114,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="account-heading" id={sectionIds.account}>
     {aliasesFor(sectionIds.account).map((a) => <span id={a} />)}
     <h2 id="account-heading"><a href={`#${sectionIds.account}`}>{accountHeading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.account} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.account} aria-label={`Copy link to this section: ${accountHeading}`} hidden>Copy link</button>
     <ol>
       {
         accountSteps.map((s) => (
@@ -150,7 +150,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="emails-heading" id={sectionIds.emails}>
     {aliasesFor(sectionIds.emails).map((a) => <span id={a} />)}
     <h2 id="emails-heading"><a href={`#${sectionIds.emails}`}>{emailsHeading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.emails} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.emails} aria-label={`Copy link to this section: ${emailsHeading}`} hidden>Copy link</button>
     <ol>
       {emailSteps.map((s) => <li id={emailStep()}>{s.text}</li>)}
     </ol>
@@ -161,7 +161,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="snags-heading" id={sectionIds.snags}>
     {aliasesFor(sectionIds.snags).map((a) => <span id={a} />)}
     <h2 id="snags-heading"><a href={`#${sectionIds.snags}`}>{snagsHeading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.snags} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.snags} aria-label={`Copy link to this section: ${snagsHeading}`} hidden>Copy link</button>
     <ol>
       {
         snags.map((s) => (
@@ -185,7 +185,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   <section aria-labelledby="getting-help-heading" id={gettingHelp.id}>
     {aliasesFor(gettingHelp.id).map((a) => <span id={a} />)}
     <h2 id="getting-help-heading"><a href={`#${sectionIds.gettingHelp}`}>{gettingHelp.heading}</a></h2>
-    <button type="button" class="copy-link" data-copy-link={sectionIds.gettingHelp} aria-label="Copy link to this section" hidden>Copy link</button>
+    <button type="button" class="copy-link" data-copy-link={sectionIds.gettingHelp} aria-label={`Copy link to this section: ${gettingHelp.heading}`} hidden>Copy link</button>
     <ol>
       {
         gettingHelp.items.map((item) => (
@@ -304,6 +304,7 @@ const helpStep = stepCounter(sectionIds.gettingHelp);
   }
 
   section:target > h2,
+  h2:target,
   li:target {
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     border-radius: var(--radius);

@@ -17,6 +17,7 @@ export function wireCopy(root, status, env, wait = 2000) {
   for (const button of root.querySelectorAll("[data-copy-link]")) {
     button.hidden = false;
     const label = button.textContent;
+    const name = button.getAttribute("aria-label");
     let timer;
     button.addEventListener("click", async () => {
       const id = button.getAttribute("data-copy-link");
@@ -28,11 +29,20 @@ export function wireCopy(root, status, env, wait = 2000) {
         env.location.hash = id; // no clipboard here: put it where the reader can copy it
         said = couldNotCopy;
       }
+      // Empty first, so pressing it twice announces twice.
+      status.textContent = "";
+      await Promise.resolve();
       status.textContent = said;
-      button.textContent = said === copiedText ? copiedText : label;
+      if (said === copiedText) {
+        // The visible words and the spoken name change together (the name must hold the words).
+        button.textContent = copiedText;
+        button.setAttribute("aria-label", copiedText);
+      }
       clearTimeout(timer);
       timer = setTimeout(() => {
         button.textContent = label;
+        if (name !== null) button.setAttribute("aria-label", name);
+        status.textContent = "";
       }, wait);
     });
   }
