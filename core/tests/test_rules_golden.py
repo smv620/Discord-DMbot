@@ -13,9 +13,7 @@ from pathlib import Path
 from dmbot.rules.index import srd
 from dmbot.sidebar import context
 
-CASES = json.loads((Path(__file__).parent / "golden" / "rules.json").read_text("utf-8"))[
-    "cases"
-]
+CASES = json.loads((Path(__file__).parent / "golden" / "rules.json").read_text("utf-8"))["cases"]
 MIN_CASES = 120  # (the suite is meant to be broad; shrinking it should be deliberate)
 INDEX = srd()
 
