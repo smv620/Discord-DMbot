@@ -386,6 +386,16 @@ class MagicItems(unittest.TestCase):
             [h.entry.name for h in self.hits("can a bag of holding take a fireball")], ["Fireball"]
         )
 
+    def test_a_potion_of_healing_is_the_item_and_not_the_glossary_word(self) -> None:
+        (hit,) = self.hits("can the party use a potion of healing")
+        self.assertEqual((hit.entry.kind, hit.entry.name), ("item", "Potions of Healing"))
+
+    def test_an_item_named_with_a_spell_gives_the_places_to_the_spell(self) -> None:
+        # Sending Stones are found by their own name; a named spell (here Sending) wins the places.
+        self.assertEqual(
+            [h.entry.name for h in self.hits("what do sending stones do")], ["Sending"]
+        )
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)

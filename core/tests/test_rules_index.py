@@ -321,6 +321,28 @@ class ClassFeatures(unittest.TestCase):
         assert found is not None
         self.assertEqual(found.entry.citation, "SRD 5.2.1, Magic Items, p. 212")
 
+    def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
+        from dmbot.devtools.srd import items as reader
+
+        for e in index.srd().entries:
+            if e.kind == "item":
+                with self.subTest(e.name):
+                    self.assertRegex(e.details["rarity"], reader.RARITIES)
+        sending = index.srd().lookup("Sending Stones", "2024", "2014", kind="item")
+        assert sending is not None
+        self.assertTrue(sending.entry.text.startswith("Sending Stones come in pairs"))
+
+    def test_the_attribution_names_every_item_with_lines_left_out(self) -> None:
+        text = (index.DATA / "srd52" / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        self.assertIn("The 41 items with something left out are:", text)
+        for name in ("Bag of Beans", "Spell Scroll", "Wand of Wonder", "Potions of Healing"):
+            self.assertIn(name, text)
+
+    def test_potion_of_healing_finds_potions_of_healing(self) -> None:
+        hit = index.srd().lookup("potion of healing", "2024", "2014", kind="item")
+        assert hit is not None
+        self.assertEqual(hit.entry.name, "Potions of Healing")
+
     def test_golden_items(self) -> None:
         def item(name: str) -> Entry:
             hit = index.srd().lookup(name, "2024", "2014", kind="item")

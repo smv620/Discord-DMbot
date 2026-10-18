@@ -120,6 +120,45 @@ class Reading(unittest.TestCase):
         self.assertEqual({i.page for i in found().values()}, {209})
 
 
+class TheTypeLine(unittest.TestCase):
+    def lines(self) -> list[Line]:
+        return [
+            at(LEFT, 620, "Sending Stones", TITLE),
+            at(LEFT, 608, "Wondrous Item, Uncommon", TYPE),
+            at(
+                LEFT, 592, "Sending Stones come in pairs, with each stone", TYPE
+            ),  # an italic opening
+            at(LEFT, 580, "carved to match the other so they are easily known."),
+        ]
+
+    def test_an_italic_first_line_of_the_description_is_not_part_of_the_type_line(self) -> None:
+        (stones,) = items.parse_items(self.lines())
+        self.assertEqual(stones.rarity, "Uncommon")
+        self.assertTrue(stones.text.startswith("Sending Stones come in pairs"))
+        self.assertIn("easily known.", stones.text)
+
+    def test_a_rarity_wrapped_before_its_notes_is_still_one_line(self) -> None:
+        lines = [
+            at(LEFT, 620, "Wand of the War Mage, +1, +2, or +3", TITLE),
+            at(LEFT, 608, "Wand, Uncommon (+1), Rare", TYPE),
+            at(LEFT, 596, "(+2), or Very Rare (+3) (Requires Attunement by a Spellcaster)", TYPE),
+            at(LEFT, 580, "You gain a bonus to spell attack rolls."),
+        ]
+        (wand,) = items.parse_items(lines)
+        self.assertEqual(wand.rarity, "Uncommon (+1), Rare (+2), or Very Rare (+3)")
+        self.assertEqual((wand.attunement, wand.attunement_by), (True, "a Spellcaster"))
+
+    def test_a_rarity_that_is_not_one_the_srd_prints_stops_the_tool(self) -> None:
+        with self.assertRaisesRegex(SrdError, "can't read"):
+            items.parse_type("X", "Ring, Rare and then some words", 1)
+
+    def test_the_items_with_lines_left_out_are_named(self) -> None:
+        self.assertEqual(
+            items.left_out(chapter()),
+            {"Apparatus of the Crab": 3, "Figurine of Wondrous Power": 3},
+        )
+
+
 class StopsRatherThanLoses(unittest.TestCase):
     def test_a_heading_with_words_but_no_category_line_stops_the_tool(self) -> None:
         lines = chapter()

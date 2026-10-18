@@ -615,10 +615,10 @@
    "name": "Dragon Scale Mail",
    "category": "Armor",
    "subtype": "Scale Mail",
-   "rarity": "Very Rare Dragon Scale Mail is made of the scales of one kind",
+   "rarity": "Very Rare",
    "attunement": true,
    "attunement_by": "",
-   "text": "of dragon. Sometimes dragons collect their cast-off scales and gift them. Other times, hunters carefully preserve the hide of a dead dragon. In either case, Dragon Scale Mail is highly valued.\nWhile wearing this armor, you gain a +1 bonus to Armor Class, you have Advantage on saving throws against the breath weapons of Dragons, and you have Resistance to one damage type determined by the kind of dragon that provided the scales (see the accompanying table).\nAdditionally, you can focus your senses as a Magic action to discern the distance and direction to the closest dragon within 30 miles of yourself that is of the same type as the armor. This action can’t be used again until the next dawn.",
+   "text": "Dragon Scale Mail is made of the scales of one kind of dragon. Sometimes dragons collect their cast-off scales and gift them. Other times, hunters carefully preserve the hide of a dead dragon. In either case, Dragon Scale Mail is highly valued.\nWhile wearing this armor, you gain a +1 bonus to Armor Class, you have Advantage on saving throws against the breath weapons of Dragons, and you have Resistance to one damage type determined by the kind of dragon that provided the scales (see the accompanying table).\nAdditionally, you can focus your senses as a Magic action to discern the distance and direction to the closest dragon within 30 miles of yourself that is of the same type as the armor. This action can’t be used again until the next dawn.",
    "page": 218
   },
   {
@@ -2015,10 +2015,10 @@
    "name": "Sending Stones",
    "category": "Wondrous Item",
    "subtype": "",
-   "rarity": "Uncommon Sending Stones come in pairs, with each stone",
+   "rarity": "Uncommon",
    "attunement": false,
    "attunement_by": "",
-   "text": "carved to match the other so the pairing is easily recognized. While you touch one stone, you can cast Sending from it. The target is the bearer of the other stone. If no creature bears the other stone, you know that fact as soon as you use the stone, and you don’t cast the spell.\nOnce Sending is cast using either stone, the stones can’t be used again until the next dawn. If one of the stones in a pair is destroyed, the other one becomes nonmagical.",
+   "text": "Sending Stones come in pairs, with each stone carved to match the other so the pairing is easily recognized. While you touch one stone, you can cast Sending from it. The target is the bearer of the other stone. If no creature bears the other stone, you know that fact as soon as you use the stone, and you don’t cast the spell.\nOnce Sending is cast using either stone, the stones can’t be used again until the next dawn. If one of the stones in a pair is destroyed, the other one becomes nonmagical.",
    "page": 243
   },
   {

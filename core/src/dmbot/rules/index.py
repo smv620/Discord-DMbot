@@ -98,14 +98,17 @@ def monster_keys(name: str) -> list[str]:
 
 def item_keys(name: str) -> list[str]:
     """The other names a magic item is found by: without its bracket ("Stone of Good Luck"), the
-    bracket's own word ("Luckstone") and, for a name that gives its bonuses ("Wand of the War
-    Mage, +1, +2, or +3"), the name before them. The bare "Armor", "Weapon" and "Shield" of
-    the "+1, +2, or +3" items are not offered: they are everyday words."""
+    bracket's own word ("Luckstone"), for a name that gives its bonuses ("Wand of the War Mage,
+    +1, +2, or +3") the name before them, and for "Potions of ..." the singular. The bare
+    "Armor", "Weapon" and "Shield" of the "+1, +2, or +3" items are not offered: they are
+    everyday words."""
     plain = _SUFFIX.sub("", name)
     found = [plain]
     inner = re.search(r"\(([^)]*)\)\s*$", name)
     if inner:
         found.append(inner.group(1))
+    if plain.startswith("Potions of "):  # "Potions of Healing" is asked for as "potion of healing"
+        found.append("Potion of " + plain.removeprefix("Potions of "))
     head, plus, _ = plain.partition(", +")
     if plus and len(head.split()) > 1:
         found.append(head)

@@ -31,6 +31,11 @@ TYPE_FONT = "Cambria-Italic"  # the category and rarity line under an item's nam
 # "(Requires Attunement)" or "(Requires Attunement by a Wizard)": the bracket may hold only this.
 ATTUNEMENT = re.compile(r"\s*\(Requires Attunement(?: by (?P<by>[^)]+))?\)")
 # The category and, if it has one, its bracket: "Armor (Any Light, Medium, or Heavy)", "Ring".
+# The closed set of rarities the SRD prints, each with an optional note: "Uncommon (+1)", "Very
+# Rare (Requires Attunement)" (taken out before this is matched). A type line that doesn't end
+# in one of these is not complete, or is not a type line at all (#1912).
+_RARITY = r"(?:Common|Uncommon|Rare|Very Rare|Legendary|Artifact)(?: \([^)]*\))?"
+RARITIES = re.compile(rf"^(?:Rarity Varies|{_RARITY}(?:(?:, or |, | or ){_RARITY})*)$")
 CATEGORY = re.compile(r"^(?P<category>[^(,]+?)(?: \((?P<subtype>[^)]*)\))?, (?P<rarity>.+)$")
 
 
@@ -80,11 +85,28 @@ def _heading(lines: Sequence[Line], i: int) -> tuple[str, int]:
     return text, j
 
 
+def _complete(text: str, following: str) -> bool:
+    """Does this read as a whole category and rarity line, with nothing of it on the next line?
+    A line that ends open (an unclosed bracket, a comma, "or") or whose next line carries on
+    ("(+2), or Very Rare (+3)") is not whole yet."""
+    if text.count("(") != text.count(")") or text.endswith((",", " or")):
+        return False
+    if following.startswith(("(", ")", "or ")):
+        return False
+    match = CATEGORY.match(ATTUNEMENT.sub("", text).strip())
+    return match is not None and RARITIES.match(match["rarity"]) is not None
+
+
 def _type_lines(lines: Sequence[Line], start: int) -> tuple[str, int]:
-    """The category and rarity line (it can wrap) and the index after it."""
+    """The category and rarity line (it can wrap over two or three lines) and the index after
+    it. It ends where it reads as complete: a description can begin in the same italic font."""
     j = start
     while j < len(lines) and _is_type_line(lines[j]):
         j += 1
+        text = _clean(" ".join(line.text for line in lines[start:j]))
+        following = _clean(lines[j].text) if j < len(lines) and _is_type_line(lines[j]) else ""
+        if _complete(text, following):
+            return text, j
     return _clean(" ".join(line.text for line in lines[start:j])), j
 
 
@@ -94,7 +116,7 @@ def parse_type(name: str, text: str, page: int) -> tuple[str, str, str, bool, st
     attunement = ATTUNEMENT.search(text)
     plain = ATTUNEMENT.sub("", text).strip()
     match = CATEGORY.match(plain)
-    if match is None:
+    if match is None or RARITIES.match(match["rarity"]) is None:
         raise SrdError(
             f"Item {name!r} on page {page}: can't read its category and rarity: {text!r}"
         )
@@ -141,6 +163,27 @@ def parse_items(lines: Sequence[Line]) -> list[Item]:
         items.append(Item(name, category, subtype, rarity, attunement, by, words, line.page))
         i = end
     return items
+
+
+def left_out(lines: Sequence[Line]) -> dict[str, int]:
+    """Each item that has lines left out of its text (tables, stat blocks), with how many: the
+    list ATTRIBUTION.md names, and a test pins, so a new drop can't pass unnoticed."""
+    found: dict[str, int] = {}
+    i = 0
+    while i < len(lines):
+        if not _starts_an_item(lines, i):
+            i += 1
+            continue
+        name, j = _heading(lines, i)
+        _, k = _type_lines(lines, j)
+        end = k
+        while end < len(lines) and not _starts_an_item(lines, end):
+            end += 1
+        dropped = sum(1 for ln in lines[k:end] if not ln.first_font.startswith("Cambria"))
+        if dropped:
+            found[name] = dropped
+        i = end
+    return found
 
 
 def _starts_an_item(lines: Sequence[Line], i: int) -> bool:
