@@ -19,18 +19,22 @@ export const consentPromisesLead = "When you press the button to say yes:";
 export const consentPromises: ConsentPromise[] = [
   {
     id: "only-yes",
-    text: "Only people who say yes are recorded. DMbot never records another bot.",
+    text: "DMbot records only people who say yes. It listens to your voice and reads what you type in the table's chat. It never records another bot.",
+  },
+  {
+    id: "ai",
+    text: "The written text goes to an AI company (Anthropic) to give your game master notes. It is not used to train their AI.",
   },
   {
     id: "transcript",
-    text: "Everyone in your Discord server can read and download the written record of the game. It stays there even if you stop later.",
+    text: "Everyone in your Discord server can read and download the written text of the game (the transcript). It stays there even if you stop later.",
   },
   {
     id: "stop",
-    text: "You can stop at any time: press ⚙️ Menu in the private message, then Stop recording me.",
+    text: "You can stop at any time: press ⚙️ Menu in the private message, then Stop recording me, then Yes.",
   },
   {
     id: "dm-screen",
-    text: "DMbot never sends the game master's private notes to players. You see them only if your game master allows it.",
+    text: "DMbot never sends the game master's private notes to players. They are hidden unless your game master allows it, and a Peek button warns you about spoilers first.",
   },
 ];
