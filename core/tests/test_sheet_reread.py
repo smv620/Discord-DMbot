@@ -531,6 +531,40 @@ class Runner(unittest.IsolatedAsyncioTestCase):
             await sheet_reread.tick(bot, table)
         bot.user.send.assert_not_awaited()
 
+    async def test_a_question_held_for_a_player_who_later_withdraws_is_not_sent(self) -> None:
+        # The sheet's own player, not the speaker, stops being recorded while it is held.
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+            bot.clocks.in_combat = AsyncMock(return_value=False)
+            bot.consent = SimpleNamespace(has_consent=lambda g, u: u != PLAYER)
+            await sheet_reread.tick(bot, table)
+        bot.user.send.assert_not_awaited()
+        self.assertEqual(bot.sent_to, [])  # not even looked up
+
+    async def test_a_speaker_who_withdraws_while_the_sheet_is_loaded_gets_no_question(self) -> None:
+        # The re-check after the stored sheet is fetched (an await) in `_ask`.
+        table = self.table(snapshot_sheet())
+        bot = self.bot(table, in_combat=True)
+        self.say(table, "Belleros takes 8 damage", user_id=5)
+        table.sheet_watch._sheets["e1"].due_at = 0.0
+        with self.fetching(base()), patch("time.monotonic", return_value=1e6):
+            await self.read(bot, table)
+            bot.clocks.in_combat = AsyncMock(return_value=False)
+            stored = bot.sheets.sheet
+
+            async def withdraws_meanwhile(*args: Any) -> Any:
+                bot.consent = SimpleNamespace(has_consent=lambda g, u: u != 5)
+                return await stored(*args)
+
+            bot.sheets.sheet = withdraws_meanwhile
+            # The speaker still agrees at the first check, so the question reaches `_ask`.
+            await sheet_reread.tick(bot, table)
+        bot.user.send.assert_not_awaited()
+
     async def test_each_question_carries_its_own_lines_speaker(self) -> None:
         table = self.table(snapshot_sheet())
         bot = self.bot(table, in_combat=True)
