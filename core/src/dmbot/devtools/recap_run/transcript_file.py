@@ -7,7 +7,11 @@ apart by their content, never by the file's name; anything else is refused with 
 them (`FORMATS`):
 
 * DMbot's own download from the website (raw or cleaned): `[0:42:10] (Mia) {Cerric}: words`;
-* plain lines, `Name: words`, with an optional `[hh:mm:ss]` first;
+* plain lines, `Name: words`, with an optional `[hh:mm:ss]` first. Craig's plain-text export is a
+  known source (#1977), so this reader is forgiving: up to 10 header lines before the first
+  utterance are skipped, a line that is not `Name: words` after an utterance is that utterance
+  carrying on (joined with a space; refused if over a quarter of the lines would be joined, as
+  then it is not this format), and a name may hold `( ) # . ' _` (`Rowan (rowan_v)`, `kai#0`);
 * WebVTT and SRT whose cue text starts `Name:`.
 
 Who is who: every speaker gets a made-up number in the order they first speak, and the name given
@@ -44,9 +48,13 @@ _DMBOT_LINE = re.compile(
     r"(?: \{(?P<char>[^{}]+)\})?(?P<typed> \(typed\))?: (?P<text>.+)$"
 )
 _DMBOT_OTHER = re.compile(r"^\[\d+:\d{2}:\d{2}\] \(")  # sidebar, skipped-note and DMbot lines
+# A plain name may hold ( ) # . ' _ (Craig writes "Display (username)", "name#0") but never
+# brackets, braces or <>: DMbot's own download, with braces, is tried before this format.
 _PLAIN = re.compile(
-    rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?(?P<who>[^\s:\[\]{{}}()<>][^:\[\]{{}}()<>]{{0,59}}):\s+(?P<text>\S.*)$"
+    rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?(?P<who>[^\s:\[\]{{}}<>][^:\[\]{{}}<>]{{0,59}}):\s+(?P<text>\S.*)$"
 )
+HEADER_MAX = 10  # lines before the first utterance that a plain file may have
+JOINED_MAX_SHARE = 4  # at most one line in this many may be a wrapped line (a quarter)
 _TIMING = re.compile(r"^(?P<h>\d+:)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{3})\s+-->\s+")
 _CUE_SPEAKER = re.compile(r"^(?P<who>[^:\[\]{}()<>]{1,60}):\s+(?P<text>\S.*)$", re.S)
 
@@ -67,6 +75,8 @@ class Transcript:
     format: str
     utterances: tuple[Utterance, ...]
     characters: tuple[str, ...] = ()  # named characters found in DMbot's download
+    skipped: int = 0  # plain format: header lines before the first utterance (a count only)
+    joined: int = 0  # plain format: wrapped lines joined to the utterance before them
 
     @property
     def speakers(self) -> list[str]:
@@ -96,9 +106,11 @@ def detect(text: str) -> str:
         return VTT
     if any(_TIMING.match(line) for line in lines[:6]) and lines[0].isdigit():
         return SRT
-    plain = sum(1 for line in lines if _PLAIN.match(line))
-    if plain and plain * 10 >= len(lines) * 8:  # nearly every line has a name and words
-        return PLAIN
+    split = _plain_split(lines)
+    if split is not None:
+        _, rows = split
+        if sum(1 for found, _ in rows if found) * 2 > len(rows):  # most lines have a name and words
+            return PLAIN
     raise TranscriptError(f"I don't know this file's format. I can read: {FORMATS}.")
 
 
@@ -122,20 +134,35 @@ def _dmbot(text: str) -> Transcript:
     return Transcript(DMBOT, tuple(out), tuple(characters))
 
 
+def _plain_split(lines: list[str]) -> tuple[int, list[tuple[re.Match[str] | None, str]]] | None:
+    """(how many header lines come first, every line after them with its match or None), or None
+    when no `Name: words` line comes within the first `HEADER_MAX + 1` lines."""
+    for header, line in enumerate(lines[: HEADER_MAX + 1]):
+        if _PLAIN.match(line):
+            return header, [(_PLAIN.match(rest), rest) for rest in lines[header:]]
+    return None
+
+
 def _plain(text: str) -> Transcript:
+    numbered = [(n, raw.strip()) for n, raw in enumerate(text.splitlines(), start=1) if raw.strip()]
+    split = _plain_split([line for _, line in numbered])
+    if split is None:
+        raise TranscriptError(f"no 'Name: words' line in the first {HEADER_MAX + 1} lines")
+    header, rows = split
+    wrapped = [numbered[header + i][0] for i, (found, _) in enumerate(rows) if found is None]
+    if len(wrapped) * JOINED_MAX_SHARE > len(rows):  # then it isn't this format
+        raise TranscriptError(f"line {wrapped[0]} has no 'Name: words' form")
     out: list[Utterance] = []
-    for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line:
+    for found, line in rows:
+        if found is None:  # an utterance carrying on: the first row always matches
+            last = out[-1]
+            out[-1] = Utterance(last.speaker, last.at_ms, f"{last.text} {line}")
             continue
-        found = _PLAIN.match(line)
-        if found is None:
-            raise TranscriptError(f"line {number} has no 'Name: words' form")
         # A line with no time follows the one before it, so a mixed file keeps its order.
         after = out[-1].at_ms + LINE_MS if out else 0
         at = _clock_ms(found["at"]) if found["at"] else after
         out.append(Utterance(found["who"].strip(), at, found["text"].strip()))
-    return Transcript(PLAIN, tuple(out))
+    return Transcript(PLAIN, tuple(out), skipped=header, joined=len(wrapped))
 
 
 def _cues(text: str, kind: str) -> Transcript:
@@ -201,12 +228,27 @@ def dm_id(transcript: Transcript, dm: str) -> int:
     """The number of the speaker named `dm` (case ignored). Raises if the file has no such
     speaker, naming who it does have so the name can be fixed."""
     ids = speaker_ids(transcript)
+    wanted = dm.strip().casefold()
     for name, number in ids.items():
-        if name.casefold() == dm.strip().casefold():
+        if name.casefold() == wanted:
             return number
+    # "Rowan (rowan_v)": the part before the parenthesis is the name people use (#1977).
+    short = [n for name, n in ids.items() if _before_parenthesis(name) == wanted]
+    if len(short) == 1:
+        return short[0]
+    if len(short) > 1:
+        raise TranscriptError(f"--dm {dm!r} fits more than one speaker; give the whole name")
     raise TranscriptError(
         f"--dm {dm!r} isn't a speaker in the file. The speakers are: " + ", ".join(sorted(ids))
     )
+
+
+def _before_parenthesis(name: str) -> str:
+    """ "Rowan (rowan_v)" is "rowan" (case ignored); a name not ending in ")" has no short form."""
+    stripped = name.strip()
+    if stripped.endswith(")") and " (" in stripped:
+        return stripped.rsplit(" (", 1)[0].strip().casefold()
+    return ""
 
 
 def lines_of(transcript: Transcript) -> list[Line]:

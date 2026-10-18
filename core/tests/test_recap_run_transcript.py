@@ -122,12 +122,75 @@ class TheFormats(unittest.TestCase):
             [(u.speaker, u.text) for u in got.utterances], [("Sam", "First."), ("Mia", "Second.")]
         )
 
-    def test_a_line_that_names_nobody_is_refused_by_its_number_not_its_words(self) -> None:
-        lines = [f"Sam: line {n}" for n in range(9)] + ["no name on this one"]
+    def test_a_file_that_is_over_a_quarter_wrapped_lines_is_refused_by_number_not_words(
+        self,
+    ) -> None:
+        lines = [f"Sam: line {n}" for n in range(6)] + [
+            f"a long continuation {n}" for n in range(4)
+        ]
         with self.assertRaises(tf.TranscriptError) as caught:
             tf.parse("\n".join(lines))
-        self.assertIn("line 10", str(caught.exception))
-        self.assertNotIn("no name on this", str(caught.exception))
+        self.assertIn("line 7", str(caught.exception))
+        self.assertNotIn("continuation", str(caught.exception))
+
+    def test_a_few_wrapped_lines_are_joined_to_the_utterance_before_them(self) -> None:
+        text = "\n".join(
+            ["Sam: The gate stands", "open at dusk.", *[f"Mia: line {n}" for n in range(8)]]
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.format, tf.PLAIN)
+        self.assertEqual(got.utterances[0].text, "The gate stands open at dusk.")
+        self.assertEqual((got.skipped, got.joined), (0, 1))
+        self.assertEqual(len(got.utterances), 9)
+
+    def test_a_header_before_the_first_utterance_is_skipped_and_counted(self) -> None:
+        text = (
+            "Craig recording of the Test Table\nRecorded 2026-10-01\n\n"
+            "Sam: The gate stands open.\nMia: Mira steps in.\n"
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.format, tf.PLAIN)
+        self.assertEqual((got.skipped, got.joined), (2, 0))
+        self.assertEqual([u.speaker for u in got.utterances], ["Sam", "Mia"])
+        self.assertNotIn("Craig", "".join(u.text for u in got.utterances))
+
+    def test_a_header_longer_than_ten_lines_is_not_a_plain_file(self) -> None:
+        text = "\n".join([f"heading {n}" for n in range(11)] + ["Sam: Hello there."] * 3)
+        with self.assertRaises(tf.TranscriptError):
+            tf.parse(text)
+
+    def test_names_may_hold_parentheses_hashes_dots_apostrophes_and_underscores(self) -> None:
+        text = (
+            "Rowan (rowan_v): The gate stands open.\nkai#0: Mira steps in.\n"
+            "Mr. O'Neil: A torch is lit.\n"
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.speakers, ["Rowan (rowan_v)", "kai#0", "Mr. O'Neil"])
+
+    def test_the_dm_may_be_given_as_the_whole_name_or_the_part_before_the_parenthesis(self) -> None:
+        got = tf.parse("Rowan (rowan_v): Hello.\nMia (mia_x): Hi.\n")
+        whole = tf.dm_id(got, "Rowan (rowan_v)")
+        self.assertEqual(tf.dm_id(got, "Rowan"), whole)
+        self.assertEqual(tf.dm_id(got, " rowan "), whole)
+        with self.assertRaises(tf.TranscriptError):
+            tf.dm_id(got, "rowan_v")  # the username alone is neither
+
+    def test_two_speakers_with_the_same_short_name_need_the_whole_name(self) -> None:
+        got = tf.parse("Rowan (a): Hello.\nRowan (b): Hi.\n")
+        with self.assertRaises(tf.TranscriptError) as caught:
+            tf.dm_id(got, "Rowan")
+        self.assertIn("whole name", str(caught.exception))
+        self.assertNotEqual(tf.dm_id(got, "Rowan (a)"), tf.dm_id(got, "Rowan (b)"))
+
+    def test_dmbot_vtt_and_srt_are_still_found_before_plain(self) -> None:
+        for text, kind in (
+            (DMBOT_FILE, tf.DMBOT), (VTT_FILE, tf.VTT), (SRT_FILE, tf.SRT), (PLAIN_FILE, tf.PLAIN),
+        ):  # fmt: skip
+            self.assertEqual(tf.detect(text), kind)
+        # a DMbot line with no character in braces has a name that looks like a plain one
+        self.assertEqual(
+            tf.detect("DMbot transcript: T, session 1\n\n[0:00:05] (Sam): Hello.\n"), tf.DMBOT
+        )
 
     def test_the_sidebar_tag_is_read_where_it_stands_and_not_found_in_a_players_words(self) -> None:
         text = (
@@ -343,6 +406,16 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         )
         _, _, spoken = run.read_transcript_inputs(args)
         self.assertEqual(spoken, [SpokenName("Oskar", "Oss-kar")])
+
+    async def test_the_summary_line_counts_what_the_plain_reader_let_through(self) -> None:
+        text = "A header\nof two lines\n" + self.story().replace(
+            "Mira draws her blade and steps inside.", "Mira draws her blade\nand steps inside."
+        )
+        story = self.file("craig.txt", text)
+        code, said, _ = await self.go(None, "--transcript", story, "--dm", "Sam")
+        self.assertEqual(code, 0)
+        self.assertIn("(skipped 2 header lines, joined 1 wrapped lines)", said)
+        self.assertNotIn("A header", said)  # a count, never the text
 
     async def test_nothing_is_asked_or_run_without_yes(self) -> None:
         story = self.file("story.txt", self.story())
