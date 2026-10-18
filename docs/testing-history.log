@@ -2660,3 +2660,10 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Log notes (not changed): .env is missing MAIL_REPLY_DOMAIN and DMBOT_TIME_SUGGESTIONS (defaults used); .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used; the AI_MODEL line can be deleted).
   Not yet checked: /dmbot in the owner's test server (1561035576076017774) and in dnd_testing, and the fresh-install test (after this deploy).
   Follow-up for the owner: delete the old .env backup (named in the set-variables output) once DMbot runs fine.
+
+2026-10-18 01:40 UTC  dev1  DEPLOY 86976110 (core, then web-api). Owner's pre-approval ("deploy as soon as it's ready") after core CI went green on 86976110.
+  Contents since 174c35ec: migrations 0128_npcs_channel (NPC roster channel), 0129_initiative_style, 0130_initiative_style_backfill; #1774, #1775, #1782, #1783, #1786, #1787, #1779; no-pings default (#1834); start-up smoke test (#1830); players page (#1821); privacy wording (#1810).
+  Steps: the head was checked before each step (git ls-remote). Dry run of 0128 to 0130 on a copy of the live database (restored into a throwaway postgres:16 on its own network): applied, second run applied nothing. Fresh backup ~/db-backups/dmbot-before-86976110-20261018T0141Z.sql (chmod 600; the name posted on #516 earlier said 0137Z, which was wrong). Images built from 86976110.
+  Restart: core once (migrations applied at start-up; connected to Discord with 2 servers; ears connected; 0 errors), then web-api (healthy, /health 200 from inside its container).
+  Still to do: the duplicate-commands clear. The owner sets DISCORD_CLEAR_GUILD_COMMANDS at the terminal to the old per-server copies' server (the one that used to be DISCORD_DEV_GUILD_ID); one restart; the log should show "Clearing the old per-server commands" and "removed"; then the variable is emptied again. Then /dmbot checks in the owner's test server and dnd_testing, and the Stripe test 1 rerun.
+  Log notes (unchanged): .env had AI_MODEL and AI_MODEL_FAST both (only AI_MODEL_FAST is used).
