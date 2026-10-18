@@ -18,9 +18,6 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-# (private, but the only way to measure a pattern; Python 3.11+. Loaded by name: it has no stubs.)
-_regex_parser: Any = importlib.import_module("re._parser")
-
 MAX_CHAT_COMMANDS = 100  # top-level slash commands for one app (and 5 each for user/message menus)
 MAX_MENU_COMMANDS = 5
 NAME_MAX = 32
@@ -169,6 +166,10 @@ def longest_custom_id(pattern: str) -> int:
     """How many characters the longest custom_id matching `pattern` can have. A number
     (`\\d+`, `\\d*`) counts as `DIGITS_MAX` digits; any other unbounded part raises `UnboundedId`,
     because then no id length can be promised."""
+    # Private, but the only way to measure a pattern (Python 3.11+); loaded by name because it has
+    # no stubs, and here rather than when the module is imported, so starting the bot never
+    # depends on it (#1830).
+    _regex_parser: Any = importlib.import_module("re._parser")
     bounded = re.sub(
         r"\\d([+*])", lambda m: f"\\d{{{1 if m[1] == '+' else 0},{DIGITS_MAX}}}", pattern
     )
