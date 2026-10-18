@@ -21,7 +21,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.logs import set_log_context
 from dmbot.rules import rule_sets, set_diff
 from dmbot.rules.house import HouseRuleError
@@ -174,7 +174,7 @@ async def _see(
     await _tell(
         interaction,
         f"If you press Add to set, **{name}** becomes version {mine.version + 1}:\n"
-        + "\n".join(lines)[:TEXT_MAX],
+        + fit_message("\n".join(lines), limit=TEXT_MAX),
     )
 
 
