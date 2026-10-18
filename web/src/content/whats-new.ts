@@ -19,6 +19,16 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-18",
+    title: "A channel for people and groups",
+    what: "DMbot keeps a read-only channel listing the people and groups you confirmed, with their other names and who they are connected to. Only people who may look behind your DM screen can see it, and it never shows secrets or plot notes.",
+  },
+  {
+    date: "2026-10-18",
+    title: "FightBot follows your turn order",
+    what: "FightBot listens to the people who agreed to be recorded and works out how your table takes turns, and if it guesses wrong, just say it differently and it follows. Each player gets a short private reminder before their turn, and you still decide the order.",
+  },
+  {
     date: "2026-10-17",
     title: "DMbot works on any new server",
     what: "Add DMbot to a new server and /dmbot start is ready to use. If no list pops up when you type it, wait a minute and try again.",
@@ -381,24 +391,10 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-17",
-    title: "A channel listing the people and groups",
-    what: "DMbot makes a channel that lists the people and groups it remembers for your campaign, as you confirmed them: their names, other names, the groups they are in and who they are connected to. Players can read it but not post, and it follows your DM screen setting. DMbot only lists what you confirmed. It never shows secrets, plot notes, or what has happened to someone.",
-    reason:
-      "Held until seen working live (#1761): the owner has not yet checked it on the test server.",
-  },
-  {
-    date: "2026-10-17",
     title: "A time suggestion from your narration",
     what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
     reason:
       "Held until it has been seen working on the test server (#1758).",
-  },
-  {
-    date: "2026-10-17",
-    title: "FightBot follows your turn order",
-    what: "FightBot listens to the people who agreed to be recorded. When it hears things like \"Mira, you're up\", \"players go first\" or \"declare your actions\", it guesses how your table takes turns. Your DM screen shows the guess, and you can change it just by saying it differently. FightBot then sends each player a short reminder just before their turn. It only guesses: you decide the order, and it never changes your fight.",
-    reason:
-      "Held until dev1 has live-checked it on the test server (#1771).",
   },
   {
     date: "2026-10-17",
