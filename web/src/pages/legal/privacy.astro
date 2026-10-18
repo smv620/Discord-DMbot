@@ -5,7 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
-import { initiativeLine, peopleListLine } from "../../content/privacy-channels";
+import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   keepAfterStopPaying,
@@ -119,6 +119,13 @@ import {
       initiativeLine.live && (
         <li>
           <strong>{initiativeLine.lead}</strong> {initiativeLine.text}
+        </li>
+      )
+    }
+    {
+      storyStatesLine.live && (
+        <li>
+          <strong>{storyStatesLine.lead}</strong> {storyStatesLine.text}
         </li>
       )
     }

@@ -634,6 +634,100 @@ class MagicItems(unittest.TestCase):
         self.assertIn("ABOUT DMBOT", prompt)
 
 
+class GameplayToolbox(unittest.TestCase):
+    """The DM's chapter (#1935): poisons, traps, curses and the hazard and travel rules."""
+
+    def hits(self, question: str) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014")
+
+    def build(self, question: str, *, table: bool = False) -> context.Context:
+        return context.build(
+            question,
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+            table=table,
+        )
+
+    def names(self, question: str) -> list[tuple[str, str]]:
+        return [(h.entry.kind, h.entry.name) for h in self.hits(question)]
+
+    def test_a_poison_with_a_long_name_beats_the_creature_named_inside_it(self) -> None:
+        self.assertEqual(
+            self.names("what does Purple Worm Poison do?"), [("poison", "Purple Worm Poison")]
+        )
+        self.assertEqual(self.names("how much is wyvern poison"), [("poison", "Wyvern Poison")])
+        self.assertEqual(self.names("what does a wyvern do"), [("monster", "Wyvern")])
+
+    def test_a_poison_is_found_by_its_name_with_the_possessive_taken_off(self) -> None:
+        self.assertEqual(self.names("what is Assassin's Blood"), [("poison", "Assassin’s Blood")])
+        self.assertEqual(self.names("spiders sting poison dc")[:1], [("poison", "Spider’s Sting")])
+
+    def test_a_one_word_name_counts_only_with_a_cue_word(self) -> None:
+        for question in ("his malice grew", "a torpor falls over the room", "what does malice do"):
+            self.assertEqual([k for k, _ in self.names(question) if k == "poison"], [], question)
+        for cue in ("malice poison", "what is the dc for malice", "is malice a hazard"):
+            self.assertIn(("poison", "Malice"), self.names(cue), cue)
+        self.assertIn(("poison", "Torpor"), self.names("torpor poison"))
+
+    def test_the_two_pits_are_both_found_by_pit_trap_and_one_trap_by_its_own_name(self) -> None:
+        self.assertEqual(
+            self.names("what's the DC to disarm a pit trap?"),
+            [("trap", "Hidden Pit"), ("trap", "Spiked Pit")],
+        )
+        self.assertEqual(
+            self.names("how does the falling net trap work"), [("trap", "Falling Net")]
+        )
+        self.assertEqual(self.names("the fire-casting statue"), [("trap", "Fire-Casting Statue")])
+
+    def test_a_named_curse_and_the_hazard_rules_are_found(self) -> None:
+        self.assertEqual(
+            self.names("how does demonic possession work"), [("curse", "Demonic Possession")]
+        )
+        self.assertEqual(self.names("extreme cold dc"), [("rule", "Extreme Cold")])
+        self.assertIn(("rule", "Special Movement"), self.names("special movement for flying"))
+
+    def test_a_trap_or_poison_is_sent_with_its_facts_and_the_whole_text(self) -> None:
+        trap = self.build("how do I disarm the spiked pit").prompt
+        self.assertIn(
+            "- Spiked Pit (trap) [SRD 5.2.1 p. 201]: FACTS: Deadly (Levels 1–4); "
+            "Trigger A creature moves onto the pit’s lid; Duration Instantaneous. TEXT:",
+            trap,
+        )
+        self.assertIn("Levels 17–20: Pit Depth 120 feet", trap)  # past the usual 1,200 characters
+        poison = self.build("what does purple worm poison do").prompt
+        self.assertIn(
+            "- Purple Worm Poison (poison) [SRD 5.2.1 p. 198]: FACTS: Injury poison; "
+            "Price 2,000 GP a dose. TEXT:",
+            poison,
+        )
+
+    def test_a_table_question_never_gets_the_dms_chapter(self) -> None:
+        for question in (
+            "how do I disarm the pit trap",
+            "what does purple worm poison do",
+            "how does demonic possession work",
+            "what is extreme cold",
+        ):
+            self.assertTrue(self.hits(question), question)  # the DM's sidebar finds it
+            table = self.build(question, table=True)
+            self.assertEqual(table.hits, (), question)
+            self.assertNotIn("RULES ENTRIES", table.prompt, question)
+            self.assertNotIn("Gameplay Toolbox", table.prompt, question)
+
+    def test_a_table_question_still_gets_the_rules_glossary(self) -> None:
+        table = self.build("how does cover work", table=True)
+        self.assertEqual([h.entry.name for h in table.hits], ["Cover"])
+
+    def test_the_toolbox_is_marked_as_the_dms(self) -> None:
+        for hit in self.hits("purple worm poison") + self.hits("extreme cold"):
+            self.assertTrue(hit.entry.dm_side, hit.entry.name)
+        self.assertFalse(self.hits("how does cover work")[0].entry.dm_side)
+
+
 class AboutDMbot(unittest.TestCase):
     def test_the_digest_is_sent_for_questions_about_dmbot_not_for_game_ones(self) -> None:
         for question in (
