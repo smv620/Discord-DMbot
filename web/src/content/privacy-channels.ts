@@ -21,5 +21,5 @@ export const initiativeLine = {
 export const storyStatesLine = {
   live: STORY_STATES_LIVE,
   lead: "Who is alive and who carries what.",
-  text: "For each campaign, DMbot keeps whether a character, item or place is alive, dead or destroyed, and who carries the one-of-a-kind things. It keeps only what your game master said yes to or set, with when it changed and that the game master said so. It stays in that campaign: it never goes to another campaign or server, and it never goes into a transcript. A backup holds it, and deleting the campaign deletes it.",
+  text: "For each campaign, DMbot keeps whether a character, item or place is alive, dead or destroyed, and who carries the one-of-a-kind things. It keeps only what your game master said yes to or set, with when it changed and who said so. Questions about it go to the game master only. It stays in that campaign: it never goes to another campaign or server, and it never goes into a transcript. A backup holds it, and deleting the campaign deletes it.",
 };

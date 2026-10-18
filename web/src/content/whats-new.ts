@@ -298,7 +298,7 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "Who is alive, who carries what",
-    what: "DMbot remembers who is alive or dead and who carries the one-of-a-kind things you confirm. If a dead character speaks, or one sword is in two hands, it asks you privately after the session. It only points it out; you decide.",
+    what: "DMbot remembers who is alive or dead and who carries the one-of-a-kind things, from lines you say yes to. If something doesn't fit, such as a dead character speaking, it asks you privately after the session, and you decide.",
     reason:
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1284).",
   },

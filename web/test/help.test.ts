@@ -10,6 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
+import { storyStatesLine } from "../src/content/privacy-channels";
 import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, STORY_STATES_LIVE, storyStateSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
@@ -428,8 +429,9 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("remembers who is alive or dead")).toBe(STORY_STATES_LIVE);
     const words = storyStateSteps.map((x) => x.text).join(" ");
+    expect(storyStatesLine.live).toBe(STORY_STATES_LIVE);
     expect(words).toContain("You decide");
-    expect(words).toContain("never goes to players or into a transcript");
+    expect(words).toContain("Players never do, and it is never in a transcript");
     expect(words).not.toMatch(/state fact|ontology|knowledge graph|claim/i);
   });
 

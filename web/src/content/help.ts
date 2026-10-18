@@ -90,15 +90,18 @@ export const STORY_STATES_LIVE = false;
 
 export const storyStateSteps: Step[] = [
   {
-    text: "DMbot remembers who is alive or dead, what has been destroyed, and who carries the one-of-a-kind things. It learns this only from lines you say yes to after a session (press 🗣️ Check what was said) and from connections you make yourself. To say an item is the only one, open its card and press ☝️ Only one exists. A named item like a magic sword is taken as the only one until you say otherwise. If its card shows Allow more than one, press that to say there can be several.",
+    text: "DMbot remembers who is alive or dead, what has been destroyed, and who carries the one-of-a-kind things. It learns this from what you say yes to after a session (press 🗣️ Check what was said) and, for who carries what, from connections you make on a name's card.",
+    names: [{ name: "🗣️ Check what was said", file: "ui/claims_review.py" }],
+  },
+  {
+    text: "To say an item is the only one, type /dmbot names, press 🔍 Find a name, open the item's card and press ☝️ Only one exists. DMbot guesses that a named item, like a magic sword, is the only one. If that is wrong, press Allow more than one on its card.",
     names: [
-      { name: "🗣️ Check what was said", file: "ui/claims_review.py" },
       { name: "☝️ Only one exists", file: "ui/name_card.py" },
       { name: "Allow more than one", file: "ui/name_card.py" },
     ],
   },
   {
-    text: "When something doesn't fit, for example a character you marked dead who speaks again, or one sword in two hands, DMbot saves what you said yes to and asks you about it later. That is a quiet question for you alone. It never goes to players or into a transcript. DMbot only points it out. You decide: fix the fact or leave it.",
+    text: "When something doesn't fit, for example a character you marked dead who speaks again, or one sword in two hands, DMbot asks you privately after the session. Only you see this. Players never do, and it is never in a transcript. DMbot only points it out. You decide: fix the fact or leave it.",
   },
 ];
 
