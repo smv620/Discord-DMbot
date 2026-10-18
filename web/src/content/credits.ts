@@ -18,6 +18,7 @@ export const sources = [
       "This work includes material from the System Reference Document 5.2.1 (“SRD 5.2.1”) by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2.1 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.",
     file: `${repo}/srd52/ATTRIBUTION.md`,
     path: "core/src/dmbot/rules/data/srd52/ATTRIBUTION.md",
+    folder: "srd52",
   },
   {
     name: "System Reference Document 5.1",
@@ -25,6 +26,7 @@ export const sources = [
       "This work includes material taken from the System Reference Document 5.1 (“SRD 5.1”) by Wizards of the Coast LLC and available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode.",
     file: `${repo}/srd51/ATTRIBUTION.md`,
     path: "core/src/dmbot/rules/data/srd51/ATTRIBUTION.md",
+    folder: "srd51",
   },
 ];
 
@@ -32,3 +34,6 @@ export const whatDmbotDid =
   "DMbot took the text out of the PDFs, fixed words the PDF had split, and cut it into entries.";
 
 export const creditsNotAffiliated = notAffiliated;
+
+export const lookupHeading = "What DMbot can look up";
+export const lookupIntro = "How many entries of each kind are in the data DMbot uses. The numbers are counted from the files when this page is built.";
