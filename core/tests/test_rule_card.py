@@ -206,6 +206,10 @@ class Splitting(unittest.TestCase):
         longest = 0
         for e in srd.entries:
             found = srd.lookup(e.name, e.edition, "none", kind=e.kind)
+            if e.kind == "feature":  # a name several classes (or levels) share: this entry's own
+                found = next(
+                    h for h in srd.lookup_all(e.name, e.edition, kind=e.kind) if h.entry is e
+                )
             assert found is not None
             parts = rule_card.card_parts(found, e.name, [rule(1, f"{e.name} is loud")])
             with self.subTest(e.name, edition=e.edition):

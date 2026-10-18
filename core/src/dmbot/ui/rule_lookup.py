@@ -128,6 +128,35 @@ async def _homebrew(
         return None
 
 
+def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
+    """The glossary entry, else the class feature, with this name. A feature several classes
+    share ("evasion") gives the first class's; typing the class first ("rogue evasion") picks
+    that class, and a level after it ("barbarian improved brutal strike 17") picks the one of
+    that level: which is how the name list words them."""
+    hit = srd.lookup(typed, target, fallback, kind=index.RULE)
+    if hit is not None:
+        return hit
+    found = _features(srd, typed, target, fallback)
+    return found[0] if found else None
+
+
+def _features(srd: index.Index, typed: str, target: str, fallback: str) -> list[index.Hit]:
+    """The class features a typed name leads to: "evasion", "rogue evasion" or
+    "barbarian improved brutal strike 17"."""
+    words = typed.split()
+    klass = ""
+    if len(words) > 1 and words[0].lower() in index.CLASS_WORDS:
+        klass, words = words[0], words[1:]
+    level = int(words.pop()) if len(words) > 1 and words[-1].isdigit() else None
+    for name, prefer in ((" ".join(words), klass), (typed, "")):
+        found = srd.lookup_all(name, target, fallback, kind=index.FEATURE, prefer=prefer)
+        if level is not None:
+            found = [h for h in found if h.entry.details.get("level") == level]
+        if found:
+            return found
+    return []
+
+
 async def look_up(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -166,8 +195,9 @@ async def look_up(
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
-        # "long rest"). Those are asked for last so a spell of the same name always wins (#1891).
-        hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=index.RULE)
+        # "long rest", #1891) or a class feature ("rage", "rogue evasion", #1900). Those are
+        # asked for last so a spell of the same name always wins.
+        hit = _asked_for(srd, typed, campaign.target_ruleset, campaign.fallback_ruleset)
     # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
     # precedence), and a homebrew name shadows the book's: the book's card for the same name is not
     # shown. An entry the DM turned off is not read at all (#1629).
@@ -195,7 +225,22 @@ async def look_up(
         text = rule_card.no_match_text(typed, rules, bool(close), player=not is_dm)
         await _send(interaction, text, Suggestions(campaign, close) if close else None)
         return
-    parts = rule_card.card_parts(hit, typed, rules, player=not is_dm)
+    also: list[str] = []
+    if hit.entry.kind == index.FEATURE:  # the same feature of other classes, named on the card
+        same = srd.lookup_all(
+            hit.entry.name,
+            campaign.target_ruleset,
+            campaign.fallback_ruleset,
+            kind=index.FEATURE,
+        )
+        also = [
+            str(h.entry.details["class"])
+            for h in same
+            if h.entry.details.get("class") != hit.entry.details.get("class")
+        ]
+    parts = rule_card.card_parts(
+        hit, typed, rules, player=not is_dm, also=list(dict.fromkeys(also))
+    )
     if not is_dm:
         parts = rule_card.for_player(parts)
     await _send(interaction, parts[0], Card(parts, 1) if len(parts) > 1 else None)
@@ -392,10 +437,29 @@ async def _typeahead(
     # three letters and only when no spell, condition or creature starts the same way: a short
     # word never floods the list with them (#1891).
     if not found and len(index.normalize(current)) >= GLOSSARY_FROM:
-        found = srd.rule_names(current, target, fallback, limit=NAMES_MORE)
+        found = srd.asked_names(
+            current, target, fallback, kinds=(index.RULE, index.FEATURE), limit=NAMES_MORE
+        )
     return [
-        app_commands.Choice(name=rule_card.choice_label(e), value=e.name[:BOX_MAX]) for e in found
+        app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
+        for e in found
     ]
+
+
+def _choice_value(srd: index.Index, entry: index.Entry) -> str:
+    """What is typed into the box when a name is picked. A feature several classes share is
+    picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
+    Brutal Strike") with its level after, which `_features` reads back."""
+    if entry.kind != index.FEATURE:
+        return entry.name[:BOX_MAX]
+    klass = str(entry.details.get("class", ""))
+    same = [
+        h
+        for h in srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE, prefer=klass)
+        if h.entry.details.get("class") == klass
+    ]
+    level = f" {entry.details.get('level')}" if len(same) > 1 else ""
+    return f"{klass} {entry.name}{level}"[:BOX_MAX]
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
