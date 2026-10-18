@@ -26,7 +26,16 @@ ATTRIBUTION_51 = (
     "under the Creative Commons Attribution 4.0 International License available at "
     "https://creativecommons.org/licenses/by/4.0/legalcode."
 )
-FILES = ("ATTRIBUTION.md", "conditions.json", "features.json", "monsters.json", "spells.json")
+FILES = (
+    "ATTRIBUTION.md",
+    "conditions.json",
+    "feats.json",
+    "features.json",
+    "items.json",
+    "monsters.json",
+    "origins.json",
+    "spells.json",
+)
 FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
@@ -130,7 +139,7 @@ class Order(unittest.TestCase):
         self.assertEqual(hit.entry, self.new)  # not the 2014 entry of the same name
         self.assertEqual(hit.tag, "")
         self.assertTrue(hit.renamed)
-        self.assertFalse(self.index.lookup("Acid Arrow", "2024", "2014").renamed)  # type: ignore[union-attr]
+        self.assertFalse(self.index.lookup("Acid Arrow", "2024", "2014").renamed)
 
     def test_the_fallback_is_used_only_when_the_target_has_nothing_and_is_tagged(self) -> None:
         hit = self.index.lookup("Sleet Storm", "2024", "2014")
@@ -315,14 +324,14 @@ class ClassFeatures(unittest.TestCase):
 
     def test_the_shipped_magic_items_are_complete_and_found_only_when_asked_for(self) -> None:
         srd = index.srd()
-        items = [e for e in srd.entries if e.kind == "item"]
-        self.assertEqual(len(items), 258)
-        self.assertEqual({e.edition for e in items}, {"2024"})
-        self.assertEqual(len({e.name for e in items}), len(items))
-        for e in items:
-            with self.subTest(e.name):
-                self.assertTrue(e.text and 209 <= e.page <= 253)
-                self.assertTrue(e.details["category"] and e.details["rarity"])
+        for edition, total, pages in (("2024", 258, (209, 253)), ("2014", 239, (207, 251))):
+            items = [e for e in srd.entries if e.kind == "item" and e.edition == edition]
+            self.assertEqual(len(items), total, edition)
+            self.assertEqual(len({e.name for e in items}), len(items))
+            for e in items:
+                with self.subTest(e.name):
+                    self.assertTrue(e.text and pages[0] <= e.page <= pages[1])
+                    self.assertTrue(e.details["category"] and e.details["rarity"])
         # never offered as a name to spot in talk, to suggest or to complete: "Bag" is a word
         self.assertFalse(any(e.kind == "item" for e in srd.names_pool("2024", "2014").values()))
         self.assertIsNone(srd.lookup("Bag of Holding", "2024", "2014"))
@@ -334,13 +343,19 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(found.entry.citation, "SRD 5.2.1, Magic Items, p. 212")
 
     def test_the_shipped_feats_species_and_backgrounds_are_complete(self) -> None:
-        def of(kind: str) -> list[Entry]:
-            return [e for e in index.srd().entries if e.kind == kind]
+        def of(kind: str, edition: str) -> list[Entry]:
+            return [e for e in index.srd().entries if e.kind == kind and e.edition == edition]
 
-        self.assertEqual((len(of("feat")), len(of("species")), len(of("background"))), (17, 9, 4))
-        for e in [*of("feat"), *of("species"), *of("background")]:
-            with self.subTest(e.name):
-                self.assertTrue(e.text and e.edition == "2024")
+        for edition, counts in (("2024", (17, 9, 4)), ("2014", (1, 9, 1))):
+            got = (
+                len(of("feat", edition)),
+                len(of("species", edition)),
+                len(of("background", edition)),
+            )
+            self.assertEqual(got, counts, edition)
+            for e in [*of("feat", edition), *of("species", edition), *of("background", edition)]:
+                with self.subTest(e.name):
+                    self.assertTrue(e.text)
         srd = index.srd()
         # none of the three is a name to spot in talk, suggest or complete
         pool = srd.names_pool("2024", "2014").values()
@@ -378,7 +393,9 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(sage.details["skills"], "Arcana and History")
         self.assertEqual(sage.citation, "SRD 5.2.1, Character Origins, p. 83")
         self.assertEqual(get("Alert", "feat").citation, "SRD 5.2.1, Feats, p. 87")
-        for background in (e for e in index.srd().entries if e.kind == "background"):
+        for background in (
+            e for e in index.srd().entries if e.kind == "background" and e.edition == "2024"
+        ):
             feat = index.srd().lookup(background.details["feat"], "2024", "2014", kind="feat")
             self.assertIsNotNone(feat, background.name)  # the feat each background gives exists
 
@@ -518,13 +535,72 @@ class ClassFeatures(unittest.TestCase):
         assert found is not None
         self.assertEqual(found.entry.name, "Horse, Riding")
 
+    def test_the_2014_races_background_and_feat_are_the_fallback_only_where_the_target_has_nothing(
+        self,
+    ) -> None:
+        srd = index.srd()
+
+        def pick(name: str, kind: str, target: str, fallback: str) -> tuple[str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.edition, hit.tag
+
+        self.assertEqual(
+            pick("Dwarf", "species", "2024", "2014"), ("2024", "")
+        )  # the 2024 one alone
+        self.assertEqual(len(srd.lookup_all("Dwarf", "2024", "2014", kind="species")), 1)
+        self.assertEqual(pick("Half-Orc", "species", "2024", "2014"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Half-Elf", "species", "2024", "2014"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Dwarf", "species", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Acolyte", "background", "2024", "2014"), ("2024", ""))
+        self.assertEqual(pick("Acolyte", "background", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Grappler", "feat", "2024", "2014"), ("2024", ""))
+        self.assertEqual(pick("Grappler", "feat", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertIsNone(srd.lookup("Half-Orc", "2024", "none", kind="species"))
+
+    def test_golden_2014_races_background_and_feat(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2014", "2024", kind=kind)
+            assert hit is not None, name
+            assert hit.entry.edition == "2014", name
+            return hit.entry
+
+        dwarf = get("Dwarf", "species")
+        self.assertIn(
+            "Subrace: Hill Dwarf\nAs a hill dwarf", dwarf.text
+        )  # the subrace stays in the race
+        self.assertIn("Your Wisdom score increases by 1.", dwarf.text)
+        self.assertEqual((dwarf.details["size"], dwarf.details["speed"]), ("Medium", "25 feet"))
+        self.assertIn("Relentless Endurance.", get("Half-Orc", "species").text)
+        self.assertEqual(get("Halfling", "species").details["size"], "Small")
+        self.assertNotIn("Black Acid", get("Dragonborn", "species").text)
+        grappler = get("Grappler", "feat")
+        self.assertEqual(grappler.details["prerequisite"], "Strength 13 or higher")
+        self.assertEqual(grappler.citation, "SRD 5.1, Feats, p. 75")
+        acolyte = get("Acolyte", "background")
+        self.assertEqual(acolyte.details["skills"], "Insight, Religion")
+        self.assertIn("Feature: Shelter of the Faithful", acolyte.text)
+        self.assertNotIn("Personality Trait", acolyte.text)
+        newer = index.srd().lookup("Dwarf", "2024", "2014", kind="species")
+        assert newer is not None
+        self.assertEqual(newer.entry.details["speed"], "30 feet")  # each keeps its own edition's
+
+    def test_the_2014_attribution_names_the_left_out_races_background_and_feat_parts(self) -> None:
+        text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        for words in ("Draconic Ancestry", "Suggested Characteristics", "Racial Traits"):
+            self.assertIn(words, text)
+
     def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
         from dmbot.devtools.srd import items as reader
+        from dmbot.devtools.srd import items51 as reader51
 
         for e in index.srd().entries:
             if e.kind == "item":
                 with self.subTest(e.name):
-                    self.assertRegex(e.details["rarity"], reader.RARITIES)
+                    if e.edition == "2014":  # (printed in lower case, kept in the 5.2.1's capitals)
+                        self.assertRegex(e.details["rarity"].lower(), reader51.RARITIES)
+                    else:
+                        self.assertRegex(e.details["rarity"], reader.RARITIES)
         sending = index.srd().lookup("Sending Stones", "2024", "2014", kind="item")
         assert sending is not None
         self.assertTrue(sending.entry.text.startswith("Sending Stones come in pairs"))
@@ -533,6 +609,68 @@ class ClassFeatures(unittest.TestCase):
         text = (index.DATA / "srd52" / "ATTRIBUTION.md").read_text(encoding="utf-8")
         self.assertIn("The 41 items with something left out are:", text)
         for name in ("Bag of Beans", "Spell Scroll", "Wand of Wonder", "Potions of Healing"):
+            self.assertIn(name, text)
+
+    def test_the_2014_items_are_the_fallback_only_where_the_target_has_nothing(self) -> None:
+        srd = index.srd()
+        bag = srd.lookup("Bag of Holding", "2024", "2014", kind="item")
+        assert bag is not None
+        self.assertEqual((bag.entry.edition, bag.tag), ("2024", ""))  # the 2024 item alone
+        self.assertEqual(len(srd.lookup_all("Bag of Holding", "2024", "2014", kind="item")), 1)
+        arrow = srd.lookup("Arrow of Slaying", "2024", "2014", kind="item")
+        assert arrow is not None  # the 2024 book renamed it Ammunition of Slaying
+        self.assertEqual((arrow.entry.edition, arrow.tag), ("2014", "[Legacy 2014]"))
+        self.assertEqual(arrow.citation, "SRD 5.1, Magic Items, p. 209 [Legacy 2014]")
+        old = srd.lookup("Bag of Holding", "2014", "2024", kind="item")
+        assert old is not None  # a 2014 campaign reads its own target first
+        self.assertEqual((old.entry.edition, old.tag), ("2014", "[Legacy 2014]"))
+        self.assertIsNone(srd.lookup("Arrow of Slaying", "2024", "none", kind="item"))
+
+    def test_the_2014_items_are_found_only_when_asked_for(self) -> None:
+        srd = index.srd()
+        pool = srd.names_pool("2024", "2014").values()
+        self.assertFalse(any(e.kind == "item" for e in pool))
+        self.assertIsNone(srd.lookup("Arrow of Slaying", "2024", "2014"))
+
+        def asked(typed: str, target: str, fallback: str) -> list[tuple[str, str]]:
+            found = srd.asked_names(typed, target, fallback, kinds=["item"])
+            return [(e.name, e.edition) for e in found]
+
+        self.assertEqual(asked("arrow of s", "2024", "2014"), [("Arrow of Slaying", "2014")])
+        self.assertEqual(asked("bag of h", "2024", "2014"), [("Bag of Holding", "2024")])
+        self.assertEqual(asked("bag of h", "2014", "2024"), [("Bag of Holding", "2014")])
+
+    def test_golden_2014_items(self) -> None:
+        def item(name: str, target: str = "2014") -> Entry:
+            hit = index.srd().lookup(name, target, "2024", kind="item")
+            assert hit is not None, name
+            assert hit.entry.edition == "2014", name
+            return hit.entry
+
+        bag, cloak = item("Bag of Holding"), item("Cloak of Protection")
+        self.assertEqual((bag.details["rarity"], bag.details["attunement"]), ("Uncommon", False))
+        self.assertEqual((cloak.details["rarity"], cloak.details["attunement"]), ("Uncommon", True))
+        # where the editions differ, each keeps its own: the 5.1 Potion of Invisibility is very
+        # rare, the 5.2.1's rare
+        old = item("Potion of Invisibility")
+        new = index.srd().lookup("Potion of Invisibility", "2024", "2014", kind="item")
+        assert new is not None
+        self.assertEqual(
+            (old.details["rarity"], new.entry.details["rarity"]), ("Very Rare", "Rare")
+        )
+        armor = item("Armor, +1, +2, or +3")
+        self.assertEqual(armor.details["rarity"], "Rare (+1), Very Rare (+2), or Legendary (+3)")
+        scroll = item("Spell Scroll")
+        self.assertEqual(scroll.details["rarity"], "Rarity Varies")
+
+    def test_the_2014_attribution_names_every_item_with_lines_left_out(self) -> None:
+        text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        self.assertIn("The 30 items with something left out are:", text)
+        listed = text.split("The 30 items with something left out are:")[1].split("(a test pins")[0]
+        self.assertEqual(len(listed.strip().rstrip(" ;").split(", ")), 30)
+        for name in ("Bag of Beans", "Deck of Many Things", "Wand of Wonder", "Iron Flask"):
+            self.assertIn(name, text)
+        for name in ("Sentient Magic Items", "Artifacts", "Orb of Dragonkind"):
             self.assertIn(name, text)
 
     def test_potion_of_healing_finds_potions_of_healing(self) -> None:
