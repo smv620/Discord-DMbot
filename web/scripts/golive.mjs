@@ -4,15 +4,18 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const SWITCH = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_LIVE\b/g;
-const EXPORT = /export const ([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_LIVE)\b/g;
+// The doc names a switch only in backticks, so a word like GO_LIVE.md in prose is not read as one.
+const SWITCH = /`([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_LIVE)`/g;
+const EXPORT = /export\s+(?:const|let)\s+([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_LIVE)\b/g;
+// A "goes live with" cell holding only one of these says nothing about the deploy.
+const PLACEHOLDER = /^(?:[-—–]+|tbd|todo|\?+)$/i;
 // A table row starts with the switch in backticks; its last cell says what it goes live with.
 const ROW = /^\|\s*`([A-Z][A-Z0-9_]*_LIVE)`/;
 
 function tsFiles(dir) {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
-    return statSync(full).isDirectory() ? tsFiles(full) : full.endsWith(".ts") ? [full] : [];
+    return statSync(full).isDirectory() ? tsFiles(full) : /\.(?:ts|tsx|mts)$/.test(full) ? [full] : [];
   });
 }
 
@@ -25,9 +28,10 @@ export function switchesInCode(contentDir) {
   return [...names].sort();
 }
 
-/** Every NAME_LIVE the doc names anywhere (table rows and prose), sorted. */
+/** Every NAME_LIVE the doc names in backticks, in table rows or prose, sorted. A switch named only in
+ * prose counts on purpose: a switch that is already true (HOMEBREW_LINKS_LIVE) has no table row. */
 export function switchesInDoc(doc) {
-  return [...new Set(doc.match(SWITCH) ?? [])].sort();
+  return [...new Set([...doc.matchAll(SWITCH)].map((match) => match[1]))].sort();
 }
 
 /** The table rows: switch name and the text of the last cell ("goes live with"). */
@@ -36,9 +40,12 @@ export function docRows(doc) {
   for (const line of doc.split("\n")) {
     const match = ROW.exec(line);
     if (!match) continue;
-    const cells = line.split("|").map((cell) => cell.trim());
-    // A row starts and ends with "|", so the first and last entries are empty.
-    rows.push({ name: match[1], deploy: cells.length >= 3 ? (cells[cells.length - 2] ?? "") : "" });
+    // Split on "|" but not on an escaped "\|" inside a cell.
+    const cells = line.split(/(?<!\\)\|/).map((cell) => cell.trim());
+    // A row starts and ends with "|", so the first and last entries are empty. A row with no closing
+    // "|" has its last cell in that slot instead, which must not pass as filled in.
+    const closed = cells[cells.length - 1] === "";
+    rows.push({ name: match[1], deploy: closed && cells.length >= 3 ? (cells[cells.length - 2] ?? "") : "" });
   }
   return rows;
 }
@@ -55,7 +62,7 @@ export function goLiveProblems(codeSwitches, doc) {
     if (!inCode.has(name)) problems.push(`${name} is in docs/GO_LIVE.md but not in web/src/content`);
   }
   for (const { name, deploy } of docRows(doc)) {
-    if (deploy === "") problems.push(`${name} has no "goes live with" in docs/GO_LIVE.md`);
+    if (deploy === "" || PLACEHOLDER.test(deploy)) problems.push(`${name} has no "goes live with" in docs/GO_LIVE.md`);
   }
   return problems;
 }

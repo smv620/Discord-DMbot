@@ -36,6 +36,17 @@ describe("go-live map check", () => {
     ]);
   });
 
+  it("rejects a placeholder and a row with no closing bar", () => {
+    const placeholder = doc.replace("**owner check**", "TBD");
+    expect(goLiveProblems(["ALPHA_LIVE", "BETA_LIVE", "GAMMA_LIVE"], placeholder)).toEqual([
+      'BETA_LIVE has no "goes live with" in docs/GO_LIVE.md',
+    ]);
+    const open = doc.replace("**owner check** |", "**owner check**");
+    expect(goLiveProblems(["ALPHA_LIVE", "BETA_LIVE", "GAMMA_LIVE"], open)).toEqual([
+      'BETA_LIVE has no "goes live with" in docs/GO_LIVE.md',
+    ]);
+  });
+
   it("reads rows and switch names the way the doc writes them", () => {
     expect(switchesInDoc(doc)).toEqual(["ALPHA_LIVE", "BETA_LIVE", "GAMMA_LIVE"]);
     expect(docRows(doc)).toEqual([
@@ -43,7 +54,7 @@ describe("go-live map check", () => {
       { name: "BETA_LIVE", deploy: "**owner check**" },
     ]);
     // "*_LIVE" in prose is the pattern, not a switch.
-    expect(switchesInDoc("each `*_LIVE` switch")).toEqual([]);
+    expect(switchesInDoc("each `*_LIVE` switch and GO_LIVE.md")).toEqual([]);
   });
 
   it("passes on the real files", () => {
