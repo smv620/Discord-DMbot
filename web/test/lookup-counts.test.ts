@@ -73,10 +73,16 @@ describe("lookup counts", () => {
     ]);
   });
 
-  it("lists only the kinds a SRD has", () => {
-    const older = lookupList(readFolder(dataDir("srd51"))).map((k) => k.label);
-    expect(older).not.toContain("Feats");
-    expect(older).toContain("Spells");
+  it("lists only the kinds a SRD has, read from its data", () => {
+    for (const s of sources) {
+      const files = readFolder(dataDir(s.folder));
+      const present = new Set(countByKind(files).keys());
+      const listed = lookupList(files).map((k) => k.label);
+      for (const [kind, label] of Object.entries(kindNames)) {
+        expect(listed.includes(label), `${s.folder} ${label}`).toBe(present.has(kind));
+      }
+    }
+    expect(lookupList(readFolder(dataDir("srd51"))).map((k) => k.label)).toContain("Spells");
   });
 
   it("shows the counts on the Credits page, under each SRD", async () => {

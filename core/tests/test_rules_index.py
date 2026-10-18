@@ -29,9 +29,11 @@ ATTRIBUTION_51 = (
 FILES = (
     "ATTRIBUTION.md",
     "conditions.json",
+    "feats.json",
     "features.json",
     "items.json",
     "monsters.json",
+    "origins.json",
     "spells.json",
 )
 FILES_52 = (
@@ -137,7 +139,9 @@ class Order(unittest.TestCase):
         self.assertEqual(hit.entry, self.new)  # not the 2014 entry of the same name
         self.assertEqual(hit.tag, "")
         self.assertTrue(hit.renamed)
-        self.assertFalse(self.index.lookup("Acid Arrow", "2024", "2014").renamed)  # type: ignore[union-attr]
+        plain = self.index.lookup("Acid Arrow", "2024", "2014")
+        assert plain is not None
+        self.assertFalse(plain.renamed)
 
     def test_the_fallback_is_used_only_when_the_target_has_nothing_and_is_tagged(self) -> None:
         hit = self.index.lookup("Sleet Storm", "2024", "2014")
@@ -341,13 +345,19 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(found.entry.citation, "SRD 5.2.1, Magic Items, p. 212")
 
     def test_the_shipped_feats_species_and_backgrounds_are_complete(self) -> None:
-        def of(kind: str) -> list[Entry]:
-            return [e for e in index.srd().entries if e.kind == kind]
+        def of(kind: str, edition: str) -> list[Entry]:
+            return [e for e in index.srd().entries if e.kind == kind and e.edition == edition]
 
-        self.assertEqual((len(of("feat")), len(of("species")), len(of("background"))), (17, 9, 4))
-        for e in [*of("feat"), *of("species"), *of("background")]:
-            with self.subTest(e.name):
-                self.assertTrue(e.text and e.edition == "2024")
+        for edition, counts in (("2024", (17, 9, 4)), ("2014", (1, 9, 1))):
+            got = (
+                len(of("feat", edition)),
+                len(of("species", edition)),
+                len(of("background", edition)),
+            )
+            self.assertEqual(got, counts, edition)
+            for e in [*of("feat", edition), *of("species", edition), *of("background", edition)]:
+                with self.subTest(e.name):
+                    self.assertTrue(e.text)
         srd = index.srd()
         # none of the three is a name to spot in talk, suggest or complete
         pool = srd.names_pool("2024", "2014").values()
@@ -385,7 +395,9 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(sage.details["skills"], "Arcana and History")
         self.assertEqual(sage.citation, "SRD 5.2.1, Character Origins, p. 83")
         self.assertEqual(get("Alert", "feat").citation, "SRD 5.2.1, Feats, p. 87")
-        for background in (e for e in index.srd().entries if e.kind == "background"):
+        for background in (
+            e for e in index.srd().entries if e.kind == "background" and e.edition == "2024"
+        ):
             feat = index.srd().lookup(background.details["feat"], "2024", "2014", kind="feat")
             self.assertIsNotNone(feat, background.name)  # the feat each background gives exists
 
@@ -524,6 +536,61 @@ class ClassFeatures(unittest.TestCase):
         found = index.srd().lookup("riding horse", "2024", "2014", kind="gear")
         assert found is not None
         self.assertEqual(found.entry.name, "Horse, Riding")
+
+    def test_the_2014_races_background_and_feat_are_the_fallback_only_where_the_target_has_nothing(
+        self,
+    ) -> None:
+        srd = index.srd()
+
+        def pick(name: str, kind: str, target: str, fallback: str) -> tuple[str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.edition, hit.tag
+
+        self.assertEqual(
+            pick("Dwarf", "species", "2024", "2014"), ("2024", "")
+        )  # the 2024 one alone
+        self.assertEqual(len(srd.lookup_all("Dwarf", "2024", "2014", kind="species")), 1)
+        self.assertEqual(pick("Half-Orc", "species", "2024", "2014"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Half-Elf", "species", "2024", "2014"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Dwarf", "species", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Acolyte", "background", "2024", "2014"), ("2024", ""))
+        self.assertEqual(pick("Acolyte", "background", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertEqual(pick("Grappler", "feat", "2024", "2014"), ("2024", ""))
+        self.assertEqual(pick("Grappler", "feat", "2014", "2024"), ("2014", "[Legacy 2014]"))
+        self.assertIsNone(srd.lookup("Half-Orc", "2024", "none", kind="species"))
+
+    def test_golden_2014_races_background_and_feat(self) -> None:
+        def get(name: str, kind: str) -> Entry:
+            hit = index.srd().lookup(name, "2014", "2024", kind=kind)
+            assert hit is not None, name
+            assert hit.entry.edition == "2014", name
+            return hit.entry
+
+        dwarf = get("Dwarf", "species")
+        self.assertIn(
+            "Subrace: Hill Dwarf\nAs a hill dwarf", dwarf.text
+        )  # the subrace stays in the race
+        self.assertIn("Your Wisdom score increases by 1.", dwarf.text)
+        self.assertEqual((dwarf.details["size"], dwarf.details["speed"]), ("Medium", "25 feet"))
+        self.assertIn("Relentless Endurance.", get("Half-Orc", "species").text)
+        self.assertEqual(get("Halfling", "species").details["size"], "Small")
+        self.assertNotIn("Black Acid", get("Dragonborn", "species").text)
+        grappler = get("Grappler", "feat")
+        self.assertEqual(grappler.details["prerequisite"], "Strength 13 or higher")
+        self.assertEqual(grappler.citation, "SRD 5.1, Feats, p. 75")
+        acolyte = get("Acolyte", "background")
+        self.assertEqual(acolyte.details["skills"], "Insight, Religion")
+        self.assertIn("Feature: Shelter of the Faithful", acolyte.text)
+        self.assertNotIn("Personality Trait", acolyte.text)
+        newer = index.srd().lookup("Dwarf", "2024", "2014", kind="species")
+        assert newer is not None
+        self.assertEqual(newer.entry.details["speed"], "30 feet")  # each keeps its own edition's
+
+    def test_the_2014_attribution_names_the_left_out_races_background_and_feat_parts(self) -> None:
+        text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        for words in ("Draconic Ancestry", "Suggested Characteristics", "Racial Traits"):
+            self.assertIn(words, text)
 
     def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
         from dmbot.devtools.srd import items as reader
