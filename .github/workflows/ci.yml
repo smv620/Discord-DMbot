@@ -158,14 +158,24 @@ jobs:
         # own schema (core/tests/pg.py, random name) and migrations lock per schema, so workers
         # never share state.
         # --durations shows where the time goes. Nothing is skipped, deselected or xfailed.
+        # Coverage (#1858) is printed (only the files with lines no test runs) and kept as
+        # coverage.xml. It is a report, not a gate: no threshold until the baseline is known.
         run: |
           set -o pipefail
-          pytest -q --tb=short -rfE -n 4 --durations=25 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n 4 --durations=25 \
+            --cov=dmbot --cov-report=term-missing:skip-covered --cov-report=xml 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"
             exit 1
           }
+      - name: keep the coverage report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage
+          path: core/coverage.xml
+          if-no-files-found: ignore
 
   scripts:
     name: scripts (server helpers)
