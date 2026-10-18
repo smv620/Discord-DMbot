@@ -186,6 +186,13 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-17",
+    title: "See what's switched on",
+    what: "In Settings, press What's switched on to see which of DMbot's extras are turned on for your table. Only the game masters see it.",
+    reason:
+      "Merged (#1831); held until dev1 deploys it and the owner's live check is recorded in docs/testing-history.log.",
+  },
+  {
+    date: "2026-10-17",
     title: "Find Settings more easily",
     what: "Press Settings on the step where you pick the voice channel, or type /dmbot settings anywhere in your server. It opens privately, for the campaign's game masters.",
     reason:
