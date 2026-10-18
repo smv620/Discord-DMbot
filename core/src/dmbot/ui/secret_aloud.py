@@ -17,7 +17,8 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import DM, MemoryRuleError
-from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _tell
+from dmbot.mentions import NO_PINGS
+from dmbot.ui.dmbot_commands import _bot, _tell
 
 NOT_YOURS = "Only this campaign's DM can answer this. Ask your DM."
 NO_CAMPAIGN = "I can't find this campaign any more, so nothing was changed."

@@ -51,6 +51,7 @@ from dmbot.dm_screen.rules import (
     overwrite_plan,
 )
 from dmbot.dm_screen.transcript_channel import _repair
+from dmbot.mentions import NO_PINGS
 from dmbot.rules.house import HouseRule, HouseRuleStore
 from dmbot.rules.rule_sets import HOUSE_RULES, RuleSetStore
 
@@ -68,7 +69,6 @@ MESSAGE_MAX = 2000  # Discord's limit for one message
 RULE_TITLE = "🏠 **House rule "
 FOLLOW_TITLE = "📚 This campaign follows the house-rule set "
 CARD_TITLE = "📖 **What's this channel?**"
-NO_PINGS = discord.AllowedMentions.none()
 
 
 _SYNC_LOCKS: dict[str, asyncio.Lock] = {}

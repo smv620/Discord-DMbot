@@ -34,7 +34,6 @@ from dmbot.rules.spotter import Mention, Spotter
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 GAP_S = 60.0  # at most one card in this many seconds, whichever names are said
 CLOSED = (
     "These buttons stopped working (the session ended or DMbot restarted). To look "
