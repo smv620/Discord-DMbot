@@ -12,6 +12,7 @@ import logging
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.rules.homebrew import Homebrew, HomebrewError
 from dmbot.rules.homebrew_sources import Approval
 from dmbot.ui import logic
@@ -51,7 +52,7 @@ def sites_text(approvals: list[Approval], names: dict[int, str], note: str = "")
         for a in approvals:
             who = _md(names.get(a.approved_by, "a DM"))
             lines.append(f"• **{_md(a.domain)}**: approved by {who}, {_when(a)}")
-    return "\n".join(lines)[:1900]
+    return fit_message("\n".join(lines), limit=MESSAGE_MAX - 100)
 
 
 def take_back_text(domain: str, count: int) -> str:
