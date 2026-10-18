@@ -185,7 +185,9 @@ def build_files(
     glossary_at = first_page_of(pages, GLOSSARY_HEADING, after=spells_at)
     toolbox_at = first_page_of(pages, AFTER_GLOSSARY_HEADING, after=glossary_at)
     spells = parse.parse_spells(lines_between(pages, spells_at, glossary_at))
-    conditions = parse.parse_conditions(lines_between(pages, glossary_at, toolbox_at))
+    glossary = lines_between(pages, glossary_at, toolbox_at)
+    conditions = parse.parse_conditions(glossary)
+    rules = parse.parse_rules(glossary)
 
     monsters_at = first_page_of(pages, MONSTERS_HEADING, after=CONTENTS_PAGES)
     creatures = monsters.parse_monsters(lines_between(pages, monsters_at, len(pages) + 1))
@@ -208,6 +210,10 @@ def build_files(
         "conditions.json": {
             **header("condition", GLOSSARY_HEADING),
             "entries": [asdict(c) for c in conditions],
+        },
+        "rules.json": {
+            **header("rule", GLOSSARY_HEADING),
+            "entries": [asdict(r) | {"see_also": list(r.see_also)} for r in rules],
         },
         "monsters.json": {
             **header("monster", None),

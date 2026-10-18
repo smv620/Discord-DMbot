@@ -3,8 +3,7 @@
 export const playersHeading = "Playing at a table with DMbot";
 export const playersLead =
   "DMbot is a helper for your game master (the DM). If you say yes, it listens to your table's voice chat and writes down what is said, so it can look up rules and remember the story. It never decides anything: the game master does.";
-export const playersIntro =
-  "Only people who say yes are written down, and everyone in your Discord server can read the written record. Here is what to expect.";
+export const playersIntro = "Here is what to expect.";
 export const beforeYes =
   "When your game master starts listening, DMbot sends you a private message in Discord. Nothing is written down until you press the button.";
 export const askYourGm = "Questions? Ask your game master.";

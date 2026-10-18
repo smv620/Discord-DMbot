@@ -391,7 +391,7 @@ class Form(LookupTest):
     async def test_the_form_has_one_box_a_phone_can_show(self) -> None:
         form = ui.LookupForm(self.campaigns[C1])
         self.assertEqual(len(form.children), 1)
-        self.assertEqual(form.name.label, "Spell, condition or creature")
+        self.assertEqual(form.name.label, "Spell, condition, creature or rule")
         self.assertLessEqual(len(str(form.name.label)), 45)
         self.assertLessEqual(len(ui.FORM_TITLE), 45)
 
@@ -614,6 +614,20 @@ class Words(unittest.TestCase):
             self.assertNotRegex(text, r"(?i)\b(srd|ruleset|index|query|database)\b")
         self.assertIn("free rules (SRD)", rule_card.NOT_A_RULING)
         self.assertEqual(rule_card.FREE_RULES, "the free rules (SRD)")
+
+    def test_the_empty_message_and_the_placeholder_name_every_kind(self) -> None:
+        # #1901: a DM is told they can type a rule ("cover") as well as a spell, a condition
+        # and a creature. The placeholder must fit Discord's 100 characters.
+        self.assertEqual(
+            ui.EMPTY, "Type a spell, a condition, a creature or a rule, then try again."
+        )
+        self.assertEqual(ui.BOX_PLACEHOLDER, "For example: Fireball, Grappled, Goblin or Cover")
+        self.assertLessEqual(len(ui.BOX_PLACEHOLDER), 100)
+        for example in ("Fireball", "Grappled", "Goblin", "Cover"):
+            hit = index.srd().lookup(example, "2024", "2014") or index.srd().lookup(
+                example, "2024", "2014", kind="rule"
+            )
+            self.assertIsNotNone(hit, example)  # each example is something DMbot has
 
 
 if __name__ == "__main__":
@@ -842,3 +856,66 @@ class HomebrewLookup(LookupTest):
         self.brew.find = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = await self.command("goblin")
         self.assertIn("📖", self.sent(it, 0)[0])
+
+
+class GlossaryLookup(LookupTest):
+    """The Rules Glossary on /dmbot rule (#1891): found when no spell, condition or creature
+    has the name, shown in the same card, with a house rule above it."""
+
+    async def test_a_glossary_name_gives_its_card_with_source_and_page(self) -> None:
+        it = await self.command("cover")
+        text, _, kwargs = self.sent(it)
+        self.assertIn("📖 **Cover** (rule)", text)
+        self.assertIn("Source: SRD 5.2.1, Rules Glossary, p. 179", text)
+        self.assertIn("Half Cover", text)
+        self.assertTrue(kwargs["ephemeral"])
+
+    async def test_a_tagged_entry_shows_its_tag_and_a_see_also_line_in_plain_words(self) -> None:
+        text = self.sent(await self.command("dash"))[0]
+        self.assertIn("📖 **Dash** (rule: Action)", text)
+        self.assertIn("See also: Speed", text)
+        hit = index.srd().lookup("Stat Block", "2024", "2014", kind="rule")
+        assert hit is not None
+        every_part = "".join(rule_card.card_parts(hit, "stat block", []))
+        self.assertIn("See also: Size, Creature Type, Alignment", every_part)
+        self.assertNotIn("Burrow Speed", every_part.split("See also:")[1])  # at most three names
+        self.assertNotIn("http", text)
+
+    async def test_a_spell_still_gives_the_spell(self) -> None:
+        text = self.sent(await self.command("fireball"))[0]
+        self.assertIn("📖 **Fireball** (spell)", text)
+
+    async def test_a_name_that_is_a_spell_and_a_glossary_entry_gives_the_spell(self) -> None:
+        text = self.sent(await self.command("darkness"))[0]
+        self.assertIn("(spell)", text)
+        self.assertNotIn("Rules Glossary", text)
+
+    async def test_a_house_rule_on_the_name_is_shown_first(self) -> None:
+        self.store.rules[C1] = [house(4, "Half cover gives +3 at our table", C1)]
+        text = self.sent(await self.command("cover"))[0]
+        self.assertTrue(text.startswith("🏠 **House rule 4:** Half cover gives +3"))
+        self.assertLess(text.index("🏠"), text.index("📖 **Cover**"))
+
+    async def test_a_long_entry_is_cut_into_parts_that_fit(self) -> None:
+        it = await self.command("stat block")
+        parts = [str(c.args[0]) for c in it.followup.send.await_args_list]
+        self.assertTrue(parts)
+        self.assertTrue(all(len(p) <= 2000 for p in parts))
+        self.assertTrue(parts[0].startswith("📖 **Stat Block** (rule)"))
+
+    async def test_a_name_in_nothing_is_still_no_match(self) -> None:
+        text = self.sent(await self.command("blorpfrazzle"))[0]
+        self.assertIn("blorpfrazzle", text)
+
+    async def test_the_list_offers_glossary_names_from_three_letters_only(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        short = [c.name for c in await ui._typeahead(it, "co")]
+        self.assertFalse([n for n in short if n.endswith("(rule)")])  # too short a word
+        three = [c.name for c in await ui._typeahead(it, "cov")]
+        self.assertIn("Cover (rule)", three)
+
+    async def test_the_list_keeps_glossary_names_out_when_a_spell_begins_the_same_way(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        names = [c.name for c in await ui._typeahead(it, "dar")]
+        self.assertIn("Darkness (spell)", names)
+        self.assertFalse([n for n in names if n.endswith("(rule)")])

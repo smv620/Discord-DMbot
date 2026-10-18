@@ -10,11 +10,14 @@ import subprocess
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.devtools.srd import build, parse51
 from dmbot.rules import aliases, index
 from dmbot.rules.index import DATA, Entry, Hit, Index, edition_tag, normalize
+
+real_load = index.load_folder
 
 ATTRIBUTION_51 = (
     "This work includes material taken from the System Reference Document 5.1 (“SRD 5.1”) by "
@@ -24,6 +27,7 @@ ATTRIBUTION_51 = (
     "https://creativecommons.org/licenses/by/4.0/legalcode."
 )
 FILES = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "spells.json")
+FILES_52 = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "rules.json", "spells.json")
 
 
 def all_text(entry: Entry) -> str:
@@ -162,6 +166,89 @@ class Order(unittest.TestCase):
         self.assertEqual(edition_tag("2014", from_fallback=True), "[Legacy 2014]")
         self.assertEqual(edition_tag("2024", from_fallback=True), "[2024]")
         self.assertEqual(edition_tag("2024", from_fallback=False), "")
+
+
+class TheRulesGlossary(unittest.TestCase):
+    """Glossary entries (#1884) are found only when their kind is asked for."""
+
+    def setUp(self) -> None:
+        self.cover = Entry("rule", "Cover", "2024", "SRD 5.2.1", "Rules Glossary", 179, "Cover.")
+        self.fire = spell("Fireball", "2024", page=131)
+        self.index = Index([self.cover, self.fire])
+
+    def test_it_is_found_by_its_kind_and_not_without_one(self) -> None:
+        hit = self.index.lookup("cover", "2024", kind="rule")
+        assert hit is not None
+        self.assertEqual(hit.entry, self.cover)
+        self.assertEqual(hit.citation, "SRD 5.2.1, Rules Glossary, p. 179")
+        self.assertIsNone(self.index.lookup("cover", "2024"))
+        self.assertIsNone(self.index.lookup("cover", "2024", kind="spell"))
+
+    def test_its_name_is_never_offered_to_spot_complete_or_suggest(self) -> None:
+        self.assertNotIn("cover", self.index.names_pool("2024"))
+        self.assertEqual([e.name for e in self.index.typeahead("co", "2024")], [])
+        self.assertEqual(self.index.suggest("covr", "2024"), [])
+
+    def test_a_spell_of_the_same_name_is_not_hidden_by_it(self) -> None:
+        spell_cover = spell("Cover", "2024", page=5)
+        index = Index([self.cover, spell_cover])
+        hit = index.lookup("cover", "2024")
+        assert hit is not None
+        self.assertEqual(hit.entry, spell_cover)
+        self.assertIn("cover", index.names_pool("2024"))
+
+    def test_the_shipped_glossary_is_cited_and_read_only(self) -> None:
+        rules = [e for e in index.srd().entries if e.kind == "rule"]
+        self.assertEqual(len(rules), 140)
+        self.assertTrue(all(e.edition == "2024" and e.section == "Rules Glossary" for e in rules))
+        self.assertFalse([e.name for e in rules if not e.text or e.page < 176 or e.page > 191])
+        self.assertFalse([e.name for e in rules if e.details.get("tag") == "Condition"])
+        cover = index.srd().lookup("Cover", "2024", kind="rule")
+        assert cover is not None
+        self.assertEqual(cover.citation, "SRD 5.2.1, Rules Glossary, p. 179")
+        self.assertIsInstance(cover.entry.details["see_also"], tuple)
+        self.assertEqual(index.srd().lookup("Half Cover", "2024", kind="rule"), None)
+
+    def test_a_list_set_as_a_table_and_a_wrapped_bullet_read_cleanly(self) -> None:
+        action = index.srd().lookup("Action", "2024", kind="rule")
+        area = index.srd().lookup("Area of Effect", "2024", kind="rule")
+        terrain = index.srd().lookup("Difficult Terrain", "2024", kind="rule")
+        assert action and area and terrain
+        self.assertNotIn("Influence", action.entry.text)  # the action list is a table
+        self.assertNotIn("Cylinder Line", area.entry.text)
+        self.assertIn(
+            "• Furniture that is sized for creatures of your size or larger", terrain.entry.text
+        )
+        glued = [
+            e.name
+            for e in index.srd().entries
+            if e.kind == "rule" and re.search(r"[a-z][A-Z]", e.text)
+        ]
+        self.assertEqual(glued, [])
+
+    def test_a_table_is_not_part_of_an_entrys_text(self) -> None:
+        carrying = index.srd().lookup("Carrying Capacity", "2024", kind="rule")
+        assert carrying is not None
+        self.assertNotIn("Drag/Lift/Push", carrying.entry.text)
+
+    def test_a_missing_rules_file_is_logged_once_and_the_rest_still_loads(self) -> None:
+        index.srd.cache_clear()
+        try:
+            with (
+                self.assertLogs(index.log, "WARNING") as logged,
+                mock.patch.object(
+                    index,
+                    "load_folder",
+                    side_effect=lambda f: [e for e in real_load(f) if e.kind != "rule"],
+                ),
+            ):
+                found = index.srd()
+                index.srd()  # cached: no second warning
+            self.assertEqual(len(logged.records), 1)
+            self.assertIsNotNone(found.lookup("Fireball", "2024"))
+            self.assertIsNone(found.lookup("Cover", "2024", kind="rule"))
+        finally:
+            index.srd.cache_clear()
 
 
 class TheShippedData(unittest.TestCase):
@@ -405,7 +492,9 @@ class Provenance(unittest.TestCase):
 
     def test_the_data_folder_holds_only_the_srd_files(self) -> None:
         names = sorted(p.relative_to(DATA).as_posix() for p in DATA.rglob("*") if p.is_file())
-        expected = [f"{d}/{n}" for d in ("srd51", "srd52") for n in FILES]
+        expected = [
+            f"{d}/{n}" for d, files in (("srd51", FILES), ("srd52", FILES_52)) for n in files
+        ]
         self.assertEqual(names, expected)
         self.assertEqual(sorted(p.name for p in DATA.iterdir()), ["srd51", "srd52"])
 

@@ -411,6 +411,20 @@ export const initiativeStyleDmSteps: Step[] = [
   },
 ];
 
+// The ℹ️ What's switched on button on the Settings card (#1831, #1833) tells a game master which of
+// DMbot's extras are on for the table. It is held with the What's new entry "See what's switched on"
+// (whats-new.ts, `held`) until dev1 deploys it and the owner's live check is recorded. Set this to
+// true in the same change that moves that entry out of `held`; a test ties the two. The button sits on
+// the Settings card, so the step reads the same whether Settings is on the DM screen or the DMbot channel.
+export const WHATS_ON_LIVE = false;
+
+export const whatsOnSteps: Step[] = [
+  {
+    text: "Wondering if something new is on yet? Press ⚙️ Settings, then ℹ️ What's switched on. Only you see the answer, and only game masters can press it.",
+    names: [{ name: "What's switched on", file: "features.py" }],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
@@ -429,6 +443,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
   ...(DM_BOT_CHANNEL_LIVE ? dmBotChannelSteps : settingsOnDmScreenSteps),
+  ...(WHATS_ON_LIVE ? whatsOnSteps : []),
   {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
     names: [{ name: "Table chat", file: "dm_screen/table_chat_panel.py" }],
@@ -883,6 +898,13 @@ export interface Snag extends Step {
 
 export const snagsHeading = "If something doesn't work";
 
+const whatsOnSnag: Snag = {
+  question: "Something on What's new isn't there for me.",
+  text: "Press ℹ️ What's switched on in ⚙️ Settings to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
+  names: [{ name: "What's switched on", file: "features.py" }],
+  link: { text: "Getting help", href: "#getting-help" },
+};
+
 export const snags: Snag[] = [
   {
     question: "I typed /dmbot start and nothing happened.",
@@ -917,6 +939,7 @@ export const snags: Snag[] = [
     question: "My character sheet didn't update.",
     text: "A linked sheet must be set to Public on the site where it lives. After someone says a spell slot was used, DMbot checks the sheet again about a minute later. It never changes your sheet.",
   },
+  ...(WHATS_ON_LIVE ? [whatsOnSnag] : []),
 ];
 
 /** Getting help (#1352): one plain place that says where to ask, in the order to try them.
