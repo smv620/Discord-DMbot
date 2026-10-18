@@ -70,14 +70,24 @@ WEAPON = "weapon"  # a weapon of the Weapons table ("Longsword")
 ARMOR = "armor"  # an armor of the Armor table, and the Shield ("Plate Armor")
 GEAR = "gear"  # adventuring gear, a mount or a vehicle ("Healer's Kit", "Horse, Riding", "Rowboat")
 TOOL = "tool"  # a tool ("Thieves' Tools")
-# All ten are found only when asked for: their names are everyday words ("Action", "Damage",
-# "Rope of Climbing", "Alert", "Sage", "Club"), so the name pool the live cards, the list and "did
-# you mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL})
+POISON = "poison"  # a sample poison of the Gameplay Toolbox ("Purple Worm Poison")
+TRAP = "trap"  # a sample trap of the Gameplay Toolbox ("Hidden Pit")
+CURSE = "curse"  # a named curse of the Gameplay Toolbox ("Demonic Possession")
+# All thirteen are found only when asked for: their names are everyday words ("Action", "Damage",
+# "Rope of Climbing", "Alert", "Sage", "Club", "Malice", "Torpor"), so the name pool the live
+# cards, the list and "did you mean" read from leaves them out.
+ASKED_FOR = frozenset(
+    {RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL, POISON, TRAP, CURSE}
+)
 ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
 EQUIPMENT_KINDS = (WEAPON, ARMOR, GEAR, TOOL)  # and then these (#1919, #1927)
+HAZARD_KINDS = (POISON, TRAP, CURSE)  # and the Gameplay Toolbox's own kinds (#1935)
 # The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
-NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS)
+NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS, *HAZARD_KINDS)
+# The Gameplay Toolbox is the DM's chapter (poisons, traps, curses, hazards and travel): what a
+# player's trap detection DC would spoil. Its entries go to the DM's sidebar and the DM's
+# `/dmbot rule`, never to a table question or a player's card (#1935).
+DM_SECTION = "Gameplay Toolbox"
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (
     *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
@@ -121,6 +131,27 @@ def gear_keys(name: str) -> list[str]:
     found += [_POSSESSIVE_S.sub("", n) for n in found]
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+def hazard_keys(kind: str, name: str) -> list[str]:
+    """The other names a poison, trap or curse is found by: the possessive's "s" taken off
+    ("Assassin's Blood" is "Assassin Blood"), and for a trap its name with "trap" after it ("Hidden
+    Pit Trap"), and "pit trap" for the two pits."""
+    found = [*gear_keys(name)]
+    if kind == TRAP:
+        found += [f"{name} trap"] + (["pit trap"] if name.endswith(" Pit") else [])
+    own = normalize(name)
+    return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+def equipment_keys(entry: Entry) -> list[str]:
+    """The other names a weapon, an armor, a piece of gear or a tool is found by (#1931): see
+    `gear_keys`; an armor is also found with "armor" after its name, because the SRD 5.1 calls it
+    "Plate" and the 5.2.1 "Plate Armor"."""
+    keys = gear_keys(entry.name)
+    if entry.kind == ARMOR and "armor" not in entry.name.lower() and entry.name != "Shield":
+        keys.append(normalize(f"{entry.name} armor"))
+    return [k for k in dict.fromkeys(keys) if k != normalize(entry.name)]
 
 
 def item_keys(name: str) -> list[str]:
@@ -175,6 +206,12 @@ class Entry:
     def citation(self) -> str:
         """What an alert cites: `SRD 5.2.1, Spell Descriptions, p. 131`."""
         return f"{self.source}, {self.section}, p. {self.page}"
+
+    @property
+    def dm_side(self) -> bool:
+        """Is it in the DM's chapter (the Gameplay Toolbox)? Such an entry is never sent to a
+        table question (#1935)."""
+        return self.section == DM_SECTION
 
     @property
     def facts(self) -> str:
@@ -235,8 +272,11 @@ class Index:
             elif entry.kind == ITEM:
                 for key in item_keys(entry.name):
                     self._add(entry.edition, key, entry)
-            elif entry.kind in (GEAR, TOOL):
-                for key in gear_keys(entry.name):
+            elif entry.kind in (GEAR, TOOL, WEAPON, ARMOR):
+                for key in equipment_keys(entry):
+                    self._add(entry.edition, key, entry)
+            elif entry.kind in HAZARD_KINDS:
+                for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
@@ -406,7 +446,16 @@ class Index:
             return []
         found: list[tuple[int, str, Entry]] = []
         seen: set[int] = set()
-        newer: set[tuple[str, str, str]] = set()  # (kind, name, class) the target already has
+        # (kind, name, class) the target has under every name it is found by (not only the ones
+        # the typing matches), and the names each fallback entry is found by: a fallback entry
+        # the target has under any of its names is not offered ("Plate" for "Plate Armor").
+        newer: set[tuple[str, str, str]] = set()
+        names_of: dict[int, list[str]] = {}
+        for name, entries in self._by_edition.get(target, {}).items():
+            newer.update((e.kind, name, _class_of(e)) for e in entries if e.kind in kinds)
+        for name, entries in self._by_edition.get(fallback, {}).items():
+            for e in entries:
+                names_of.setdefault(id(e), []).append(name)
         for rank, edition in enumerate((target, fallback)):
             if edition == FALLBACK_NONE or (rank and edition == target):
                 continue
@@ -415,7 +464,10 @@ class Index:
                     if entry.kind not in kinds or id(entry) in seen:
                         continue
                     # The fallback's version of what the target also has is not offered.
-                    if rank and (entry.kind, name, _class_of(entry)) in newer:
+                    if rank and any(
+                        (entry.kind, other, _class_of(entry)) in newer
+                        for other in names_of[id(entry)]
+                    ):
                         continue
                     if name.startswith(key):
                         order = 0
@@ -425,8 +477,6 @@ class Index:
                         continue
                     seen.add(id(entry))
                     found.append((rank * 2 + order, name, entry))
-                    if not rank:
-                        newer.add((entry.kind, name, _class_of(entry)))
         found.sort(key=lambda item: item[:2])
         return [entry for _, _, entry in found[:limit]]
 
@@ -515,6 +565,9 @@ def srd() -> Index:
         (ARMOR, "armor"),
         (GEAR, "adventuring gear, mounts and vehicles"),
         (TOOL, "tools"),
+        (POISON, "poisons"),
+        (TRAP, "traps"),
+        (CURSE, "curses"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)

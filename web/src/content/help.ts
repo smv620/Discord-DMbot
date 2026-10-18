@@ -795,6 +795,21 @@ export const fightBotStep: Step = {
   names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
 };
 
+// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
+// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
+// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
+// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const RULE_KINDS_LIVE = false;
+
+export const ruleKindSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
+  },
+  {
+    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
+  },
+];
+
 export const playerSteps: Step[] = [
   consentStep,
   noThanksStep,
@@ -823,6 +838,7 @@ export const playerSteps: Step[] = [
     text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master turned on. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
+  ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
   {
     text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],

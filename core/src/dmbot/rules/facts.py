@@ -71,7 +71,8 @@ def weapon_line(entry: Entry) -> str:
     parts = [str(d.get("category", "")), f"{d.get('damage', '')} {d.get('damage_type', '')}"]
     if d.get("properties"):
         parts.append(str(d["properties"]))
-    parts.append(f"mastery {d.get('mastery', '')}")
+    if d.get("mastery"):  # (the SRD 5.1 has none)
+        parts.append(f"mastery {d['mastery']}")
     return ", ".join(p.strip() for p in parts if p.strip())
 
 
@@ -111,9 +112,10 @@ def tool_line(entry: Entry, *, card: bool) -> str:
     d = entry.details
     cost = str(d.get("cost", ""))
     cost = "price varies" if cost == "Varies" else cost
-    parts = [cost, _weight_words(d)]
-    if not card:
-        parts = [str(d.get("group", "")), str(d.get("ability", "")), *parts]
+    if card:  # the heading has the ability, or (when there is none) the price
+        parts = [_weight_words(d)] if not d.get("ability") else [cost, _weight_words(d)]
+    else:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), cost, _weight_words(d)]
     return ", ".join(p for p in parts if p)
 
 
@@ -194,6 +196,15 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         found = [("", gear_line(entry, card=card))]
     elif entry.kind == "tool":
         found = [("", tool_line(entry, card=card))]
+    elif entry.kind == "poison":  # the card's heading already says "(poison: Injury)"
+        found = [] if card else [("", f"{d.get('type', '')} poison")]
+        found.append(("Price", f"{d.get('price', '')} a dose" if has("price") else ""))
+    elif entry.kind == "trap":
+        found = [
+            ("", str(d.get("severity", "")).replace(" Trap", "")),  # (the heading says "trap")
+            ("Trigger", str(d.get("trigger", ""))),
+            ("Duration", str(d.get("duration", ""))),
+        ]
     elif entry.kind == "species":
         found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
@@ -215,7 +226,9 @@ def card_parts(entry: Entry) -> list[str]:
     ]
 
 
-_CARD_COLONS = frozenset({"Casting time", "Range", "Components", "Duration", "Prerequisite"})
+_CARD_COLONS = frozenset(
+    {"Casting time", "Range", "Components", "Duration", "Prerequisite", "Trigger", "Price"}
+)
 
 
 def full_text(entry: Entry) -> str:
