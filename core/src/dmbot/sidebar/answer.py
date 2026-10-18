@@ -36,7 +36,7 @@ from dmbot.memory.recall import Recall, check_citations
 from dmbot.rules import facts as rule_facts
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import RULE, Hit, Index, normalize
+from dmbot.rules.index import ASKED_FOR, Hit, Index, normalize
 from dmbot.sidebar import brevity, context, table_links
 from dmbot.ui import rule_card
 
@@ -547,8 +547,9 @@ class Sidebar:
             system += HOMEBREW_RULES
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
-        # (a glossary word like "spell" in the question is not an entry it asks the text of)
-        wholes = [h for h in ctx.hits if h.entry.kind != RULE]
+        # (a glossary word like "spell", or a feature, in the question is not an entry it asks the
+        # text of)
+        wholes = [h for h in ctx.hits if h.entry.kind not in ASKED_FOR]
         full = brevity.asks_for_full_text(question) and bool(wholes)
         if full:
             parts = full_text_parts(wholes[0], question, ctx.house_rules)
