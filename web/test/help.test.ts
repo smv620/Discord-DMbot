@@ -434,6 +434,8 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("longsword"); // weapons and armor merged with #1921
     // The same kinds as the entry: the Help step names what the entry names.
     const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
+    expect(entry.match(/longsword/gi)?.length, "longsword once in the entry").toBe(1);
+    expect(words.match(/longsword/gi)?.length, "longsword once in the Help step").toBe(1);
     for (const example of ["cover", "rage", "Bag of Holding", "longsword", "Alert", "Goliath"]) {
       expect(entry, example).toContain(example);
     }
