@@ -202,6 +202,7 @@ def header(
     *,
     house_max: int = HOUSE_LINE_MAX,
     player: bool = False,
+    also: Sequence[str] = (),
 ) -> str:
     """Everything above the text: house rules first, the name and facts, where it comes
     from, and any note about how it was found."""
@@ -222,6 +223,8 @@ def header(
     if line:
         lines.append(line)
     lines.append(f"_Source: {_md(source(hit))}_")
+    if also:  # a feature other classes have too: the card shows one, and says so
+        lines.append(f"_Other classes with this: {_md(', '.join(also))}._")
     asked = _fit(_md(" ".join(typed.split())), NAME_MAX)
     if hit.renamed and asked:
         lines.append(f"_{asked} is now called {called} in the newer rules._")
@@ -267,14 +270,19 @@ def alert_text(hit: Hit, said: str, heard: str, rules: Sequence[HouseRule]) -> s
 
 
 def card_parts(
-    hit: Hit, typed: str, rules: Sequence[HouseRule], *, player: bool = False
+    hit: Hit,
+    typed: str,
+    rules: Sequence[HouseRule],
+    *,
+    player: bool = False,
+    also: Sequence[str] = (),
 ) -> list[str]:
     """The card as messages, each short enough for Discord: the first has the heading and
     as much of the text as fits; the others carry on with the text. Many long house rules
     are cut shorter, then only counted, so the heading never fills a message."""
     head = ""
     for house_max in (HOUSE_LINE_MAX, 120, 60, 0):
-        head = header(hit, typed, rules, house_max=house_max, player=player)
+        head = header(hit, typed, rules, house_max=house_max, player=player, also=also)
         if len(head) <= PART_MAX - MIN_TEXT_ROOM:
             break
     text = _md(hit.entry.text)

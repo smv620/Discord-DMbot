@@ -664,6 +664,32 @@ class FeatureLookup(LookupTest):
         picked = self.sent(await self.command(choices[1].value))[0]
         self.assertIn("(feature: Rogue 7)", picked)
 
+    async def test_the_card_names_the_other_classes_that_have_the_feature(self) -> None:
+        text = self.sent(await self.command("evasion"))[0]
+        self.assertIn("_Other classes with this: Rogue._", text)
+        alone = self.sent(await self.command("rogue evasion"))[0]
+        self.assertIn("_Other classes with this: Monk._", alone)
+        rage = self.sent(await self.command("rage"))[0]
+        self.assertNotIn("Other classes", rage)
+
+    async def test_every_name_in_the_list_leads_back_to_its_own_entry(self) -> None:
+        srd = index.srd()
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for e in srd.entries:
+            if e.kind != "feature":
+                continue
+            value = ui._choice_value(srd, e)
+            found = ui._features(srd, value, "2024", "2014")
+            with self.subTest(value=value):
+                self.assertTrue(any(h.entry is e for h in found), value)
+                self.assertEqual(found[0].entry.details["class"], e.details["class"])
+        # the level breaks a tie inside one class: Improved Brutal Strike at 13 and at 17
+        both = ui._features(srd, "Barbarian Improved Brutal Strike 17", "2024", "2014")
+        self.assertEqual([h.entry.details["level"] for h in both], [17])
+        text = self.sent(await self.command("Barbarian Improved Brutal Strike 17"))[0]
+        self.assertIn("(feature: Barbarian 17)", text)
+        self.assertIsNotNone(it)
+
     async def test_a_house_rule_on_the_feature_is_shown_first(self) -> None:
         self.store.rules[C1] = [house(5, "Rage lasts a minute at our table", C1)]
         text = self.sent(await self.command("rage"))[0]

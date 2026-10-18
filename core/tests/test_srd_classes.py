@@ -73,6 +73,51 @@ class Features(unittest.TestCase):
                 [at(63, 700, "Bard", TITLE), at(63, 690, "Monk Subclass: Open Hand", TITLE)]
             )
 
+    def test_a_table_in_the_middle_of_a_feature_does_not_end_it(self) -> None:
+        # Sneak Attack (SRD 5.2.1 p. 61 to 62): the class table sits in the column between the
+        # feature's lines, with a title for a caption and column heads set a few points in.
+        lines = [
+            at(314, 700, "Rogue", TITLE),
+            at(314, 680, "Level 1: Sneak Attack", TITLE),
+            at(314, 668, "You deal an extra 1d6 damage to one creature you hit with an attack"),
+            at(63, 700, "Rogue Features", TITLE, 62),
+            at(111, 690, "Proficiency Sneak", TITLE, 62),
+            at(80, 680, "1 +2 Expertise, Sneak Attack 1d6", SANS, 62),
+            at(314, 700, "if you have Advantage on it.", BODY, 62),
+            at(314, 680, "Level 2: Cunning Action", TITLE, 62),
+            at(314, 668, "You can take a Bonus Action.", BODY, 62),
+        ]
+        sneak, cunning = classes.parse_features(lines)
+        self.assertEqual(
+            sneak.text,
+            "You deal an extra 1d6 damage to one creature you hit with an attack"
+            " if you have Advantage on it.",
+        )
+        self.assertEqual(cunning.name, "Cunning Action")
+
+    def test_a_list_of_options_still_ends_the_feature_above_it(self) -> None:
+        # "Metamagic Options" is followed by titles of its own, not by a table: it is a heading.
+        lines = [
+            at(314, 700, "Sorcerer", TITLE),
+            at(314, 680, "Level 2: Metamagic", TITLE),
+            at(314, 668, "You gain two Metamagic options."),
+            at(314, 650, "Metamagic Options", TITLE),
+            at(314, 636, "Careful Spell", TITLE),
+            at(314, 624, "When you cast a spell."),
+        ]
+        (metamagic,) = classes.parse_features(lines)
+        self.assertEqual(metamagic.text, "You gain two Metamagic options.")
+
+    def test_the_placeholder_that_only_says_you_gain_a_subclass_is_left_out(self) -> None:
+        lines = [
+            at(63, 700, "Bard", TITLE),
+            at(63, 680, "Level 3: Bard Subclass", TITLE),
+            at(63, 668, "You gain a Bard subclass of your choice."),
+            at(63, 650, "Level 2: Expertise", TITLE),
+            at(63, 638, "You gain Expertise."),
+        ]
+        self.assertEqual([f.name for f in classes.parse_features(lines)], ["Expertise"])
+
     def test_the_right_column_has_its_own_edge(self) -> None:
         lines = [
             at(314, 700, "Rogue", TITLE),

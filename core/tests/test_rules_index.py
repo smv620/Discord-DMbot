@@ -296,9 +296,29 @@ class ClassFeatures(unittest.TestCase):
         for e in features:
             by_class[str(e.details["class"])] = by_class.get(str(e.details["class"]), 0) + 1
             self.assertTrue(e.text and 28 <= e.page <= 82, e.name)
-        self.assertEqual(len(features), 232)
+        self.assertEqual(len(features), 220)
         self.assertEqual(len(by_class), 12)
-        self.assertEqual(by_class["Barbarian"], 24)  # 20 class features and 4 of the Berserker
+        self.assertEqual(by_class["Barbarian"], 23)  # 19 class features and 4 of the Berserker
+
+    def test_no_feature_is_cut_short_and_no_placeholder_is_kept(self) -> None:
+        # Sneak Attack, Spellcasting and Eldritch Invocations were cut where a table sits in
+        # the column (found in review): every text ends a sentence.
+        for e in index.srd().entries:
+            if e.kind != "feature":
+                continue
+            with self.subTest(e.name, klass=e.details["class"]):
+                self.assertRegex(e.text, r"[.)\":!?”]\s*$")
+                self.assertNotEqual(e.name, f"{e.details['class']} Subclass")
+        sneak = index.srd().lookup_all("Sneak Attack", "2024", kind="feature")[0].entry
+        self.assertIn("Advantage", sneak.text)  # the part after the table
+
+    def test_its_facts_line_names_the_class_level_and_subclass(self) -> None:
+        (rage,) = index.srd().lookup_all("Rage", "2024", kind="feature")
+        self.assertEqual(rage.entry.facts, "Class feature, Barbarian level 1")
+        (frenzy,) = index.srd().lookup_all("Frenzy", "2024", kind="feature")
+        self.assertEqual(
+            frenzy.entry.facts, "Class feature, Barbarian level 3, Path of the Berserker"
+        )
 
 
 class TheShippedData(unittest.TestCase):

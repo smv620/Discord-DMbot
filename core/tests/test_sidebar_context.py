@@ -181,7 +181,10 @@ class TheRulesGlossary(unittest.TestCase):
             lookup=None,
             scene="",
         )
-        self.assertIn("- Rage (feature) [SRD 5.2.1 p. 28]:", prompt.prompt)
+        self.assertIn(
+            "- Rage (feature) [SRD 5.2.1 p. 28]: FACTS: Class feature, Barbarian level 1",
+            prompt.prompt,
+        )
         self.assertIn("SRD 5.2.1 p. 28", prompt.sources)
 
     def test_a_named_class_picks_its_feature_and_otherwise_every_class_has_its_say(self) -> None:
@@ -206,6 +209,15 @@ class TheRulesGlossary(unittest.TestCase):
             scene="",
         ).prompt
         self.assertIn("ABOUT DMBOT", prompt)
+
+    def test_a_name_many_classes_share_leaves_a_place_for_the_next_name(self) -> None:
+        names = [h.entry.name for h in self.hits("how do rage and extra attack and evasion work")]
+        self.assertEqual(len(names), 3)
+        self.assertEqual(sorted(set(names)), ["Evasion", "Extra Attack", "Rage"])
+        classes = [h.entry.details["class"] for h in self.hits("how does extra attack work")]
+        self.assertEqual(
+            len(classes), 3
+        )  # a name alone gets the three places, five classes share it
 
     def test_a_house_rule_on_a_feature_comes_first(self) -> None:
         prompt = context.build(

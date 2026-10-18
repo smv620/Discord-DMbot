@@ -35,17 +35,21 @@ from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.rules.index import ASKED_FOR, FEATURE, RULE, Hit, Index, edition_tag, normalize
+from dmbot.rules.index import (
+    ASKED_FOR,
+    CLASS_WORDS,
+    FEATURE,
+    RULE,
+    Hit,
+    Index,
+    edition_tag,
+    normalize,
+)
 from dmbot.sidebar import knowledge
 
 LEGACY_TAG = "[Legacy 2014]"  # the owner's rule: the older ruleset is always tagged
 ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 ENTRIES_MAX = 3
-# The twelve classes of the SRD 5.2.1: a class in the question picks that class's feature (#1900).
-CLASS_NAMES = frozenset(
-    {"barbarian", "bard", "cleric", "druid", "fighter", "monk"}
-    | {"paladin", "ranger", "rogue", "sorcerer", "warlock", "wizard"}
-)
 HOUSE_RULES_MAX = 5
 HOUSE_RULE_MAX = 300
 HOMEBREW_MAX = 3  # the campaign's own entries sent for one question
@@ -190,11 +194,11 @@ def mentioned_rules(
     # "Cover") or shared by classes ("Extra Attack"): beside a named entry they would be noise in
     # the prompt, so they never crowd out what the DM actually named. A class named in the
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
-    klass = next((w for w in words if w.lower() in CLASS_NAMES), "")
-    spare = 0 if found else ENTRIES_MAX
-    for size in range(WINDOW, 0, -1) if spare > 0 else ():
+    klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
+    asked: list[tuple[int, list[Hit]]] = []
+    for size in range(WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
-            if spare <= 0 or any(used[start : start + size]):
+            if len(asked) >= ENTRIES_MAX or any(used[start : start + size]):
                 continue
             window = words[start : start + size]
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
@@ -207,8 +211,13 @@ def mentioned_rules(
             if hits:
                 for k in range(start, start + size):
                     used[k] = True
-                found.extend((start, hit) for hit in hits[:spare])
-                spare -= len(hits)
+                asked.append((start, hits))
+    # Each name gets its first entry before any gets a second: a name several classes share
+    # ("Extra Attack") must not use up the places a second name in the question needs.
+    for depth in range(max((len(h) for _, h in asked), default=0)):
+        for start, hits in asked:
+            if depth < len(hits) and len(found) < ENTRIES_MAX:
+                found.append((start, hits[depth]))
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:

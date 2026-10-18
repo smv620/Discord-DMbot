@@ -66,6 +66,12 @@ FEATURE = (
 # shared by classes ("Extra Attack"), so the name pool the live cards, the list and "did you
 # mean" read from leaves them out.
 ASKED_FOR = frozenset({RULE, FEATURE})
+# The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
+CLASS_NAMES = (
+    *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
+    *("Paladin", "Ranger", "Rogue", "Sorcerer", "Warlock", "Wizard"),
+)
+CLASS_WORDS = frozenset(name.lower() for name in CLASS_NAMES)
 PEOPLES = ("elf", "gnome", "dwarf", "halfling", "human", "orc")  # "Elf, Drow": say "Drow"
 
 
