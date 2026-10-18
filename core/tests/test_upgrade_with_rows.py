@@ -33,7 +33,7 @@ import asyncio
 import itertools
 import re
 import uuid
-from typing import Any, LiteralString, cast
+from typing import Any
 
 import psycopg
 from psycopg import sql
@@ -142,7 +142,7 @@ SELECT k.conrelid::regclass::text AS child, k.confrelid::regclass::text AS paren
 
 def raw(text: str) -> sql.SQL:
     """A piece of SQL built from this file's own constants (never from outside input)."""
-    return sql.SQL(cast(LiteralString, text))
+    return sql.SQL(text)
 
 
 def short(name: str) -> str:
