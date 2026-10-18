@@ -25,7 +25,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dmbot.devtools.srd import classes, monsters, monsters51, parse, parse51
+from dmbot.devtools.srd import classes, classes51, monsters, monsters51, parse, parse51
 from dmbot.devtools.srd.pdf import Line, read_pages
 
 SOURCE = "SRD 5.2.1"
@@ -49,6 +49,9 @@ CONDITIONS_51 = (
 )  # fmt: skip
 
 MONSTERS_HEADING = "Monsters A–Z"
+CLASSES_HEADING_51 = "Barbarian"  # the first class, which starts a page
+AFTER_CLASSES_HEADING_51 = "Beyond 1st Level"  # starts in the middle of the Wizard's last page
+CLASSES_SECTION = "Classes"
 MONSTERS_HEADING_51 = "Monsters (A)"
 MONSTER_APPENDICES_51 = (
     ("Appendix MM-A:", "Appendix MM-A: Miscellaneous Creatures"),
@@ -258,14 +261,28 @@ def monster_entry(monster: monsters.Monster, edition: str) -> dict[str, Any]:
     }
 
 
+def class_lines_51(pages: Sequence[Sequence[Line]]) -> list[Line]:
+    """The lines of the 5.1's Classes chapter: from the page that starts with the first class to
+    the heading of the chapter after it, which starts in the middle of a page."""
+    first = first_page_of(pages, CLASSES_HEADING_51)
+    lines = lines_between(pages, first, len(pages) + 1)
+    for i, line in enumerate(lines):
+        if parse.is_title(line) and parse51.clean(line.text) == AFTER_CLASSES_HEADING_51:
+            return lines[:i]
+    raise parse.SrdError(f"Can't find the heading {AFTER_CLASSES_HEADING_51!r} after the classes.")
+
+
 def build_files_51(
     pages: Sequence[Sequence[Line]],
     document: dict[str, Any],
     known: set[str],
     monster_input: tuple[dict[str, Any], set[str], set[tuple[str, str]]] | None = None,
     pairs: set[tuple[str, str]] | None = None,
+    *,
+    classes: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """The 2014 SRD 5.1's files from pages already read."""
+    """The 2014 SRD 5.1's files from pages already read. `classes=False` leaves out the class
+    features, for tests whose pages hold no Classes chapter."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
     traps_at = first_page_of(pages, AFTER_SPELLS_HEADING_51, after=spells_at)
     conditions_at = first_page_of(pages, CONDITIONS_HEADING_51, after=traps_at)
@@ -297,6 +314,12 @@ def build_files_51(
             "entries": [asdict(c) for c in conditions],
         },
     }
+    if classes:
+        features = classes51.parse_features51(class_lines_51(pages), vocab)
+        files["features.json"] = {
+            **header("feature", CLASSES_SECTION),
+            "entries": [feature_entry(f) for f in features],
+        }
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]

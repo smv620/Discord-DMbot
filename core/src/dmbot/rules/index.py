@@ -310,27 +310,28 @@ class Index:
         kind: str,
         prefer: str = "",
     ) -> list[Hit]:
-        """Every entry of `kind` with this name in the first ruleset that has one (the target's,
-        else the fallback's, tagged): a feature name like "Evasion" belongs to several classes.
-        With `prefer` (a class: "rogue") only that class's entries, if it has one."""
+        """Every entry of `kind` with this name: the target ruleset's, and the fallback's (tagged)
+        for a class the target has none for, because a feature name like "Evasion" belongs to
+        several classes and the older rules are used only where no newer one exists. With `prefer`
+        (a class: "rogue") only that class's entries, if it has one."""
         key = normalize(name)
         if not key:
             return []
+        hits: list[Hit] = []
+        taken: set[str] = set()  # the classes the newer ruleset already gave this name
         for edition, from_fallback in ((target, False), (fallback, True)):
             if edition == FALLBACK_NONE or (from_fallback and edition == target):
                 continue
             found = [e for e in self._by_edition.get(edition, {}).get(key, []) if e.kind == kind]
-            if prefer:
-                wanted = [
-                    e
-                    for e in found
-                    if normalize(str(e.details.get("class", ""))) == normalize(prefer)
-                ]
-                found = wanted or found
-            if found:
-                tag = edition_tag(edition, from_fallback=from_fallback)
-                return [Hit(e, tag, key, False, from_fallback) for e in found]
-        return []
+            tag = edition_tag(edition, from_fallback=from_fallback)
+            hits += [
+                Hit(e, tag, key, False, from_fallback) for e in found if _class_of(e) not in taken
+            ]
+            taken |= {_class_of(e) for e in found}
+        if prefer:
+            wanted = [h for h in hits if _class_of(h.entry) == normalize(prefer)]
+            hits = wanted or hits
+        return hits
 
     def asked_names(
         self,
@@ -350,12 +351,16 @@ class Index:
             return []
         found: list[tuple[int, str, Entry]] = []
         seen: set[int] = set()
+        newer: set[tuple[str, str, str]] = set()  # (kind, name, class) the target already has
         for rank, edition in enumerate((target, fallback)):
             if edition == FALLBACK_NONE or (rank and edition == target):
                 continue
             for name, entries in self._by_edition.get(edition, {}).items():
                 for entry in entries:
                     if entry.kind not in kinds or id(entry) in seen:
+                        continue
+                    # The older rules' version of what the target also has is not offered.
+                    if rank and (entry.kind, name, _class_of(entry)) in newer:
                         continue
                     if name.startswith(key):
                         order = 0
@@ -365,6 +370,8 @@ class Index:
                         continue
                     seen.add(id(entry))
                     found.append((rank * 2 + order, name, entry))
+                    if not rank:
+                        newer.add((entry.kind, name, _class_of(entry)))
         found.sort(key=lambda item: item[:2])
         return [entry for _, _, entry in found[:limit]]
 
@@ -397,6 +404,11 @@ class Index:
     def names(self, kind: str, edition: str) -> list[str]:
         """The names of that edition's entries of that kind, in order."""
         return [e.name for e in self.entries if e.kind == kind and e.edition == edition]
+
+
+def _class_of(entry: Entry) -> str:
+    """The class a feature belongs to, as a key ("" for an entry that has none)."""
+    return normalize(str(entry.details.get("class", "")))
 
 
 def load_folder(folder: Path) -> list[Entry]:
