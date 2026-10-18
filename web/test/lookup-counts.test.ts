@@ -18,10 +18,10 @@ describe("lookup counts", () => {
     for (const s of sources) expect(unnamedKinds(readFolder(dataDir(s.folder))), s.folder).toEqual([]);
   });
 
-  it("fails on a kind with no plain name, so it can't show up as 'item' or 'gear'", () => {
-    const files = [{ kind: "gear", entries: [{}, {}] }];
-    expect(unnamedKinds(files)).toEqual(["gear"]);
-    expect(() => lookupList(files)).toThrow(/no plain name for the kind: gear/);
+  it("fails on a kind with no plain name, so it can't show up under its data name", () => {
+    const files = [{ kind: "vehicle", entries: [{}, {}] }];
+    expect(unnamedKinds(files)).toEqual(["vehicle"]);
+    expect(() => lookupList(files)).toThrow(/no plain name for the kind: vehicle/);
   });
 
   it("counts the entries of each file by its kind, or the entry's own", () => {
@@ -49,6 +49,19 @@ describe("lookup counts", () => {
         const kind = Object.entries(kindNames).find(([, l]) => l === label)?.[0] ?? "";
         expect(count, `${s.folder} ${label}`).toBe(byHand.get(kind));
       }
+    }
+  });
+
+  it("names the equipment kinds, and counts them from the equipment file (#1930)", () => {
+    expect(kindNames.tool).toBe("Tools");
+    expect(kindNames.gear).toBe("Gear, mounts and vehicles");
+    const newer = lookupList(readFolder(dataDir("srd52")));
+    const labels = newer.map((k) => k.label);
+    expect(labels.indexOf("Armor")).toBeLessThan(labels.indexOf("Tools"));
+    expect(labels.indexOf("Tools")).toBeLessThan(labels.indexOf("Gear, mounts and vehicles"));
+    const equipment = JSON.parse(readFileSync(`${dataDir("srd52")}/equipment.json`, "utf8")) as { entries: { kind: string }[] };
+    for (const [kind, label] of [["tool", "Tools"], ["gear", "Gear, mounts and vehicles"]] as const) {
+      expect(newer.find((k) => k.label === label)?.count, label).toBe(equipment.entries.filter((e) => e.kind === kind).length);
     }
   });
 

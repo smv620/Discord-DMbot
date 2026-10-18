@@ -17,6 +17,8 @@ export const kindNames = {
   background: "Backgrounds",
   weapon: "Weapons",
   armor: "Armor",
+  tool: "Tools",
+  gear: "Gear, mounts and vehicles",
 };
 
 /** Every data file of one SRD folder, parsed. */
