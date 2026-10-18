@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 
 from dmbot.devtools.srd import build, toolbox
 from dmbot.devtools.srd.parse import SrdError
@@ -412,6 +413,10 @@ class TheRealChapterCounts(unittest.TestCase):
 class TheData(unittest.TestCase):
     """The file the tool made from the real PDF (the rebuild is checked by running the tool
     twice, and by this: the file is exactly what `dump` makes of itself)."""
+
+    text: str
+    data: dict[str, Any]
+    by_name: dict[tuple[str, str], dict[str, Any]]
 
     @classmethod
     def setUpClass(cls) -> None:
