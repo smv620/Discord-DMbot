@@ -1749,7 +1749,8 @@ names panel nor the speech-to-text hints can be a fixed list.
   Earlier / Later, worked out again on every press. Secret names and connections are
   listed only to the campaign's DMs (the card's own check). The card does not change,
   and nothing is written. The type-ahead answers from the copy the
-  session already keeps (no expiry for search-only copies yet). Decided while building:
+  session already keeps. A copy nobody has asked for in 30 minutes, for a campaign with no
+  table running, is dropped and simply loaded again on its next ask (2026-10-18, #1883). Decided while building:
   after DMbot's own change the copy is marked stale at once (not waiting for the change
   notification), so the redrawn card and the next search are right; Fix spelling and
   Add another name redraw the card in place with what changed on top; Fix spelling
