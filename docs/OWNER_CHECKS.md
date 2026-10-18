@@ -13,7 +13,7 @@ them. If a button is not where a check says, that is a mistake in this file: tel
 1. Open your test server and type `/dmbot start`.
 2. Press ＋ New campaign, or ▶ Continue last campaign if you already have one (do not make a duplicate).
 3. Pick your voice channel and press ▶ Start listening. You are the game master.
-4. Say yes to being recorded in the private message DMbot sends you (the one with the **Yes** button). Without it, checks 2, 16, 17 and 18 hear nothing.
+4. Say yes to being recorded: in the private message DMbot sends you, press **I'm 16 or older, record me**. Without it, checks 2, 16, 17 and 18 hear nothing.
 
 The steps are on the Help page: https://getdmbot.com/help. Keep this open on your phone and work down the
 list. Checks 1 and 2 come first because they are the newest features. Check 19 waits for the next deploy.
@@ -227,7 +227,7 @@ Unlocks: #1403
 ### 18. A player says a secret name
 **You'll do:**
 1. Open the name's card (`/dmbot names`) and mark one made-up name secret, for example "Lady Vesper". The Help page's steps for secret names show how.
-2. Start listening. Have a test player, who has also said yes to being recorded, say that name out loud.
+2. Start listening. Have a test player, who has also pressed **I'm 16 or older, record me** in their own private message, say that name out loud.
 3. Press ⏹ Stop listening and look at your private messages.
 
 **It worked if:** after you stop, DMbot asks you privately, one name at a time, whether it should stay secret or be opened up. Only you can answer.
