@@ -443,6 +443,33 @@ export const ruleKindSteps: Step[] = [
   },
 ];
 
+// Every rule the Help text and the held "Look up any rule" entry name as an example, with the kind it is
+// meant to be, so test/rule-examples.test.ts can check each one is in the rules data the bot reads.
+// `text` is the exact wording in the sentence; `name` is the entry's name where it differs; `class` is
+// for a class feature ("rogue evasion" is the Rogue's Evasion).
+export interface RuleExample {
+  text: string;
+  kind: string;
+  name?: string;
+  class?: string;
+}
+export const ruleExamples: RuleExample[] = [
+  { text: "cover", kind: "rule" },
+  { text: "dash", kind: "rule" },
+  { text: "long rest", kind: "rule" },
+  { text: "rage", kind: "feature" },
+  { text: "rogue evasion", kind: "feature", name: "Evasion", class: "Rogue" },
+  { text: "Bag of Holding", kind: "item" },
+  { text: "longsword", kind: "weapon" },
+  { text: "plate armor", kind: "armor" },
+  { text: "Thieves' Tools", kind: "tool" },
+  { text: "Healer's Kit", kind: "gear" },
+  { text: "Alert", kind: "feat" },
+  { text: "Goliath", kind: "species" },
+  { text: "Sage", kind: "background" },
+  { text: "Orc (creature)", kind: "monster", name: "Orc" },
+];
+
 // The game master sees what players do not (core ui/rule_lookup.py: DM_ONLY, the player branch and the
 // typeahead filter). Held with RULE_KINDS_LIVE: it deploys with the same rules data.
 export const ruleKindDmSteps: Step[] = [
