@@ -278,8 +278,8 @@ class Older(unittest.TestCase):
 class CutWordsOfEither(unittest.TestCase):
     def test_no_two_known_words_that_are_one_cut_word_remain(self) -> None:
         # Every pair of neighbouring words that make a known word, in any text of the 5.1
-        # (spells, conditions and creatures), where the 5.2.1 data never has the pair. These
-        # are the book's own two words, and one cut word the tool could not be sure of.
+        # (spells, conditions, creatures and class features), where the 5.2.1 data never has the
+        # pair. These are the book's own two words, and one cut word the tool could not be sure of.
         words = {w for w in build.known_words(monsters_too=True) if "-" not in w}
         pairs = build.known_pairs(monsters_too=True)
         found = set()
@@ -304,6 +304,9 @@ class CutWordsOfEither(unittest.TestCase):
             {
                 ("any", "one"), ("hand", "bell"), ("sea", "horse"), ("a", "mount"),
                 ("up", "on"), ("has", "ten"),
+                # "if you are a 3rd-level cleric": 2014 Cleric, Druid and Paladin Spellcasting
+                # and Druid Natural Recovery
+                ("are", "a"),
             },
         )  # fmt: skip
 
