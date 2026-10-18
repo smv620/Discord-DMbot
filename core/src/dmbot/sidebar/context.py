@@ -316,6 +316,10 @@ EQUIPMENT_CUES = frozenset(
     {"damage", "weapon", "weapons", "armor", "ac", "mastery", "masteries", "property", "properties"}
 )
 SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip", "cantrips"})
+# Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
+ONLY_GEAR_CUES = frozenset(
+    {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"}
+)
 PROPERTY_CUES = frozenset({"weapon", "weapons", "property", "properties", "mastery", "masteries"})
 PROPERTY_TAGS = frozenset({"Weapon Property", "Mastery Property"})
 # The properties whose names are everyday words: they count only with a cue word (#1919).
@@ -353,10 +357,14 @@ def _cued_equipment(
     *,
     props: bool = False,
 ) -> list[tuple[int, Hit]]:
-    """A question that says "armor", "AC", "weapon" or "damage" and names a spell or creature
-    that is also an armor or weapon ("Shield") means the armor or weapon."""
+    """A question that says "armor", "AC", "weapon" or "damage" and names a creature that is
+    also an armor or weapon means the armor or weapon. A named spell that is also gear
+    ("Shield") stays, with the gear beside it, unless the question says a word only gear has
+    ("weapon", "armor", "mastery", "property"): "AC" and "damage" are said of spells too, and
+    a confident answer about the wrong Shield is worse than two cited ones (#1919)."""
     out = list(found)
     spells = any(w.lower() in SPELL_WORDS for w in words)  # "the Shield spell": it stays the spell
+    only_gear = any(w.lower() in ONLY_GEAR_CUES for w in words)
     for start, hit in found:
         if hit.entry.kind in ASKED_FOR or (spells and hit.entry.kind == "spell"):
             continue
@@ -371,7 +379,8 @@ def _cued_equipment(
                 else []
             )
         if picked:
-            out = [pair for pair in out if pair[1] is not hit]
+            if hit.entry.kind != "spell" or only_gear:
+                out = [pair for pair in out if pair[1] is not hit]
             out += [(start, p) for p in picked]
     return out
 

@@ -489,9 +489,8 @@ class MagicItems(unittest.TestCase):
 
     def test_the_shield_spell_and_the_shield_armor_are_told_apart_by_the_question(self) -> None:
         self.assertEqual([(h.entry.kind) for h in self.hits("cast shield")], ["spell"])
-        self.assertEqual(
-            [(h.entry.kind) for h in self.hits("what is the AC of a shield")], ["armor"]
-        )
+        got = [h.entry.kind for h in self.hits("what is the AC of a shield")]
+        self.assertEqual(sorted(got), ["armor", "spell"])  # both, each cited: "AC" fits both
 
     def test_a_cue_word_does_not_take_the_place_of_a_spell_the_question_calls_a_spell(self) -> None:
         for question in (
@@ -502,6 +501,18 @@ class MagicItems(unittest.TestCase):
             kinds = [h.entry.kind for h in self.hits(question)]
             self.assertIn("spell", kinds, question)
             self.assertNotIn("armor", kinds, question)
+
+    def test_ac_or_damage_beside_a_spell_name_gives_the_spell_and_the_gear(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("how much AC does shield give")]
+        self.assertIn(("spell", "Shield"), got)
+        self.assertIn(("armor", "Shield"), got)
+        spell_only = [(h.entry.kind) for h in self.hits("the shield spell")]
+        self.assertEqual(spell_only, ["spell"])
+
+    def test_a_word_only_gear_has_makes_a_shield_the_armor_and_not_the_spell(self) -> None:
+        # "armor" can't be said of the spell: the armor alone answers (the spell is dropped)
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("what armor is a shield, its AC")]
+        self.assertEqual(got, [("armor", "Shield")])
 
     def test_a_cue_word_brings_the_other_gear_in_the_question_too(self) -> None:
         got = [(h.entry.kind, h.entry.name) for h in self.hits("slow mastery for a whip")]
