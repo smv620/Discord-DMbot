@@ -485,6 +485,20 @@ class MagicItems(unittest.TestCase):
         )
         self.assertEqual([h.entry.kind for h in self.hits("the orc swings")], ["monster"])
 
+    def test_a_2014_race_is_sent_whole_with_its_subrace(self) -> None:
+        built = context.build(
+            "a dwarf species hit points",
+            target="2014",
+            fallback="2024",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("Subrace: Hill Dwarf", built.prompt)
+        self.assertIn("Dwarven Toughness. Your hit point maximum increases by 1", built.prompt)
+        self.assertNotIn("(cut)", built.prompt)
+
     def test_a_dwarf_in_a_2024_campaign_is_the_2024_species_alone(self) -> None:
         got = [(h.entry.edition, h.entry.name) for h in self.hits("a dwarf species speed")]
         self.assertIn(("2024", "Dwarf"), got)

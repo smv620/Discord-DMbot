@@ -77,7 +77,7 @@ class Races(unittest.TestCase):
 
     def test_a_subrace_stays_in_its_races_text_under_its_own_heading(self) -> None:
         text = found()["Dwarf"].text
-        self.assertIn("Hill Dwarf\nAs a hill dwarf, you have keen senses.", text)
+        self.assertIn("Subrace: Hill Dwarf\nAs a hill dwarf, you have keen senses.", text)
         self.assertIn("Ability Score Increase. Your Wisdom score increases by 1.", text)
         self.assertNotIn("Dwarf Traits", text)  # (the race's own second title is not text)
 
@@ -92,7 +92,10 @@ class Races(unittest.TestCase):
     def test_a_table_is_left_out_and_ends_the_paragraph(self) -> None:
         text = found()["Dragonborn"].text
         self.assertNotIn("Black Acid", text)
-        self.assertEqual(text.splitlines()[-1], "Breath Weapon. You can exhale.")
+        self.assertEqual(text.splitlines()[-2], "Breath Weapon. You can exhale.")
+        self.assertEqual(
+            text.splitlines()[-1], "(The Draconic Ancestry table is not included here.)"
+        )
 
     def test_a_race_without_a_size_or_speed_stops_the_tool(self) -> None:
         lines = [ln for ln in races() if "walking speed is 25" not in ln.text]
@@ -119,12 +122,15 @@ def background() -> list[Line]:
         at(66.6, 528, "entered the priesthood), and a pouch", BODY, 61),
         at(LEFT, 482, "Feature: Shelter of the Faithful", TITLE, 61),
         at(LEFT, 470, "You command the respect of those who share your faith.", BODY, 61),
+        at(LEFT, 248, "Suggested Characteristics", TITLE, 61),
+        at(LEFT, 235, "Acolytes are shaped by temples.", BODY, 61),
     ]
 
 
 class Background(unittest.TestCase):
     def read(self, lines: list[Line]) -> origins51.Background:
-        return origins51.parse_background(lines, vocab(lines))
+        end = next(i for i, ln in enumerate(lines) if ln.text == "Suggested Characteristics")
+        return origins51.parse_background(lines[:end], vocab(lines))
 
     def test_the_acolytes_lines_and_feature(self) -> None:
         acolyte = self.read(background())
@@ -143,6 +149,11 @@ class Background(unittest.TestCase):
                 "You command the respect of those who share your faith.",
             ],
         )
+
+    def test_the_labelled_lines_come_first_as_in_the_5_2_1s_backgrounds(self) -> None:
+        rows = self.read(background()).text.splitlines()
+        self.assertEqual([r.partition(":")[0] for r in rows[:3]], list(origins51.LABELS))
+        self.assertTrue(rows[3].startswith("You have spent"))
 
     def test_a_missing_labelled_line_stops_the_tool(self) -> None:
         lines = [ln for ln in background() if not ln.text.startswith("Languages")]
@@ -181,3 +192,52 @@ class Feat(unittest.TestCase):
         lines = [feat()[0], *feat()[2:]]
         with self.assertRaisesRegex(SrdError, "no Prerequisite"):
             origins51.parse_feat(lines, vocab(lines))
+
+
+class Building(unittest.TestCase):
+    """The glue in `build`: where each chapter's pages are found, and the files' shapes."""
+
+    def pages(self) -> list[list[Line]]:
+        feat_page = [at(LEFT, 695, "Feats", TITLE, 75), *feat()]
+        return [
+            [], [],
+            [ln for ln in races() if ln.page == 3],
+            [ln for ln in races() if ln.page == 4],
+            [ln for ln in races() if ln.page == 5],
+            [at(LEFT, 700, "Barbarian", TITLE, 8)],
+            [at(LEFT, 700, "Backgrounds", TITLE, 60), *background()],
+            [],
+            feat_page,
+        ]  # fmt: skip
+
+    def test_the_races_background_and_feat_files_have_the_5_2_1s_shapes(self) -> None:
+        from dmbot.devtools.srd import build
+
+        pages = self.pages()
+        everything = [ln for page in pages for ln in page]
+
+        def header(kind: str, section: str | None) -> dict[str, object]:
+            return {"source": "SRD 5.1", "edition": "2014", "kind": kind, "section": section}
+
+        files = build.origin_files_51(pages, header, vocab(everything))
+        entries = files["origins.json"]["entries"]
+        self.assertEqual(
+            [(e["kind"], e["name"]) for e in entries],
+            [("species", "Dwarf"), ("species", "Human"), ("species", "Dragonborn"),
+             ("background", "Acolyte")],
+        )  # fmt: skip
+        dwarf, acolyte = entries[0], entries[-1]
+        self.assertEqual(
+            (dwarf["creature_type"], dwarf["size"], dwarf["speed"], dwarf["section"]),
+            ("", "Medium", "25 feet", "Races"),
+        )
+        self.assertEqual(
+            (acolyte["ability_scores"], acolyte["feat"], acolyte["tool"], acolyte["section"]),
+            ("", "", "", "Backgrounds"),
+        )
+        (grappler,) = files["feats.json"]["entries"]
+        self.assertEqual(
+            (grappler["name"], grappler["category"], grappler["prerequisite"]),
+            ("Grappler", "", "Strength 13 or higher"),
+        )
+        self.assertEqual(files["feats.json"]["section"], "Feats")

@@ -427,7 +427,9 @@ class ClassFeatures(unittest.TestCase):
             return hit.entry
 
         dwarf = get("Dwarf", "species")
-        self.assertIn("Hill Dwarf\nAs a hill dwarf", dwarf.text)  # the subrace stays in the race
+        self.assertIn(
+            "Subrace: Hill Dwarf\nAs a hill dwarf", dwarf.text
+        )  # the subrace stays in the race
         self.assertIn("Your Wisdom score increases by 1.", dwarf.text)
         self.assertEqual((dwarf.details["size"], dwarf.details["speed"]), ("Medium", "25 feet"))
         self.assertIn("Relentless Endurance.", get("Half-Orc", "species").text)

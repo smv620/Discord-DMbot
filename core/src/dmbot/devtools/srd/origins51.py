@@ -61,9 +61,9 @@ def _titles(lines: Sequence[Line]) -> list[int]:
     return [i for i, ln in enumerate(lines) if is_title(ln)]
 
 
-def _text(lines: Sequence[Line], vocab: Vocabulary) -> str:
-    """The words of `lines` with each title as a heading line of its own, and the lines of the
-    paragraphs between the titles run together."""
+def _text(lines: Sequence[Line], vocab: Vocabulary, heading: str = "") -> str:
+    """The words of `lines` with each title as a heading line of its own (after `heading`, such
+    as "Subrace: "), and the lines of the paragraphs between the titles run together."""
     out: list[str] = []
     start = 0
     for i in [*_titles(lines), len(lines)]:
@@ -71,7 +71,7 @@ def _text(lines: Sequence[Line], vocab: Vocabulary) -> str:
         if block:
             out.append(block)
         if i < len(lines):
-            out.append(vocab.repair(clean(lines[i].text)))
+            out.append(heading + vocab.repair(clean(lines[i].text)))
         start = i + 1
     return "\n".join(out)
 
@@ -95,7 +95,12 @@ def parse_races(lines: Sequence[Line], vocab: Vocabulary) -> list[Race]:
         end = starts[n + 1] if n + 1 < len(starts) else len(lines)
         name = vocab.repair(clean(lines[start].text))
         block = lines[start + 2 : end]  # (after the race's title and its "Traits" title)
-        text = _text(block, vocab)
+        # A subrace's heading says so: its own "Ability Score Increase." is not the race's.
+        text = _text(block, vocab, heading="Subrace: ")
+        for ln in block:  # a table is left out; the text says so, as the 5.2.1 species do
+            if not _is_body(ln) and ln.first_font.endswith("Bold") and not is_title(ln):
+                text += f"\n(The {clean(ln.text)} table is not included here.)"
+                break
         where = f"Race {name!r} on page {lines[start].page}"
         size, speed = SIZE.search(text), SPEED.search(text)
         if size is None or speed is None:
@@ -120,11 +125,17 @@ def parse_background(lines: Sequence[Line], vocab: Vocabulary) -> Background:
         found = [ln for ln in body if clean(ln.text).startswith(f"{label}:")]
         if len(found) != 1:
             raise SrdError(f"Background {name!r}: {len(found)} lines say {label!r}, not one")
-    text = _text(body, vocab)
-    for row in text.splitlines():
+    rows = _text(body, vocab).splitlines()
+    for row in rows:
         label, colon, value = row.partition(":")
         if colon and label in LABELS:
             fields[label] = value.strip()
+    # The three labelled lines first, as the 5.2.1's backgrounds have them, then the words.
+    labelled = [r for r in rows if r.partition(":")[0] in LABELS]
+    text = "\n".join([*labelled, *(r for r in rows if r not in labelled)])
+    unread = [label for label in LABELS if label not in fields]
+    if unread:
+        raise SrdError(f"Background {name!r}: can't read the line(s) {', '.join(unread)}")
     if "Feature:" not in text:
         raise SrdError(f"Background {name!r}: no Feature")
     return Background(

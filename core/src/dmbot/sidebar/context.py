@@ -57,6 +57,7 @@ ENTRY_TEXT_MAX = 1200  # characters of one rules entry sent to the AI
 # A class feature is long prose (Spellcasting, Wild Shape) and the part that answers may be at
 # its end; 2,000 holds all but about 30 of the 399, and at most 3 entries are sent (#1910).
 FEATURE_TEXT_MAX = 2000
+SPECIES_TEXT_MAX = 3200  # a 2014 race is 1,500 to 3,000 characters, its subrace at the end (#1928)
 CUT_MARK = " (cut)"
 ENTRIES_MAX = 3
 HOUSE_RULES_MAX = 5
@@ -144,6 +145,11 @@ _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
 
 PEOPLE_MAX = 12  # a table is small; a long list is never sent
 PEOPLE_LINE_MAX = 160
+
+
+def _text_max(kind: str) -> int:
+    """How much of an entry of this kind is sent: a class feature and a species are long."""
+    return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(kind, ENTRY_TEXT_MAX)
 
 
 def shorten(text: str, limit: int) -> str:
@@ -289,7 +295,7 @@ def _widened_origins(
             picked = origin_hits(
                 index, " ".join(words[begin : begin + size + 1]), target, fallback, cued=False
             )
-            if picked:
+            if picked and picked[0].entry.kind == SPECIES:  # (only a species name is two words)
                 out = [pair for pair in out if pair[1] is not hit]
                 out += [(begin, p) for p in picked]
                 break
@@ -545,9 +551,7 @@ def build(
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
             entry = hit.entry
-            text = shorten(
-                entry.text, FEATURE_TEXT_MAX if entry.kind == FEATURE else ENTRY_TEXT_MAX
-            )
+            text = shorten(entry.text, _text_max(entry.kind))
             tag = f" {hit.tag}" if hit.tag else ""
             facts = entry.facts
             facts = f" FACTS: {facts}. TEXT:" if facts else ""
