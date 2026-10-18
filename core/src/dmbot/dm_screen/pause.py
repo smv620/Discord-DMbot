@@ -19,10 +19,10 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.dm_screen import handover, messages
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 PAUSE_LABEL = "Pause this campaign"
 UNPAUSE_LABEL = "Unpause"

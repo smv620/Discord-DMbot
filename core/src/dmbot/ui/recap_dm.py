@@ -15,10 +15,11 @@ from typing import Any
 
 import discord
 
+from dmbot.mentions import NO_PINGS
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.notify import page_link
 from dmbot.ui.decision_lines import with_outcome
-from dmbot.ui.dmbot_commands import NO_PINGS, _bot, _tell
+from dmbot.ui.dmbot_commands import _bot, _tell
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this recap any more. Nothing was changed. Check your recap page."
