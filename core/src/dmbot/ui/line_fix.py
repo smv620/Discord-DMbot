@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript import export, suggestions
 from dmbot.transcript.cleaner import text_names_a_secret
@@ -98,7 +99,7 @@ def dm_text(who: str, heard: str, now: str, suggested: str) -> str:
 
 
 def decided_text(text: str, yes: bool) -> str:
-    return (f"✅ Changed to: {text}" if yes else LEFT)[:1900]
+    return fit_message(f"✅ Changed to: {text}" if yes else LEFT, limit=MESSAGE_MAX - 100)
 
 
 class LineFixButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE):

@@ -9,6 +9,7 @@ import base64
 import json
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import unittest.mock
@@ -210,16 +211,25 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("__host-dmbot_admin=", out.headers["set-cookie"].lower())
 
     async def test_the_api_keeps_answering_while_a_password_is_checked(self) -> None:
-        def slow(_hash: str, _password: str) -> bool:
-            time.sleep(0.5)
+        # Proved by blocking on purpose, not by a clock (#1842): the check waits for `release`,
+        # and while it is stuck `/health` must still answer. If the check ran on the event loop,
+        # `/health` could not answer at all and the `wait_for` below would time out.
+        started, release = threading.Event(), threading.Event()
+
+        def blocked(_hash: str, _password: str) -> bool:
+            started.set()
+            release.wait(10)  # a bug can't hang CI: it lets go by itself
             return False
 
-        with unittest.mock.patch("dmbot.web.admin_api.password_matches", slow):
+        with unittest.mock.patch("dmbot.web.admin_api.password_matches", blocked):
             trying = asyncio.create_task(self.password())
-            await asyncio.sleep(0.05)
-            started = time.monotonic()
-            self.assertEqual((await self.client.get("/health")).status_code, 200)
-            self.assertLess(time.monotonic() - started, 0.45)  # the check takes 0.5
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 5), "the check never started")
+                health = await asyncio.wait_for(self.client.get("/health"), 5)
+                self.assertEqual(health.status_code, 200)
+                self.assertFalse(trying.done(), "the sign-in finished before it was released")
+            finally:
+                release.set()
             await trying
 
     async def test_checks_run_one_at_a_time_and_a_flood_is_refused_at_once(self) -> None:

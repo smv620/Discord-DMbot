@@ -21,6 +21,7 @@ import discord
 from discord import app_commands
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -101,7 +102,7 @@ NOTHING_CHANGED = (
     "Something went wrong and nothing was changed. Press 🔍 Find a name to open it and try again."
 )
 
-CARD_MAX = 1900  # under Discord's 2,000 characters
+CARD_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 SHOWN = 3  # per section, then "… and N more"
 # A state, not an action: it is a setting that stays until pressed again.
 SECRET_OFF = "🤫 Secret: no"

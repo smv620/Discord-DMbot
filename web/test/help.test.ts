@@ -158,6 +158,7 @@ describe("Help", () => {
   it("links to Add to Discord and Say hello", () => {
     const links = [...help.querySelectorAll("main a")].map((a) => a.getAttribute("href"));
     expect(links).toContain("/install");
+    expect(links).toContain("/players"); // the first step sends the game master's players there (#1821)
     expect(links).toContain("/hello");
   });
 
