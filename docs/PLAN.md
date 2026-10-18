@@ -371,6 +371,8 @@ The 5.1 PDF's text layer is rougher (cut words, a few lost words): the tool repa
 words only with words the SRD itself uses, never edits by hand, and `ATTRIBUTION.md` says
 that one lost word (a stray letter in Animal Friendship, named there) remains.
 
+*Built, the Rules Glossary in the index (2026-10-18, #1884):* the SRD 5.2.1's Rules Definitions (`rules.json`, kind `"rule"`, section "Rules Glossary", 140 entries: Cover, the Dash action, Long Rest, ...; the 15 conditions stay kind `condition`) are in the index, and the DM sidebar cites them like any other entry ("SRD 5.2.1, Rules Glossary, p. 180"). A glossary entry is found only when its kind is asked for: its names are everyday words ("Action", "Damage"), so the live rules cards, the `/rule` name list and "did you mean" never see them. The sidebar looks them up only when the question names no spell, condition or creature (at most three, longest names first), so an everyday word beside a named spell never adds noise; house rules still come before them. The `/rule` card does not find them yet (a follow-up). Class features, species and the rest of the SRD are a later issue.
+
 Creatures are in the index too (#900): the 330 stat blocks of the 5.2.1's Monsters A-Z and
 Animals sections and the 317 of the 5.1's Monsters pages and its two creature appendices,
 as `monsters.json` next to the spells, each with its size, type, alignment, armor class, hit
@@ -1749,7 +1751,8 @@ names panel nor the speech-to-text hints can be a fixed list.
   Earlier / Later, worked out again on every press. Secret names and connections are
   listed only to the campaign's DMs (the card's own check). The card does not change,
   and nothing is written. The type-ahead answers from the copy the
-  session already keeps (no expiry for search-only copies yet). Decided while building:
+  session already keeps. A copy nobody has asked for in 30 minutes, for a campaign with no
+  table running, is dropped and simply loaded again on its next ask (2026-10-18, #1883). Decided while building:
   after DMbot's own change the copy is marked stale at once (not waiting for the change
   notification), so the redrawn card and the next search are right; Fix spelling and
   Add another name redraw the card in place with what changed on top; Fix spelling

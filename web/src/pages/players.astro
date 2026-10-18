@@ -11,6 +11,7 @@ import {
   stopStep,
   transcriptStep,
 } from "../content/help";
+import { consentPromises, consentPromisesHeading, consentPromisesLead } from "../content/consent-promises";
 import { askYourGm, beforeYes, playersHeading, playersIntro, playersLead, sayingYesHeading, seeHeading } from "../content/players";
 
 // The steps are the Help page's own (one copy each); the initiative sentence shows only while its
@@ -23,6 +24,14 @@ const see = [transcriptStep, heyDmBotStep, fightBotStep, ...(INITIATIVE_STYLE_LI
   <h1>{playersHeading}</h1>
   <p class="lead">{playersLead}</p>
   <p class="muted">{playersIntro}</p>
+
+  <section aria-labelledby="agree-heading">
+    <h2 id="agree-heading">{consentPromisesHeading}</h2>
+    <p>{consentPromisesLead}</p>
+    <ul>
+      {consentPromises.map((p) => <li>{p.text}</li>)}
+    </ul>
+  </section>
 
   <section aria-labelledby="yes-heading">
     <h2 id="yes-heading">{sayingYesHeading}</h2>
