@@ -1,6 +1,6 @@
 // After `npm run build`: every inline script in dist/ must be allowed by its hash in
 // dist/_headers (or the browser blocks it and the page stops working), and only /account
-// /hello (its forms, #665), /admin (#772) and /pricing (a personal link's greeting, #1231) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
+// /hello (its forms, #665), /help (its search box, #1939), /admin (#772) and /pricing (a personal link's greeting, #1231) may have scripts at all. Usage: node scripts/check-csp.mjs [dist-dir]
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -12,12 +12,14 @@ import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_O
 // account/homebrew.html: the homebrew pages (#1525).
 // account/transcripts.html: the session transcript pages (#1501).
 // unsubscribe.html: an offer email's unsubscribe link (#1229).
+// help.html: the search box that filters the steps in the page (#1939); it sends nothing anywhere.
 const SCRIPTED = new Set([
   "account.html",
   "account/recaps.html",
   "account/house-rules.html",
   "account/homebrew.html",
   "account/transcripts.html",
+  "help.html",
   "hello.html",
   "admin.html",
   "pricing.html",
@@ -61,4 +63,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /hello, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
