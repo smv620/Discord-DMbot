@@ -545,7 +545,6 @@ class ClassFeatures(unittest.TestCase):
         assert found is not None
         self.assertEqual(found.entry.name, "Horse, Riding")
 
-<<<<<<< HEAD
     def test_the_2014_races_background_and_feat_are_the_fallback_only_where_the_target_has_nothing(
         self,
     ) -> None:
@@ -771,7 +770,7 @@ class ClassFeatures(unittest.TestCase):
         text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
         for words in ("Equipment Packs", "Trade Goods", "Container Capacity", "Lifestyle Expenses"):
             self.assertIn(words, text)
-=======
+
     def test_poisons_traps_and_curses_are_asked_for_and_found_by_their_other_names(self) -> None:
         for kind in (index.POISON, index.TRAP, index.CURSE):
             self.assertIn(kind, index.ASKED_FOR)  # (never in the pool the live cards read)
@@ -793,7 +792,6 @@ class ClassFeatures(unittest.TestCase):
         cover = index.srd().lookup("Cover", "2024", "2014", kind="rule")
         assert cover is not None
         self.assertFalse(cover.entry.dm_side)
->>>>>>> origin/clouddev-1935-toolbox
 
     def test_every_shipped_rarity_is_one_the_srd_prints(self) -> None:
         from dmbot.devtools.srd import items as reader
