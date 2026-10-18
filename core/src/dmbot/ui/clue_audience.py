@@ -13,6 +13,7 @@ from collections.abc import Sequence
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.clues import TURNED_OFF
 from dmbot.memory.models import CONFIRMED, DM, Entity, MemoryRuleError
 from dmbot.memory.search import MAX_RESULTS, find
@@ -52,7 +53,7 @@ def audience_text(name: str, who: list[str], limited: bool, note: str = "") -> s
     lines.append(f"**Who knows it:** {', '.join(_md(n) for n in who) if who else NOBODY}")
     if limited:
         lines.append("DMbot never decides who learned it. You do.")
-    return ("\n".join(([note] if note else []) + lines))[:1900]
+    return fit_message("\n".join(([note] if note else []) + lines), limit=MESSAGE_MAX - 100)
 
 
 async def show_audience(

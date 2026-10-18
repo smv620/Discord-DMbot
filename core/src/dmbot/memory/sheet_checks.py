@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import sheet_names
 from dmbot.memory.sheets import (
     ABILITIES,
@@ -42,7 +43,7 @@ NO_CAMPAIGN_RULESETS = (DEFAULT_TARGET, DEFAULT_FALLBACK)
 EMOJI = {OK: "✅", WARN: "⚠️", BAD: "⛔"}
 _WORST = {OK: 0, WARN: 1, BAD: 2}
 SHOWN_NAMES = 3  # names listed before "and N more": the card stays under one message
-CARD_MAX = 1900  # Discord allows 2000 characters in a message
+CARD_MAX = MESSAGE_MAX - 100  # room for the footer the card always keeps
 LINE_MAX = 140  # one line of the card; a longer one is cut, never the footer
 MAX_LEVEL = 20
 
