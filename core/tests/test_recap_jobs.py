@@ -4,7 +4,7 @@ campaign, in backups, and gone with the campaign."""
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from itertools import pairwise
 from typing import Any
 
@@ -406,6 +406,44 @@ class Working(Base):
         self.assertNotIn(fx.BOB, job.speakers)
         second = self.fast.sent[1]
         self.assertNotIn("Oskar lights a torch", second)  # Bob's words are not sent again
+
+    async def revoked_after(self, calls: int) -> Callable[[], Awaitable[Collection[int]]]:
+        """Bob is recorded until the AI has been asked `calls` times, and has stopped after."""
+
+        async def flaky() -> Collection[int]:
+            if len(self.fast.sent) < calls:
+                return {fx.DM, fx.ALICE, fx.BOB}
+            return {fx.DM, fx.ALICE}
+
+        return flaky
+
+    async def test_a_player_who_stops_while_the_summary_is_written_is_left_out_of_it(self) -> None:
+        """Consent re-checked after an await (CLAUDE.md, Hard rules, Consent): Bob says stop
+        between the AI being asked for the summary and its answer coming back. The summary was
+        written from his words, so it is thrown away and the recap starts again without them."""
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.BEATS_ANSWER)
+        await self.setUpWorker(fast, consenting=await self.revoked_after(2))
+        job = await self.go()
+        self.assertEqual(job.restarts, 1)
+        self.assertEqual(job.summary, "")  # nothing written from his words is kept
+        self.assertNotIn(fx.BOB, job.speakers)
+        self.assertNotIn("Oskar lights a torch", fast.sent[2])  # and not sent again
+        # The next call starts the beat sheet again; it does not grade or title the discarded text.
+        self.assertEqual(fast.systems[2], fast.systems[0])
+
+    async def test_a_player_who_stops_while_the_title_is_written_is_left_out_of_it(self) -> None:
+        """Consent re-checked after an await (CLAUDE.md, Hard rules, Consent): Bob says stop
+        after the summary is graded, while the title is being written. Nothing of the draft is
+        kept, so the recap that is posted cannot carry his words."""
+        fast = fx.Canned(
+            fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER, fx.BEATS_ANSWER
+        )
+        await self.setUpWorker(fast, consenting=await self.revoked_after(4))
+        job = await self.go()
+        self.assertEqual(job.restarts, 1)
+        self.assertEqual((job.summary, job.title), ("", ""))
+        self.assertNotIn(fx.BOB, job.speakers)
+        self.assertEqual(fast.systems[4], fast.systems[0])  # a new pass, not a posted title
 
     async def test_nobody_recorded_means_no_call_and_a_plain_reason(self) -> None:
         async def nobody() -> Collection[int]:
