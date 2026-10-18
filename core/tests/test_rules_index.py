@@ -26,7 +26,7 @@ ATTRIBUTION_51 = (
     "under the Creative Commons Attribution 4.0 International License available at "
     "https://creativecommons.org/licenses/by/4.0/legalcode."
 )
-FILES = ("ATTRIBUTION.md", "conditions.json", "monsters.json", "spells.json")
+FILES = ("ATTRIBUTION.md", "conditions.json", "features.json", "monsters.json", "spells.json")
 FILES_52 = (
     "ATTRIBUTION.md",
     "conditions.json",
@@ -292,14 +292,21 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(spell.entry.kind, "spell")
 
     def test_the_shipped_features_are_complete_and_read_only(self) -> None:
-        features = [e for e in index.srd().entries if e.kind == "feature"]
-        by_class: dict[str, int] = {}
-        for e in features:
-            by_class[str(e.details["class"])] = by_class.get(str(e.details["class"]), 0) + 1
-            self.assertTrue(e.text and 28 <= e.page <= 82, e.name)
-        self.assertEqual(len(features), 220)
-        self.assertEqual(len(by_class), 12)
-        self.assertEqual(by_class["Barbarian"], 23)  # 19 class features and 4 of the Berserker
+        for edition, total, pages, barbarian in (
+            ("2024", 220, (28, 82), 23),
+            ("2014", 179, (8, 56), 18),
+        ):
+            features = [
+                e for e in index.srd().entries if e.kind == "feature" and e.edition == edition
+            ]
+            by_class: dict[str, int] = {}
+            for e in features:
+                by_class[str(e.details["class"])] = by_class.get(str(e.details["class"]), 0) + 1
+                self.assertTrue(e.text and pages[0] <= e.page <= pages[1], (edition, e.name))
+            self.assertEqual(len(features), total, edition)
+            self.assertEqual(len(by_class), 12, edition)
+            # Barbarian: 2024 has 19 class features and 4 of the Berserker; 2014 has 14 and 4.
+            self.assertEqual(by_class["Barbarian"], barbarian, edition)
 
     def test_the_shipped_magic_items_are_complete_and_found_only_when_asked_for(self) -> None:
         srd = index.srd()
@@ -387,10 +394,106 @@ class ClassFeatures(unittest.TestCase):
             if e.kind != "feature":
                 continue
             with self.subTest(e.name, klass=e.details["class"]):
-                self.assertRegex(e.text, r"[.)\":!?”]\s*$")
+                ends = r"[.)\":!?”]\s*$"
+                if e.edition == "2014" and e.name.endswith("Spellcasting"):
+                    # the 5.1 spellcasting features end on their formula: "... your Wisdom modifier"
+                    ends += r"|\byour \w+ modifier\s*$"
+                self.assertRegex(e.text, ends)
                 self.assertNotEqual(e.name, f"{e.details['class']} Subclass")
         sneak = index.srd().lookup_all("Sneak Attack", "2024", kind="feature")[0].entry
         self.assertIn("Advantage", sneak.text)  # the part after the table
+
+    def test_the_2014_features_are_used_only_where_there_is_no_newer_one(self) -> None:
+        srd = index.srd()
+        # Brutal Critical is only in the 2014 rules: it is found, tagged.
+        (brutal,) = srd.lookup_all("Brutal Critical", "2024", "2014", kind="feature")
+        self.assertEqual((brutal.entry.edition, brutal.tag), ("2014", "[Legacy 2014]"))
+        # Rage is in both: the target's version, and only that.
+        (rage,) = srd.lookup_all("Rage", "2024", "2014", kind="feature")
+        self.assertEqual((rage.entry.edition, rage.tag), ("2024", ""))
+        (older,) = srd.lookup_all("Rage", "2014", "2024", kind="feature")
+        self.assertEqual(older.entry.edition, "2014")
+        # Timeless Body is only in the 2014 rules (for the Druid and the Monk): both are found.
+        both = srd.lookup_all("Timeless Body", "2024", "2014", kind="feature")
+        self.assertEqual(
+            sorted((h.entry.details["class"], h.tag) for h in both),
+            [("Druid", "[Legacy 2014]"), ("Monk", "[Legacy 2014]")],
+        )
+
+    def test_a_class_the_target_lacks_gets_its_older_feature_and_the_class_it_has_gets_the_new(
+        self,
+    ) -> None:
+        def feature(edition: str, klass: str) -> Entry:
+            return Entry(
+                "feature", "Aura", edition, "SRD", "Classes", 1, f"{klass} {edition}",
+                {"class": klass, "level": 1},
+            )  # fmt: skip
+
+        srd = Index(
+            [feature("2024", "Paladin"), feature("2014", "Paladin"), feature("2014", "Cleric")]
+        )
+        hits = srd.lookup_all("Aura", "2024", "2014", kind="feature")
+        self.assertEqual(
+            [(h.entry.details["class"], h.entry.edition, h.from_fallback) for h in hits],
+            [("Paladin", "2024", False), ("Cleric", "2014", True)],
+        )
+        (cleric,) = srd.lookup_all("Aura", "2024", "2014", kind="feature", prefer="cleric")
+        self.assertEqual(cleric.tag, "[Legacy 2014]")
+        listed = srd.asked_names("aura", "2024", "2014", kinds=("feature",))
+        self.assertEqual(
+            [(e.details["class"], e.edition) for e in listed],
+            [("Paladin", "2024"), ("Cleric", "2014")],
+        )
+
+    def test_a_2014_campaign_finds_its_own_features_and_the_newer_ones_only_for_a_class_it_lacks(
+        self,
+    ) -> None:
+        def feature(edition: str, klass: str) -> Entry:
+            return Entry(
+                "feature", "Aura", edition, "SRD", "Classes", 1, f"{klass} {edition}",
+                {"class": klass, "level": 1},
+            )  # fmt: skip
+
+        srd = Index(
+            [feature("2024", "Paladin"), feature("2014", "Paladin"), feature("2024", "Cleric")]
+        )
+        hits = srd.lookup_all("Aura", "2014", "2024", kind="feature")
+        self.assertEqual(
+            [(h.entry.details["class"], h.entry.edition, h.from_fallback) for h in hits],
+            [("Paladin", "2014", False), ("Cleric", "2024", True)],
+        )
+
+    def test_the_levels_of_the_2014_features_match_the_published_class_tables(self) -> None:
+        # Read by hand from the SRD 5.1 class tables; these are the ones the table's wrapped and
+        # split rows made hardest (the Monk's table is printed in two pieces).
+        golden = {
+            ("Monk", "Ki"): 2,
+            ("Monk", "Unarmored Movement"): 2,
+            ("Monk", "Evasion"): 7,
+            ("Monk", "Stillness of Mind"): 7,
+            ("Warlock", "Mystic Arcanum"): 11,
+            ("Paladin", "Aura of Protection"): 6,
+            ("Rogue", "Thieves’ Cant"): 1,
+            ("Ranger", "Land’s Stride"): 8,
+            ("Barbarian", "Brutal Critical"): 9,
+        }
+        found = {
+            (str(e.details["class"]), e.name): e.details["level"]
+            for e in index.srd().entries
+            if e.kind == "feature" and e.edition == "2014" and not e.details.get("subclass")
+        }
+        for key, level in golden.items():
+            with self.subTest(key):
+                self.assertEqual(found.get(key), level)
+
+    def test_the_name_list_does_not_offer_the_older_version_of_what_the_target_has(self) -> None:
+        names = index.srd().asked_names("evasion", "2024", "2014", kinds=("feature",), limit=25)
+        self.assertEqual(
+            sorted((e.details["class"], e.edition) for e in names),
+            [("Monk", "2024"), ("Rogue", "2024")],
+        )
+        older = index.srd().asked_names("brutal crit", "2024", "2014", kinds=("feature",))
+        self.assertEqual([(e.name, e.edition) for e in older], [("Brutal Critical", "2014")])
 
     def test_its_facts_line_names_the_class_level_and_subclass(self) -> None:
         (rage,) = index.srd().lookup_all("Rage", "2024", kind="feature")
