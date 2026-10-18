@@ -83,6 +83,7 @@ class FakeHost:
     agreed: set[tuple[int, int]] = field(default_factory=set)
     saved: list[Line] = field(default_factory=list)
     dms: list[tuple[int, str]] = field(default_factory=list)
+    views: list[Any] = field(default_factory=list)  # the view under each private answer (#1957)
     screen: list[str] = field(default_factory=list)
     heard_as: str | None = "find if you need line of sight for fireball"
     transcribed: int = 0
@@ -124,8 +125,9 @@ class FakeHost:
     def sidebar_clean(self, table: Any, text: str) -> str:
         return text.replace("Fire ball", "Fireball")
 
-    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+    async def sidebar_send_dm(self, user_id: int, text: str, view: Any = None) -> str:
         self.dms.append((user_id, text))
+        self.views.append(view)
         return "sent" if self.can_dm else self.refusal
 
     def sidebar_save(self, table: Any, line: Line) -> None:

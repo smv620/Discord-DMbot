@@ -330,7 +330,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
-from dmbot.ui import rule_card
+from dmbot.ui import looked_at, rule_card
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
@@ -1181,6 +1181,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
         )  # #1666, #1691
+        self.add_dynamic_items(looked_at.LookedButton, looked_at.OpenCard)  # #1957
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
@@ -3999,11 +4000,16 @@ class DMBot(commands.AutoShardedBot):
             return text
         return self._clean(table, text, unsure=False).text
 
-    async def sidebar_send_dm(self, user_id: int, text: str) -> str:
+    async def sidebar_send_dm(
+        self, user_id: int, text: str, view: discord.ui.View | None = None
+    ) -> str:
         """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
             user = self.get_user(user_id) or await self.fetch_user(user_id)
-            await user.send(text, allowed_mentions=NO_PINGS)
+            if view is None:
+                await user.send(text, allowed_mentions=NO_PINGS)
+            else:
+                await user.send(text, view=view, allowed_mentions=NO_PINGS)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"

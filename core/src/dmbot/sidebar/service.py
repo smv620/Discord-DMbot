@@ -34,7 +34,7 @@ from dmbot.audio.segmenter import Utterance
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_voice
-from dmbot.sidebar import guide_phrase, memo, table_links
+from dmbot.sidebar import guide_phrase, looked, memo, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
@@ -136,6 +136,8 @@ class Answer(Protocol):
     @property
     def question(self) -> str: ...  # the question restated in a few words, or ""
 
+    # (the entries it was built from, #1957: read with getattr, an engine without it has none)
+
 
 class Answerer(Protocol):
     async def answer(
@@ -155,7 +157,10 @@ class Host(Protocol):
     def consent_request(self, table: Table) -> tuple[str, discord.ui.View]: ...
     async def sidebar_transcribe(self, table: Table, utterance: Utterance) -> str | None: ...
     def sidebar_clean(self, table: Table, text: str) -> str: ...
-    async def sidebar_send_dm(self, user_id: int, text: str) -> str: ...  # sent, forbidden, failed
+    # sent, forbidden or failed; `view`, under the text, only for a rules answer (#1957)
+    async def sidebar_send_dm(
+        self, user_id: int, text: str, view: discord.ui.View | None = None
+    ) -> str: ...
     def sidebar_save(self, table: Table, line: Line) -> None: ...
     def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
@@ -171,7 +176,8 @@ class Host(Protocol):
     async def sidebar_guide(self, table: Table, user_id: int) -> str | None: ...
 
 
-Reply = Callable[[str], Awaitable[bool]]
+# The text, and (for the DM's private answer only) the view under it: "📖 What I looked at" (#1957).
+Reply = Callable[..., Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -254,6 +260,7 @@ class SidebarService:
         self._decoding = asyncio.Semaphore(DECODE_AT_ONCE)
         self._known_dms: set[int] = set()  # seen as a campaign's DM since DMbot started
         self._undelivered: dict[int, str] = {}  # why the last private message failed
+        self.looked = looked.Registry()  # the lists behind "What I looked at" (#1957)
 
     # ---- the DM's chat with DMbot ---------------------------------------------------
 
@@ -279,9 +286,12 @@ class SidebarService:
             return  # "ok", "thanks", "👍": not a question, no AI call, nothing written down
         tables = self.tables_of(user_id)
 
-        async def reply(text: str) -> bool:
+        async def reply(text: str, view: discord.ui.View | None = None) -> bool:
             try:
-                await message.channel.send(text, allowed_mentions=NO_PINGS)
+                if view is None:
+                    await message.channel.send(text, allowed_mentions=NO_PINGS)
+                else:
+                    await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
             except discord.HTTPException:
                 return False
             return True
@@ -593,10 +603,13 @@ class SidebarService:
     async def _table_question(
         self, table: Table, user_id: int, request: Request, *, via: str, public: bool
     ) -> None:
-        async def reply(text: str) -> bool:
+        async def reply(text: str, view: discord.ui.View | None = None) -> bool:
             if public:
                 return await self.host.sidebar_post_chat(table, text)
-            status = await self.host.sidebar_send_dm(user_id, text)
+            if view is None:
+                status = await self.host.sidebar_send_dm(user_id, text)
+            else:
+                status = await self.host.sidebar_send_dm(user_id, text, view)
             self._undelivered[user_id] = status
             return status == "sent"
 
@@ -731,10 +744,12 @@ class SidebarService:
                 if len(message) > MESSAGE_LIMIT
                 else message
             ]
-        for part in pieces:
+        under = None if public else self._looked_view(table, user_id, campaign, answer)
+        for n, part in enumerate(pieces):
             if public and not self._still(table, user_id, dm=dm_only):
                 return  # (right before every post)
-            if not await reply(part):
+            last = n == len(pieces) - 1
+            if not await (reply(part, under) if last and under is not None else reply(part)):
                 # Only the DM's private path, and only when Discord says their messages are
                 # closed: the DM screen is the one place left to say so.
                 if (
@@ -747,6 +762,21 @@ class SidebarService:
         if answer.refused or not self._still(table, user_id, dm=dm_only):
             return
         self._save_lines(table, user_id, heard, question, asked_ms, answer, said, via, public)
+
+    def _looked_view(
+        self, table: Table, user_id: int, campaign: Campaign, answer: Answer
+    ) -> discord.ui.View | None:
+        """The DM's "📖 What I looked at" under a rules answer, with the list the answer was built
+        from kept for it (#1957). Never for a table question (the caller passes none), and not
+        for a refusal or an off-topic reply."""
+        if answer.refused or not answer.in_game:
+            return None
+        from dmbot.ui import looked_at  # (the UI imports the sidebar: late)
+
+        kept = looked.Kept(
+            user_id, table.guild_id, campaign.id, tuple(getattr(answer, "looked_at", ()))
+        )
+        return looked_at.view(self.looked.remember(kept))
 
     async def _guide_answer(
         self,

@@ -191,6 +191,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-18",
+    title: "See what DMbot looked at",
+    what: "Under a rules answer in your private chat with DMbot, press What I looked at to see which rules and house rules it used. Press a line to read that card. Only the game master who asked can open it.",
+    reason: "Built (#1957); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-18",
     title: "Look up any rule",
     what: "Type /dmbot rule and a word to read what the free rules say. Try cover, dash, long rest, rage, Bag of Holding, Thieves' Tools, Alert, Longsword, Purple Worm Poison, Hidden Pit or Demonic Possession. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: if a player asks about one at the table, DMbot answers That's one for your DM.",
     reason:

@@ -37,7 +37,7 @@ from dmbot.rules import facts as rule_facts
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import ASKED_FOR, Hit, Index, normalize
-from dmbot.sidebar import brevity, context, table_links
+from dmbot.sidebar import brevity, context, looked, table_links
 from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
@@ -213,6 +213,9 @@ class Answer:
     sources: tuple[str, ...] = ()  # everything the AI was given, in short words
     parts: tuple[str, ...] = ()  # a long answer (the full text) as messages; else (text,)
     seconds: float = 0.0
+    # What the answer was built from (#1957), for the DM's "What I looked at" button: taken when
+    # the answer is made, never worked out again.
+    looked_at: tuple[looked.Looked, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -559,6 +562,7 @@ class Sidebar:
                     in_game=True,
                     sources=(context.source_of(wholes[0]),),
                     parts=parts,
+                    looked_at=looked.of(ctx, index),
                 ),
                 started,
                 used_ai=False,
@@ -678,6 +682,7 @@ class Sidebar:
                 + ("+homebrew" if ctx.homebrew else ""),
                 sources=ctx.sources,
                 parts=(text,),
+                looked_at=looked.of(ctx, index),
             ),
             started,
         )
