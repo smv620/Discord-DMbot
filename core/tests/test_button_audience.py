@@ -151,6 +151,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
             "dm_screen.set_update.SetUpdateButton",
+            "dm_screen.settings.FeaturesButton",
             "dm_screen.settings.HomebrewButton",
             "dm_screen.settings.HouseFileButton",
             "dm_screen.settings.InviteButton",
