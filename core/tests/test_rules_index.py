@@ -1512,3 +1512,19 @@ class TheLegacyData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuleSingulars(unittest.TestCase):
+    """The singular of a plural rule title is another name for it (#1956)."""
+
+    def test_a_plural_last_word_gives_the_singular_only_for_two_words_or_more(self) -> None:
+        self.assertEqual(index.rule_keys("Opportunity Attacks"), ["opportunity attack"])
+        self.assertEqual(index.rule_keys("Temporary Hit Points"), ["temporary hit point"])
+        for name in ("Attacks", "Darkness", "Fire Bolt", "Difficult Terrain", "Bonus Actions Us"):
+            self.assertEqual(index.rule_keys(name), [], name)
+
+    def test_the_index_finds_the_rule_by_the_singular_in_both_editions(self) -> None:
+        for target, fallback in (("2024", "2014"), ("2014", "2024")):
+            hit = index.srd().lookup("opportunity attack", target, fallback, kind="rule")
+            assert hit is not None
+            self.assertEqual((hit.entry.name, hit.entry.edition), ("Opportunity Attacks", target))

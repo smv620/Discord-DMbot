@@ -221,6 +221,7 @@ def mentioned_rules(
     """The rules entries the question names: longest names first, no word used twice, at most
     `ENTRIES_MAX`. A single common word (`_STOP`) is never looked up on its own."""
     words = words_of(question)
+    spell_cue = any(w.lower() in SPELL_WORDS for w in words)
     used = [False] * len(words)
     found: list[tuple[int, Hit]] = []
     for size in range(WINDOW, 0, -1):
@@ -231,6 +232,14 @@ def mentioned_rules(
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
                 continue
             hit = index.lookup(" ".join(window), target, fallback)
+            if (
+                hit is not None
+                and size == 1
+                and hit.entry.kind == "spell"
+                and normalize(window[0]) in EVERYDAY_SPELLS
+                and not spell_cue
+            ):
+                hit = None  # "they light a torch" is not the Light spell (#1956)
             if hit is None and size > 1:
                 # A poison, trap or curse of the Gameplay Toolbox with a longer name ("Purple Worm
                 # Poison", "Hidden Pit") beats the creature or spell named inside it.
@@ -401,6 +410,9 @@ EQUIPMENT_CUES = frozenset(
     {"damage", "weapon", "weapons", "armor", "ac", "mastery", "masteries", "property", "properties"}
 )
 SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip", "cantrips"})
+# Spells whose names are everyday words ("they light a torch", "send a message", "fly home"): cited
+# only when the question also says cast, spell or cantrip (#1956).
+EVERYDAY_SPELLS = frozenset({"light", "message", "sleep", "command", "fly"})
 # Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
 ONLY_GEAR_CUES = frozenset(
     {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"} | GEAR_CUES
