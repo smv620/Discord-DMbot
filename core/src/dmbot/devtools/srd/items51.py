@@ -24,11 +24,17 @@ from dmbot.devtools.srd.parse import SrdError, is_title
 from dmbot.devtools.srd.parse51 import Vocabulary, clean
 from dmbot.devtools.srd.pdf import Line
 
+# Where a column's text starts on the 5.1's two-column pages (measured from the PDF; the 5.2.1
+# reader's edges are 63 and 314). A title or a type line sits there, a paragraph indent does not.
 COLUMN_EDGES = (57.6, 328.6)
 SAME_HEADING = 20.0  # title lines this close (points) with nothing between are one heading
 EDGE_SLACK = 3.0
+# An indented line only starts a paragraph when the line above ended a sentence: the Figurine of
+# Wondrous Power's paragraphs are all set in, and a wrapped line there is indented too.
+SENTENCE_END = (".", "!", "?", ":", ")", "”")
+SHORT_BULLET = 30  # a bullet line shorter than this (in characters) did not fill its line
 INDENT = 5.0  # a line set in by about this much starts a paragraph (a bullet's wrap sits there too)
-TYPE_FONT = "Cambria-Italic"
+TYPE_FONT = "Cambria-Italic"  # the category and rarity line under a name (also used in prose)
 BODY_FAMILY = "Cambria"
 BULLET_FONT = "Symbol"
 LEAD_INS = ("Cambria-Bold", "Cambria-BoldItalic")
@@ -45,8 +51,10 @@ RARITIES = re.compile(
     rf"^(?:rarity varies|rarity by figurine|varies|{_RARITY}(?:(?:, or |, | or ){_RARITY})*)$"
 )
 CATEGORY = re.compile(r"^(?P<category>[^(,]+?)(?: \((?P<subtype>[^)]*)\))?, (?P<rarity>.+)$")
-_GRADE = re.compile(r"\b(common|uncommon|rare|very rare|legendary|artifact|rarity|varies|by)\b")
+# Rarities the 5.1 prints in words instead of a grade; all three mean "no one rarity" (the Spell
+# Scroll's bare "varies" is "rarity varies"), and are written as the 5.2.1 writes its own.
 _WORDS = ("rarity by figurine", "rarity varies", "varies")
+_GRADE = re.compile(r"\b(common|uncommon|rare|very rare|legendary|artifact)\b")
 
 
 def _at_an_edge(line: Line) -> bool:
@@ -153,8 +161,11 @@ def _is_body(line: Line) -> bool:
 def _paragraphs(lines: Sequence[Line], vocab: Vocabulary) -> str:
     """The description. A line starts a paragraph when it is set in (unless the paragraph is a
     bullet, whose wrapped lines are set in too), starts in bold, is a bullet, or comes after
-    lines that were left out (a table or a stat block ended the paragraph above)."""
+    lines that were left out (a table or a stat block ended the paragraph above). A paragraph that
+    follows a bullet list is set in just as a bullet's wrapped line is, so it is told apart by
+    the line above it: a finished sentence, or a bullet too short to have wrapped."""
     rows: list[str] = []
+    previous = ""
     bullet = False
     skipped = True  # lines were left out just before this one
     for line in lines:
@@ -169,13 +180,21 @@ def _paragraphs(lines: Sequence[Line], vocab: Vocabulary) -> str:
         # A stat line ("Armor Class: 20") hangs like a bullet; an indented bold lead-in
         # ("Absorption (Very Rare). ...") is an ordinary paragraph.
         starts_bullet = line.first_font == BULLET_FONT or text.startswith("•")
-        starts_bullet = starts_bullet or (line.first_font == "Cambria-Bold" and not indented)
+        stat_line = line.first_font == "Cambria-Bold" and not indented and ":" in text[:25]
+        starts_bullet = starts_bullet or stat_line
+        ends_bullet = (
+            bullet
+            and indented
+            and text[:1].isupper()
+            and (previous.endswith(SENTENCE_END) or len(previous) < SHORT_BULLET)
+        )
         fresh = (
             not rows
             or skipped
             or starts_bullet
             or line.first_font in LEAD_INS
-            or (indented and not bullet)
+            or (indented and not bullet and previous.endswith(SENTENCE_END))
+            or ends_bullet
             or (bullet and not indented)
         )
         if fresh:
@@ -184,6 +203,7 @@ def _paragraphs(lines: Sequence[Line], vocab: Vocabulary) -> str:
         else:
             rows[-1] = vocab.run_on(rows[-1], text)
         skipped = False
+        previous = text
     return "\n".join(vocab.tidy(r) for r in rows)
 
 

@@ -60,7 +60,9 @@ CONDITIONS_51 = (
 
 MONSTERS_HEADING = "Monsters A–Z"
 ITEMS_HEADING_51 = "Magic Items"
-AFTER_ITEMS_HEADING_51 = "Monsters"  # (the Sentient Magic Items and Artifacts sections come first)
+AFTER_ITEMS_HEADING_51 = (
+    "Monsters"  # only bounds the pages read; the list itself ends at the next line
+)
 SENTIENT_HEADING_51 = "Sentient Magic Items"  # ends the list of items, on a page it shares
 CLASSES_HEADING_51 = "Barbarian"  # the first class, which starts a page
 AFTER_CLASSES_HEADING_51 = "Beyond 1st Level"  # starts in the middle of the Wizard's last page

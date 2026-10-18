@@ -462,6 +462,8 @@ class ClassFeatures(unittest.TestCase):
     def test_the_2014_attribution_names_every_item_with_lines_left_out(self) -> None:
         text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
         self.assertIn("The 30 items with something left out are:", text)
+        listed = text.split("The 30 items with something left out are:")[1].split("(a test pins")[0]
+        self.assertEqual(len(listed.strip().rstrip(" ;").split(", ")), 30)
         for name in ("Bag of Beans", "Deck of Many Things", "Wand of Wonder", "Iron Flask"):
             self.assertIn(name, text)
         for name in ("Sentient Magic Items", "Artifacts", "Orb of Dragonkind"):

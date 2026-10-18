@@ -68,7 +68,18 @@ def chapter() -> list[Line]:
         at(RIGHT, 700, "Cloak of Protection", TITLE),
         at(RIGHT, 688, "Wondrous item, uncommon (requires attunement)", TYPE),
         at(RIGHT, 672, "You gain a +1 bonus to AC and saving throws."),
-        at(RIGHT, 640, "Spell Scroll", TITLE),
+        at(RIGHT, 650, "Robe of Useful Items", TITLE),
+        at(RIGHT, 638, "Wondrous item, uncommon", TYPE),
+        at(RIGHT, 626, "The robe has patches such as:"),
+        at(RIGHT, 614, "• Sack", BULLET),
+        at(RIGHT + INDENT, 602, "In addition, the robe has four other patches. The"),
+        at(RIGHT, 590, "GM chooses the patches."),
+        at(RIGHT, 570, "Cap of Notes", TITLE),
+        at(RIGHT, 558, "Wondrous item, rare", TYPE),
+        at(RIGHT, 546, "Armor Class: 20", BOLD),
+        at(RIGHT, 534, "Speed: 30 ft. (or 0 ft. for both if the legs"),
+        at(RIGHT, 522, "and tail aren’t out)"),
+        at(RIGHT, 500, "Spell Scroll", TITLE),
         at(RIGHT, 628, "Scroll, varies", TYPE),
         at(RIGHT, 612, "A spell scroll bears the words of a single spell."),
     ]
@@ -95,6 +106,8 @@ class Reading(unittest.TestCase):
                 "Apparatus of the Crab",
                 "Belt of Giant Strength",
                 "Cloak of Protection",
+                "Robe of Useful Items",
+                "Cap of Notes",
                 "Spell Scroll",
             ],
         )
@@ -145,6 +158,20 @@ class Reading(unittest.TestCase):
         self.assertEqual(belt[1], "• You have darkvision out to a range of 60 feet.")
         self.assertEqual(belt[2], "• You can speak Dwarvish.")
         self.assertEqual(belt[3], "In addition, you gain a bonus.")  # not part of the bullet
+
+    def test_an_indented_paragraph_after_a_short_bullet_is_a_paragraph(self) -> None:
+        robe = found()["Robe of Useful Items"].text.splitlines()
+        self.assertEqual(robe[1], "• Sack")
+        self.assertEqual(
+            robe[2], "In addition, the robe has four other patches. The GM chooses the patches."
+        )
+
+    def test_an_unindented_wrap_after_a_stat_line_stays_with_it(self) -> None:
+        cap = found()["Cap of Notes"].text.splitlines()
+        self.assertEqual(cap[0], "Armor Class: 20")
+        self.assertEqual(
+            cap[1], "Speed: 30 ft. (or 0 ft. for both if the legs and tail aren’t out)"
+        )
 
     def test_the_items_with_lines_left_out_are_named(self) -> None:
         self.assertEqual(items51.left_out(chapter()), {"Apparatus of the Crab": 2})
