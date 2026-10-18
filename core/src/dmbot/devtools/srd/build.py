@@ -31,6 +31,7 @@ from dmbot.devtools.srd import (
     equipment,
     gear,
     items,
+    items51,
     monsters,
     monsters51,
     origins,
@@ -61,6 +62,11 @@ CONDITIONS_51 = (
 )  # fmt: skip
 
 MONSTERS_HEADING = "Monsters A–Z"
+ITEMS_HEADING_51 = "Magic Items"
+AFTER_ITEMS_HEADING_51 = (
+    "Monsters"  # only bounds the pages read; the list itself ends at the next line
+)
+SENTIENT_HEADING_51 = "Sentient Magic Items"  # ends the list of items, on a page it shares
 CLASSES_HEADING_51 = "Barbarian"  # the first class, which starts a page
 AFTER_CLASSES_HEADING_51 = "Beyond 1st Level"  # starts in the middle of the Wizard's last page
 CLASSES_SECTION = "Classes"
@@ -489,6 +495,15 @@ def class_lines_51(pages: Sequence[Sequence[Line]]) -> list[Line]:
     raise parse.SrdError(f"Can't find the heading {AFTER_CLASSES_HEADING_51!r} after the classes.")
 
 
+def item_lines_51(lines: Sequence[Line]) -> list[Line]:
+    """The Magic Items chapter's lines up to its Sentient Magic Items section (which is rules
+    about giving an item a mind, not an item; the Artifacts after it are left out too)."""
+    for i, line in enumerate(lines):
+        if parse.is_title(line) and parse51.clean(line.text) == SENTIENT_HEADING_51:
+            return list(lines[:i])
+    raise parse.SrdError(f"Can't find the heading {SENTIENT_HEADING_51!r} after the items.")
+
+
 def build_files_51(
     pages: Sequence[Sequence[Line]],
     document: dict[str, Any],
@@ -497,9 +512,10 @@ def build_files_51(
     pairs: set[tuple[str, str]] | None = None,
     *,
     classes: bool = True,
+    items_pages: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """The 2014 SRD 5.1's files from pages already read. `classes=False` leaves out the class
-    features, for tests whose pages hold no Classes chapter."""
+    """The 2014 SRD 5.1's files from pages already read. `classes=False` and `items_pages=False`
+    leave out the class features and the magic items, for tests whose pages hold no such chapter."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
     traps_at = first_page_of(pages, AFTER_SPELLS_HEADING_51, after=spells_at)
     conditions_at = first_page_of(pages, CONDITIONS_HEADING_51, after=traps_at)
@@ -536,6 +552,18 @@ def build_files_51(
         files["features.json"] = {
             **header("feature", CLASSES_SECTION),
             "entries": [feature_entry(f) for f in features],
+        }
+    if items_pages:
+        items_at = first_page_of(pages, ITEMS_HEADING_51, after=CONTENTS_PAGES)
+        after_items_at = first_page_of(pages, AFTER_ITEMS_HEADING_51, after=items_at)
+        files["items.json"] = {
+            **header("item", ITEMS_SECTION),
+            "entries": [
+                item_entry(i)
+                for i in items51.parse_items(
+                    item_lines_51(lines_between(pages, items_at, after_items_at)), vocab
+                )
+            ],
         }
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input

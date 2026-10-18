@@ -360,6 +360,17 @@ class MagicItems(unittest.TestCase):
         )
         self.assertIn("SRD 5.2.1 p. 212", built.sources)
 
+    def test_an_item_only_the_2014_rules_have_is_cited_with_the_legacy_tag(self) -> None:
+        built = self.build("what does an arrow of slaying do")
+        self.assertIn("- Arrow of Slaying (item) [SRD 5.1 p. 209 [Legacy 2014]]", built.prompt)
+        self.assertIn("FACTS: Weapon (Arrow), very rare.", built.prompt)
+        self.assertIn("SRD 5.1 p. 209 [Legacy 2014]", built.sources)
+
+    def test_an_item_both_editions_have_is_the_2024_one_alone(self) -> None:
+        built = self.build("what does a bag of holding do")
+        self.assertIn("SRD 5.2.1 p. 212", built.prompt)
+        self.assertNotIn("SRD 5.1", built.prompt)
+
     def test_an_item_that_needs_attunement_says_so_and_for_whom(self) -> None:
         self.assertIn(
             "uncommon, needs attunement. ", self.build("is a cloak of protection ok").prompt
