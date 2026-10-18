@@ -334,6 +334,8 @@ def mentioned_rules(
     unique = unique[:ENTRIES_MAX]
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
+        if table:  # the other edition's DM chapter is no more the table's than this one's
+            extra = [h for h in extra if not h.entry.dm_side]
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
         unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique

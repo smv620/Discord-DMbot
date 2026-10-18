@@ -25,7 +25,6 @@ from dmbot.devtools.srd.parse51 import Vocabulary, clean
 from dmbot.devtools.srd.pdf import Line
 
 SECTION = "Gameplay Toolbox"  # (the DM's chapter: `Entry.dm_side`, as the 5.2.1's)
-SERIF = "Cambria"
 SANS_BOLD = "Calibri-Bold"
 ITALIC = "Cambria-Italic"
 
@@ -70,7 +69,6 @@ LEFT_OUT = {
 }
 TRAP_KINDS = ("Mechanical trap", "Magic trap")
 POISON_TYPES = ("Contact", "Ingested", "Inhaled", "Injury")
-CARRIES_ON: tuple[str, ...] = ()  # (none of these titles wraps)
 
 MADNESS_TABLES = {
     "Short-Term Madness": "d100 Effect (lasts 1d10 minutes)",
@@ -297,7 +295,7 @@ def parse_gm(lines: Sequence[Line], vocab: Vocabulary) -> GameMaster:
                 raise SrdError(f"Rule {name!r} on page {page}: no description")
             once("rule", name, page)
             rules.append(Rule(name, "", _joined(text), page, ()))
-            if name == "Madness Effects" or name == "Curing Madness":
+            if name == "Madness Effects":
                 for _, caption, rows in tables:
                     if caption in MADNESS_TABLES:
                         words = _joined(

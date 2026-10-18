@@ -749,6 +749,16 @@ class GameplayToolbox(unittest.TestCase):
             self.assertNotIn("RULES ENTRIES", table.prompt, question)
             self.assertNotIn("Gameplay Toolbox", table.prompt, question)
 
+    def test_a_comparison_never_brings_the_other_editions_dm_chapter_to_the_table(self) -> None:
+        question = "travel pace 2014 vs 2024"
+        for target, fallback in (("2014", "2024"), ("2024", "2014")):
+            dms = context.mentioned_rules(question, INDEX, target, fallback, both=True)
+            table = context.mentioned_rules(
+                question, INDEX, target, fallback, both=True, table=True
+            )
+            self.assertTrue(any(h.entry.dm_side for h in dms), target)
+            self.assertEqual([h for h in table if h.entry.dm_side], [], target)
+
     def test_a_table_question_still_gets_the_rules_glossary(self) -> None:
         table = self.build("how does cover work", table=True)
         self.assertEqual([h.entry.name for h in table.hits], ["Cover"])
