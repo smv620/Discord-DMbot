@@ -631,7 +631,8 @@ async def _transcript(
     price = prices.get(models[0])
     print(
         f"{transcript.format} file: {len(inputs.lines)} lines from {len(transcript.speakers)} "
-        f"speakers; up to {calls} AI calls; about {tokens} input tokens on the first try "
+        f"speakers{_tolerated(transcript)}; up to {calls} AI calls; about {tokens} input tokens on "
+        "the first try "
         f"({dollars(price, tokens, 4000)} on the fast tier; a retry uses the careful tier and "
         "costs more)." + (" Plus about 7,000 provider credits for --audio." if args.audio else "")
     )
@@ -662,6 +663,17 @@ async def _transcript(
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
                 print(f"audio: failed ({type(exc).__name__}); the text above is unchanged")
     return 0 if out.job.state == "ready" else 1
+
+
+def _tolerated(transcript: tf.Transcript) -> str:
+    """What the plain reader let through, as counts only: " (skipped 2 header lines, joined 5
+    wrapped lines)". Never the text."""
+    notes = []
+    if transcript.skipped:
+        notes.append(f"skipped {transcript.skipped} header lines")
+    if transcript.joined:
+        notes.append(f"joined {transcript.joined} wrapped lines")
+    return f" ({', '.join(notes)})" if notes else ""
 
 
 def _cue_lines(out: Outcome) -> list[str]:
