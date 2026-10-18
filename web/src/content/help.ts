@@ -709,6 +709,17 @@ export const dmSteps: Step[] = [
  * notes), sidebar/answer.py (NO_INFO_ANSWER, and the rule "use only the material given") and
  * sidebar/service.py (the question and the in-game answer are saved in the raw transcript).
  */
+// The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
+// entry is held and this Help step follows. Set this to true in the same change that moves that
+// entry out of `held`; a test ties the two.
+export const SIDEBAR_SOURCES_LIVE = false;
+
+export const sidebarSourceSteps: Step[] = [
+  {
+    text: "Where did that come from? Press 📖 What I looked at under a rules answer to see the source: the rules DMbot read, with the book and page number. Press one to open it.",
+  },
+];
+
 export const quickAnswersHeading = "What DMbot knows when you ask it";
 export const quickAnswers: Step[] = [
   {
@@ -730,6 +741,7 @@ export const quickAnswers: Step[] = [
   {
     text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
   },
+  ...(SIDEBAR_SOURCES_LIVE ? sidebarSourceSteps : []),
 ];
 
 /** The recaps steps, with the narration add-on's price from its one constant while narration is on
