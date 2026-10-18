@@ -75,9 +75,11 @@ class Sender(unittest.TestCase):
 
     def test_other_mail_stops_short_of_the_cap_by_the_kept_back_slots(self) -> None:
         s = MailSettings(daily_cap=400)
-        self.assertEqual(s.mail_cap, 400 - mail.ALERT_RESERVE)
-        self.assertEqual(alerts.ALERT_DAILY_MAX, mail.ALERT_RESERVE)
-        self.assertEqual(MailSettings(daily_cap=3).mail_cap, 1)
+        self.assertEqual(s.mail_cap, 390)
+        self.assertEqual(s.offer_cap, 292)  # 3/4 of what other mail may use
+        self.assertEqual(2 * alerts.ALERT_DAILY_MAX, mail.ALERT_RESERVE)  # the bot and the website
+        with self.assertRaises(MailConfigError):  # a cap the kept-back slots would swallow
+            load_mail_settings({**ENV, "MAIL_DAILY_CAP": str(mail.ALERT_RESERVE)})
 
 
 class Sending(unittest.IsolatedAsyncioTestCase):
@@ -119,6 +121,17 @@ class Sending(unittest.IsolatedAsyncioTestCase):
         rig.clock.now += alerts.ALERT_WINDOW_S
         self.assertTrue(await rig.alerter.alert(Problem.AI_KEY_REFUSED))
         self.assertEqual(len(rig.sent), alerts.ALERT_DAILY_MAX + 1)
+
+    async def test_failing_emails_tell_discord_once_an_hour_and_use_no_slot(self) -> None:
+        rig = Rig(fail_mail=True)
+        with self.assertLogs("dmbot.alerts", logging.ERROR):
+            for problem in (Problem.AI_KEY_REFUSED, Problem.DEEPGRAM_KEY_REFUSED):
+                await rig.alerter.alert(problem)
+        self.assertEqual(rig.told, [f"⚠️ {Problem.MAIL_FAILED.value}"])
+        rig.fail_mail = False
+        for problem in [p for p in Problem if p not in alerts.BY_DISCORD_ONLY]:
+            await rig.alerter.alert(problem)
+        self.assertGreaterEqual(len(rig.sent), 3)  # the failed sends took no slots
 
     async def test_when_mail_failed_the_owner_is_told_on_discord_and_the_log(self) -> None:
         rig = Rig()
@@ -215,4 +228,11 @@ class OutageWindow(unittest.TestCase):
         clock.now += 1
         self.assertTrue(outage.failed())
         outage.worked()
+        self.assertFalse(outage.failed())
+
+    def test_a_failure_long_after_the_last_one_is_not_ten_minutes_of_outage(self) -> None:
+        clock = Clock()
+        outage = Outage(600, clock=clock)
+        outage.failed()
+        clock.now += 2 * 3600  # nobody was playing
         self.assertFalse(outage.failed())

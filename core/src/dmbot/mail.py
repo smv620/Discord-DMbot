@@ -40,9 +40,10 @@ DAILY_CAP_DEFAULT = 400
 # Addresses that are a person's own live replies and never an automated sender (#1425: the owner
 # answers from admin@ by hand, so a robot sending as it would look like a person's word).
 RESERVED_SENDERS = ("admin@getdmbot.com",)
-# Daily slots kept back for owner alerts (dmbot.alerts.ALERT_DAILY_MAX is the same number): other
-# mail stops this many short of the cap, so a flood of sign-in links can't starve an alert.
-ALERT_RESERVE = 5
+# Daily slots kept back for owner alerts: other mail stops this many short of the cap, so a flood
+# of sign-in links can't starve an alert. Twice dmbot.alerts.ALERT_DAILY_MAX because the bot and
+# the website each send up to that many.
+ALERT_RESERVE = 10
 DAY_S = 86400
 # A Try It's sent notes (the last-day and 30-more-days emails and their private-message
 # records) have no job left after a year: a Try It can't be taken twice, because the DMbot ID
@@ -109,8 +110,11 @@ def load_mail_settings(env: Mapping[str, str]) -> MailSettings:
     cap_raw = get("MAIL_DAILY_CAP") or str(DAILY_CAP_DEFAULT)
     if not (port_raw.isascii() and port_raw.isdigit() and 0 < int(port_raw) < 65536):
         raise MailConfigError("SMTP_PORT must be a port number, such as 587.")
-    if not (cap_raw.isascii() and cap_raw.isdigit() and 0 < int(cap_raw) <= 10_000):
-        raise MailConfigError("MAIL_DAILY_CAP must be a number from 1 to 10000.")
+    if not (cap_raw.isascii() and cap_raw.isdigit() and ALERT_RESERVE < int(cap_raw) <= 10_000):
+        raise MailConfigError(
+            f"MAIL_DAILY_CAP must be a number from {ALERT_RESERVE + 1} to 10000 "
+            f"({ALERT_RESERVE} are kept back for owner alerts)."
+        )
     address = ", ".join(
         " ".join(part.split()) for part in get("MAIL_POSTAL_ADDRESS").split("|") if part.strip()
     )
@@ -296,9 +300,11 @@ class Mailer:
             return "no_address"
         try:
             await self._send(message)
-        except Exception:  # an SMTP error can carry the address: log only the kind
+        except Exception as exc:  # an SMTP error can carry the address: log only the kind
             log.error("Couldn't send a %s email", kind, exc_info=False)
-            _tell_owner_mail_failed()
+            # One person's mistyped address is not the mail service failing.
+            if not isinstance(exc, smtplib.SMTPRecipientsRefused):
+                _tell_owner_mail_failed()
             if offer:
                 await self._release(user_id, kind)
             return "failed"
@@ -317,9 +323,10 @@ class Mailer:
         try:
             message = self._build(to, "", subject, body, False, sender)
             await self._send(message)
-        except Exception:  # an SMTP error can carry the address: say only that it failed
+        except Exception as exc:  # an SMTP error can carry the address: say only that it failed
             log.error("Couldn't send a team email", exc_info=False)
-            _tell_owner_mail_failed()
+            if not isinstance(exc, smtplib.SMTPRecipientsRefused):
+                _tell_owner_mail_failed()
             return False
         return True
 

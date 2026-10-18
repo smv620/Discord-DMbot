@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 
 ALERT_EVERY_S = 3600  # one email per problem per hour
 ALERT_WINDOW_S = 24 * 3600
-# The email slots kept back for alerts: other mail stops this many short of MAIL_DAILY_CAP
-# (mail.py), and alerts never send more than this many a day.
+# Alerts never send more than this many emails a day from one process. The bot and the website each
+# count for themselves, so mail.py keeps back twice this many slots from MAIL_DAILY_CAP.
 ALERT_DAILY_MAX = 5
 DEEPGRAM_DOWN_AFTER_S = 10 * 60  # "not answering for N minutes"
 
@@ -63,8 +63,8 @@ class Problem(enum.Enum):
         "the server's .env and the mail provider's dashboard."
     )
     DATABASE_DOWN = (
-        "DMbot couldn't reach its database when it started. Check that Postgres is running on "
-        "the server and that DATABASE_URL in .env is right."
+        "DMbot couldn't start its database (it wouldn't connect, or its role or tables were "
+        "wrong). Check that Postgres is running and that DATABASE_URL in .env is right."
     )
 
 
@@ -125,7 +125,13 @@ class Alerter:
             self._sent_at.append(now)
             if await self._email(problem):
                 return True
-            # The email didn't go: that is a mail failure, told the other way.
+            # The email didn't go: that is a mail failure, told the other way, and only as
+            # often as any other problem (so seven failing emails are one message an hour).
+            self._sent_at.pop()  # a send that failed doesn't use up a slot
+            last_failed = self._last.get(Problem.MAIL_FAILED)
+            if last_failed is not None and now - last_failed < ALERT_EVERY_S:
+                return False
+            self._last[Problem.MAIL_FAILED] = now
             return await self._discord(Problem.MAIL_FAILED.value)
         return await self._discord(problem.value)
 
@@ -202,12 +208,16 @@ class Outage:
         self._after = after_s
         self._clock = clock
         self._since: float | None = None
+        self._last: float | None = None
 
     def worked(self) -> None:
         self._since = None
 
     def failed(self) -> bool:
         now = self._clock()
-        if self._since is None:
+        # A failure long after the last one (nobody was playing) starts a new count: the service
+        # was not known to be down all that time.
+        if self._since is None or (self._last is not None and now - self._last > self._after):
             self._since = now
+        self._last = now
         return now - self._since >= self._after

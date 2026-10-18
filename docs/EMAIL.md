@@ -82,9 +82,13 @@ and sends one test email.
 When the AI service is out of credit or refuses its key, Deepgram refuses its key or has not answered
 for 10 minutes, Stripe refuses its key, the mail service fails, or the database can't be reached at
 start-up, DMbot sends the owner one short email with one fixed sentence and what to check. It sends
-at most one per problem per hour and at most 5 a day (the slots `mail.py` keeps back from other mail
-under `MAIL_DAILY_CAP`). When mail itself is what failed, the owner gets a private Discord message
-instead. The sentences never hold a key, a ticket or a player's words.
+at most one per problem per hour and at most 5 a day from each of the bot and the website (10 slots
+that `mail.py` keeps back from other mail under `MAIL_DAILY_CAP`, which must be above 10). The counts
+are kept in memory, so a restart starts them again. When mail itself is what failed, the owner gets a
+private Discord message instead, at most once an hour. **Known limit:** the website has no Discord
+login, so a mail failure seen there is only logged; the bot's own failures and every other problem
+are told as above. A mistyped address (the mail service refusing one recipient) is not a failure.
+The sentences never hold a key, a ticket or a player's words.
 
 | Setting | Value |
 |---|---|

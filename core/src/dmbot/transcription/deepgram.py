@@ -189,7 +189,7 @@ class DeepgramTranscriber:
         self._busy_until = 0.0
         self._busy_set_at = 0.0
         # Failures to reach Deepgram in a row; the owner hears after 10 minutes of them (#1907).
-        # An answer of any kind (even a refusal) means it is up, so only 200s reset it.
+        # An answer other than a 5xx means it is up.
         self._outage = Outage(DEEPGRAM_DOWN_AFTER_S, clock=_clock)
 
     def _get_session(self) -> aiohttp.ClientSession:
@@ -289,6 +289,8 @@ class DeepgramTranscriber:
                             raise_alert(Problem.DEEPGRAM_KEY_REFUSED)
                         elif resp.status >= 500:
                             self._note_unreachable()
+                        else:  # any other answer means Deepgram is up
+                            self._outage.worked()
                         # Status only: error bodies can echo request details.
                         reason = STATUS_REASONS.get(resp.status, "Deepgram had a problem")
                         raise DeepgramError(

@@ -12,7 +12,7 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - Owner alerts (#1907), once merged: no migration. The owner sets OWNER_ALERT_EMAIL (their private address) and
   optionally MAIL_ALERTS_REPLY_TO in the server's .env at the terminal (dev1 never types the address into the
   repository or a chat), then dev1 restarts bot and web-api (bot first). Check: the start-up log says "Owner
-  alerts are off" before the setting and not after. MAIL_DAILY_CAP now keeps 5 slots back for alerts.
+  alerts are off" before the setting and not after. MAIL_DAILY_CAP now keeps 10 slots back for alerts (it must be above 10).
 (nothing else: the deploy of 3b75a693 (migrations 0122-0127) and everything before it are live)
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env
   with the STRIPE_* ones (.env.example) through scripts/set-key (#1110). Payments stay off until then.
