@@ -486,8 +486,18 @@ class Building(unittest.TestCase):
             say("You can enter a Rage.", BODY, 20),
         ]
         origins = [say("Character Origins", TITLE, 21)]
-        creatures = [say("Monsters A–Z", TITLE, 22), *goblin()]
-        return [contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, creatures]
+        items = [
+            say("Magic Items A–Z", TITLE, 22),
+            say("Bag of Holding", TITLE, 22),
+            say("Wondrous Item, Uncommon", ITALIC, 22),
+            say("It holds more than it should.", BODY, 22),
+        ]
+        monsters = [say("Monsters", TITLE, 23)]
+        creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
+        return [
+            contents, *[[]] * 9, spells, glossary, toolbox, classes, origins, items, monsters,
+            creatures,
+        ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
         return {"title": "t", "url": "u", "sha256": "s", "pages": 13}
@@ -496,7 +506,14 @@ class Building(unittest.TestCase):
         files = build.build_files(self.pages(), self.document())
         self.assertEqual(
             set(files),
-            {"spells.json", "conditions.json", "rules.json", "features.json", "monsters.json"},
+            {
+                "spells.json",
+                "conditions.json",
+                "rules.json",
+                "features.json",
+                "items.json",
+                "monsters.json",
+            },
         )
         creatures = files["monsters.json"]
         self.assertEqual([e["name"] for e in creatures["entries"]], ["Goblin Warrior"])
@@ -525,6 +542,23 @@ class Building(unittest.TestCase):
                     "subclass": "",
                     "text": "You can enter a Rage.",
                     "page": 20,
+                }
+            ],
+        )
+        magic = files["items.json"]
+        self.assertEqual((magic["kind"], magic["section"]), ("item", "Magic Items"))
+        self.assertEqual(
+            magic["entries"],
+            [
+                {
+                    "name": "Bag of Holding",
+                    "category": "Wondrous Item",
+                    "subtype": "",
+                    "rarity": "Uncommon",
+                    "attunement": False,
+                    "attunement_by": "",
+                    "text": "It holds more than it should.",
+                    "page": 22,
                 }
             ],
         )

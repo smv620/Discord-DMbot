@@ -129,15 +129,17 @@ async def _homebrew(
 
 
 def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> index.Hit | None:
-    """The glossary entry, else the class feature, with this name. A feature several classes
-    share ("evasion") gives the first class's; typing the class first ("rogue evasion") picks
-    that class, and a level after it ("barbarian improved brutal strike 17") picks the one of
-    that level: which is how the name list words them."""
+    """The glossary entry, else the class feature, else the magic item, with this name. A
+    feature several classes share ("evasion") gives the first class's; typing the class first
+    ("rogue evasion") picks that class, and a level after it ("barbarian improved brutal strike
+    17") picks the one of that level: which is how the name list words them."""
     hit = srd.lookup(typed, target, fallback, kind=index.RULE)
     if hit is not None:
         return hit
     found = _features(srd, typed, target, fallback)
-    return found[0] if found else None
+    if found:
+        return found[0]
+    return srd.lookup(typed, target, fallback, kind=index.ITEM)
 
 
 def _features(srd: index.Index, typed: str, target: str, fallback: str) -> list[index.Hit]:
@@ -195,7 +197,8 @@ async def look_up(
     hit = srd.lookup(typed, campaign.target_ruleset, campaign.fallback_ruleset, kind=kind)
     if hit is None and kind is None:
         # Not a spell, a condition or a creature: it may be a Rules Glossary entry ("cover",
-        # "long rest", #1891) or a class feature ("rage", "rogue evasion", #1900). Those are
+        # "long rest", #1891), a class feature ("rage", "rogue evasion", #1900) or a magic item
+        # ("bag of holding", #1912). Those are
         # asked for last so a spell of the same name always wins.
         hit = _asked_for(srd, typed, campaign.target_ruleset, campaign.fallback_ruleset)
     # The campaign's own homebrew sits between its house rules and the book (PLAN, rules
@@ -438,7 +441,11 @@ async def _typeahead(
     # word never floods the list with them (#1891).
     if not found and len(index.normalize(current)) >= GLOSSARY_FROM:
         found = srd.asked_names(
-            current, target, fallback, kinds=(index.RULE, index.FEATURE), limit=NAMES_MORE
+            current,
+            target,
+            fallback,
+            kinds=(index.RULE, index.FEATURE, index.ITEM),
+            limit=NAMES_MORE,
         )
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))

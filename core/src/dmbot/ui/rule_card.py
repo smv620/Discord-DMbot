@@ -46,6 +46,7 @@ KIND_WORDS = {
     "monster": "creature",
     "rule": "rule",
     "feature": "feature",
+    "item": "item",
 }
 
 
@@ -218,6 +219,8 @@ def header(
         entry.kind == index.FEATURE
     ):  # "(feature: Rogue 7)"; a subclass's feature adds its subclass
         kind = f"{kind}: {_md(feature_place(entry))}"
+    elif entry.kind == index.ITEM:  # "(item: Wondrous Item, uncommon)"
+        kind = f"{kind}: {_md(item_place(entry))}"
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
     if line:
@@ -429,6 +432,13 @@ def names_shown(entry: Entry) -> list[str]:
     return names
 
 
+def item_place(entry: Entry) -> str:
+    """What kind of item it is and how rare: `Wondrous Item, uncommon`."""
+    d = entry.details
+    rarity = rule_facts.short_rarity(str(d.get("rarity", "")))
+    return f"{d.get('category', '')}, {rarity}".strip(", ")
+
+
 def feature_place(entry: Entry) -> str:
     """Where a class feature is gained: `Rogue 7`, or `Barbarian 3, Path of the Berserker` for a
     subclass's feature."""
@@ -443,6 +453,8 @@ def choice_label(entry: Entry) -> str:
     kind = KIND_WORDS.get(entry.kind, entry.kind)
     if entry.kind == index.FEATURE:  # "Evasion (feature: Rogue 7)": the class tells two apart
         kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
+    if entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
+        kind = f"{kind}: {item_place(entry)}"
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
     return label if len(label) <= NAME_MAX else label[: NAME_MAX - 1] + "…"

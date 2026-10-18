@@ -25,7 +25,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dmbot.devtools.srd import classes, classes51, monsters, monsters51, parse, parse51
+from dmbot.devtools.srd import classes, classes51, items, monsters, monsters51, parse, parse51
 from dmbot.devtools.srd.pdf import Line, read_pages
 
 SOURCE = "SRD 5.2.1"
@@ -75,6 +75,9 @@ GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
 CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
+ITEMS_HEADING = "Magic Items A–Z"
+AFTER_ITEMS_HEADING = "Monsters"
+ITEMS_SECTION = "Magic Items"
 
 
 def first_page_of(pages: Sequence[Sequence[Line]], heading: str, after: int = 0) -> int:
@@ -197,6 +200,10 @@ def build_files(
     origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
     features = classes.parse_features(lines_between(pages, classes_at, origins_at))
 
+    items_at = first_page_of(pages, ITEMS_HEADING, after=CONTENTS_PAGES)
+    after_items_at = first_page_of(pages, AFTER_ITEMS_HEADING, after=items_at)
+    magic_items = items.parse_items(lines_between(pages, items_at, after_items_at))
+
     monsters_at = first_page_of(pages, MONSTERS_HEADING, after=CONTENTS_PAGES)
     creatures = monsters.parse_monsters(lines_between(pages, monsters_at, len(pages) + 1))
 
@@ -227,10 +234,30 @@ def build_files(
             **header("feature", CLASSES_HEADING),
             "entries": [feature_entry(f) for f in features],
         },
+        "items.json": {
+            **header("item", ITEMS_SECTION),
+            "entries": [item_entry(i) for i in magic_items],
+        },
         "monsters.json": {
             **header("monster", None),
             "entries": [monster_entry(m, EDITION) for m in creatures],
         },
+    }
+
+
+def item_entry(item: items.Item) -> dict[str, Any]:
+    """A magic item as a data file holds it: its name, then what the line under it says
+    (category, the category's bracket as subtype, rarity as printed, attunement and for whom),
+    then its text and page."""
+    return {
+        "name": item.name,
+        "category": item.category,
+        "subtype": item.subtype,
+        "rarity": item.rarity,
+        "attunement": item.attunement,
+        "attunement_by": item.attunement_by,
+        "text": item.text,
+        "page": item.page,
     }
 
 
