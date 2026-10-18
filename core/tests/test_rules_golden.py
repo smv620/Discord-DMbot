@@ -48,11 +48,17 @@ class GoldenQuestions(unittest.TestCase):
             self.assertIn(case["mode"], {"dm", "table", "dm both", "table both"})
             self.assertTrue(all(len(entry) == 3 for entry in case["expect"]))
 
-    def test_the_table_never_cites_the_dms_chapter(self) -> None:
-        # Whatever a case expects, a table question must not hold a DM-side entry.
+    def test_the_table_never_gets_the_dms_chapter(self) -> None:
+        # Checked on what is returned, not on the data file: the DM's hazards asked about at the
+        # table, alone or in a comparison, come back empty of DM-side entries.
         for case in CASES:
             if case["mode"].startswith("table"):
-                for kind, name, edition in case["expect"]:
-                    hit = INDEX.lookup(name, edition, edition, kind=kind)
-                    assert hit is not None, name
-                    self.assertFalse(hit.entry.dm_side, f"{name} for {case['question']!r}")
+                hits = context.mentioned_rules(
+                    case["question"],
+                    INDEX,
+                    case["target"],
+                    case["fallback"],
+                    both="both" in case["mode"],
+                    table=True,
+                )
+                self.assertFalse([h.entry.name for h in hits if h.entry.dm_side], case["question"])
