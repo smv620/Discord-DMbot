@@ -13,7 +13,8 @@ export function labelsInPython(text) {
   const constant = /^[ \t]*(?:[A-Z][A-Z0-9_]*_)?(?:LABEL|BUTTON)\s*(?::[^=\n]+)?=\s*\(?\s*(f?)"((?:[^"\\\n]|\\.)*)"/gm;
   for (const m of text.matchAll(constant)) {
     const filled = m[1] ? m[2].replace(/\{([A-Z][A-Z0-9_]*)\}/g, (all, name) => numbers.get(name) ?? all) : m[2];
-    if (!/[{}]/.test(filled)) found.push(unescape(filled));
+    // A name that isn't a same-file number stays in braces: skip it rather than invent a label.
+    if (!m[1] || !/[{}]/.test(filled)) found.push(unescape(filled));
   }
   // `label="A" if x else "B"` names two buttons, so take every string on the label's line.
   for (const m of text.matchAll(/\blabel=([^\n]*)/g)) {

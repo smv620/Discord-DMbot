@@ -29,6 +29,8 @@ describe("button labels on the site", () => {
     expect(labels.size).toBeGreaterThan(200);
     expect(labels).toContain("Yes, stop recording me");
     expect(labels).toContain("Stop recording me");
+    // An f-string label, worked out from MIN_AGE in the same file.
+    expect(labels).toContain("I'm 16 or older, record me");
   });
 
   it("every label in the hidden list is still in the file it names", () => {
