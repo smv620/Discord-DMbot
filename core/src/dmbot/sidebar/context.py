@@ -209,6 +209,18 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
     return None
 
 
+def asked_about(words: list[str], start: int) -> bool:
+    """Is the one-word name at `words[start]` the subject of a question about it (#1989)?"""
+    low = [w.lower() for w in words]
+    before, after = low[:start], low[start + 1 :]
+    if after and after[0] in _AFTER_ONLY:
+        return True
+    for lead, follow in _BEFORE_AFTER:
+        if tuple(before[-len(lead) :]) == lead and (not follow or (after and after[0] in follow)):
+            return True
+    return bool(before and before[-1] == "can" and (not after or after[0] in _CAN_THEN))
+
+
 def mentioned_rules(
     question: str,
     index: Index,
@@ -238,6 +250,7 @@ def mentioned_rules(
                 and hit.entry.kind == "spell"
                 and normalize(window[0]) in EVERYDAY_SPELLS
                 and not spell_cue
+                and not asked_about(words, start)
             ):
                 hit = None  # "they light a torch" is not the Light spell (#1956)
             if hit is None and size > 1:
@@ -413,6 +426,20 @@ SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip
 # Spells whose names are everyday words ("they light a torch", "send a message", "fly home"): cited
 # only when the question also says cast, spell or cantrip (#1956).
 EVERYDAY_SPELLS = frozenset({"light", "message", "sleep", "command", "fly"})
+# A question *about* the word is a cue too (#1989): "how does command work", "what does sleep do".
+# Fixed frames over the words around the name, no model. `_BEFORE_AFTER` is (words before the name,
+# words right after it); `_AFTER_ONLY` are words after it that only a spell has ("sleep level").
+_BEFORE_AFTER = (
+    (("how", "does"), ("work", "works")),
+    (("what", "does"), ("do", "does")),
+    (("how", "long", "does"), ("last", "lasts")),
+    (("range", "of"), ()),
+    (("duration", "of"), ()),
+)
+_AFTER_ONLY = frozenset({"spell", "level", "save", "saves"})
+# "can sleep affect undead": only before a word that asks what the spell does, or at the end of
+# the question; "can sleep at the inn" is a person sleeping.
+_CAN_THEN = frozenset({"affect", "target", "be", "stack", "work", "do", "reach", "last", "hit"})
 # Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
 ONLY_GEAR_CUES = frozenset(
     {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"} | GEAR_CUES
