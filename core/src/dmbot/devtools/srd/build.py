@@ -73,7 +73,7 @@ BACKGROUND_PAGES_51 = 60  # the Backgrounds section, before the Equipment chapte
 EQUIPMENT_HEADING_51 = "Equipment"  # the chapter's first page; it ends on the page with Trade Goods
 TRADE_GOODS_HEADING_51 = "Trade Goods"
 MOUNTS_TITLE_51 = "Mounts and Vehicles"
-HALF = 300.0  # x: the right-hand column of a page starts beyond this
+HALF = equipment51.HALF_PAGE  # x: the right-hand column of a page starts beyond this
 # y: under this, the gear table's page has the Container Capacity table (left out)
 CONTAINERS_BELOW = 185.0
 ITEMS_HEADING_51 = "Magic Items"

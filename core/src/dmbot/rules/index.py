@@ -416,7 +416,16 @@ class Index:
             return []
         found: list[tuple[int, str, Entry]] = []
         seen: set[int] = set()
-        newer: set[tuple[str, str, str]] = set()  # (kind, name, class) the target already has
+        # (kind, name, class) the target has under every name it is found by (not only the ones
+        # the typing matches), and the names each fallback entry is found by: a fallback entry
+        # the target has under any of its names is not offered ("Plate" for "Plate Armor").
+        newer: set[tuple[str, str, str]] = set()
+        names_of: dict[int, list[str]] = {}
+        for name, entries in self._by_edition.get(target, {}).items():
+            newer.update((e.kind, name, _class_of(e)) for e in entries if e.kind in kinds)
+        for name, entries in self._by_edition.get(fallback, {}).items():
+            for e in entries:
+                names_of.setdefault(id(e), []).append(name)
         for rank, edition in enumerate((target, fallback)):
             if edition == FALLBACK_NONE or (rank and edition == target):
                 continue
@@ -425,7 +434,10 @@ class Index:
                     if entry.kind not in kinds or id(entry) in seen:
                         continue
                     # The fallback's version of what the target also has is not offered.
-                    if rank and (entry.kind, name, _class_of(entry)) in newer:
+                    if rank and any(
+                        (entry.kind, other, _class_of(entry)) in newer
+                        for other in names_of[id(entry)]
+                    ):
                         continue
                     if name.startswith(key):
                         order = 0
@@ -435,8 +447,6 @@ class Index:
                         continue
                     seen.add(id(entry))
                     found.append((rank * 2 + order, name, entry))
-                    if not rank:
-                        newer.add((entry.kind, name, _class_of(entry)))
         found.sort(key=lambda item: item[:2])
         return [entry for _, _, entry in found[:limit]]
 

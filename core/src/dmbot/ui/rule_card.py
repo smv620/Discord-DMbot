@@ -467,6 +467,8 @@ def equipment_place(entry: Entry) -> str:
         return str(d["ability"])
     group = str(d.get("group", ""))
     cost = str(d.get("cost", ""))
+    if entry.kind == index.TOOL:  # (the SRD 5.1's tools have no ability: the price, and no group)
+        group = "Adventuring Gear"
     if cost == "Varies":
         cost = "price varies"
     elif ";" in cost and (first := re.search(r"[\d,]+ [GSC]P", cost)):

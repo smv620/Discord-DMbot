@@ -657,6 +657,38 @@ class ClassFeatures(unittest.TestCase):
         self.assertEqual(get("Reach (Weapon Property)", "rule").details["tag"], "Weapon Property")
         self.assertEqual(get("Special", "rule").citation, "SRD 5.1, Equipment, p. 65")
 
+    def test_the_name_list_offers_the_2014_piece_only_where_the_target_has_none(self) -> None:
+        srd = index.srd()
+        kinds = index.EQUIPMENT_KINDS
+
+        def listed(typed: str, target: str, fallback: str) -> list[tuple[str, str]]:
+            found = srd.asked_names(typed, target, fallback, kinds=kinds)
+            return [(e.name, e.edition) for e in found]
+
+        # "Healer's Kit" and "Chain Mail" are in both: the 2024 ones alone, whichever alias is typed
+        self.assertEqual(listed("healer", "2024", "2014"), [("Healer’s Kit", "2024")])
+        self.assertEqual([n for n, ed in listed("chain m", "2024", "2014")], ["Chain Mail"])
+        self.assertEqual(
+            [n for n, _ in listed("plate", "2024", "2014")], ["Plate Armor", "Half Plate Armor"]
+        )  # the 5.1's "Plate" is the same armor
+        self.assertEqual(
+            listed("plate", "2014", "2024"), [("Plate", "2014"), ("Half Plate", "2014")]
+        )
+        self.assertIn(("Abacus", "2014"), listed("abac", "2024", "2014"))  # only in the 5.1
+        for edition, other in (("2024", "2014"), ("2014", "2024")):
+            names = [n for n, _ in listed("hor", edition, other)]
+            self.assertEqual(len(names), len(set(index.normalize(n) for n in names)))
+
+    def test_a_2014_tool_label_says_its_price_not_its_group(self) -> None:
+        from dmbot.ui import rule_card
+
+        hit = index.srd().lookup("Herbalism Kit", "2014", "2024", kind="tool")
+        assert hit is not None
+        self.assertEqual(rule_card.equipment_place(hit.entry), "5 GP")
+        self.assertEqual(
+            rule_card.choice_label(hit.entry), "Herbalism Kit (tool: 5 GP) [Legacy 2014]"
+        )
+
     def test_the_2014_attribution_names_the_left_out_equipment(self) -> None:
         text = (index.DATA / "srd51" / "ATTRIBUTION.md").read_text(encoding="utf-8")
         for words in ("Equipment Packs", "Trade Goods", "Container Capacity", "Lifestyle Expenses"):

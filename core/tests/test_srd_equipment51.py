@@ -236,10 +236,12 @@ class Gear(unittest.TestCase):
 
     def test_a_heading_over_rows_is_one_entry_with_its_rows_as_lines(self) -> None:
         ammunition = self.read()["Ammunition"]
-        self.assertEqual(ammunition.text, "Arrows (20) 1 GP 1 lb.\nCrossbow Bolts (20) 1 GP 1½ lb.")
+        self.assertEqual(
+            ammunition.text, "Arrows (20): 1 GP, 1 lb.\nCrossbow Bolts (20): 1 GP, 1½ lb."
+        )
         self.assertEqual((ammunition.cost, ammunition.weight), ("Varies", "Varies"))
         holy = self.read()["Holy Symbol"]
-        self.assertEqual(holy.text.splitlines()[1:], ["Amulet 5 GP 1 lb.", "Emblem 5 GP"])
+        self.assertEqual(holy.text.splitlines()[1:], ["Amulet: 5 GP, 1 lb.", "Emblem: 5 GP."])
 
     def test_one_paragraph_for_two_rows_is_one_entry_listing_both(self) -> None:
         rope = self.read()["Rope"]
@@ -276,7 +278,7 @@ def tool_rows() -> list[Row]:
         at(RIGHT, 630, "Artisan’s tools", ITAL, 70),
         at(337.6, 618, "Alchemist’s supplies 50 gp 8 lb.", CAL, 70),
         at(337.6, 607, "Brewer’s supplies 20 gp 9 lb.", CAL, 70),
-        at(RIGHT, 431, "Disguise kit 25 gp 3 lb.", CAL, 70),
+        at(337.6, 431, "Disguise kit 25 gp 3 lb.", CAL, 70),
         at(RIGHT, 409, "Gaming set", ITAL, 70),
         at(337.6, 398, "Dice set 1 sp —", CAL, 70),
         at(337.6, 387, "Playing card set 5 sp —", CAL, 70),
@@ -312,6 +314,11 @@ class Tools(unittest.TestCase):
         )  # fmt: skip
         self.assertEqual(tools["Brewer’s Supplies"].group, "Artisan’s Tools")
         self.assertEqual(tools["Thieves’ Tools"].group, "Other Tools")
+
+    def test_an_artisans_tool_with_its_own_paragraph_uses_it(self) -> None:
+        disguise = self.read()["Disguise Kit"]
+        self.assertEqual(disguise.group, "Artisan’s Tools")
+        self.assertEqual(disguise.text, "This pouch lets you disguise.")
 
     def test_the_artisans_tools_share_one_paragraph_and_have_their_own_prices(self) -> None:
         alchemist = self.read()["Alchemist’s Supplies"]

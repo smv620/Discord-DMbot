@@ -789,7 +789,7 @@
   },
   {
    "kind": "tool",
-   "name": "Calligrapher's Supplies",
+   "name": "Calligrapher’s Supplies",
    "group": "Artisan’s Tools",
    "cost": "10 GP",
    "ability": "",
@@ -993,7 +993,7 @@
    "craft": "",
    "variants": "",
    "page": 70,
-   "text": "These special tools include the items needed to pursue a craft or trade. The table shows examples of the most common types of tools, each providing items related to a single craft. Proficiency with a set of artisan’s tools lets you add your proficiency bonus to any ability checks you make using the tools in your craft. Each type of artisan’s tools requires a separate proficiency."
+   "text": "This pouch of cosmetics, hair dye, and small props lets you create disguises that change your physical appearance. Proficiency with this kit lets you add your proficiency bonus to any ability checks you make to create a visual disguise."
   },
   {
    "kind": "tool",
@@ -1006,7 +1006,7 @@
    "craft": "",
    "variants": "",
    "page": 70,
-   "text": "These special tools include the items needed to pursue a craft or trade. The table shows examples of the most common types of tools, each providing items related to a single craft. Proficiency with a set of artisan’s tools lets you add your proficiency bonus to any ability checks you make using the tools in your craft. Each type of artisan’s tools requires a separate proficiency."
+   "text": "This small box contains a variety of papers and parchments, pens and inks, seals and sealing wax, gold and silver leaf, and other supplies necessary to create convincing forgeries of physical documents. Proficiency with this kit lets you add your proficiency bonus to any ability checks you make to create a physical forgery of a document."
   },
   {
    "kind": "tool",
@@ -1119,7 +1119,7 @@
    "group": "Adventuring Gear",
    "cost": "Varies",
    "weight": "Varies",
-   "text": "Arrows (20) 1 GP 1 lb.\nBlowgun Needles (50) 1 GP 1 lb.\nCrossbow Bolts (20) 1 GP 1½ lb.\nSling Bullets (20) 4 CP 1½ lb.",
+   "text": "Arrows (20): 1 GP, 1 lb.\nBlowgun Needles (50): 1 GP, 1 lb.\nCrossbow Bolts (20): 1 GP, 1½ lb.\nSling Bullets (20): 4 CP, 1½ lb.",
    "page": 69
   },
   {
@@ -1137,7 +1137,7 @@
    "group": "Adventuring Gear",
    "cost": "Varies",
    "weight": "Varies",
-   "text": "An arcane focus is a special item— an orb, a crystal, a rod, a specially constructed staff, a wand-like length of wood, or some similar item— designed to channel the power of arcane spells. A sorcerer, warlock, or wizard can use such an item as a spellcasting focus.\nCrystal 10 GP 1 lb.\nOrb 20 GP 3 lb.\nRod 10 GP 2 lb.\nStaff 5 GP 4 lb.\nWand 10 GP 1 lb.",
+   "text": "An arcane focus is a special item— an orb, a crystal, a rod, a specially constructed staff, a wand-like length of wood, or some similar item— designed to channel the power of arcane spells. A sorcerer, warlock, or wizard can use such an item as a spellcasting focus.\nCrystal: 10 GP, 1 lb.\nOrb: 20 GP, 3 lb.\nRod: 10 GP, 2 lb.\nStaff: 5 GP, 4 lb.\nWand: 10 GP, 1 lb.",
    "page": 69
   },
   {
@@ -1371,7 +1371,7 @@
    "group": "Adventuring Gear",
    "cost": "Varies",
    "weight": "Varies",
-   "text": "A druidic focus might be a sprig of mistletoe or holly, a wand or scepter made of yew or another special wood, a staff drawn whole out of a living tree, or a totem object incorporating feathers, fur, bones, and teeth from sacred animals. A druid can use such an object as a spellcasting focus.\nSprig of Mistletoe 1 GP\nTotem 1 GP\nWooden Staff 5 GP 4 lb.\nYew Wand 10 GP 1 lb.",
+   "text": "A druidic focus might be a sprig of mistletoe or holly, a wand or scepter made of yew or another special wood, a staff drawn whole out of a living tree, or a totem object incorporating feathers, fur, bones, and teeth from sacred animals. A druid can use such an object as a spellcasting focus.\nSprig of Mistletoe: 1 GP.\nTotem: 1 GP.\nWooden Staff: 5 GP, 4 lb.\nYew Wand: 10 GP, 1 lb.",
    "page": 69
   },
   {
@@ -1434,7 +1434,7 @@
    "group": "Adventuring Gear",
    "cost": "Varies",
    "weight": "Varies",
-   "text": "A holy symbol is a representation of a god or pantheon. It might be an amulet depicting a symbol representing a deity, the same symbol carefully engraved or inlaid as an emblem on a shield, or a tiny box holding a fragment of a sacred relic. Appendix PH-B \"Fantasy-Historical Pantheons\" lists the symbols commonly associated with many gods in the multiverse. A cleric or paladin can use a holy symbol as a spellcasting focus. To use the symbol in this way, the caster must hold it in hand, wear it visibly, or bear it on a shield.\nAmulet 5 GP 1 lb.\nEmblem 5 GP\nReliquary 5 GP 2 lb.",
+   "text": "A holy symbol is a representation of a god or pantheon. It might be an amulet depicting a symbol representing a deity, the same symbol carefully engraved or inlaid as an emblem on a shield, or a tiny box holding a fragment of a sacred relic. Appendix PH-B \"Fantasy-Historical Pantheons\" lists the symbols commonly associated with many gods in the multiverse. A cleric or paladin can use a holy symbol as a spellcasting focus. To use the symbol in this way, the caster must hold it in hand, wear it visibly, or bear it on a shield.\nAmulet: 5 GP, 1 lb.\nEmblem: 5 GP.\nReliquary: 5 GP, 2 lb.",
    "page": 69
   },
   {

@@ -29,6 +29,7 @@ from dmbot.devtools.srd.parse import SrdError, is_title
 from dmbot.devtools.srd.parse51 import Vocabulary, clean
 from dmbot.devtools.srd.pdf import Line
 
+LEFT_EDGE, RIGHT_EDGE = 57.6, 328.6  # where a column of the 5.1 pages starts
 SAME_ROW = 1.0  # points: lines this close in height are one printed row
 HALF_PAGE = 300.0  # x: a table in a column of its own starts on one side of this
 LEAD_IN = "Cambria-BoldItalic"
@@ -90,7 +91,7 @@ class Row:
 
 def title_case(name: str) -> str:
     """ "Climber's kit" is "Climber's Kit", "Case, map or scroll" is "Case, Map or Scroll"."""
-    words = name.split(" ")
+    words = name.replace("'", "’").split(" ")
     return " ".join(
         w if (i and w.lower() in SMALL_WORDS) else w[:1].upper() + w[1:]
         for i, w in enumerate(words)
@@ -342,11 +343,13 @@ def _table(rows: Sequence[Row], pattern: re.Pattern[str], where: str) -> list[_E
         match = pattern.match(row.text)
         if match is None:
             raise SrdError(f"{where}: a row it can't read (page {row.page}): {row.text!r}")
-        indented = heading is not None and row.x - (57.6 if row.x < HALF_PAGE else 328.6) > 5.0
+        indented = (
+            heading is not None and row.x - (LEFT_EDGE if row.x < HALF_PAGE else RIGHT_EDGE) > 5.0
+        )
         cost, weight = money(match["cost"], match["coin"]), match["weight"]
         if indented and heading is not None:
             heading.lines.append(
-                f"{title_case(match['name'])} {cost}" + (f" {weight}" if weight != "—" else "")
+                _rows_text(_Entry(title_case(match["name"]), cost, weight, row.page, []))
             )
             continue
         heading = None
@@ -440,10 +443,13 @@ def parse_tools(rows: Sequence[Row], lines: Sequence[Line], vocab: Vocabulary) -
             raise SrdError(f"Tools table: a row it can't read (page {row.page}): {row.text!r}")
         cost, weight = money(match["cost"], match["coin"]), match["weight"]
         name = title_case(match["name"])
-        indented = bool(heading) and row.x - 328.6 > 5.0
+        indented = bool(heading) and row.x - RIGHT_EDGE > 5.0
         if indented and _key(heading) == "artisan’s tools":
+            own = words.get(_key(match["name"]), ("", ""))[1]  # (the Disguise Kit has its own)
             tools.append(
-                Tool(name, "Artisan’s Tools", cost, "", weight, "", "", "", row.page, artisan)
+                Tool(
+                    name, "Artisan’s Tools", cost, "", weight, "", "", "", row.page, own or artisan
+                )
             )
         elif indented:
             kinds[heading].append(

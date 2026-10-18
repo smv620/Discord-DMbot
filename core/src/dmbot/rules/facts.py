@@ -112,9 +112,10 @@ def tool_line(entry: Entry, *, card: bool) -> str:
     d = entry.details
     cost = str(d.get("cost", ""))
     cost = "price varies" if cost == "Varies" else cost
-    parts = [cost, _weight_words(d)]
-    if not card:
-        parts = [str(d.get("group", "")), str(d.get("ability", "")), *parts]
+    if card:  # the heading has the ability, or (when there is none) the price
+        parts = [_weight_words(d)] if not d.get("ability") else [cost, _weight_words(d)]
+    else:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), cost, _weight_words(d)]
     return ", ".join(p for p in parts if p)
 
 
