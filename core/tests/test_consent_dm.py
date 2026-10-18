@@ -1255,3 +1255,19 @@ class ConsentDMTests(DatabaseTest):
         args = call.followup.send.await_args
         assert "You said yes on <t:" in args.args[0]
         assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:menu:1:-"]
+
+
+def test_no_text_in_the_bot_or_the_website_still_calls_the_menu_a_gear() -> None:
+    """A revert guard for #1966: the Menu is 🗂️, and ⚙️ belongs to Settings."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    found = [
+        str(path.relative_to(root))
+        for folder in ("core/src", "web/src")
+        for path in (root / folder).rglob("*")
+        if path.is_file()
+        and path.suffix in {".py", ".ts", ".astro", ".md"}
+        and "⚙️ Menu" in path.read_text(encoding="utf-8")
+    ]
+    assert found == []
