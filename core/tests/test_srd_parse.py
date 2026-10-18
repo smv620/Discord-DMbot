@@ -498,6 +498,12 @@ class Building(unittest.TestCase):
             say("Size: Medium (about 7–8 feet tall)", TITLE, 21),
             say("Speed: 35 feet", TITLE, 21),
             say("As a Goliath, you have these special traits.", BODY, 21),
+            # the three tables the chapter's species have (named in origins.SPECIES_TABLES)
+            *[
+                line
+                for table in ("Draconic Ancestors", "Elven Lineages", "Fiendish Legacies")
+                for line in (say(table, TITLE, 21), say("Some cells", "GillSans", 21))
+            ],
         ]
         feats = [
             say("Feats", TITLE, 21),
