@@ -18,6 +18,7 @@ no() {
   exit 0
 }
 
+# These names are the jobs' `name:` in .github/workflows/ci.yml; test-ci-already-green.sh checks they match.
 need=("scripts (server helpers)" "docker images")
 [ "${NEED_CORE:-}" = "false" ] || need+=("core (Python)")
 [ "${NEED_EARS:-}" = "false" ] || need+=("ears (Node voice service)")

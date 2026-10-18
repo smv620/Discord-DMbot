@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: read  # the 'changes' job asks whether this commit already has a green run (#1984)
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,6 +19,9 @@ jobs:
   # does any push this job cannot work out (the jobs below also run if this one fails).
   changes:
     name: changes (which jobs to run)
+    permissions:
+      contents: read
+      actions: read  # asks whether this commit already has a green run (#1984); no other job gets it
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     timeout-minutes: 5
     outputs:
@@ -51,6 +53,8 @@ jobs:
           if grep -q '^done=true' /tmp/reuse.txt; then
             run=$(sed -n 's/^run=//p' /tmp/reuse.txt)
             echo "::notice title=CI skipped::This commit already passed CI in run ${run}; nothing changed, so nothing is run again."
+          elif ! grep -q '^done=false' /tmp/reuse.txt; then
+            echo "::warning title=CI skip check::The 'already green?' check gave no answer; everything runs."
           fi
 
   ears:

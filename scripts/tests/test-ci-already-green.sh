@@ -52,5 +52,13 @@ check "any one earlier run that covers it" "done=true" NEED_EARS=false
 rm -f "$tmp/runs.json"
 check "no answer from GitHub" "done=false" NEED_EARS=false
 
+workflow=$here/../../.github/workflows/ci.yml
+for name in "scripts (server helpers)" "docker images" "core (Python)" "ears (Node voice service)" "web (customer website)"; do
+  if ! grep -qF "name: $name" "$workflow" || ! grep -qF "\"$name\"" "$script"; then
+    echo "FAIL job name '$name' differs between ci.yml and ci-already-green.sh"
+    fails=$((fails + 1))
+  fi
+done
+
 [ "$fails" -eq 0 ] && echo "ci-already-green: all checks passed"
 exit "$fails"
