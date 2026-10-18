@@ -5,6 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
+import { initiativeLine, peopleListLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   keepAfterStopPaying,
@@ -114,6 +115,13 @@ import {
       press ⚙️ Menu, then Stop recording me, DMbot forgets the names it picked up about you. Names
       your game master typed in themselves stay.
     </li>
+    {
+      initiativeLine.live && (
+        <li>
+          <strong>{initiativeLine.lead}</strong> {initiativeLine.text}
+        </li>
+      )
+    }
     <li>
       <strong>Deleting transcripts.</strong> Anyone who said yes can delete every line they said
       in a server, from every past game: press ⚙️ Menu in DMbot's private message to you, then
@@ -173,6 +181,13 @@ import {
       game masters; players who choose to peek (the usual setting, with a spoiler warning first);
       or everyone in the server. When a player peeks, the game masters can see who peeked.
     </li>
+    {
+      peopleListLine.live && (
+        <li>
+          <strong>{peopleListLine.lead}</strong> {peopleListLine.text}
+        </li>
+      )
+    }
     <li>
       <strong>Backups</strong> of a paid campaign hold the campaign, including the game master's
       secrets, but not what was said, and anyone in the server may download one. This keeps a
