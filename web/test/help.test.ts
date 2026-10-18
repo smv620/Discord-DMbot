@@ -10,7 +10,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -373,6 +373,16 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("press Not now to skip it, or Undo to put it back. Players never see it.");
     expect(words).toContain("only if you agreed to recording");
     expect(words).toContain("It is off unless the person who runs your DMbot turns it on.");
+  });
+
+  it("holds the What's switched on step and snag with their held What's new entry (#1841)", () => {
+    expect(held.map((h) => h.title).includes("See what's switched on")).toBe(!WHATS_ON_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Wondering if something new is on yet?")).toBe(WHATS_ON_LIVE);
+    expect(snags.some((x) => x.text.includes("What's switched on"))).toBe(WHATS_ON_LIVE);
+    const words = whatsOnSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("Only you see the answer.");
+    for (const step of whatsOnSteps) expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
   });
 
   it("holds the deeds and where-are-we steps with their held What's new entries (#1754)", () => {
