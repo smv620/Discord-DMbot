@@ -7,8 +7,15 @@ const unescape = (s) => s.replace(/\\(["'\\])/g, "$1");
 export function labelsInPython(text) {
   const found = [];
   // Plain strings only: a label built with an f-string is filled in at run time and can't be read here.
-  const constant = /^[ \t]*(?:[A-Z][A-Z0-9_]*_)?(?:LABEL|BUTTON)\s*(?::[^=\n]+)?=\s*\(?\s*"((?:[^"\\\n]|\\.)*)"/gm;
-  for (const m of text.matchAll(constant)) found.push(unescape(m[1]));
+  // The one exception is an f-string that only fills in whole-number constants from the same file
+  // (the consent button's age), which is worked out here so the owner's checks can name it.
+  const numbers = new Map([...text.matchAll(/^([A-Z][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*(\d+)[ \t]*(?:#.*)?$/gm)].map((m) => [m[1], m[2]]));
+  const constant = /^[ \t]*(?:[A-Z][A-Z0-9_]*_)?(?:LABEL|BUTTON)\s*(?::[^=\n]+)?=\s*\(?\s*(f?)"((?:[^"\\\n]|\\.)*)"/gm;
+  for (const m of text.matchAll(constant)) {
+    const filled = m[1] ? m[2].replace(/\{([A-Z][A-Z0-9_]*)\}/g, (all, name) => numbers.get(name) ?? all) : m[2];
+    // A name that isn't a same-file number stays in braces: skip it rather than invent a label.
+    if (!m[1] || !/[{}]/.test(filled)) found.push(unescape(filled));
+  }
   // `label="A" if x else "B"` names two buttons, so take every string on the label's line.
   for (const m of text.matchAll(/\blabel=([^\n]*)/g)) {
     for (const q of m[1].matchAll(/(?<![\w])"((?:[^"\\\n]|\\.)*)"/g)) found.push(unescape(q[1]));
@@ -29,6 +36,11 @@ export function plain(s) {
 // "then" is here because steps read "press X, then Y": Y is a button too. The capture sits in a
 // lookahead so one phrase doesn't swallow the "then" that follows it.
 const trigger = /\b(?:[Pp]ress|[Tt]ap|[Cc]hoose|[Pp]ick|then)\s+(?=((?:[\p{Extended_Pictographic}\uFE0F\u200D]\s*)*[A-Z][^"\n]*))/gu;
+
+/** Markdown bold and code marks around a label are decoration, so a bold "**Helped**" reads as "Helped". */
+export function unmark(text) {
+  return text.replace(/\*\*|`/g, "");
+}
 
 /** Every phrase the text presents as a button, with the words that follow it for matching. */
 export function buttonPhrases(text) {
@@ -100,6 +112,8 @@ export const hiddenBotLabels = [
   { label: "Rules only", file: "ui/shared_rules_defs.py" },
   { label: "Turn FightBot off", file: "ui/sheets.py" },
   { label: "Off", file: "dm_screen/story_mode.py" },
+  { label: "Watch the story", file: "dm_screen/story_mode.py" },
+  { label: "Helped them", file: "memory/standing.py" },
   { label: "Secret: no", file: "ui/name_card.py" },
   { label: "Due soon", file: "memory/threads.py" },
   { label: "Post to the table", file: "ui/recap_dm.py" },

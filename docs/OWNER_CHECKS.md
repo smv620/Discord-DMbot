@@ -89,8 +89,8 @@ can see it.
 Unlocks: #1655
 
 ### 6. Recording a deed
-**You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick Captain
-Rook and **Helped**, and press ✅ Record it.
+**You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick the person (Captain
+Rook) and **Helped them**, and press ✅ Record it.
 
 **It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
@@ -130,8 +130,8 @@ Unlocks: #1738
 
 ### 10. Shared story: watching your adventure
 **You'll do:**
-1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and press "I have the
-   right".
+1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and
+   press **I have the right**.
 2. Press 📖 Give your adventure, then Give a file, and pick a short made-up text file you wrote yourself.
    Then press 📖 Read it now and Yes, read it.
 3. Link one name to the adventure (open its card, press 📖 In my adventure…). Play a little.
