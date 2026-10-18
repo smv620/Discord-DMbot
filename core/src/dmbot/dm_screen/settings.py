@@ -45,11 +45,11 @@ from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
+from dmbot.mentions import NO_PINGS
 from dmbot.transcript.keep import KEEP_LABELS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 SETTINGS_LABEL = "Settings"
 RULE_LOOKUP_LABEL = "Look up a rule"

@@ -31,10 +31,10 @@ import discord
 from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, ConsentMethod
 from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, UNDER_LINE
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _GUILD = r"(?P<guild>[0-9]{1,20})"
 _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 

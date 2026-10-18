@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot import retention_channels as rc
+from dmbot.mentions import NO_PINGS
 
 GUILD, OTHER_GUILD, ME, SOMEONE = 11, 12, 99, 5
 SCREEN, GAMETIME, TRANSCRIPT, CHAT = 101, 102, 103, 104
@@ -97,7 +98,7 @@ class Retire(unittest.IsolatedAsyncioTestCase):
             (call,) = chans[cid].send.await_args_list
             self.assertIn("This campaign was deleted on <t:1700000000:D>", call.args[0])
             self.assertIn("A server admin can delete it.", call.args[0])
-            self.assertIs(call.kwargs["allowed_mentions"], rc.NO_PINGS)  # nobody is pinged
+            self.assertIs(call.kwargs["allowed_mentions"], NO_PINGS)  # nobody is pinged
 
     async def test_dmbots_own_buttons_go_and_other_peoples_messages_are_untouched(self) -> None:
         mine_pinned = message(ME, True, 1)

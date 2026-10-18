@@ -31,6 +31,7 @@ import discord
 
 from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_voice
 from dmbot.sidebar import guide_phrase, memo, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
@@ -54,7 +55,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 MAX_TYPED_CHARS = 500
 ANSWER_TIMEOUT_S = 25.0
 SCENE_SECONDS = 180.0
