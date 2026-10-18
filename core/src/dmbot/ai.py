@@ -25,6 +25,8 @@ from typing import Any, Protocol
 
 import aiohttp
 
+from dmbot.alerts import Problem, raise_alert
+
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -443,11 +445,13 @@ class AnthropicClient:
                         log.error("The AI service says the account is out of funds or at its limit")
                         if self._watch is not None:
                             self._watch.out_of_funds()
+                        raise_alert(Problem.AI_OUT_OF_FUNDS)
                         raise AIOutOfFunds(OUT_OF_FUNDS)
                     if can_refuse and _model_unavailable(resp.status, reason):
                         raise _ModelRefused(resp.status)
                     if resp.status in (401, 403):
                         log.error("The AI service refused the key (HTTP %s)", resp.status)
+                        raise_alert(Problem.AI_KEY_REFUSED)
                         raise AIError(
                             "The AI service didn't accept DMbot's key. Nothing was added. Ask "
                             "whoever runs DMbot to check its Anthropic key."

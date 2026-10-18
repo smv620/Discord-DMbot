@@ -78,6 +78,24 @@ settings:
 Then the owner saves the key with `scripts/set-key` (dev1 never reads `.env`), and dev1 restarts
 and sends one test email.
 
+### C. Owner alerts (#1907)
+When the AI service is out of credit or refuses its key, Deepgram refuses its key or has not answered
+for 10 minutes, Stripe refuses its key, the mail service fails, or the database can't be reached at
+start-up, DMbot sends the owner one short email with one fixed sentence and what to check. It sends
+at most one per problem per hour and at most 5 a day from each of the bot and the website (10 slots
+that `mail.py` keeps back from other mail under `MAIL_DAILY_CAP`, which must be above 10). The counts
+are kept in memory, so a restart starts them again. When mail itself is what failed, the owner gets a
+private Discord message instead, at most once an hour. **Known limit:** the website has no Discord
+login, so a mail failure seen there is only logged; the bot's own failures and every other problem
+are told as above. A mistyped address (the mail service refusing one recipient) is not a failure.
+The sentences never hold a key, a ticket or a player's words.
+
+| Setting | Value |
+|---|---|
+| `OWNER_ALERT_EMAIL` | the owner's private address, set in the server's `.env` at the terminal only. Empty: no alert emails, and the log says so once. |
+| `MAIL_ALERTS_REPLY_TO` | optional Reply-To on alerts (for example an ops address). Empty: none. |
+| `MAIL_ALERTS_FROM` | the From on alerts (jarvis@). Never `admin@getdmbot.com`: DMbot refuses it for every From setting (#1425). |
+
 ## Rules
 - No key, password or private inbox address goes in this repository, an issue or a chat.
 - Each use gets its own Resend key (Gmail replies; DMbot's server), so one can be revoked

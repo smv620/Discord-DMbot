@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
-from dmbot import entitlements, mail
+from dmbot import alerts, entitlements, mail
 from dmbot.ai import DEFAULT_MODELS, AIModelTier, AnthropicClient, Feature
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
@@ -125,6 +125,11 @@ async def serve(settings: WebSettings) -> None:
     # A small pool of its own, and no query may run longer than 5 seconds: a busy website
     # can never hold many of the database's connections for long. It never changes the
     # schema (its role, dmbot_web, can't): the bot does, so it only checks it's current.
+    # Owner alerts (#1907) by email: the website has no Discord login, so a mail failure is
+    # only logged here (the bot's own process sends the private message).
+    alerter = alerts.Alerter(settings.mail)
+    alerts.install(alerter)
+    alerter.say_if_off()
     db = await Database.open(
         settings.database_url,
         options="-c statement_timeout=5000",
