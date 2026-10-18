@@ -39,16 +39,6 @@ RARITIES = re.compile(rf"^(?:Rarity Varies|{_RARITY}(?:(?:, or |, | or ){_RARITY
 CATEGORY = re.compile(r"^(?P<category>[^(,]+?)(?: \((?P<subtype>[^)]*)\))?, (?P<rarity>.+)$")
 
 
-class ItemMender(Mender):
-    """The Mender, and a hyphen after a number stays: "30-" / "foot" is "30-foot", not "30foot".
-    (The shared Mender still joins those as one word in the spells and the creatures: #1914.)"""
-
-    def join(self, left: str, right: str) -> str:
-        if left[:-1].rstrip()[-1:].isdigit() and right[:1].isalpha():
-            return f"{left[:-1].rstrip()}-{right}"
-        return super().join(left, right)
-
-
 @dataclass(frozen=True, slots=True)
 class Item:
     name: str
@@ -128,7 +118,7 @@ def parse_type(name: str, text: str, page: int) -> tuple[str, str, str, bool, st
 
 def parse_items(lines: Sequence[Line]) -> list[Item]:
     """Every item in the lines of the Magic Items A to Z chapter, after its introduction."""
-    mender = ItemMender(lines)
+    mender = Mender(lines)
     items: list[Item] = []
     seen: set[str] = set()
     i = 0
