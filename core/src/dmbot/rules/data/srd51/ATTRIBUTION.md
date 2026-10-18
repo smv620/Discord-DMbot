@@ -28,7 +28,6 @@ Tables inside a spell or condition are kept as plain lines of text, one line for
 The PDF's text layer has lost a few words and letters altogether, and two defects are left in the files, neither corrected by hand (the files hold what the PDF holds):
 
 - Animal Friendship's “At Higher Levels” line reads “one additional beast t level above 1st”, a word lost for good;
-- Find Traps reads “specific ally” for “specifically”: the PDF has the word too rarely for the tool to be sure it is a cut one.
 
 Where a spell's or creature's wording matters, check it against the SRD 5.1 itself. A few plain words (“attacked”, “defends”, “dread”, “dimly”, “lit”, “bed”, “linen”, “strip”, “ideas”) are listed in the tool as known words, because neither the 5.2.1 data nor this PDF spells them out often enough for the cut-word reading to know them.
 
@@ -38,6 +37,7 @@ The `document` block of each file records the SHA-256 of the 5.2.1 data files wh
 
 Download the PDF into a folder of its own (it is not kept in this repository), then, from `core/`:
 
+    pip install -e ".[srd]"
     python -m dmbot.devtools.srd PATH/TO/SRD_CC_v5.1.pdf
 
 The same PDF always gives the same files, so running the tool on the PDF and seeing no change (`git diff`) is how to check them. The tool recognizes which of the two SRDs it was given, and stops with a message rather than guessing when the layout is not what it expects.

@@ -34,6 +34,9 @@ whisper = [
 # The session twin (python -m dmbot.devtools.replay, #299) reading m4a/mp3 recordings:
 # PyAV is a normal dependency now (the DM sidebar reads voice messages), so this adds nothing.
 twin = []
+# Rebuilding the SRD data files (python -m dmbot.devtools.srd, #1892): pypdfium2 reads the PDF's
+# text in full; pypdf and pdfminer.six leave parts of it out. Never needed to run the bot.
+srd = ["pypdfium2>=4.30"]
 dev = [
     "numpy>=1.26",
     "pytest>=8",
@@ -71,7 +74,7 @@ files = ["src", "tests"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["dotenv", "faster_whisper", "av"]
+module = ["dotenv", "faster_whisper", "av", "pypdfium2", "pypdfium2.raw"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
