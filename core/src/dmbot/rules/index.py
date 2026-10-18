@@ -66,11 +66,16 @@ ITEM = "item"  # a magic item ("Bag of Holding", "Cloak of Protection")
 FEAT = "feat"  # a feat ("Alert", "Lucky")
 SPECIES = "species"  # a character species ("Goliath")
 BACKGROUND = "background"  # a character background ("Sage")
-# All six are found only when asked for: their names are everyday words ("Action", "Damage",
-# "Rope of Climbing", "Alert", "Sage") or shared by classes ("Extra Attack"), so the name pool the
-# live cards, the list and "did you mean" read from leaves them out.
-ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND})
+WEAPON = "weapon"  # a weapon of the Weapons table ("Longsword")
+ARMOR = "armor"  # an armor of the Armor table, and the Shield ("Plate Armor")
+# All eight are found only when asked for: their names are everyday words ("Action", "Damage",
+# "Rope of Climbing", "Alert", "Sage", "Club"), so the name pool the live cards, the list and "did
+# you mean" read from leaves them out.
+ASKED_FOR = frozenset({RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR})
 ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
+EQUIPMENT_KINDS = (WEAPON, ARMOR)  # and then these (#1919)
+# The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
+NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS)
 # The SRD 5.2.1's twelve classes: a class in a question picks that class's feature (#1900).
 CLASS_NAMES = (
     *("Barbarian", "Bard", "Cleric", "Druid", "Fighter", "Monk"),
@@ -485,6 +490,8 @@ def srd() -> Index:
         (FEAT, "feats"),
         (SPECIES, "species"),
         (BACKGROUND, "backgrounds"),
+        (WEAPON, "weapons"),
+        (ARMOR, "armor"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)

@@ -50,6 +50,8 @@ KIND_WORDS = {
     "feat": "feat",
     "species": "species",
     "background": "background",
+    "weapon": "weapon",
+    "armor": "armor",
 }
 
 
@@ -225,7 +227,10 @@ def header(
         kind = f"{kind}: {_md(feature_place(entry))}"
     elif entry.kind == index.ITEM:  # "(item: Wondrous Item, uncommon)"
         kind = f"{kind}: {_md(item_place(entry))}"
-    elif entry.kind == index.FEAT:  # "(feat: Origin)"
+    elif (
+        entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category") != entry.name
+    ):  # "(feat: Origin)", "(weapon: Martial Melee)"
         kind = f"{kind}: {_md(str(entry.details.get('category', '')))}"
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
@@ -463,9 +468,15 @@ def choice_label(entry: Entry) -> str:
     kind = KIND_WORDS.get(entry.kind, entry.kind)
     if entry.kind == index.FEATURE:  # "Evasion (feature: Rogue 7)": the class tells two apart
         kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
-    if entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
+    if entry.details.get("tag"):  # "Topple (rule: Mastery Property)"
+        if entry.details["tag"] not in entry.name:  # (not "Reach (Weapon Property) (rule: ...)")
+            kind = f"{kind}: {entry.details['tag']}"
+    elif entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
         kind = f"{kind}: {item_place(entry)}"
-    elif entry.kind == index.FEAT:  # "Alert (feat: Origin)"
+    elif (
+        entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category") != entry.name  # (a Shield is not "armor: Shield")
+    ):  # "Longsword (weapon: Martial Melee)"
         kind = f"{kind}: {entry.details.get('category', '')}"
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"

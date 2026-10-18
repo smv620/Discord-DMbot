@@ -129,7 +129,9 @@ async def _homebrew(
         return None
 
 
-_KIND_SUFFIX = re.compile(r"^(?P<name>.+) \((?P<kind>feat|species|background|creature)\)$")
+_KIND_SUFFIX = re.compile(
+    r"^(?P<name>.+) \((?P<kind>rule|item|feat|species|background|weapon|armor|creature)\)$"
+)
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
 
 
@@ -159,7 +161,7 @@ def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> inde
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
-    for kind in (index.ITEM, *index.ORIGIN_KINDS):
+    for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS):
         hit = srd.lookup(typed, target, fallback, kind=kind)
         if hit is not None:
             return hit
@@ -479,16 +481,20 @@ async def _typeahead(
             current,
             target,
             fallback,
-            kinds=(index.RULE, index.FEATURE, index.ITEM, *index.ORIGIN_KINDS),
+            kinds=(
+                index.RULE,
+                index.FEATURE,
+                index.ITEM,
+                *index.ORIGIN_KINDS,
+                *index.EQUIPMENT_KINDS,
+            ),
             limit=NAMES_MORE,
         )
     # A feat, species or background that is also a creature's name ("Acolyte", "Orc") is offered
     # beside the creature, so it can be picked (#1913).
     key = index.normalize(current)
     if found and key and len(found) < NAMES_MORE:
-        same = srd.asked_names(
-            current, target, fallback, kinds=index.ORIGIN_KINDS, limit=NAMES_MORE
-        )
+        same = srd.asked_names(current, target, fallback, kinds=index.NAMED_KINDS, limit=NAMES_MORE)
         found = [*found, *(e for e in same if index.normalize(e.name) == key and e not in found)]
     return [
         app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
@@ -500,12 +506,18 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     """What is typed into the box when a name is picked. A feature several classes share is
     picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
     Brutal Strike") with its level after, which `_features` reads back."""
-    if entry.kind in index.ORIGIN_KINDS and srd.lookup(entry.name, entry.edition) is not None:
+    if entry.kind in index.NAMED_KINDS and (
+        srd.lookup(entry.name, entry.edition) is not None
+        or (
+            entry.kind != index.RULE  # a feat shares its name with a class feature
+            and srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE)
+        )
+    ):
         return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
     if entry.kind == "monster" and any(
         srd.lookup(entry.name, edition, kind=kind) is not None
         for edition in ("2024", "2014")
-        for kind in index.ORIGIN_KINDS
+        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS)
     ):
         return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
     if entry.kind != index.FEATURE:
