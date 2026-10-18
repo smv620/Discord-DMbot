@@ -12,8 +12,9 @@ Built on the session harness in `test_sessions.py` (a real DMBot, a real consent
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import tests.test_sessions as ts
 from dmbot.transcript import left_out, speaker_ai
@@ -163,3 +164,106 @@ class PuttingLinesBack(Refusals):
         answer = await self.bot.put_back(GUILD, run.id, DM)
         self.assertIn("Put back 1", answer)
         self.assertIn("my boss called again", posted.edit.await_args.kwargs["content"])
+
+
+class NameQuestions(Refusals):
+    """ "Did they mean…?" (#296, #503): the DM is asked, and the answer is written, only while the
+    speaker is recorded; a Stop takes their words down."""
+
+    async def test_the_type_it_form_does_not_open_for_a_stopped_speaker(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        self.assertEqual(self.bot.can_type_answer(GUILD, asked.id, DM), (None, asked.heard))
+        self.stop(PLAYER)
+        self.assertEqual(
+            self.bot.can_type_answer(GUILD, asked.id, DM), (ts.name_questions.GONE, "")
+        )  # their words are not shown again
+
+    async def test_the_unanswered_line_shows_no_words_of_a_stopped_speaker(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        self.assertIn(asked.heard, self.bot._not_answered(table, asked))
+        self.stop(PLAYER)
+        self.assertEqual(self.bot._not_answered(table, asked), ts.name_questions.GONE)
+
+    async def test_a_question_is_not_posted_after_its_speaker_stops(self) -> None:
+        table, _, posted, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        table.questions.close(ts.name_questions.EXPIRED, 0.0)
+        posted.reset_mock()
+        self.stop(PLAYER)
+        table.questions.open = asked  # as if it were still waiting to be posted
+        await self.bot._ask_dm(table, asked)
+        posted.assert_not_awaited()
+        self.assertIsNone(table.questions.open)
+
+    async def test_an_answer_about_a_stopped_speaker_writes_nothing(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        self.stop(PLAYER)
+        text, done, undo = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual((text, done, undo), (ts.name_questions.GONE, True, None))
+        memory.add_correction.assert_not_awaited()
+
+    async def test_a_stop_while_the_answer_is_saved_fixes_no_line(self) -> None:
+        table, _, _, memory = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+
+        async def save_then_stop(*_: Any, **__: Any) -> Any:
+            self.stop(PLAYER)  # they press Stop while the answer is being saved
+            return MagicMock(batch=41)
+
+        memory.add_correction = AsyncMock(side_effect=save_then_stop)
+        fixed = AsyncMock()
+        self.bot._fix_asked_line = fixed  # type: ignore[method-assign]
+        text, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertEqual((text, done), (ts.name_questions.GONE, True))
+        fixed.assert_not_awaited()  # their line is not rewritten
+
+    async def test_the_same_answer_for_someone_recorded_fixes_the_line(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        fixed = AsyncMock(return_value=True)
+        self.bot._fix_asked_line = fixed  # type: ignore[method-assign]
+        _, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
+        self.assertTrue(done)
+        fixed.assert_awaited_once()
+
+    async def test_earlier_lines_are_not_fixed_for_a_stopped_speaker(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        rewrite = AsyncMock(return_value=True)
+        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        self.stop(PLAYER)
+        changed = await self.bot._fix_earlier_lines(table, asked, "Maren", None)
+        self.assertEqual(changed, 0)
+        rewrite.assert_not_awaited()
+
+    async def test_an_earlier_line_of_someone_who_stops_meanwhile_is_not_rewritten(self) -> None:
+        table, _, _, _ = await self.asked_about_marin()
+        asked = table.questions.open
+        assert asked is not None
+        other = ts.OTHER_PERSON
+        await self.consent.grant(GUILD, other)
+        self.said(table, "then Marin speaks again", user=other, at_ms=9_000)
+        item = SimpleNamespace(
+            speaker=other, started_ms=9_000, heard="then Marin speaks", edits=[(5, 10, "Maren")]
+        )
+
+        def plan(*_: Any, **__: Any) -> list[Any]:
+            self.stop(other)  # a Stop arrives while the lines are being worked out
+            return [item]
+
+        rewrite = AsyncMock(return_value=True)
+        self.bot._rewrite_line = rewrite  # type: ignore[method-assign]
+        with patch("dmbot.bot.refix.plan", plan):
+            changed = await self.bot._fix_earlier_lines(table, asked, "Maren", None)
+        self.assertEqual(changed, 0)
+        rewrite.assert_not_awaited()
