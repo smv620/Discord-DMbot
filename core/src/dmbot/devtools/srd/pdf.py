@@ -155,13 +155,11 @@ SOFT_HYPHEN = (
 def pieces_of(chars: Iterable[Char]) -> list[Piece]:
     """The pieces of one page, from its characters in the order the PDF draws them. A piece is
     a run in one font on one line, as the parsers expect (they were written for it). Two things
-    the PDF leaves out are put back: the space between pieces that sit apart, and the leading
-    space of a paragraph's first line (its indent), which the parsers use to find paragraphs."""
+    the PDF leaves out are put back: the space between pieces that sit apart, and a space the
+    reader made up at a line's start (see `mark_paragraphs` for what it means)."""
     pieces: list[Piece] = []
     current: list[Any] | None = None  # x, y, font, text, x of its last character
-    lead = ""  # an indent seen before the next piece's first character
-    at_line_start = True
-    in_lead_in = False  # the line at the column's edge began with a bold-italic lead-in
+    lead = ""  # a space seen before the next piece's first character
     previous_right = 0.0
 
     def close(ending: str = "") -> None:
@@ -182,13 +180,13 @@ def pieces_of(chars: Iterable[Char]) -> list[Piece]:
         text = "-" if char.text == SOFT_HYPHEN else char.text
         if text in ("\r", "\n"):
             close("\n")
-            lead, at_line_start = "", True
+            lead = ""
             continue
         if not char.font:  # a space made up between two pieces
             if current is not None:
                 current[3] += text
             elif text == " ":
-                lead = " "
+                lead = " "  # a space the PDF has at a line's start: the line begins a paragraph
             continue
         if (
             current is None
@@ -200,22 +198,6 @@ def pieces_of(chars: Iterable[Char]) -> list[Piece]:
             before = pieces[-1] if pieces else None
             current = [char.x, char.y, char.font, lead, char.x]
             lead = ""
-            if at_line_start:
-                at_edge = any(abs(char.left - edge) <= EDGE_SLACK for edge in COLUMN_EDGES)
-                if at_edge:
-                    in_lead_in = "BoldItalic" in char.font
-                elif (
-                    not in_lead_in
-                    and any(abs(char.left - edge - INDENT) <= INDENT_SLACK for edge in COLUMN_EDGES)
-                    and before is not None
-                    and (
-                        before.text.rstrip("\n").rstrip().endswith(SENTENCE_END)
-                        or "SemiBold" in before.font
-                        or "GillSans" in before.font
-                    )
-                ):
-                    current[3] = " "  # an indented first line starts a paragraph
-                at_line_start = False
             if (
                 before is not None
                 and abs(before.y - char.y) <= SAME_LINE / 2
@@ -238,6 +220,50 @@ def pieces_of(chars: Iterable[Char]) -> list[Piece]:
     return pieces
 
 
+def mark_paragraphs(
+    lines: list[Line], carried: tuple[bool, bool, bool] = (False, False, False)
+) -> tuple[bool, bool, bool]:
+    """Give each paragraph's first line its leading space and take it from lines that only
+    continue one, in reading order (the parsers find paragraphs by that space). The PDF draws
+    an indent as a gap, so it is read from where the line starts: 8 points in from a column's
+    edge. Such a line starts a paragraph when the line before it ended a sentence (or was a
+    heading or a table's); but in a hanging block, set with every line indented, or under a
+    bold-italic lead-in, a line indented 8 points only continues. `carried` is the state at the
+    end of the page before, since a block runs on across a column and a page; returns the same
+    for the end of this page. Only the lines' first pieces are changed."""
+    after_indent, in_lead_in, previous_ends = carried
+    for line in lines:
+        first = next((i for i, p in enumerate(line.pieces) if p.text.strip()), None)
+        if first is None:
+            continue
+        piece = line.pieces[first]
+        at_edge = any(abs(piece.x - edge) <= EDGE_SLACK for edge in COLUMN_EDGES)
+        indented = any(abs(piece.x - edge - INDENT) <= INDENT_SLACK for edge in COLUMN_EDGES)
+        text = piece.text
+        if at_edge:
+            in_lead_in = "BoldItalic" in piece.font
+        elif indented and after_indent:
+            text = text.lstrip(" ")  # inside a hanging block a leading space is no paragraph
+        elif indented and not in_lead_in and previous_ends:
+            text = " " + text.lstrip(" ")  # an indented first line starts a paragraph
+        if text != piece.text:
+            line.pieces[first] = Piece(piece.x, piece.y, piece.font, text)
+        after_indent = indented
+        previous_ends = _ends_a_paragraph(line)
+    return after_indent, in_lead_in, previous_ends
+
+
+def _ends_a_paragraph(line: Line) -> bool:
+    last = next((p for p in reversed(line.pieces) if p.text.strip()), None)
+    if last is None:
+        return False
+    return (
+        last.text.rstrip("\n").rstrip().endswith(SENTENCE_END)
+        or "SemiBold" in last.font
+        or "GillSans" in last.font
+    )
+
+
 def read_pages(path: str) -> list[list[Line]]:
     """Every page of the PDF at `path`, as lines in reading order. Read with pypdfium2 (the
     `srd` extra): pypdf, and pdfminer.six, each leave out parts of this PDF's text (the
@@ -253,6 +279,7 @@ def read_pages(path: str) -> list[list[Line]]:
     flags = ctypes.c_int()
     origin_x, origin_y = ctypes.c_double(), ctypes.c_double()
     pages: list[list[Line]] = []
+    state = (False, False, False)
     for number in range(len(document)):
         textpage = document[number].get_textpage()
         chars: list[Char] = []
@@ -267,5 +294,7 @@ def read_pages(path: str) -> list[list[Line]]:
             left, _bottom, right, _top = textpage.get_charbox(index)
             font = name.value.decode("latin1") if text not in "\r\n" else ""
             chars.append(Char(text, font, origin_x.value, origin_y.value, left, right))
-        pages.append(lines_of(pieces_of(chars), number + 1))
+        lines = lines_of(pieces_of(chars), number + 1)
+        state = mark_paragraphs(lines, state)
+        pages.append(lines)
     return pages

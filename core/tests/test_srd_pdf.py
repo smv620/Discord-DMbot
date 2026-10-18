@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 
 from dmbot.devtools.srd import monsters
-from dmbot.devtools.srd.pdf import Char, lines_of, pieces_of
+from dmbot.devtools.srd.pdf import Char, lines_of, mark_paragraphs, pieces_of
 from tests.test_srd_parse import BODY, BOLD_LEAD, TITLE
 
 LABEL = "GillSans-SemiBold-SC700"
@@ -120,11 +120,16 @@ class Spaces(unittest.TestCase):
         self.assertEqual(texts(chars), ["Con22"])
 
 
+def paragraphs(
+    chars: list[Char], carried: tuple[bool, bool, bool] = (False, False, False)
+) -> tuple[list[str], tuple[bool, bool, bool]]:
+    lines = lines_of(pieces_of(chars), 1)
+    state = mark_paragraphs(lines, carried)
+    return [line.text for line in lines], state
+
+
 class Paragraphs(unittest.TestCase):
     """The PDF draws a paragraph's indent as a gap; the parsers look for a leading space."""
-
-    def lines(self, chars: list[Char]) -> list[str]:
-        return texts(chars)
 
     def test_an_indented_first_line_after_a_sentence_gets_the_leading_space(self) -> None:
         chars = [
@@ -134,7 +139,9 @@ class Paragraphs(unittest.TestCase):
             *newline(488),
             *run("and goes on", BODY, 63, 476),
         ]
-        self.assertEqual(self.lines(chars), ["It ends here.", " A new one starts", "and goes on"])
+        self.assertEqual(
+            paragraphs(chars)[0], ["It ends here.", " A new one starts", "and goes on"]
+        )
 
     def test_a_line_indented_in_mid_sentence_does_not_start_a_paragraph(self) -> None:
         chars = [
@@ -142,7 +149,7 @@ class Paragraphs(unittest.TestCase):
             *newline(500),
             *run("make a save", BODY, 71, 488),
         ]
-        self.assertEqual(self.lines(chars), ["The target must", "make a save"])
+        self.assertEqual(paragraphs(chars)[0], ["The target must", "make a save"])
 
     def test_the_hanging_lines_under_a_bold_lead_in_do_not_start_paragraphs(self) -> None:
         chars = [
@@ -151,7 +158,9 @@ class Paragraphs(unittest.TestCase):
             *newline(500),
             *run("to 4d12 plus", BODY, 71, 488),
         ]
-        self.assertEqual(self.lines(chars), ["Healing Light. The target regains.", "to 4d12 plus"])
+        self.assertEqual(
+            paragraphs(chars)[0], ["Healing Light. The target regains.", "to 4d12 plus"]
+        )
 
     def test_the_right_column_has_its_own_edge(self) -> None:
         chars = [
@@ -159,7 +168,44 @@ class Paragraphs(unittest.TestCase):
             *newline(500),
             *run("A new one", BODY, 321.5, 488),
         ]
-        self.assertEqual(self.lines(chars), ["It ends here.", " A new one"])
+        self.assertEqual(paragraphs(chars)[0], ["It ends here.", " A new one"])
+
+    def test_a_hanging_block_runs_on_across_a_column_and_a_sentence_end(self) -> None:
+        # Wish (SRD 5.2.1 p. 175): every line of the block is drawn 8 points in; the left
+        # column ends "... from the game." and the right one goes on "Similarly, ...". The PDF
+        # has a space before "Similarly", but it is the same paragraph.
+        left = [
+            *run("when it is gone", BODY, 71, 500),
+            *newline(500),
+            *run("from the game.", BODY, 71, 488),
+        ]
+        right = [Char(" ", MADE_UP, 313.5, 734, 313.5, 313.5), *run("Similarly,", BODY, 321.5, 734)]
+        lines = lines_of(pieces_of(left + right), 1)
+        mark_paragraphs(lines, (False, False, False))
+        self.assertEqual([line.text for line in lines][-1], "Similarly,")
+
+    def test_a_hanging_block_runs_on_across_a_page(self) -> None:
+        # Antipathy/Sympathy (p. 109 to 110): the page before ends on an indented line, and the
+        # next page begins "Wisdom saving throw" with a space glyph, mid-sentence.
+        chars = [Char(" ", BODY, 71, 734, 71, 73), *run("Wisdom saving", BODY, 73, 734)]
+        text, _ = paragraphs(chars, carried=(True, False, False))
+        self.assertEqual(text, ["Wisdom saving"])
+
+    def test_a_page_that_starts_a_paragraph_keeps_its_indent(self) -> None:
+        # Gate and Dimension Door: a page that follows a sentence end, in a block that is not
+        # hanging, starts a paragraph at its first indented line.
+        chars = [*run("If you, the other", BODY, 71, 734)]
+        text, _ = paragraphs(chars, carried=(False, False, True))
+        self.assertEqual(text, [" If you, the other"])
+
+    def test_an_indent_after_a_heading_or_a_table_row_starts_a_paragraph(self) -> None:
+        for font in (TITLE, SANS):
+            chars = [
+                *run("Cantrip", font, 63, 500),
+                *newline(500),
+                *run("A new one", BODY, 71, 488),
+            ]
+            self.assertEqual(paragraphs(chars)[0][1], " A new one", font)
 
 
 class Hyphens(unittest.TestCase):
