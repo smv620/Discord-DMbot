@@ -276,7 +276,7 @@ def reachable_names(cls: type, depth: int = 3) -> set[str]:
                 target = getattr(module, name, None)
                 if inspect.isfunction(target) and (
                     target.__module__.startswith("dmbot")
-                    or target.__module__ == function.__module__  # type: ignore[attr-defined]
+                    or target.__module__ == function.__module__
                 ):
                     todo.append((target, left - 1))
     return found
