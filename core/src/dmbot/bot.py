@@ -30,6 +30,7 @@ from discord.ext import commands
 from dmbot import (
     campaign_cap,
     entitlements,
+    features,
     fightbot,
     hours,
     install,
@@ -160,6 +161,7 @@ from dmbot.dm_screen.rules_channel import (
 from dmbot.dm_screen.rules_channel import forget_campaign as rules_forget_campaign
 from dmbot.dm_screen.rules_channel import prune_locks as rules_prune_locks
 from dmbot.dm_screen.settings import (
+    FeaturesButton,
     HomebrewButton,
     HouseFileButton,
     InviteButton,
@@ -1164,6 +1166,7 @@ class DMBot(commands.AutoShardedBot):
         # list of names, which Discord gives 3 seconds) then finds them ready (#908). Broken
         # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
+        log.info(features.features_line(self.settings))  # what is switched on (#1831)
         # DMbot's knowledge of itself (#1195): read its documents now, not on the first question.
         await asyncio.to_thread(knowledge.load)
         register_commands(self.tree)
@@ -1249,6 +1252,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(house_voice_screen.HouseVoiceButton)  # house rules said aloud (#953)
         # A player's 📜 My character sheet, in their private messages (#723).
         self.add_dynamic_items(MySheetButton, OpenCardButton)  # #723, #1119
+        self.add_dynamic_items(FeaturesButton)  # what is switched on (#1831)
         await self._sync_commands()
         await self.ears.start()
         self._background = [
