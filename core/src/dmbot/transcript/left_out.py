@@ -21,11 +21,11 @@ import secrets
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.transcript.topics import Waiting
 
 SHOWN = 10  # runs in the message (the newest); older ones can't be put back here
 WORDS_MAX = 60  # the first words shown for a run
-MESSAGE_MAX = 2000  # Discord's limit for one message
 HEADER = (
     "🙈 **Left out as off-topic**: kept out of the cleaned transcript. Game talk? Press "
     "its Put it back."
@@ -161,4 +161,4 @@ def message_text(
     while kept > 1 and len(HEADER) + sum(len(x) + 1 for x in lines[-kept:]) > MESSAGE_MAX:
         kept -= 1
     shown = runs[-(kept - len(footer)) :] if kept > len(footer) else []
-    return "\n".join([HEADER, *lines[-kept:]])[:MESSAGE_MAX], shown
+    return fit_message("\n".join([HEADER, *lines[-kept:]])), shown

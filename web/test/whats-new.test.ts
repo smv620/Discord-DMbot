@@ -61,6 +61,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "See what's switched on", // until dev1 deploys it and the owner's live check (#1831)
       "Find Settings more easily", // until the owner's live check (#1619)
       "Split the party", // until the owner's live check (#1607)
       "Delete a whole campaign", // until the owner's live check (#1608)

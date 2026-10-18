@@ -74,6 +74,9 @@ CI runs all of the above on every pull request. Never merge red CI.
   may merge up to four approved PRs back to back when one CI run is green on a single branch
   of `development` plus all of them merged in the planned order, and each PR's own patch is
   unchanged. That run is the "CI on the combination". If it fails, merge one at a time again.
+  RepoManager pushes that branch itself as `batch/<date>-<n>` (Supervisor, 2026-10-18: the rule
+  had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
+  only carries the CI run, and the PRs then merge as themselves.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
   only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check

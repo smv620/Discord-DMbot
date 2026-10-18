@@ -343,7 +343,7 @@ class WhatTheTableReads(unittest.TestCase):
     def test_long_text_is_cut_into_messages_discord_accepts(self) -> None:
         parts = post.parts_of(("word " * 100 + "\n") * 12 + "x" * 4000)
         self.assertGreater(len(parts), 3)
-        self.assertTrue(all(len(p) <= post.MESSAGE_MAX for p in parts))
+        self.assertTrue(all(len(p) <= post.PART_MAX for p in parts))
 
 
 class TheLinkAndTheEmail(unittest.TestCase):
