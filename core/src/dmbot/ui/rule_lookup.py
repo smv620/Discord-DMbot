@@ -130,7 +130,9 @@ async def _homebrew(
 
 
 _KIND_SUFFIX = re.compile(
-    r"^(?P<name>.+) \((?P<kind>rule|item|feat|species|background|weapon|armor|creature)\)$"
+    r"^(?P<name>.+) \((?P<kind>"
+    r"rule|item|feat|species|background|weapon|armor|gear|tool|creature"
+    r")\)$"
 )
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
 
@@ -508,6 +510,11 @@ def _choice_value(srd: index.Index, entry: index.Entry) -> str:
     Brutal Strike") with its level after, which `_features` reads back."""
     if entry.kind in index.NAMED_KINDS and (
         srd.lookup(entry.name, entry.edition) is not None
+        or any(  # a gear entry and a magic item can share a name ("Spell Scroll"): #1927
+            srd.lookup(entry.name, entry.edition, kind=kind) is not None
+            for kind in index.NAMED_KINDS
+            if kind != entry.kind
+        )
         or (
             entry.kind != index.RULE  # a feat shares its name with a class feature
             and srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE)

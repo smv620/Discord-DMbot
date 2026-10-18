@@ -15,6 +15,8 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dmbot.rules.index import Entry
 
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd"}
@@ -83,6 +85,36 @@ def armor_line(entry: Entry) -> str:
     if str(d.get("stealth", "—")) != "—":
         parts.append(f"{d['stealth']} on Stealth")
     return ", ".join(parts)
+
+
+def _weight_words(d: Mapping[str, object]) -> str:
+    """ "3 lb.", or "weight varies"; nothing for a dash (it has none to say)."""
+    weight = str(d.get("weight", ""))
+    return "weight varies" if weight == "Varies" else "" if weight in ("", "—") else weight
+
+
+def gear_line(entry: Entry, *, card: bool) -> str:
+    """ "Adventuring Gear, 5 GP, 3 lb." for the AI. On the card the heading has the price, so only
+    the weight is left ("3 lb."); a mount's or a vehicle's words (its capacity, its weight, its
+    speed) are the entry's text, which the card shows, so it has no line."""
+    d = entry.details
+    weight = _weight_words(d)
+    if card:
+        return weight if d.get("group") == "Adventuring Gear" else ""
+    cost = str(d.get("cost", ""))
+    return ", ".join(p for p in (str(d.get("group", "")), cost, weight) if p)
+
+
+def tool_line(entry: Entry, *, card: bool) -> str:
+    """ "Other Tools, Dexterity, 25 GP, 1 lb." for the AI; "25 GP, 1 lb." on the card, whose
+    heading has the ability."""
+    d = entry.details
+    cost = str(d.get("cost", ""))
+    cost = "price varies" if cost == "Varies" else cost
+    parts = [cost, _weight_words(d)]
+    if not card:
+        parts = [str(d.get("group", "")), str(d.get("ability", "")), *parts]
+    return ", ".join(p for p in parts if p)
 
 
 def level_words(entry: Entry) -> str:
@@ -158,6 +190,10 @@ def pairs(entry: Entry, *, card: bool = False) -> list[tuple[str, str]]:
         found = [] if card else [("", weapon_line(entry))]
     elif entry.kind == "armor":
         found = [] if card else [("", armor_line(entry))]
+    elif entry.kind == "gear":
+        found = [("", gear_line(entry, card=card))]
+    elif entry.kind == "tool":
+        found = [("", tool_line(entry, card=card))]
     elif entry.kind == "species":
         found = [("", f"Size: {d.get('size', '')}"), ("", f"Speed: {d.get('speed', '')}")]
     else:
@@ -186,7 +222,7 @@ def full_text(entry: Entry) -> str:
     """The facts and then the text: everything DMbot knows about the entry, to search, quote or
     check an answer against."""
     header = line(entry)
-    return f"{header}. {entry.text}" if header else entry.text
+    return f"{header.rstrip('.')}. {entry.text}" if header else entry.text
 
 
 def asked_field(entry: Entry, question: str) -> str | None:
