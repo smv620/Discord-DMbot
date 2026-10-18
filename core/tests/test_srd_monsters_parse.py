@@ -337,6 +337,8 @@ class Building(unittest.TestCase):
             set(),
             (document | {"word_list_sha256": "w"}, set(), set()),
             classes=False,
+            items_pages=False,
+            origins_pages=False,
         )
         self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
         creatures = files["monsters.json"]
@@ -352,7 +354,14 @@ class Building(unittest.TestCase):
         self.assertEqual(creatures["entries"][0]["ac_note"], "(leather armor, shield)")
 
     def test_without_monster_input_the_5_1_files_are_the_two_old_ones(self) -> None:
-        files = build.build_files_51(self.pages51(), {"pages": 17}, set(), classes=False)
+        files = build.build_files_51(
+            self.pages51(),
+            {"pages": 17},
+            set(),
+            classes=False,
+            items_pages=False,
+            origins_pages=False,
+        )
         self.assertEqual(set(files), {"spells.json", "conditions.json"})
 
     def test_the_monster_entry_has_the_fields_in_order(self) -> None:

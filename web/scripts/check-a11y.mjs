@@ -1,7 +1,9 @@
 // After `npm run build`: open every built page in a real browser and check what the DOM-only
 // tests in test/ can't (#1224, WCAG 2.1 AA): colour contrast in light and dark, no sideways
-// scrolling at 320 px wide, a visible focus ring on every control reached with Tab, one h1 and no skipped
-// heading levels, and no motion when the reader asks for less. axe-core fails the run on serious and critical findings.
+// scrolling at 320 px wide, a visible focus ring on every control reached with Tab (on the home, prices,
+// help and credits pages also: Tab reaches every link and button, in page order, #1938), one h1 and no
+// skipped heading levels, and no motion when the reader asks for less. axe-core fails the run on any
+// finding of the WCAG 2.2 AA rules and the best-practice ones, at every impact (moderate and minor too, #1938).
 //
 // Needs Chrome or Chromium: set A11Y_CHROME to its path, or it uses the installed Google Chrome
 // (the CI runners have one). Needs no network: the pages are served from dist/ on localhost.
@@ -79,10 +81,9 @@ async function axeFindings(page) {
   await page.evaluate(axeSource);
   return page.evaluate(async () => {
     const result = await window.axe.run(document, {
-      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] },
+      runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] },
     });
     return result.violations
-      .filter((v) => v.impact === "serious" || v.impact === "critical")
       .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
   });
 }
@@ -117,6 +118,38 @@ async function focusRingFindings(page) {
   return bad;
 }
 
+// The pages a keyboard user lands on first (#1938). Tab must reach every link and button, in the
+// order they come on the page: a positive tabindex or a layout that moves things around breaks that.
+const keyboardPages = new Set(["/", "/pricing", "/help", "/credits"]);
+
+async function tabOrderFindings(page) {
+  const expected = await page.evaluate(() => {
+    const reachable = [...document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex]")].filter((el) => {
+      if (el.matches(":disabled") || el.getAttribute("tabindex") === "-1" || el.getClientRects().length === 0) return false;
+      // What a closed question hides is not reachable, and should not be: only its summary is.
+      const closed = el.closest("details:not([open])");
+      if (closed && !(el.tagName === "SUMMARY" && el.parentElement === closed)) return false;
+      return getComputedStyle(el).visibility !== "hidden";
+    });
+    reachable.forEach((el, i) => el.setAttribute("data-kb", String(i)));
+    return reachable.map((el, i) => ({ i, name: `${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}"`, positive: Number(el.getAttribute("tabindex") ?? 0) > 0 }));
+  });
+  const bad = expected.filter((e) => e.positive).map((e) => `${e.name} has a tabindex above 0`);
+  const reached = [];
+  for (let i = 0; i < expected.length + 5; i++) {
+    await page.keyboard.press("Tab");
+    const at = await page.evaluate(() => document.activeElement?.getAttribute("data-kb") ?? null);
+    if (at === null) continue; // the browser's own bar, or something with no number
+    if (reached.length > 0 && Number(at) === reached[0]) break; // came round to the start
+    reached.push(Number(at));
+  }
+  const missed = expected.filter((e) => !reached.includes(e.i)).map((e) => `Tab never reaches ${e.name}`);
+  const inOrder = reached.every((n, k) => k === 0 || n > reached[k - 1]);
+  if (!inOrder) bad.push(`Tab goes through the page out of order: ${reached.join(", ")}`);
+  if (expected.length === 0) bad.push("(no link or button to reach)");
+  return [...bad, ...missed];
+}
+
 async function open(browser, address, options) {
   const context = await browser.newContext(options);
   const page = await context.newPage();
@@ -138,6 +171,12 @@ async function checkPage(address) {
       if (i > 0 && level > levels[i - 1] + 1) fail(label, `heading jumps from h${levels[i - 1]} to h${level}`);
     });
     for (const name of await focusRingFindings(page)) fail(label, `no visible focus ring on ${name}`);
+    if (keyboardPages.has(address) && scheme === "light") {
+      // A new page, so the focus ring walk above does not leave Tab part-way through.
+      await page.reload({ waitUntil: "load" });
+      await page.waitForSelector("h1");
+      for (const finding of await tabOrderFindings(page)) fail(label, finding);
+    }
     await context.close();
   }
 

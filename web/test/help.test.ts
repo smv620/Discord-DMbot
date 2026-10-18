@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, STORY_STATES_LIVE, storyStateSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -433,6 +433,25 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("You decide");
     expect(words).toContain("Players never do, and it is never in a transcript");
     expect(words).not.toMatch(/state fact|ontology|knowledge graph|claim/i);
+  });
+
+  it("holds the rule-kinds step with the held \"Look up any rule\" entry, and flips them together (#1924)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Look up any rule");
+    expect(heldTitle).toBe(!RULE_KINDS_LIVE);
+    const shown = playerSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("also finds rules like cover or long rest")).toBe(RULE_KINDS_LIVE);
+    const words = ruleKindSteps.map((x) => x.text).join(" ");
+    for (const example of ["cover", "rage", "Bag of Holding", "Alert", "Goliath", "rogue evasion", "Orc (creature)"]) {
+      expect(words, example).toContain(example);
+    }
+    expect(words).toContain("longsword"); // weapons and armor merged with #1921
+    // The same kinds as the entry: the Help step names what the entry names.
+    const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
+    expect(entry.match(/longsword/gi)?.length, "longsword once in the entry").toBe(1);
+    expect(words.match(/longsword/gi)?.length, "longsword once in the Help step").toBe(1);
+    for (const example of ["cover", "rage", "Bag of Holding", "longsword", "Alert", "Goliath"]) {
+      expect(entry, example).toContain(example);
+    }
   });
 
   it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {

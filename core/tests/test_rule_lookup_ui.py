@@ -678,6 +678,13 @@ class FeatureLookup(LookupTest):
         self.assertNotIn("Other classes", text)
         self.assertNotIn("[Legacy", text)
 
+    async def test_an_item_only_the_2014_rules_have_is_tagged_legacy(self) -> None:
+        text = self.sent(await self.command("arrow of slaying"))[0]
+        self.assertIn("📖 **Arrow of Slaying** (item: Weapon, very rare)", text)
+        self.assertIn("SRD 5.1, Magic Items, p. 209 [Legacy 2014]", text)
+        bag = self.sent(await self.command("bag of holding"))[0]
+        self.assertNotIn("Legacy", bag)  # the 2024 campaign has its own
+
     async def test_an_item_with_no_single_rarity_has_a_short_heading(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         (potions,) = await ui._typeahead(it, "potions of heal")
@@ -749,6 +756,130 @@ class FeatureLookup(LookupTest):
         self.assertNotIn(
             "[Legacy 2014]", text.replace("The older Orc (creature) [Legacy 2014]", "")
         )
+
+    async def test_weapons_and_armor_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("longsw", "plate arm", "topple")
+        }
+        self.assertEqual(labels["longsw"], ["Longsword (weapon: Martial Melee)"])
+        self.assertEqual(labels["plate arm"][0], "Plate Armor (armor: Heavy)")
+        self.assertIn("Topple (rule: Mastery Property)", labels["topple"])
+        weapon = self.sent(await self.command("longsword"))[0]
+        self.assertIn("📖 **Longsword** (weapon: Martial Melee)", weapon)
+        self.assertIn("1d8 Slashing. Properties: Versatile (1d10).", weapon)
+        self.assertIn("Mastery: Sap", weapon)
+        self.assertIn("SRD 5.2.1, Equipment, p. 91", weapon)
+        armor = self.sent(await self.command("plate armor"))[0]
+        self.assertIn("AC 18. Needs Strength 15.", armor)
+        self.assertIn("Disadvantage on Stealth.", armor)
+        self.assertNotIn("—", armor)
+
+    async def test_gear_and_tools_are_found_and_the_list_says_which(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = {
+            typed: [c.name for c in await ui._typeahead(it, typed)]
+            for typed in ("healer", "thieves", "horse, r")
+        }
+        self.assertIn("Healer’s Kit (gear: 5 GP)", labels["healer"])
+        self.assertIn("Thieves’ Tools (tool: Dexterity)", labels["thieves"])
+        self.assertEqual(labels["horse, r"], ["Horse, Riding (gear: Mount, 75 GP)"])
+        kit = self.sent(await self.command("healer’s kit"))[0]
+        self.assertIn("📖 **Healer’s Kit** (gear: 5 GP)", kit)
+        self.assertIn("3 lb.", kit)
+        self.assertIn("ten uses", kit)
+        self.assertIn("SRD 5.2.1, Equipment, p. 97", kit)
+        tools = self.sent(await self.command("thieves’ tools"))[0]
+        self.assertIn("📖 **Thieves’ Tools** (tool: Dexterity)", tools)
+        self.assertIn("Utilize: Pick a lock (DC 15)", tools)
+        self.assertIn("25 GP, 1 lb.", tools)  # the heading has the ability, the line the price
+        focus = self.sent(await self.command("arcane focus"))[0]
+        self.assertIn("(gear: price varies)", focus)
+        self.assertNotIn("(gear: Varies)", focus)
+
+    async def test_the_gear_and_the_magic_item_of_one_name_can_both_be_picked(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "spell scroll")}
+        gear = [v for n, v in values.items() if "(gear" in n]
+        item = [v for n, v in values.items() if "(item" in n]
+        self.assertEqual((gear, item), (["Spell Scroll (gear)"], ["Spell Scroll (item)"]))
+        text = self.sent(await self.command("Spell Scroll (gear)"))[0]
+        self.assertIn("(gear: from 30 GP)", text.splitlines()[0])
+        text = self.sent(await self.command("Spell Scroll (item)"))[0]
+        self.assertIn("(item:", text.splitlines()[0])
+
+    async def test_both_shields_and_both_lights_can_be_picked_from_the_list(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        for typed, kinds in (("shield", {"spell", "armor"}), ("light", {"spell", "rule"})):
+            choices = await ui._typeahead(it, typed)
+            exact = [c for c in choices if c.name.lower().startswith(f"{typed} (")]
+            self.assertEqual(
+                {c.name.split("(")[1].split(")")[0].split(":")[0] for c in exact}, kinds
+            )
+            for choice in exact:
+                with self.subTest(choice.name):
+                    ui._last_lookup.clear()
+                    text = self.sent(await self.command(choice.value))[0]
+                    word = choice.name.split("(")[1].split(")")[0].split(":")[0]
+                    self.assertIn(f"({word}", text.splitlines()[0])
+
+    async def test_a_name_a_rule_shares_with_a_spell_can_be_picked_from_the_list(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "darkness")}
+        self.assertEqual(values.get("Darkness (rule)"), "Darkness (rule)")
+        text = self.sent(await self.command("Darkness (rule)"))[0]
+        self.assertIn("(rule)", text.splitlines()[0])
+
+    async def test_the_feat_and_the_class_feature_of_one_name_can_both_be_picked(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "ability score impr")}
+        self.assertEqual(
+            values.get("Ability Score Improvement (feat: General)"),
+            "Ability Score Improvement (feat)",
+        )
+        text = self.sent(await self.command("Ability Score Improvement (feat)"))[0]
+        self.assertIn("(feat: General)", text.splitlines()[0])
+
+    async def test_the_shield_armor_is_not_labelled_with_its_own_name(self) -> None:
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = [c.name for c in await ui._typeahead(it, "shield")]
+        self.assertIn("Shield (armor)", labels)
+        self.assertIn("Shield (spell)", labels)
+
+    async def test_the_weapon_reach_property_does_not_shadow_the_glossarys_reach(self) -> None:
+        glossary = self.sent(await self.command("reach"))[0]
+        self.assertIn("A creature has a reach of 5 feet", glossary)
+        prop = self.sent(await self.command("Reach (Weapon Property)"))[0]
+        self.assertIn("A Reach weapon adds 5 feet", prop)
+
+    async def test_a_race_only_the_2014_rules_have_is_found_and_tagged(self) -> None:
+        text = self.sent(await self.command("Half-Orc"))[0]
+        self.assertIn("📖 **Half-Orc** (species)", text)
+        self.assertIn("SRD 5.1, Races, p. 7 [Legacy 2014]", text)
+        self.assertIn("Relentless Endurance.", text)
+        dwarf = self.sent(await self.command("Dwarf (species)"))[0]
+        self.assertIn("SRD 5.2.1", dwarf)  # a 2024 campaign: the 2024 species alone
+        self.assertNotIn("Hill Dwarf", dwarf)
+
+    async def test_a_2014_campaign_reads_its_own_race_background_and_feat_first(self) -> None:
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        dwarf = self.sent(await self.command("Dwarf (species)"))[0]
+        self.assertIn("SRD 5.1, Races, p. 3 [Legacy 2014]", dwarf)
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        values = {c.name: c.value for c in await ui._typeahead(it, "acolyte")}
+        self.assertIn("Acolyte (background) [Legacy 2014]", values)  # the 2014 one first
+        self.assertIn("Acolyte (creature) [Legacy 2014]", values)
+        for label, kind in (
+            ("Acolyte (background) [Legacy 2014]", "(background"),
+            ("Acolyte (creature) [Legacy 2014]", "(creature"),
+        ):
+            text = self.sent(await self.command(values[label]))[0]
+            self.assertIn(kind, text.splitlines()[0], label)
+        grappler = self.sent(await self.command("Grappler"))[0]
+        self.assertIn("📖 **Grappler** (feat)", grappler)  # (no category to say)
+        self.assertNotIn("(feat: )", grappler)
+        self.assertIn("Strength 13 or higher", grappler)
 
     async def test_an_item_is_found_by_its_other_name_and_a_spell_of_the_same_name_wins(
         self,

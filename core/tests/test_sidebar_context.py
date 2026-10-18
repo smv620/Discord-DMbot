@@ -360,6 +360,17 @@ class MagicItems(unittest.TestCase):
         )
         self.assertIn("SRD 5.2.1 p. 212", built.sources)
 
+    def test_an_item_only_the_2014_rules_have_is_cited_with_the_legacy_tag(self) -> None:
+        built = self.build("what does an arrow of slaying do")
+        self.assertIn("- Arrow of Slaying (item) [SRD 5.1 p. 209 [Legacy 2014]]", built.prompt)
+        self.assertIn("FACTS: Weapon (Arrow), very rare.", built.prompt)
+        self.assertIn("SRD 5.1 p. 209 [Legacy 2014]", built.sources)
+
+    def test_an_item_both_editions_have_is_the_2024_one_alone(self) -> None:
+        built = self.build("what does a bag of holding do")
+        self.assertIn("SRD 5.2.1 p. 212", built.prompt)
+        self.assertNotIn("SRD 5.1", built.prompt)
+
     def test_an_item_that_needs_attunement_says_so_and_for_whom(self) -> None:
         self.assertIn(
             "uncommon, needs attunement. ", self.build("is a cloak of protection ok").prompt
@@ -459,6 +470,138 @@ class MagicItems(unittest.TestCase):
             [h.entry.name for h in self.hits("how does great weapon fighting work")],
             ["Great Weapon Fighting"],
         )
+
+    def test_a_weapon_armor_or_mastery_is_cited_when_asked_about(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what's the damage of a longsword")],
+            [("weapon", "Longsword")],
+        )
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what does topple do")],
+            [("rule", "Topple")],
+        )
+        built = self.build("what's the damage of a longsword")
+        self.assertIn(
+            "- Longsword (weapon) [SRD 5.2.1 p. 91]: FACTS: Martial Melee, 1d8 Slashing, "
+            "Versatile (1d10), mastery Sap.",
+            built.prompt,
+        )
+        self.assertIn("Disadvantage on Stealth", self.build("how heavy is plate armor").prompt)
+
+    def test_an_everyday_weapon_or_property_word_alone_adds_nothing(self) -> None:
+        for question in ("the guard swings a club", "the light is dim", "a heavy door", "push it"):
+            gear = [h for h in self.hits(question) if h.entry.kind in ("weapon", "armor", "rule")]
+            self.assertEqual(gear, [], question)
+
+    def test_a_cue_word_brings_the_one_word_weapon_or_property(self) -> None:
+        self.assertEqual([h.entry.name for h in self.hits("what damage does a club do")], ["Club"])
+        props = [h.entry.name for h in self.hits("what does the light property do")]
+        self.assertEqual(props, ["Light"])
+
+    def test_the_shield_spell_and_the_shield_armor_are_told_apart_by_the_question(self) -> None:
+        self.assertEqual([(h.entry.kind) for h in self.hits("cast shield")], ["spell"])
+        got = [h.entry.kind for h in self.hits("what is the AC of a shield")]
+        self.assertEqual(sorted(got), ["armor", "spell"])  # both, each cited: "AC" fits both
+
+    def test_a_cue_word_does_not_take_the_place_of_a_spell_the_question_calls_a_spell(self) -> None:
+        for question in (
+            "does the shield spell stop damage",
+            "the wizard casts shield and I roll damage",
+            "can I cast the Light spell on a weapon",
+        ):
+            kinds = [h.entry.kind for h in self.hits(question)]
+            self.assertIn("spell", kinds, question)
+            self.assertNotIn("armor", kinds, question)
+
+    def test_ac_or_damage_beside_a_spell_name_gives_the_spell_and_the_gear(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("how much AC does shield give")]
+        self.assertIn(("spell", "Shield"), got)
+        self.assertIn(("armor", "Shield"), got)
+        spell_only = [(h.entry.kind) for h in self.hits("the shield spell")]
+        self.assertEqual(spell_only, ["spell"])
+
+    def test_a_word_only_gear_has_makes_a_shield_the_armor_and_not_the_spell(self) -> None:
+        # "armor" can't be said of the spell: the armor alone answers (the spell is dropped)
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("what armor is a shield, its AC")]
+        self.assertEqual(got, [("armor", "Shield")])
+
+    def test_a_cue_word_brings_the_other_gear_in_the_question_too(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("slow mastery for a whip")]
+        self.assertIn(("rule", "Slow"), got)
+        self.assertIn(("weapon", "Whip"), got)
+
+    def test_gear_and_tools_are_cited_when_asked_about(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what does a healer's kit do")],
+            [("gear", "Healer’s Kit")],
+        )
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("what are thieves' tools for")],
+            [("tool", "Thieves’ Tools")],
+        )
+        built = self.build("how much does a torch cost")
+        self.assertIn(
+            "- Torch (gear) [SRD 5.2.1 p. 100]: FACTS: Adventuring Gear, 1 CP, 1 lb.", built.prompt
+        )
+
+    def test_an_everyday_gear_word_alone_adds_nothing(self) -> None:
+        for question in (
+            "they light a torch",
+            "he throws a rope down",
+            "the oil is hot",
+            "a bell rings",
+        ):
+            gear = [h for h in self.hits(question) if h.entry.kind in ("gear", "tool")]
+            self.assertEqual(gear, [], question)
+
+    def test_a_cue_word_brings_the_one_word_gear_and_a_mount_gives_way_to_its_price(self) -> None:
+        self.assertEqual([h.entry.name for h in self.hits("how much does rope weigh")], ["Rope"])
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("how much does a camel cost")],
+            [("gear", "Camel")],
+        )
+        self.assertEqual([h.entry.kind for h in self.hits("what does a camel do")], ["monster"])
+        horse = self.hits("what does a riding horse cost")
+        self.assertEqual([(h.entry.kind, h.entry.name) for h in horse], [("gear", "Horse, Riding")])
+
+    def test_a_named_spell_is_kept_when_gear_is_named_beside_it(self) -> None:
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("the healer's kit and fireball")]
+        self.assertIn(("spell", "Fireball"), got)
+        self.assertIn(("gear", "Healer’s Kit"), got)
+        self.assertEqual([h.entry.kind for h in self.hits("cast shield")], ["spell"])
+
+    def test_a_race_only_the_2014_rules_have_is_cited_with_the_legacy_tag(self) -> None:
+        built = self.build("what are the half-orc traits")
+        self.assertIn("- Half-Orc (species) [SRD 5.1 p. 7 [Legacy 2014]]", built.prompt)
+        self.assertIn("Relentless Endurance", built.prompt)
+        got = [(h.entry.kind, h.entry.name) for h in self.hits("does a half elf see in the dark")]
+        self.assertNotIn(("monster", "Elf"), got)
+
+    def test_the_creature_of_the_shorter_name_gives_way_only_to_a_longer_species_name(self) -> None:
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in self.hits("the half orc swings")],
+            [("species", "Half-Orc")],
+        )
+        self.assertEqual([h.entry.kind for h in self.hits("the orc swings")], ["monster"])
+
+    def test_a_2014_race_is_sent_whole_with_its_subrace(self) -> None:
+        built = context.build(
+            "a dwarf species hit points",
+            target="2014",
+            fallback="2024",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("Subrace: Hill Dwarf", built.prompt)
+        self.assertIn("Dwarven Toughness. Your hit point maximum increases by 1", built.prompt)
+        self.assertNotIn("(cut)", built.prompt)
+
+    def test_a_dwarf_in_a_2024_campaign_is_the_2024_species_alone(self) -> None:
+        got = [(h.entry.edition, h.entry.name) for h in self.hits("a dwarf species speed")]
+        self.assertIn(("2024", "Dwarf"), got)
+        self.assertNotIn(("2014", "Dwarf"), got)
 
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt

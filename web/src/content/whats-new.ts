@@ -19,6 +19,11 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-18",
+    title: "Search and link Help steps",
+    what: "The Help page has a search box that shows only the steps with your words in them. Every section and step also has its own link, and a Copy link button beside each section to paste it to a friend.",
+  },
+  {
     date: "2026-10-17",
     title: "DMbot works on any new server",
     what: "Add DMbot to a new server and /dmbot start is ready to use. If no list pops up when you type it, wait a minute and try again.",
@@ -187,9 +192,9 @@ export const held: Held[] = [
   {
     date: "2026-10-18",
     title: "Look up any rule",
-    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, or a feat, species or background like Alert, Goliath or Sage to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
+    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a weapon or armor like longsword or plate armor, a tool like Thieves' Tools, gear like a Healer's Kit, or a feat, species or background like Alert, Goliath or Sage to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above.",
     reason:
-      "Merged (#1890, #1891, #1912, #1913); held until dev1 deploys it.",
+      "Merged (#1890, #1891, #1912, #1913, #1919); held until dev1 deploys it.",
   },
   {
     date: "2026-10-17",

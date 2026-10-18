@@ -50,6 +50,10 @@ KIND_WORDS = {
     "feat": "feat",
     "species": "species",
     "background": "background",
+    "weapon": "weapon",
+    "armor": "armor",
+    "gear": "gear",
+    "tool": "tool",
 }
 
 
@@ -225,7 +229,13 @@ def header(
         kind = f"{kind}: {_md(feature_place(entry))}"
     elif entry.kind == index.ITEM:  # "(item: Wondrous Item, uncommon)"
         kind = f"{kind}: {_md(item_place(entry))}"
-    elif entry.kind == index.FEAT:  # "(feat: Origin)"
+    elif entry.kind in (index.GEAR, index.TOOL):  # "(gear: 5 GP)", "(tool: Dexterity)"
+        kind = f"{kind}: {_md(equipment_place(entry))}"
+    elif (
+        entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category")  # (the 2014 Grappler has none)
+        and entry.details.get("category") != entry.name
+    ):  # "(feat: Origin)", "(weapon: Martial Melee)"
         kind = f"{kind}: {_md(str(entry.details.get('category', '')))}"
     lines.append(f"📖 **{called}** ({kind})")
     line = facts(entry)
@@ -449,6 +459,21 @@ def item_place(entry: Entry) -> str:
     return f"{d.get('category', '')}, {rarity}".strip(", ")
 
 
+def equipment_place(entry: Entry) -> str:
+    """What a list or heading says after "gear:" or "tool:": a gear entry's price ("5 GP"; a
+    mount or a vehicle says which, "Mount, 75 GP"), a tool's ability ("Dexterity")."""
+    d = entry.details
+    if entry.kind == index.TOOL:
+        return str(d.get("ability", ""))
+    group = str(d.get("group", ""))
+    cost = str(d.get("cost", ""))
+    if cost == "Varies":
+        cost = "price varies"
+    elif ";" in cost and (first := re.search(r"[\d,]+ [GSC]P", cost)):
+        cost = f"from {first.group()}"  # the Spell Scroll's two prices; the card's text has both
+    return cost if group == "Adventuring Gear" else f"{group}, {cost}"
+
+
 def feature_place(entry: Entry) -> str:
     """Where a class feature is gained: `Rogue 7`, or `Barbarian 3, Path of the Berserker` for a
     subclass's feature."""
@@ -463,9 +488,18 @@ def choice_label(entry: Entry) -> str:
     kind = KIND_WORDS.get(entry.kind, entry.kind)
     if entry.kind == index.FEATURE:  # "Evasion (feature: Rogue 7)": the class tells two apart
         kind = f"{kind}: {entry.details.get('class', '')} {entry.details.get('level', '')}".rstrip()
-    if entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
+    if entry.details.get("tag"):  # "Topple (rule: Mastery Property)"
+        if entry.details["tag"] not in entry.name:  # (not "Reach (Weapon Property) (rule: ...)")
+            kind = f"{kind}: {entry.details['tag']}"
+    elif entry.kind == index.ITEM:  # "Bag of Holding (item: Wondrous Item, uncommon)"
         kind = f"{kind}: {item_place(entry)}"
-    elif entry.kind == index.FEAT:  # "Alert (feat: Origin)"
+    elif entry.kind in (index.GEAR, index.TOOL):  # "Healer's Kit (gear: 5 GP)"
+        kind = f"{kind}: {equipment_place(entry)}"
+    elif (
+        entry.kind in (index.FEAT, index.WEAPON, index.ARMOR)
+        and entry.details.get("category")  # (the 2014 Grappler has none)
+        and entry.details.get("category") != entry.name  # (a Shield is not "armor: Shield")
+    ):  # "Longsword (weapon: Martial Melee)"
         kind = f"{kind}: {entry.details.get('category', '')}"
     older = f" [Legacy {entry.edition}]" if entry.edition == index.LEGACY else ""
     label = f"{entry.name} ({kind}){older}"
