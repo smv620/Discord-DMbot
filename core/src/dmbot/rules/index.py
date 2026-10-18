@@ -288,6 +288,35 @@ class Index:
         found.sort(key=lambda e: e.edition != target)  # stable: the target's names first
         return found[:limit]
 
+    def rule_names(
+        self, typed: str, target: str, fallback: str = FALLBACK_NONE, *, limit: int = 25
+    ) -> list[Entry]:
+        """Glossary entries (kind "rule") for a name being typed, the target ruleset's first:
+        names that begin with it, then names with a word that begins with it. They are kept out
+        of `typeahead` and `suggest` (see `_pool`), so the list asks for them itself."""
+        key = normalize(typed)
+        if not key:
+            return []
+        found: list[tuple[int, str, Entry]] = []
+        seen: set[int] = set()
+        for rank, edition in enumerate((target, fallback)):
+            if edition == FALLBACK_NONE or (rank and edition == target):
+                continue
+            for name, entries in self._by_edition.get(edition, {}).items():
+                for entry in entries:
+                    if entry.kind != RULE or id(entry) in seen:
+                        continue
+                    if name.startswith(key):
+                        order = 0
+                    elif f" {key}" in f" {name}":
+                        order = 1
+                    else:
+                        continue
+                    seen.add(id(entry))
+                    found.append((rank * 2 + order, name, entry))
+        found.sort(key=lambda item: item[:2])
+        return [entry for _, _, entry in found[:limit]]
+
     def is_monster(self, name: str) -> bool:
         """Is `name` a kind of monster the rules have, in any edition: by its name, its
         other names, its plural ("goblins") or with a count or article in front ("three
