@@ -2676,3 +2676,8 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Step 5: ❓ Help: "DMbot didn't respond in time" (#1964). The Help text did not show.
   Step 6: #dm-screen has no Settings card or option buttons, and is clear of noise. Worked.
   The owner's note (for the test page): the player view is not tested (it needs a second person).
+2026-10-18 21:33 UTC  dev1  DUPLICATE-COMMANDS CLEAR (DISCORD_CLEAR_GUILD_COMMANDS), one restart of core. Owner's terminal set the variable to the original server's ID, the owner answered y to the restart, and the owner emptied the variable afterwards.
+  Correction to the 2026-10-17 entry: that entry called the ID "the live server's ID by mistake". The owner has since confirmed it is the owner's original test server, the one that used to be DISCORD_DEV_GUILD_ID and still showed each command twice. Clearing removes only that server's old per-server copies; the global commands stay.
+  Result from the core log (the server's name as the log gives it): "Clearing the old per-server commands in <id> (Dunjeons and Dragins)", then "Server <id>: old per-server commands removed". 0 errors since the restart. Connected to 2 servers; ears connected. The start-up log has no "Features" line in this build; not checked further.
+  DISCORD_CLEAR_GUILD_COMMANDS is empty in .env (the owner emptied it). The running process still holds the value it started with until the next restart; the next restart reads the empty value.
+  Still to check by the owner: /dmbot shows each command once in that server, and in the owner's test server (1561035576076017774) and dnd_testing. Then the Stripe test 1 rerun.
