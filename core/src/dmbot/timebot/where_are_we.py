@@ -21,6 +21,7 @@ import logging
 import time
 from typing import Any
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen import levels
 from dmbot.timebot import clock as game
 from dmbot.timebot.split import Group
@@ -29,7 +30,7 @@ from dmbot.timebot.store import Stored
 log = logging.getLogger(__name__)
 
 TICK_S = 60  # how often the loop looks; the gap itself is the level's
-LINE_MAX = 1900  # a message holds 2000; a split party has at most a few short names
+LINE_MAX = MESSAGE_MAX - 100  # a split party has at most a few short names
 
 
 def when(minute: int) -> str:

@@ -1,0 +1,27 @@
+{
+  "_about": "The words that must not appear in text a person reads (CLAUDE.md, Hard rules: simple enough for a child). Whole words, any case. Read by core/tests/test_plain_words.py and web/test/plain-words.test.ts, so the two lists cannot drift. Add a word only if it would actually confuse someone at the table; each needs a reason.",
+  "banned": {
+    "api": "a programmer's word for how programs talk to each other",
+    "database": "say where it is kept in plain words (\"saved\", \"remembered\")",
+    "token": "a programmer's word for a secret code (say \"code\" or \"link\")",
+    "tokens": "a programmer's word for pieces of text",
+    "error code": "say what went wrong and what to do",
+    "exception": "a programmer's word for a failure",
+    "json": "a file format name",
+    "null": "a programmer's word for \"nothing\"",
+    "payload": "a programmer's word for what a message carries",
+    "endpoint": "a programmer's word for an address a program calls",
+    "cache": "a programmer's word for a quick copy",
+    "regex": "a programmer's word for a pattern",
+    "webhook": "a programmer's word for a message another program sends",
+    "oauth": "the name of a sign-in method; say \"sign in with Discord\" or \"Google\"",
+    "schema": "a programmer's word for how data is laid out",
+    "migration": "a programmer's word for a data update",
+    "embedding": "an AI term",
+    "embeddings": "an AI term",
+    "llm": "an AI term; say \"the AI\"",
+    "prompt": "an AI term (say \"question\" or \"instructions\")",
+    "model": "an AI term (say \"the AI\")",
+    "knowledge graph": "the example in CLAUDE.md: say \"remembers your NPCs between sessions\""
+  }
+}

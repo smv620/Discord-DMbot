@@ -23,6 +23,7 @@ from dmbot import fetch
 from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
@@ -90,7 +91,9 @@ from dmbot.ui.names import (
 log = logging.getLogger(__name__)
 
 PER_PAGE = 20
-PAGE_MAX = 1800  # the page's text, under Discord's 2,000 characters
+PAGE_MAX = (
+    MESSAGE_MAX - 200
+)  # the page's text; margin kept from before: room for the words a sender adds around it
 SHOWN_PROBLEMS = 5
 SHOWN_SWAPPED = 3
 PASTE_MAX = 4000  # what a form field holds
@@ -797,7 +800,7 @@ async def show_ai_list(
     )
     view = AIPreview(campaign.id, listed, count)
     await interaction.edit_original_response(
-        content=text[:2000],
+        content=fit_message(text),
         attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
         view=view,
         allowed_mentions=NO_PINGS,
@@ -1191,7 +1194,8 @@ class KindQuestions(discord.ui.View):
             # At once, before the campaign is even read: saving many takes a while and
             # Discord waits 3 s (#537). If it can't be used, the menus come back below.
             await interaction.response.edit_message(
-                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
+                content=_fit(self.text().split("\n"), MESSAGE_MAX - 10 - len(SAVING)) + SAVING,
+                view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
             campaign = await _campaign_for(interaction, self.campaign_id)
@@ -1243,9 +1247,10 @@ def _short(name: str) -> str:
     return _md(logic.shorten(name, SHORT))
 
 
-def _fit(lines: list[str], limit: int = 1990) -> str:
-    """At most `limit` characters (under Discord's 2,000), cut between lines, never
-    inside one; the "…" line that says so counts too."""
+def _fit(lines: list[str], limit: int = MESSAGE_MAX - 10) -> str:
+    """At most `limit` characters, cut between lines, never inside one; the "…" line that
+    says so counts too. (Kept beside `fit_message`: it works on a list of lines and ends
+    with a line of its own, so no line is ever cut in half.)"""
     out: list[str] = []
     size = 0
     for line in lines:
@@ -1292,7 +1297,8 @@ class _Questions(discord.ui.View):
         self.busy = True
         try:
             await interaction.response.edit_message(
-                content=_fit(self.text().split("\n"), 1990 - len(SAVING)) + SAVING, view=None,
+                content=_fit(self.text().split("\n"), MESSAGE_MAX - 10 - len(SAVING)) + SAVING,
+                view=None,
                 allowed_mentions=NO_PINGS,
             )  # fmt: skip
             await work(interaction, campaign, memory)
