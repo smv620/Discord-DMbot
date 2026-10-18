@@ -34,10 +34,10 @@ from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
 from dmbot.dm_screen.gametime_channel import setup_gametime_channel
 from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 LABEL = "Game masters"
 ONLY_DMS = "Only this campaign's game masters can change this list."

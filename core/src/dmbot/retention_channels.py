@@ -34,13 +34,13 @@ from dmbot.dm_screen.gametime_channel import is_gametime_name
 from dmbot.dm_screen.names import is_screen_name
 from dmbot.dm_screen.npcs_channel import is_npcs_name
 from dmbot.dm_screen.rules_channel import is_rules_name
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
 CHANNEL_TIMEOUT_S = 15  # per Discord call; a slow channel is skipped, the job goes on
 SCANNED_MESSAGES = 100  # the newest messages looked at for DMbot's own buttons
 MAX_EDITS = 25  # buttons taken off per channel: bounded, so a busy channel cannot hold the job
-NO_PINGS = discord.AllowedMentions.none()
 CLOSING_NOTE = (
     "This campaign was deleted on {date} because nobody played it for a long time. "
     "DMbot no longer uses this channel. A server admin can delete it."

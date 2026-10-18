@@ -28,10 +28,10 @@ from dmbot.dm_screen.channel import (
 from dmbot.dm_screen.npcs_channel import is_npcs_name
 from dmbot.dm_screen.rules import READ_ONLY, Target, is_peeker, missing_required, restrict
 from dmbot.dm_screen.rules_channel import is_rules_name
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 CONFIRM_TIMEOUT_S = 120
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 

@@ -22,12 +22,12 @@ import discord
 from dmbot.campaigns import CampaignError
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
+from dmbot.mentions import NO_PINGS
 from dmbot.timebot import clock as game
 from dmbot.timebot import suggest
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 # Suggestion messages whose "+N" is being applied right now: a second press (the same DM twice,
 # or two DMs) of one suggestion must not move the clock twice. In memory is enough: the buttons
 # come off once it is done.

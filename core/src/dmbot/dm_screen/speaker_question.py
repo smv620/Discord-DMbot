@@ -18,11 +18,11 @@ from typing import Any
 
 import discord
 
+from dmbot.mentions import NO_PINGS
 from dmbot.transcript import speaker_question as sq
 
 log = logging.getLogger(__name__)
 
-NO_PINGS = discord.AllowedMentions.none()
 FAILED = "Something went wrong. Try again in a moment."
 
 
