@@ -9,9 +9,10 @@ Owner of this file: WebDev. Source of the "live today?" column: `docs/testing-st
 and `docs/testing-history.log`, read the way #1820 did (a feature is live only when it is deployed and
 a live check is recorded). Update a row in the same PR that flips its switch.
 
-**Last checked:** 2026-10-18, against `development` at 86976110 and the deploy `174c35ec`
-(2026-10-17 17:00 UTC, last migration 0127). The next deploy brings migrations 0128–0130 and every PR
-merged after `174c35ec`.
+**Last checked:** 2026-10-18, against `development` at 86976110. dev1 deployed `86976110` at 01:40 UTC
+(migrations 0128–0130 and every PR merged after `174c35ec`); its record in `docs/testing-history.log` was
+not on `development` yet when this was written. The deploy before it was `174c35ec` (2026-10-17 17:00 UTC,
+last migration 0127).
 
 ## How to read "goes live with"
 
@@ -28,8 +29,8 @@ merged after `174c35ec`.
 
 | Switch | Shows | Bot PRs, merged? | Server setting | Live today? | Goes live with |
 |---|---|---|---|---|---|
-| `NPCS_CHANNEL_LIVE` (help.ts) | Help steps for the people-and-groups channel; home card; privacy line "people list"; What's new "A channel listing the people and groups" | #1761, #1779, #1793 merged after `174c35ec`; migration 0128 | none | No: not on the server (0128 is not deployed) | **next deploy**, then dev1 or the owner sees the channel on the test server |
-| `INITIATIVE_STYLE_LIVE` (help.ts) | Help steps (player and game master); home card sentence; privacy line; `/players` "What you might see"; What's new "FightBot follows your turn order" | #1771/#1783, #1784/#1790, #1791/#1795 merged after `174c35ec`; migrations 0129, 0130 | none | No: not on the server | **next deploy**, then dev1 live-checks it |
+| `NPCS_CHANNEL_LIVE` (help.ts) | Help steps for the people-and-groups channel; home card; privacy line "people list"; What's new "A channel listing the people and groups" | #1761, #1779, #1793 merged after `174c35ec`; migration 0128 | none | Deployed 2026-10-18 01:40 UTC (`86976110`); the live check is not recorded yet | **the draft flip (#1864)**, once dev1 records the check in `docs/testing-history.log` |
+| `INITIATIVE_STYLE_LIVE` (help.ts) | Help steps (player and game master); home card sentence; privacy line; `/players` "What you might see"; What's new "FightBot follows your turn order" | #1771/#1783, #1784/#1790, #1791/#1795 merged after `174c35ec`; migrations 0129, 0130 | none | Deployed 2026-10-18 01:40 UTC (`86976110`); the live check is not recorded yet | **the draft flip (#1864)**, once dev1 records the check in `docs/testing-history.log` |
 | `TIME_SUGGESTIONS_LIVE` (help.ts) | Help steps; What's new "A time suggestion from your narration" | #1758, #1760 deployed in `174c35ec` | **`DMBOT_TIME_SUGGESTIONS=1`** (default off) | No: deployed but the setting is off | **server setting**, set by the owner, then dev1's live check |
 | `RULES_CHANNEL_LIVE` (help.ts) | Help steps; the sentence that a peek opens this channel too; What's new "A channel for your house rules" | #1752, #1759 deployed (migration 0127, `3b75a693`) | none | Deployed, not seen: the entry says the owner has not checked it | **owner check** |
 | `WHERE_ARE_WE_LIVE` (help.ts) | Help line about the quiet "where we are" note; What's new "A quiet reminder of the game time" | #1738 deployed | none found | Deployed, not seen | **owner check** |
@@ -47,9 +48,9 @@ merged after `174c35ec`.
 
 `HOMEBREW_LINKS_LIVE` is already `true` (went live 2026-10-17, #1664) and is not in the table.
 
-## What the next deploy flips
+## What the 86976110 deploy flips
 
-Two switches, the ones whose row says **next deploy**: `NPCS_CHANNEL_LIVE` and `INITIATIVE_STYLE_LIVE`.
+Two switches, the ones that deploy brought: `NPCS_CHANNEL_LIVE` and `INITIATIVE_STYLE_LIVE`.
 Neither needs a server setting. The draft PR that flips them also moves their two held What's new
 entries into `entries` and changes no words. It waits for dev1's line in `docs/testing-history.log`
 that records the deploy and the live check.
