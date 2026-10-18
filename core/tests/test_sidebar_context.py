@@ -603,6 +603,32 @@ class MagicItems(unittest.TestCase):
         self.assertIn(("2024", "Dwarf"), got)
         self.assertNotIn(("2014", "Dwarf"), got)
 
+    def test_a_2014_weapon_has_no_mastery_and_a_2014_only_piece_is_cited_with_the_tag(self) -> None:
+        old = context.build(
+            "what's the damage of a longsword",
+            target="2014",
+            fallback="2024",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        )
+        self.assertIn("- Longsword (weapon) [SRD 5.1 p. 66 [Legacy 2014]]", old.prompt)
+        self.assertIn("FACTS: Martial Melee, 1d8 Slashing, Versatile (1d10).", old.prompt)
+        self.assertNotIn("mastery", old.prompt)
+        new = self.build("what's the damage of a longsword")
+        self.assertIn("SRD 5.2.1 p. 91", new.prompt)
+        self.assertNotIn("SRD 5.1", new.prompt)  # the 2024 weapon alone
+        net = self.build("what damage does a net do")
+        self.assertIn("(weapon) [SRD 5.1 p. 66 [Legacy 2014]]", net.prompt)
+
+    def test_a_piece_of_gear_only_the_2014_book_has_needs_its_cue_word(self) -> None:
+        self.assertEqual(
+            [(h.entry.name, h.entry.edition) for h in self.hits("how much does an abacus cost")],
+            [("Abacus", "2014")],
+        )
+        self.assertEqual(self.hits("he counts on an abacus"), [])
+
     def test_an_item_is_no_rules_question(self) -> None:
         prompt = self.build("can you track a bag of holding?").prompt
         self.assertIn("ABOUT DMBOT", prompt)
