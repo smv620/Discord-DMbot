@@ -65,6 +65,14 @@ describe("lookup counts", () => {
     }
   });
 
+  it("names gear and tool entries from a made-up file, whatever the data holds today", () => {
+    const files = [{ kind: "equipment", entries: [{ kind: "gear" }, { kind: "gear" }, { kind: "tool" }] }];
+    expect(lookupList(files)).toEqual([
+      { label: "Tools", count: 1 },
+      { label: "Gear, mounts and vehicles", count: 2 },
+    ]);
+  });
+
   it("lists only the kinds a SRD has", () => {
     const older = lookupList(readFolder(dataDir("srd51"))).map((k) => k.label);
     expect(older).not.toContain("Feats");
