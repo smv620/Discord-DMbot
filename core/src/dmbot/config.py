@@ -87,6 +87,9 @@ class Settings:
     elevenlabs_voice_id: str = ""
     elevenlabs_speech_model: str = "eleven_v3"  # the voice model; dev1 compares models by ear
     recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
+    # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
+    # pauses, so dev1 can compare the two narrations by ear.
+    recap_voice_tags: bool = True
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
@@ -260,6 +263,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
+    voice_tags_raw = (get("DMBOT_RECAP_VOICE_TAGS") or "1").lower()
+    if voice_tags_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_RECAP_VOICE_TAGS must be 1 (on) or 0 (off), got "' + voice_tags_raw + '".'
+        )
     audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "15000"
     if not (audio_credits_raw.isascii() and audio_credits_raw.isdigit()) or not (
         1000 <= int(audio_credits_raw) <= 200000
@@ -334,6 +342,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,
         recap_audio_max_credits=int(audio_credits_raw),
+        recap_voice_tags=voice_tags_raw in ("1", "true", "on"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         story_extractor_tier=extractor_tier,

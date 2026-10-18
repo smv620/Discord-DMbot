@@ -260,6 +260,7 @@ async def run_audio(
     guild_id: int = 0,
     campaign_id: str = "test-run",
     runner: Runner | None = None,
+    voice_tags: bool = True,
 ) -> list[str]:
     """The narration and music into a temporary folder: the lengths and the credits. Removed
     afterwards; nothing is kept."""
@@ -267,7 +268,13 @@ async def run_audio(
     from dmbot.recaps.audio.render import Renderer, estimate_credits, run_ffmpeg
 
     try:
-        script = sc.build(job.title, job.game_day, job.summary, secret_names=inputs.secret_names)
+        script = sc.build(
+            job.title,
+            job.game_day,
+            job.summary,
+            secret_names=inputs.secret_names,
+            emotion_tags=voice_tags,
+        )
     except sc.SecretInScript:
         return ["audio: not made (the text names a secret)"]
     renderer = Renderer(provider, files, runner=runner or run_ffmpeg)  # type: ignore[arg-type]
@@ -279,6 +286,7 @@ async def run_audio(
         sizes = {p.name: p.stat().st_size for p in (folder / "out").iterdir()}
         return [
             "",
+            f"Voice mood tags: {'on' if voice_tags else 'off'} (DMBOT_RECAP_VOICE_TAGS)",
             f"Audio: {made.seconds:.1f} s, {made.credits} credits "
             f"(estimated {estimate_credits(script, ambience_needed=True)})",
             *(f"  {name}: {size // 1024} KB" for name, size in sorted(sizes.items())),
@@ -530,7 +538,10 @@ async def _audio(out: Outcome) -> list[str]:
         provider = ElevenLabs(http, voice_id=voice, speech_model=model)
         # The ambience cache is a temporary folder too, so a run costs what a first run costs.
         with tempfile.TemporaryDirectory(prefix="recap-run-cache-") as cache:
-            return await run_audio(out.job, out.inputs, provider, AudioFiles(Path(cache)))
+            tags = os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+            return await run_audio(
+                out.job, out.inputs, provider, AudioFiles(Path(cache)), voice_tags=tags
+            )
     finally:
         await http.close()
 
