@@ -843,7 +843,16 @@ function CampaignsSection({ me }: { me: Me }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const offeredIds = new Set(me.offers.outgoing.map((o) => o.campaignId));
   const { first, older } = foldCampaigns(me.campaigns, offeredIds);
-  const shown = all ? [...first, ...older] : first;
+  // After a hand-over the older ones can all be gone while the list is open: the button goes with
+  // them, so the list closes too (and a later fold starts closed).
+  const open = all && older.length > 0;
+  useEffect(() => {
+    if (all && older.length === 0) {
+      setAll(false);
+      heading.current?.focus();
+    }
+  }, [all, older.length]);
+  const shown = open ? [...first, ...older] : first;
   return (
     <section aria-labelledby="campaigns-heading" class="panel" id="campaigns">
       <h2 id="campaigns-heading" ref={heading} tabIndex={-1}>
@@ -879,7 +888,7 @@ function CampaignsSection({ me }: { me: Me }) {
         <button
           type="button"
           class="button secondary"
-          aria-expanded={all}
+          aria-expanded={open}
           aria-controls="campaigns-list"
           onClick={() => {
             setAll(!all);
@@ -887,7 +896,7 @@ function CampaignsSection({ me }: { me: Me }) {
             if (all) heading.current?.focus();
           }}
         >
-          {all ? text.showFewer : text.showOlder(older.length)}
+          {open ? text.showFewer : text.showOlder(older.length)}
         </button>
       )}
       {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}

@@ -1404,6 +1404,23 @@ describe("a long campaigns list folds (#1991)", () => {
     expect(text.showOlder(7)).toBe("Show 7 older campaigns");
   });
 
+  it("an old paused campaign shows first too", async () => {
+    const base = scenarioMe("table")!;
+    const api = mockApi("table");
+    const campaigns = Array.from({ length: 12 }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: i === 0 ? ("paused" as const) : ("active" as const),
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+  });
+
   it("an old campaign with an unanswered hand-over offer shows first", async () => {
     const base = scenarioMe("table")!;
     showMany(12, {

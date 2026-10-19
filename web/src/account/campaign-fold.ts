@@ -7,13 +7,12 @@ export const SHOWN_AT_FIRST = 5;
 
 /** Newest first by last session; a campaign never played comes after the played ones, by name. */
 export function byRecentlyPlayed(campaigns: Campaign[]): Campaign[] {
+  // Parsed, not compared as text: "…Z" and "…+00:00" are the same moment. The id is the last tiebreak
+  // so the order never depends on the browser.
+  const when = (c: Campaign): number => (c.lastPlayedAt ? Date.parse(c.lastPlayedAt) : Number.NEGATIVE_INFINITY);
   return [...campaigns].sort((a, b) => {
-    if (a.lastPlayedAt && b.lastPlayedAt) {
-      return b.lastPlayedAt.localeCompare(a.lastPlayedAt) || a.name.localeCompare(b.name);
-    }
-    if (a.lastPlayedAt) return -1;
-    if (b.lastPlayedAt) return 1;
-    return a.name.localeCompare(b.name);
+    const diff = when(b) - when(a);
+    return (Number.isNaN(diff) ? 0 : diff) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
   });
 }
 

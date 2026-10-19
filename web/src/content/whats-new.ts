@@ -19,6 +19,11 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-19",
+    title: "A shorter campaigns list",
+    what: "On My Account, Your campaigns shows the five you played most recently, with a button for the older ones. A paused campaign, or one with a hand-over waiting, always stays in view.",
+  },
+  {
     date: "2026-10-18",
     title: "Search and link Help steps",
     what: "The Help page has a search box that shows only the steps with your words in them. Every section and step also has its own link, and a Copy link button beside each section to paste it to a friend.",

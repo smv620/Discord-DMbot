@@ -21,6 +21,13 @@ describe("campaign fold", () => {
     expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["b", "a", "c", "d"]);
   });
 
+  it("sorts the same moment written two ways as equal, and breaks a full tie by id", () => {
+    const list = [make("b", "2026-09-01T19:00:00+00:00"), make("a", "2026-09-01T19:00:00Z"), make("c", "2026-09-02T19:00:00Z")];
+    list[0] = { ...list[0]!, name: "Same" };
+    list[1] = { ...list[1]!, name: "Same" };
+    expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["c", "a", "b"]);
+  });
+
   it("five or fewer: everything shows and nothing waits", () => {
     const { first, older } = foldCampaigns([make("a", day(1)), make("b", day(2)), make("c", day(3))], new Set());
     expect(first).toHaveLength(3);
