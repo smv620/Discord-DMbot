@@ -4,12 +4,12 @@
 
 Runs the story extractor set (`story_measure`), the recap writer set (`recap_measure`) and the
 sidebar's table questions (`sidebar_check`), each once with the bot's own fast model and once with
-the candidate (`--candidate`, default `claude-haiku-5-5`), and prints one table for each tool: its
-own quality figure, passes and fails, the tokens in and out, and the dollars at the list prices on
-file (`devtools/costs/prices.py`). Without `--yes` nothing is called and it only says what it
-would run. Counts and the tools' own figures only, on the invented golden data, never live data.
-The key comes from ANTHROPIC_API_KEY and is never printed. The sidebar's questions are read from
-`tests/sidebar_brevity_cases.py`, so run it from `core/` of a checkout.
+the candidate (`--candidate`, default `dmbot.ai.FAST_CANDIDATE`), and prints one table for each
+tool: its own quality figure, passes and fails, the tokens in and out, and the dollars at the
+list prices on file (`devtools/costs/prices.py`). Without `--yes` nothing is called and it only
+says what it would run. Counts and the tools' own figures only, on the invented golden data, never
+live data. The key comes from ANTHROPIC_API_KEY and is never printed. The sidebar's questions are
+read from `tests/sidebar_brevity_cases.py`, so run it from `core/` of a checkout.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
+from dmbot.ai import FAST_CANDIDATE, AIError, AIModels, AIModelTier, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools import sidebar_check
 from dmbot.devtools.claims import cost
@@ -35,7 +35,6 @@ from dmbot.devtools.story_measure import __main__ as story_measure
 from dmbot.devtools.story_measure.golden import GoldenError as StoryGoldenError
 from dmbot.devtools.story_measure.golden import load_golden as load_story
 
-CANDIDATE = "claude-haiku-5-5"
 MAX_USD = 5.0  # the whole comparison, every tool and both models
 TOOLS = ("story", "recap", "sidebar")
 
@@ -181,7 +180,9 @@ def render(tables: Sequence[Table]) -> list[str]:
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="fast_compare", description=__doc__)
     parser.add_argument(
-        "--candidate", default=CANDIDATE, help=f"the model to try (default {CANDIDATE})"
+        "--candidate",
+        default=FAST_CANDIDATE,
+        help=f"the model to try (default {FAST_CANDIDATE})",
     )
     parser.add_argument(
         "--tool", action="append", choices=TOOLS, default=[], help="a tool to run (default: all)"

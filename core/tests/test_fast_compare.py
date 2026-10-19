@@ -10,7 +10,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from dmbot.ai import DEFAULT_MODELS, PRICE_PER_MILLION, AIModels, AIModelTier, Reply
+from dmbot.ai import DEFAULT_MODELS, FAST_CANDIDATE, PRICE_PER_MILLION, AIModels, AIModelTier, Reply
 from dmbot.config import parse_ai_models
 from dmbot.devtools import fast_compare, sidebar_check
 from dmbot.devtools.claims import cost
@@ -19,7 +19,7 @@ from dmbot.devtools.costs.prices import price_of
 from dmbot.devtools.recap_measure import __main__ as recap_measure
 from dmbot.devtools.story_measure import __main__ as story_measure
 
-NEW = "claude-haiku-5-5"
+NEW = FAST_CANDIDATE
 
 
 class FakeClient:

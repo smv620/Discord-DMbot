@@ -133,6 +133,9 @@ DEFAULT_MODELS = AIModels(
     careful="claude-sonnet-5-5",
     deep="claude-opus-5-5",
 )
+# The model the fast tier is measured against, for the comparison tool only (#2055): never a
+# default, and not used by the bot. A job names a tier, so this is the one place the id is written.
+FAST_CANDIDATE = "claude-haiku-5-5"
 CONNECT_TIMEOUT_S = 15
 
 # List prices in dollars per million tokens, (input, output), base tokens, from
