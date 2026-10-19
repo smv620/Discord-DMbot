@@ -3704,6 +3704,26 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
   estimates them from the words spoken, and `recap_run --hours` sets them.
+  **Names the recap uses that DMbot doesn't know yet** (owner, 2026-10-19, #2027, after recap test 3
+  refused place names from the owner's own names file): the names list can miss a name, most often a
+  new one. So an unknown name in a draft is looked at before it fails the draft:
+  - **Said in the session** (in the kept lines, whatever the spelling there): the recap may use it.
+  - **Close to a known name** (speech to text misheard it: "care Dinval" for a known "Caer-Dineval"):
+    the recap uses the known spelling.
+  - **Neither:** it is made up, and the draft fails as before.
+  - **Secret names** stay refused in every case.
+
+  Each new name the recap kept goes into the after-session name check as a suggestion (the same queue
+  as "📝 Check new names", stored as proposed; the DM still decides). The recap never writes to story
+  memory itself: PlotBot and NPCBot record only what the DM confirmed.
+
+  The DM's copy of the recap ends with a **Facts to be confirmed** footer listing them. The narration
+  stops at the end of the story: it never reads the housekeeping or the footer. The footer is
+  DM-screen content, so it is never posted to the table. The same list goes to the DM screen at once
+  as "📝 N names from the recap to check", with the check's button. A DM who isn't online sees it
+  there when they next open Discord, and again when the next session starts if it is still
+  unanswered. DMbot doesn't watch who is online: that would need Discord's presence permission, and
+  the DM-screen channel already waits for them.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
