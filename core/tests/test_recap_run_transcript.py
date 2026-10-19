@@ -387,7 +387,7 @@ class TheCueMap(unittest.TestCase):
     def test_the_canned_recap_lists_all_its_cues(self) -> None:
         script = sc.build("The Silver Lock", 4, fx.SUMMARY)
         rows = tf.cue_map(fx.SUMMARY, script)
-        self.assertEqual(len(rows), 3)  # 《Tense》, ((slow)), 《Uneasy》
+        self.assertEqual(len(rows), 3)  # 《Tense》, ((slow)), 《Ominous》
 
 
 class TheRefusals(unittest.TestCase):
