@@ -206,8 +206,8 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-19",
-    title: "Stops listening by itself when no one is there",
-    what: "DMbot stops listening by itself when everyone has left the voice channel, or when nobody has spoken for a while, so a forgotten session doesn't use up your listening hours. It warns you first, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off.",
+    title: "Stops listening when no one's there",
+    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
     reason: "Merged with #2038 (#2041); held until dev1 deploys it.",
   },
   {

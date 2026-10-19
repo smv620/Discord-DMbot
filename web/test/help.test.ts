@@ -265,7 +265,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
   });
 
   it("holds the automatic stop step with its held What's new entry, and flips them together (#2041)", () => {
-    expect(held.map((h) => h.title).includes("Stops listening by itself when no one is there")).toBe(!QUIET_STOP_LIVE);
+    expect(held.map((h) => h.title).includes("Stops listening when no one's there")).toBe(!QUIET_STOP_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("Keep listening")).toBe(QUIET_STOP_LIVE);
     const words = quietStopSteps.map((x) => x.text).join(" ");
