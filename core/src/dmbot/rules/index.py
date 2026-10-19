@@ -317,9 +317,15 @@ class Index:
             elif entry.kind in HAZARD_KINDS:
                 for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
-            elif entry.kind == RULE:
+        # The singulars of rule titles come last, and never take a name another entry of the same
+        # edition already has: "Bonus Actions" (the combat rule) must not be found as "bonus
+        # action", which is the spellcasting rule's own name (#1956).
+        own_names = {(e.edition, normalize(e.name)) for e in self.entries}
+        for entry in self.entries:
+            if entry.kind == RULE:
                 for key in rule_keys(entry.name):
-                    self._add(entry.edition, key, entry)
+                    if (entry.edition, key) not in own_names:
+                        self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
             if not found:

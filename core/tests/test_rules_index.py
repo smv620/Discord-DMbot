@@ -1579,3 +1579,27 @@ class RuleSingulars(unittest.TestCase):
             hit = index.srd().lookup("opportunity attack", target, fallback, kind="rule")
             assert hit is not None
             self.assertEqual((hit.entry.name, hit.entry.edition), ("Opportunity Attacks", target))
+
+    def test_a_singular_never_takes_the_name_another_entry_has(self) -> None:
+        # "Bonus Actions" (the combat rule) must not be found as "bonus action": that is the
+        # spellcasting rule's own name in the 2014 rules.
+        spell = index.srd().lookup("Bonus Action", "2014", "2024", kind="rule")
+        assert spell is not None
+        self.assertEqual(
+            (spell.entry.name, spell.entry.section), ("Bonus Action", spell.entry.section)
+        )
+        combat = index.srd().lookup("bonus actions", "2014", "2024", kind="rule")
+        assert combat is not None
+        self.assertEqual(combat.entry.name, "Bonus Actions")
+
+    def test_no_rule_key_is_the_own_name_of_another_entry(self) -> None:
+        # The entry that owns a name is the first one found by it, in both editions.
+        own = {(e.edition, index.normalize(e.name)): e for e in index.srd().entries}
+        for entry in index.srd().entries:
+            if entry.kind != index.RULE:
+                continue
+            for key in index.rule_keys(entry.name):
+                holder = own.get((entry.edition, key))
+                if holder is not None:
+                    found = index.srd()._by_edition[entry.edition][key]
+                    self.assertIs(found[0], holder, f"{entry.name} took {key}")
