@@ -23,9 +23,10 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
+from typing import Any, Protocol
 
-from dmbot.ai import AIOutOfFunds
-from dmbot.memory.extractor import Client, Said, readable
+from dmbot.ai import AIOutOfFunds, Reply
+from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import unknown_names as un
@@ -78,6 +79,39 @@ class Inputs:
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
     window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
+
+
+FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
+
+
+def more_room(tokens: int, attempt: int) -> int:
+    """A retry gets half as much room again for each try, so a draft that was cut off at the limit
+    (structured outputs cannot promise the shape of a cut answer) has room to finish (#2039)."""
+    return tokens + tokens * attempt // 2
+
+
+def unusable(reply: Reply) -> str:
+    """Why a structured answer cannot be read at all, in the words of the retry; "" if it can.
+    The shape holds only for an answer that finished and was not declined."""
+    if reply.refused:
+        return "the answer was declined: write it again from the beats"
+    if reply.cut:
+        return "the answer was cut off: write it again, shorter"
+    return ""
+
+
+class Client(Protocol):
+    """The AI client a recap job uses: like the extractor's, plus `schema` for structured
+    outputs (#2039): the answer text is then JSON of that shape."""
+
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = ...,
+        schema: dict[str, Any] | None = ...,
+    ) -> Reply: ...
 
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
@@ -245,12 +279,16 @@ class RecapWorker:
         system: str,
         text: str,
         max_tokens: int,
-    ) -> str | None:
+        schema: dict[str, Any] | None = None,
+    ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
         await self._store.update(gid, cid, job.session_at, calls=job.calls + 1, spent=job.spent + 1)
         try:
-            reply = await client.complete(system, text, max_tokens=max_tokens)
+            if schema is None:
+                reply = await client.complete(system, text, max_tokens=max_tokens)
+            else:  # structured outputs (#2039): the answer is JSON of this shape
+                reply = await client.complete(system, text, max_tokens=max_tokens, schema=schema)
         except AIOutOfFunds:
             await self._fail(gid, cid, job, FUNDS)
             return None
@@ -266,7 +304,7 @@ class RecapWorker:
                 error=type(exc).__name__,
             )
             return None
-        return reply.text
+        return reply
 
     def _client(self, job: Job) -> Client:
         return self._fast if job.attempt == 0 else self._careful
@@ -303,7 +341,7 @@ class RecapWorker:
         sent = {s.user_id for s in said}
         if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
-        parsed = bt.parse(raw)
+        parsed = bt.parse(raw.text)
         if parsed is None:
             return await self._retry_or_fail(gid, cid, job, ["answer in the JSON form asked for"])
         beats = [*(job.beats or []), *parsed]
@@ -402,19 +440,22 @@ class RecapWorker:
             self._client(job),
             rd.prose_system(inputs.setting, length),
             message,
-            length.max_tokens,
+            more_room(length.max_tokens, job.attempt),
+            schema=rd.prose_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        prose = rd.parse_prose(raw, length)
+        if why := unusable(raw):
+            return await self._retry_or_fail(gid, cid, job, [why], last_attempt=PROSE_LAST_ATTEMPT)
+        prose = rd.parse_prose(raw.text)
         if prose is None:
             return await self._retry_or_fail(
                 gid,
                 cid,
                 job,
-                ["answer in the form SUMMARY: (the narration), then MUSIC: (numbered prompts)"],
+                ["answer with the sections JSON asked for"],
                 last_attempt=PROSE_LAST_ATTEMPT,
             )
         fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
@@ -542,16 +583,25 @@ class RecapWorker:
         if job.problems:
             message += rd.finish_retry(job.problems, self._rejected_finish.get(key))
         raw = await self._call(
-            gid, cid, job, self._client(job), rd.housekeeping_system(), message, 600
+            gid,
+            cid,
+            job,
+            self._client(job),
+            rd.housekeeping_system(),
+            message,
+            more_room(FINISH_TOKENS, job.attempt),
+            schema=rd.finish_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        parsed = rd.parse_finish(raw)
+        if why := unusable(raw):
+            return await self._retry_or_fail(gid, cid, job, [why])
+        parsed = rd.parse_finish(raw.text)
         if parsed is None:
             return await self._retry_or_fail(
-                gid, cid, job, ["follow the form: TITLE then HOUSEKEEPING"]
+                gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
         transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
         # Near-miss names put right here too (#2027), and the names the DM is to confirm added.

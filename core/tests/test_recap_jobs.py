@@ -357,7 +357,7 @@ class Working(Base):
         self,
     ) -> None:
         # A 1-hour session: about 200 words, 160 to 240, up to 270 on the last try.
-        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 250) + "\nMUSIC:\n1. Low strings.\n"
+        long = fx.prose_answer("《Tense》 " + " ".join(["calm"] * 250), "1. Low strings.")
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
             fx.Canned(long, long),
@@ -375,7 +375,7 @@ class Working(Base):
         self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
 
     async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
-        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 280) + "\nMUSIC:\n1. Low strings.\n"
+        long = fx.prose_answer("《Tense》 " + " ".join(["calm"] * 280), "1. Low strings.")
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
@@ -395,6 +395,59 @@ class Working(Base):
         self.assertIn("Lord Varkus laughed.", self.careful.sent[1])
         self.assertIn("between", self.careful.sent[1])
         self.assertNotIn("<previous_draft>", self.fast.sent[1])  # the first try has none
+
+    async def test_the_prose_and_title_calls_ask_for_json_and_the_others_do_not(self) -> None:
+        """#2039: the two text-form stages use structured outputs; the beat sheet and the grader
+        are called as before."""
+        from dmbot.recaps import draft as rd
+
+        await self.setUpWorker(self.happy())
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        # fast client: beats, prose, grade, title and housekeeping
+        self.assertEqual(self.fast.schemas, [None, rd.prose_schema(), None, rd.finish_schema()])
+        self.assertEqual(job.title, "The Silver Lock")
+        self.assertEqual(job.housekeeping, ("Mira drew her blade.",))
+
+    async def test_a_cut_off_answer_is_retried_with_more_room(self) -> None:
+        """#2039: a structured answer that hit the limit is not valid JSON; the retry says so and
+        has half as much room again."""
+        from dmbot.ai import Reply
+
+        cut = Reply(fx.PROSE_ANSWER[:200], True, 10, 10, "m")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, cut, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("cut off", self.careful.sent[0])
+        self.assertGreater(self.careful.tokens[0], self.fast.tokens[1])
+        self.assertEqual(self.careful.tokens[0], self.fast.tokens[1] * 3 // 2)
+
+    async def test_a_declined_answer_is_asked_for_again_and_the_title_too(self) -> None:
+        from dmbot.ai import Reply
+
+        declined = Reply("", False, 10, 10, "m", refused=True)
+        cut_title = Reply(fx.FINISH_ANSWER[:30], True, 10, 10, "m")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, declined, fx.GRADE_ANSWER, cut_title),
+            fx.Canned(fx.PROSE_ANSWER, fx.FINISH_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("declined", self.careful.sent[0])
+        self.assertIn("cut off", self.careful.sent[1])
+        self.assertEqual(self.careful.tokens[1], 900 * 3 // 2)
+
+    async def test_an_answer_that_is_not_the_json_is_retried_with_the_form(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, "Sorry, I cannot.", fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("sections JSON", self.careful.sent[0])
 
     async def test_a_misheard_name_is_respelled_and_a_name_said_at_the_table_is_kept(self) -> None:
         """#2027: "Care Dinval" becomes the known "Caer-Dineval" in code; "Breathing Stair" was

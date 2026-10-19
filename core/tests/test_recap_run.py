@@ -107,14 +107,14 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
     async def test_a_run_that_fails_its_prose_twice_says_why_for_each_try(self) -> None:
         # The beats pass; the draft is refused twice (#1969). The report names the checks, in
         # fixed sentences: no line of the transcript is printed.
-        bad = "SUMMARY:\nThey walked on.\nMUSIC:\nsoft strings\n"
+        bad = fx.prose_answer("《Tense》 They walked on.", "1. soft strings")
         out = await run.run_text(inputs(), fx.Canned(fx.BEATS_ANSWER, bad), fx.Canned(bad, bad))
         self.assertEqual(out.job.state, "failed")
         text = "\n".join(run.report(out, {}))
         self.assertIn("Step prose, try 1:", text)
         self.assertIn("Step prose, try 2:", text)
         self.assertIn("Step prose, try 3:", text)
-        self.assertIn("problem: it must open with an emotion cue", text)
+        self.assertIn("problem: Your draft was 3 words", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)
 
