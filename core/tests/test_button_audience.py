@@ -84,6 +84,10 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.handover.DeclineOfferButton",
             "dm_screen.handover.NotNowButton",
             "ui.sheets.MySheetButton",  # `characters_of(guild, interaction.user.id)`
+            # Only the person the list was made for (`kept.owner_id`, the DM who asked): anyone else
+            # gets "not yours" before anything is shown (#1957).
+            "ui.looked_at.LookedButton",
+            "ui.looked_at.OpenCard",
         ],
         SELF,
     ),
