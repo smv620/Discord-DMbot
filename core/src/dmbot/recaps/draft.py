@@ -324,7 +324,7 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
     wrote), the target again, and to revise that draft and change only what the problems name. A
     rewrite asked for without the draft came back as a 54-word fix-up."""
     form = (
-        f"Answer in the same JSON form: about {length.target} words in all, between {length.low} "
+        f"Answer in the same form: about {length.target} words in all, between {length.low} "
         f"and {length.high}, at most {length.sections} sections, one music prompt for each."
     )
     head = "\nYour last draft was rejected: " + _data("; ".join(problems)) + ". "
@@ -343,7 +343,7 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
 
 def finish_retry(problems: Sequence[str], rejected: tuple[str, list[str]] | None) -> str:
     """The same for the title and the housekeeping: the rejected answer and the form again."""
-    form = "Answer in the same JSON form: a title and the housekeeping bullets, each with its beat."
+    form = "Answer in the same form: a title and the housekeeping bullets, each with its beat."
     head = "\nYour last answer was rejected: " + _data("; ".join(problems)) + ". "
     if rejected is None:
         return head + "Write it again. " + form
