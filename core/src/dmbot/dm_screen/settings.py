@@ -35,7 +35,8 @@ from dmbot.campaigns.models import (
     CampaignError,
     HandoverOffer,
 )
-from dmbot.dm_screen import handover, messages, story_mode, table_chat_panel
+from dmbot.campaigns.store import QUIET_STOP_CHOICES
+from dmbot.dm_screen import handover, messages, quiet_stop, story_mode, table_chat_panel
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
@@ -143,6 +144,7 @@ def settings_text(
             table_chat_panel.line(campaign),
             _combat_line(campaign),
             *([story_mode.line(campaign)] if rules else []),  # the DMs' (#1692)
+            *([quiet_stop.line(campaign.quiet_stop_minutes)] if rules else []),  # (#2034)
             handover.owner_line(campaign, offer),
             pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
@@ -172,6 +174,7 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(InviteButton(campaign.id))  # the D&D Beyond invite (#1119)
         view.add_item(TableChatButton(campaign.id))  # which typed chat is read (#1118)
         view.add_item(RecapsButton(campaign.id))  # the recap choices (#1421)
+        view.add_item(QuietStopButton(campaign.id, campaign.quiet_stop_minutes))  # (#2034)
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
         view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
@@ -742,6 +745,55 @@ class LevelButton(
             return
         except Exception:
             log.exception("Couldn't change how much DMbot says")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
+class QuietStopButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:quietstop:{_ID}:(?P<to>0|30|60|90)",
+):
+    """Stop when quiet (#2034): one tap goes to the next choice (30, 60, 90 minutes, Off) and the
+    card shows it. The button's ID carries the choice a press saves, so it works after a restart."""
+
+    def __init__(self, campaign_id: str, minutes: int) -> None:
+        self.campaign_id = campaign_id
+        self.next = QUIET_STOP_CHOICES[(QUIET_STOP_CHOICES.index(minutes) + 1) % 4]
+        super().__init__(
+            discord.ui.Button(
+                label=f"Stop when quiet: {quiet_stop.quiet_label(minutes)}",
+                emoji="🔇",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+                custom_id=f"dmbot:quietstop:{campaign_id}:{self.next}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> QuietStopButton:
+        # What is saved is the choice in the ID; the label is redrawn from the saved value.
+        button = cls(match["campaign"], int(match["to"]))
+        button.next = int(match["to"])
+        return button
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        campaign = await _allowed(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        store = getattr(interaction.client, "campaigns", None)
+        await interaction.response.defer()
+        try:
+            if store is None:
+                raise RuntimeError("no running DMbot to save it")
+            saved: Campaign = await store.set_quiet_stop(campaign.guild_id, campaign.id, self.next)
+        except CampaignError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception:
+            log.exception("Couldn't change the quiet-stop setting")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
         await _redraw(interaction, saved)

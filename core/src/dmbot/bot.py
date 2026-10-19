@@ -153,6 +153,13 @@ from dmbot.dm_screen.npcs_channel import forget_campaign as npcs_forget_campaign
 from dmbot.dm_screen.npcs_channel import prune_locks as npcs_prune_locks
 from dmbot.dm_screen.npcs_channel import sync_campaign as sync_npcs
 from dmbot.dm_screen.pause import PauseButton
+from dmbot.dm_screen.quiet_stop import (
+    CANCELLED,
+    KeepListeningButton,
+    idle_warning_text,
+    keep_view,
+    stopped_text,
+)
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
 from dmbot.dm_screen.rules_channel import (
     RulesChannelError,
@@ -168,6 +175,7 @@ from dmbot.dm_screen.settings import (
     HouseFileButton,
     InviteButton,
     LevelButton,
+    QuietStopButton,
     RuleLookupButton,
     RulesCardsButton,
     SettingsButton,
@@ -210,6 +218,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
+from dmbot.idle_stop import IdleWatch
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor, plan_reader
@@ -442,6 +451,7 @@ RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
+IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
@@ -681,6 +691,10 @@ class Table:
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     transcript_warned: bool = False  # told the DM saving isn't working
     listening_message: discord.Message | None = None  # carries the Stop button (#108)
+    # Is anyone here? (#2034) The watch for the automatic stop, and the warning's message. A
+    # new table (a start or a resume) starts a new watch: a restart is not silence.
+    idle: IdleWatch = field(default_factory=lambda: IdleWatch(time.monotonic()))
+    idle_message: discord.Message | None = None
     dropped_logged: bool = False
     save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # One capture check at a time (#699: its audio check awaits the AI).
@@ -1196,6 +1210,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
+            QuietStopButton,
             SettingsVisibilityButton,
             RuleLookupButton,
             RulesCardsButton,
@@ -1226,6 +1241,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
+        self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
@@ -1280,6 +1296,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self._idle_sweeper(), "idle-sweep"),
             self._watched(self._summary_poster(), "summaries"),
             self._watched(self._meter_loop(), "hours-meter"),
+            self._watched(self._idle_loop(), "idle-stop"),  # #2034
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
             *(
                 [self._watched(self._recap_loop(), "recaps")]
@@ -3226,10 +3243,12 @@ class DMBot(commands.AutoShardedBot):
         *,
         campaign_id: str | None = None,
         session: int | None = None,
+        auto: str | None = None,
     ) -> str:
         """`campaign_id`: only stop if this campaign is the one being listened to (a Stop
         button on an older message must never end a newer session). `session`: only stop
-        that very session (the Stop button's question, #554)."""
+        that very session (the Stop button's question, #554). `auto`: why DMbot is stopping it
+        itself (#2034): nobody is here. It goes through this same path as the Stop button."""
         async with self.session_lock(guild_id):
             table = self.tables.get(guild_id)
             if campaign_id is not None and (table is None or table.campaign_id != campaign_id):
@@ -3244,8 +3263,9 @@ class DMBot(commands.AutoShardedBot):
                 return screen_messages.ONLY_DM_STOPS
             # Forget the saved session first: if that fails, keep listening rather than
             # stop now and come back by surprise after the next restart.
+            who = f"by itself, nobody here ({auto})" if auto else f"by user {user_id}"
             try:
-                was_saved = await self.sessions.clear(guild_id, f"/dmbot stop by user {user_id}")
+                was_saved = await self.sessions.clear(guild_id, f"/dmbot stop {who}")
             except Exception:
                 log.exception("Couldn't clear the saved session")
                 return STOP_FAILED
@@ -3253,7 +3273,7 @@ class DMBot(commands.AutoShardedBot):
                 # DMbot was listening, so this session should have been saved (#147).
                 with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
                     log.warning("Stopped a session that wasn't saved: it couldn't have resumed")
-            await self.stop_table(guild_id, f"/dmbot stop by user {user_id}")
+            await self.stop_table(guild_id, f"/dmbot stop {who}")
         name = f" to **{table.campaign_name}**" if table.campaign_name else ""
         saved = self.transcripts is not None and (
             table.transcript_session_id is not None or bool(table.unsaved)
@@ -4341,6 +4361,7 @@ class DMBot(commands.AutoShardedBot):
         off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
         the as-heard version, never the cleaned one."""
         now = time.monotonic()
+        table.idle.activity(now)  # typed chat at the table is not silence (#2034)
         listeners = table.typed_rate.allow(user_id, now)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
@@ -8029,6 +8050,81 @@ class DMBot(commands.AutoShardedBot):
                     log.error("The listening minutes took too long to write down")
                 if warn is not None:
                     self._start_follow_up(table, warn)
+
+    async def _idle_loop(self) -> None:
+        """Once a minute, look at each running session for the automatic stop (#2034). One table
+        at a time, and a failure for one never stops the others."""
+        while True:
+            await asyncio.sleep(IDLE_CHECK_S)
+            for table in list(self.tables.values()):
+                try:
+                    await self._idle_check(table)
+                except Exception:
+                    log.exception("The idle check failed for a session")
+
+    def keep_listening(self, guild_id: int, campaign_id: str, session: int) -> bool:
+        """The DM pressed Keep listening: both clocks start again. False when that session is
+        not the one running (the button is on an old warning)."""
+        table = self.tables.get(guild_id)
+        if table is None or table.campaign_id != campaign_id or table.segmenter.session != session:
+            return False
+        table.idle.keep(time.monotonic())
+        table.idle_message = None
+        return True
+
+    async def _quiet_minutes(self, table: Table) -> int:
+        """The campaign's quiet limit, read fresh so a change applies at once; the default if
+        it can't be read (a missed read must not turn the stop off, or stop it early)."""
+        if table.campaign_id is None:
+            return 30
+        try:
+            campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        except Exception:
+            log.exception("Couldn't read the quiet-stop setting")
+            return 30
+        return campaign.quiet_stop_minutes if campaign is not None else 30
+
+    async def _idle_check(self, table: Table) -> None:
+        if not table.listening or table.campaign_id is None:
+            return
+        if self.tables.get(table.guild_id) is not table:
+            return
+        now = time.monotonic()
+        table.idle.saw_speech(now, sum(t.seconds for t in table.totals.speakers.values()))
+        minutes = await self._quiet_minutes(table)
+        verdict = table.idle.poll(
+            now, people=bool(self._people_in_voice(table)), quiet_minutes=minutes
+        )
+        with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
+            if verdict.action == "warn" and verdict.reason is not None:
+                log.info("Idle: warning that the session will stop (%s)", verdict.reason)
+                table.idle_message = await self.post_message(
+                    table.screen_channel_id,
+                    idle_warning_text(verdict.reason, minutes),
+                    keep_view(table.campaign_id, table.segmenter.session),
+                )
+            elif verdict.action == "stop" and verdict.reason is not None:
+                log.info("Idle: stopping the session (%s)", verdict.reason)
+                await self._remove_idle_warning(table)
+                await self.stop_session(
+                    table.guild_id,
+                    table.dm_user_id,
+                    True,
+                    campaign_id=table.campaign_id,
+                    session=table.segmenter.session,
+                    auto=verdict.reason,
+                )
+                if self.tables.get(table.guild_id) is not table:  # it did stop
+                    await self.post(table.screen_channel_id, stopped_text(verdict.reason, minutes))
+            elif table.idle_message is not None and table.idle.warned_at is None:
+                await self._remove_idle_warning(table, CANCELLED)  # people are back, or spoke
+
+    @staticmethod
+    async def _remove_idle_warning(table: Table, text: str | None = None) -> None:
+        message, table.idle_message = table.idle_message, None
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=text if text is not None else message.content, view=None)
 
     def _forget_follow_up(self, guild_id: int, task: asyncio.Task[None]) -> None:
         if self._follow_ups.get(guild_id) is task:  # not a newer one's entry
