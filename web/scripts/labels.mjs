@@ -23,7 +23,7 @@ export function labelsInPython(text) {
   return found;
 }
 
-/** Drop leading emoji and symbols and fold spacing, so "⚙️ Menu" and "Menu" compare equal. */
+/** Drop leading emoji and symbols and fold spacing, so "🗂️ Menu" and "Menu" compare equal. */
 export function plain(s) {
   return s
     // ℹ️ is a lowercase letter to Unicode, so emoji are stripped by their own class first.
