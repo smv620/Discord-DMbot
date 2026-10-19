@@ -242,16 +242,58 @@ class TheProse(unittest.TestCase):
     def test_an_empty_draft_shows_no_sections_and_extra_sections_are_merged(self) -> None:
         self.assertEqual(rd.prose_json(rd.Prose("no cue", ())), '{"sections": []}')
         many = {
-            "sections": [{"mood": "tense", "text": f"Part {n}.", "music": ""} for n in range(8)]
+            "sections": [
+                {"mood": ("tense", "calm")[n % 2], "text": f"Part {n}.", "music": ""}
+                for n in range(8)
+            ]
         }
         prose = rd.parse_prose(json.dumps(many))
         assert prose is not None
         fixed = rd.fix_prose(prose, 5)
         self.assertEqual(len(CUE.findall(fixed.summary)), 5)
         self.assertEqual(len(fixed.music), 5)
-        self.assertTrue(all("tense" in m for m in fixed.music))  # empty prompts made from the mood
+        self.assertTrue(
+            all(("tense" in m or "calm" in m) for m in fixed.music)
+        )  # made from the mood
         for n in range(8):
             self.assertIn(f"Part {n}.", fixed.summary)
+
+    def test_neighbouring_sections_with_the_same_mood_become_one(self) -> None:
+        answer = {
+            "sections": [
+                {"mood": "tense", "text": "One.", "music": "low strings"},
+                {"mood": "tense", "text": "Two.", "music": "drums"},
+                {"mood": "calm", "text": "Three.", "music": "flute"},
+            ]
+        }
+        prose = rd.parse_prose(json.dumps(answer))
+        assert prose is not None
+        self.assertEqual(len(CUE.findall(prose.summary)), 2)
+        self.assertIn("One.\n\nTwo.", prose.summary)
+        self.assertEqual(prose.music[0], "low strings")  # the first section's music is kept
+
+    def test_the_story_must_end_on_the_last_beat(self) -> None:
+        body = " ".join(["calm"] * 330)
+        ends = {
+            "stops early": body
+            + " They reached Greywater Keep at dusk.",  # beat 1, not the last two
+            "runs past": body + " Afterwards the party rested far away.",
+            "on the last beat": body + " Oskar picked the lock and something breathed below.",
+            "a paraphrase": body + " Then the lock was picked and a breath came from below.",
+        }
+        results = {
+            k: any("exactly where" in p for p in prose_problems("《Tense》 " + v))
+            for k, v in ends.items()
+        }
+        self.assertEqual(
+            results,
+            {
+                "stops early": True,
+                "runs past": True,
+                "on the last beat": False,
+                "a paraphrase": False,
+            },
+        )
 
     def test_an_answer_that_is_not_the_asked_for_json_is_none(self) -> None:
         for bad in (
@@ -333,7 +375,10 @@ class TheProse(unittest.TestCase):
 
         def problems(n: int, last: bool) -> list[str]:
             return prose_problems(
-                "《Tense》 " + " ".join(["calm"] * n), "1. Strings.", length=one, last=last
+                "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar",
+                "1. Strings.",
+                length=one,
+                last=last,
             )
 
         self.assertEqual(problems(200, False), [])
