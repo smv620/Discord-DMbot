@@ -72,10 +72,7 @@ CHECKS: dict[str, str] = {
         "the account is out of credits, or its plan does not include this "
         "(music needs a paid plan)."
     ),
-    "refused": (
-        "the request was turned down; check that the voice id (ELEVENLABS_VOICE_ID) is one "
-        "this account may use."
-    ),
+    "refused": "the request was turned down.",
     "busy": "the service was busy or down; try again in a few minutes.",
     "network": "the connection failed or timed out; check the server's network.",
     "reply": (
@@ -85,7 +82,12 @@ CHECKS: dict[str, str] = {
 
 
 def check_line(exc: ProviderError) -> str:
-    return CHECKS.get(exc.kind, "an unknown kind of failure; look at the server log.")
+    """What to check, in plain words. A refused speech call is most often the voice id; the other
+    calls do not use one, so only speech is told to look there."""
+    line = CHECKS.get(exc.kind, "an unknown kind of failure; look at the server log.")
+    if exc.kind == "refused" and exc.step == "speech":
+        line += " Check that the voice id (ELEVENLABS_VOICE_ID) is one this account may use."
+    return line
 
 
 def step(name: str) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:

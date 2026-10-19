@@ -263,6 +263,10 @@ class TheNamedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ELEVENLABS_API_KEY", auth[1])
         self.assertIn("paid plan", audio_failure(ProviderError("plan", 402, "music"))[1])
         self.assertIn("voice id", audio_failure(ProviderError("refused", 422, "speech"))[1])
+        self.assertNotIn("voice id", audio_failure(ProviderError("refused", 422, "music"))[1])
+        self.assertNotIn(
+            "voice id", audio_failure(ProviderError("refused", 400, "pronunciation dictionary"))[1]
+        )
         # anything else: only its type, never its message
         other = audio_failure(RuntimeError(f"secret {SECRET_NAME}"))
         self.assertEqual(other, ["audio: failed (RuntimeError); the text above is unchanged"])
