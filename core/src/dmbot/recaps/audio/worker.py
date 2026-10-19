@@ -151,6 +151,9 @@ class AudioWorker:
         except Stop as stop:
             await self._finish(gid, cid, job, stop.why, permanent=stop.permanent)
         except ProviderError as exc:
+            # The kind, the HTTP status and which call: fixed words and a number, so a live
+            # recap's failure can be told apart in the server log (#2042). Never a body.
+            log.warning("Recap audio: a provider call failed (%s)", exc.describe())
             await self._finish(
                 gid, cid, job, REFUSED if exc.permanent else BUSY, permanent=exc.permanent
             )
