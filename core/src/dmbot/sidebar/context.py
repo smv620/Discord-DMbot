@@ -209,6 +209,29 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
     return None
 
 
+def asked_about(words: list[str], start: int) -> bool:
+    """Is the one-word name at `words[start]` the subject of a question about it (#1989)?"""
+    low = [w.lower() for w in words]
+    name = low[start]
+    before, after = low[:start], low[start + 1 :]
+    if after and (after[0] == "spell" or (after[0] in _LEVEL_AFTER and name in _LEVEL_SPELLS)):
+        return True
+    if before and before[-1] == "the":  # "how does the command work"
+        before = before[:-1]
+    for lead, follow in _BEFORE_AFTER:
+        if tuple(before[-len(lead) :]) == lead and after and after[0] in follow:
+            return True
+    for frame in _RANGE_FRAMES:
+        if tuple(before[-len(frame) :]) == frame and (not after or after[0] in _RANGE_THEN):
+            return True
+    # "can X ...", "does X ..." at the start of the question (or after what/who/how/which).
+    if before and before[-1] in ("can", "does", "do"):
+        opener = before[:-1]
+        if (not opener or opener[-1] in _CAN_LEAD) and (not after or after[0] in _CAN_THEN):
+            return True
+    return False
+
+
 def mentioned_rules(
     question: str,
     index: Index,
@@ -221,6 +244,7 @@ def mentioned_rules(
     """The rules entries the question names: longest names first, no word used twice, at most
     `ENTRIES_MAX`. A single common word (`_STOP`) is never looked up on its own."""
     words = words_of(question)
+    spell_cue = any(w.lower() in SPELL_WORDS for w in words)
     used = [False] * len(words)
     found: list[tuple[int, Hit]] = []
     for size in range(WINDOW, 0, -1):
@@ -231,6 +255,15 @@ def mentioned_rules(
             if size == 1 and (window[0].lower() in _STOP or len(window[0]) < 3):
                 continue
             hit = index.lookup(" ".join(window), target, fallback)
+            if (
+                hit is not None
+                and size == 1
+                and hit.entry.kind == "spell"
+                and normalize(window[0]) in EVERYDAY_SPELLS
+                and not spell_cue
+                and not asked_about(words, start)
+            ):
+                hit = None  # "they light a torch" is not the Light spell (#1956)
             if hit is None and size > 1:
                 # A poison, trap or curse of the Gameplay Toolbox with a longer name ("Purple Worm
                 # Poison", "Hidden Pit") beats the creature or spell named inside it.
@@ -401,6 +434,27 @@ EQUIPMENT_CUES = frozenset(
     {"damage", "weapon", "weapons", "armor", "ac", "mastery", "masteries", "property", "properties"}
 )
 SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip", "cantrips"})
+# Spells whose names are everyday words ("they light a torch", "send a message", "fly home"): cited
+# only when the question also says cast, spell or cantrip (#1956).
+EVERYDAY_SPELLS = frozenset({"light", "message", "sleep", "command", "fly"})
+# A question *about* the word is a cue too (#1989): "how does command work", "what does sleep do".
+# Fixed frames over the words around the name, no model. Each is (words before the name, words right
+# after it).
+_BEFORE_AFTER = (
+    (("how", "does"), ("work", "works")),
+    (("what", "does"), ("do", "does")),
+    (("how", "long", "does"), ("last", "lasts")),
+)
+_RANGE_FRAMES = (("range", "of"), ("duration", "of"))
+_RANGE_THEN = frozenset({"for", "on", "against"})  # "range of light from a torch" is a torch
+# "light level" and "message saves" are everyday phrases; "sleep level" and "fly save" are not.
+_LEVEL_AFTER = frozenset({"level", "save", "saves"})
+_LEVEL_SPELLS = frozenset({"sleep", "command", "fly"})
+# "can sleep affect undead", "does sleep work on elves": only when the question starts that way (or
+# after what/who/how/which), and only before a word that asks what the spell does or at its end;
+# "the party can sleep" and "can sleep at the inn" are people sleeping.
+_CAN_THEN = frozenset({"affect", "target", "stack", "work", "reach", "last", "hit"})
+_CAN_LEAD = frozenset({"what", "who", "how", "which"})
 # Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
 ONLY_GEAR_CUES = frozenset(
     {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"} | GEAR_CUES

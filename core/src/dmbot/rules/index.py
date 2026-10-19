@@ -122,6 +122,18 @@ def monster_keys(name: str) -> list[str]:
 _POSSESSIVE_S = re.compile(r"['’]s\b")
 
 
+def rule_keys(name: str) -> list[str]:
+    """The singular of a rule title of two words or more whose last word is a plural ("Opportunity
+    Attacks" is also "opportunity attack"), because a question says it either way (#1956). One
+    word is left alone: "action" or "attack" alone is an everyday word, and "Attack" is a rule of
+    its own. A word ending "ss", "us" or "is" ("Darkness") is not a plural."""
+    *front, last = name.split()
+    if not front or len(last) < 4 or not last.endswith("s") or last.endswith(("ss", "us", "is")):
+        return []
+    key = normalize(" ".join([*front, last[:-1]]))
+    return [key] if key != normalize(name) else []
+
+
 def gear_keys(name: str) -> list[str]:
     """The other names a piece of gear, a mount or a tool is found by: the comma turned round
     ("Horse, Riding" is "Riding Horse"), and without the possessive's "s" ("Healer's Kit" is
@@ -305,6 +317,15 @@ class Index:
             elif entry.kind in HAZARD_KINDS:
                 for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
+        # The singulars of rule titles come last, and never take a name another entry of the same
+        # edition already has: "Bonus Actions" (the combat rule) must not be found as "bonus
+        # action", which is the spellcasting rule's own name (#1956).
+        own_names = {(e.edition, normalize(e.name)) for e in self.entries}
+        for entry in self.entries:
+            if entry.kind == RULE:
+                for key in rule_keys(entry.name):
+                    if (entry.edition, key) not in own_names:
+                        self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
             if not found:
@@ -470,6 +491,10 @@ class Index:
             hits = wanted or hits
         return hits
 
+    def key_counts(self) -> dict[str, int]:
+        """How many names and spellings each edition can be looked up by (for `index_stats`)."""
+        return {edition: len(keys) for edition, keys in self._by_edition.items()}
+
     def has_asked_for(self, name: str, edition: str, *, rules: bool = False) -> bool:
         """Does this edition have an entry of a kind found only when asked for, other than a
         glossary rule (unless `rules`), under this name (the 2024 feat "Two-Weapon Fighting")?"""
@@ -610,8 +635,15 @@ def load_folder(folder: Path) -> list[Entry]:
 
 @functools.cache
 def srd() -> Index:
-    """The index of what DMbot ships: the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
-    renamed spells' older names."""
+    """The index of what DMbot ships, built once per process: every caller (the sidebar, the
+    rule card, the typeahead) shares this one object (#1953)."""
+    return build_srd()
+
+
+def build_srd() -> Index:
+    """Builds the index of what DMbot ships, the SRD 5.2.1 and, as legacy, the SRD 5.1, with the
+    renamed spells' older names. Not cached: `srd()` is the one to use; this is for measuring
+    the build (`devtools/index_stats.py`)."""
     entries = load_folder(DATA / "srd52") + load_folder(DATA / "srd51")
     for kind, what in (
         (RULE, "Rules Glossary"),
