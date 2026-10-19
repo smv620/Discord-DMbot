@@ -15,17 +15,21 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 import aiohttp
 
 from dmbot.recaps.audio.names import Rule
 
 log = logging.getLogger(__name__)
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 API_BASE = "https://api.elevenlabs.io"
 # The newest model that understands bracketed delivery tags; recorded here, in one place.
@@ -60,13 +64,64 @@ MAX_AUDIO_BYTES = 60_000_000  # a reply bigger than this is refused (10 minutes 
 Transport = Callable[[str, str, "Mapping[str, Any] | None"], Awaitable[tuple[int, bytes]]]
 
 
+STEPS = ("speech", "music", "ambience", "pronunciation dictionary")
+# What to check for each kind, in plain words, for the test tool's report.
+CHECKS: dict[str, str] = {
+    "auth": "check that ELEVENLABS_API_KEY is right and has not expired.",
+    "plan": (
+        "the account is out of credits, or its plan does not include this "
+        "(music needs a paid plan)."
+    ),
+    "refused": "the request was turned down.",
+    "busy": "the service was busy or down; try again in a few minutes.",
+    "network": "the connection failed or timed out; check the server's network.",
+    "reply": (
+        "the answer was not audio DMbot could read; try again, and say so if it keeps happening."
+    ),
+}
+
+
+def check_line(exc: ProviderError) -> str:
+    """What to check, in plain words. A refused speech call is most often the voice id; the other
+    calls do not use one, so only speech is told to look there."""
+    line = CHECKS.get(exc.kind, "an unknown kind of failure; look at the server log.")
+    if exc.kind == "refused" and exc.step == "speech":
+        line += " Check that the voice id (ELEVENLABS_VOICE_ID) is one this account may use."
+    return line
+
+
+def step(name: str) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+    """Name the call in any `ProviderError` it raises, so a failure says which call it was."""
+
+    def wrap(call: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+        @functools.wraps(call)
+        async def named(*args: P.args, **kwargs: P.kwargs) -> R:
+            try:
+                return await call(*args, **kwargs)
+            except ProviderError as exc:
+                if not exc.step:
+                    exc.step = name
+                raise
+
+        return named
+
+    return wrap
+
+
 class ProviderError(Exception):
     """A call failed. `kind` says how, in a fixed word; never the reply's body."""
 
-    def __init__(self, kind: str, status: int = 0) -> None:
+    def __init__(self, kind: str, status: int = 0, step: str = "") -> None:
         super().__init__(f"{kind} ({status})" if status else kind)
         self.kind = kind
         self.status = status
+        self.step = step  # which call failed (`STEPS`); a fixed word, never what was sent
+
+    def describe(self) -> str:
+        """`auth, HTTP 401, during speech`: for the log and the test tool. Fixed words and a
+        number only: never the reply's body, the text sent or the key."""
+        status = f"HTTP {self.status}" if self.status else "no HTTP reply"
+        return f"{self.kind}, {status}, during {self.step or 'an unnamed call'}"
 
     @property
     def permanent(self) -> bool:
@@ -168,6 +223,7 @@ class ElevenLabs:
         self._music_model = music_model
         self.credits = 0
 
+    @step("speech")
     async def speech(
         self,
         text: str,
@@ -219,6 +275,7 @@ class ElevenLabs:
             raise ProviderError("reply")
         return Speech(pcm, starts, ends)
 
+    @step("music")
     async def music(self, request: Mapping[str, Any], *, seconds: float) -> bytes:
         """The piece for a composition plan (`music.composition_request`), as an mp3."""
         body = {**request, "model_id": self._music_model}
@@ -234,6 +291,7 @@ class ElevenLabs:
         self.credits += round(CREDITS_PER_MUSIC_MINUTE * seconds / 60)
         return raw
 
+    @step("ambience")
     async def ambience(self, request: Mapping[str, Any]) -> bytes:
         """One looping sound bed (`music.Ambience.as_request`), as an mp3."""
         status, raw = await self._http(
@@ -255,6 +313,7 @@ class ElevenLabs:
         except ProviderError:
             log.info("Recap audio: an old dictionary was left at the provider")
 
+    @step("pronunciation dictionary")
     async def dictionary(self, name: str, rules: Sequence[Rule]) -> Locator:
         """A pronunciation dictionary made from alias rules (text to text)."""
         body = {"name": name, "rules": [r.as_request() for r in rules]}

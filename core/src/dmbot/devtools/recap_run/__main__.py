@@ -65,6 +65,7 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
@@ -686,6 +687,18 @@ def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given
     rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")
 
 
+def audio_failure(exc: Exception) -> list[str]:
+    """The lines for an audio step that failed (#2042). A voice-company failure says its kind,
+    the HTTP status and which call, then what to check; anything else only its type. Never the
+    message, which could hold text that was sent."""
+    if isinstance(exc, ProviderError):
+        return [
+            f"audio: failed ({exc.describe()}); the text above is unchanged",
+            f"  to check: {check_line(exc)}",
+        ]
+    return [f"audio: failed ({type(exc).__name__}); the text above is unchanged"]
+
+
 def _golden_inputs(session: object) -> pl.Inputs:
     return pl.Inputs(
         lines=session.lines,  # type: ignore[attr-defined]
@@ -772,7 +785,7 @@ async def _session(
             try:
                 print("\n".join(await _audio(out)))
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
-                print(f"audio: failed ({type(exc).__name__}); the text above is unchanged")
+                print("\n".join(audio_failure(exc)))
         if args.keep and out.job.state == "ready":
             campaign = await campaigns.get(gid, cid)
             assert campaign is not None  # load_inputs found it
@@ -871,7 +884,7 @@ async def _transcript(
             try:
                 made = await _audio(out, names=names, keep_in=folder)
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
-                made = [f"audio: failed ({type(exc).__name__}); the text above is unchanged"]
+                made = audio_failure(exc)
             print("\n".join(made))
             printed += made
     if folder is not None:
