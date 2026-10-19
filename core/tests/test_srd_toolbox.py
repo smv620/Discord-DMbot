@@ -202,8 +202,109 @@ def chapter() -> list[Line]:
     ]
 
 
+XP_TABLE = (
+    (1, "50 75 100"), (2, "100 150 200"), (3, "150 225 400"), (4, "250 375 500"),
+    (5, "500 750 1,100"), (6, "600 1,000 1,400"), (7, "750 1,300 1,700"),
+    (8, "1,000 1,700 2,100"), (9, "1,300 2,000 2,600"), (10, "1,600 2,300 3,100"),
+    (11, "1,900 2,900 4,100"), (12, "2,200 3,700 4,700"), (13, "2,600 4,200 5,400"),
+    (14, "2,900 4,900 6,200"), (15, "3,300 5,400 7,800"), (16, "3,800 6,100 9,800"),
+    (17, "4,500 7,200 11,700"), (18, "5,000 8,700 14,200"), (19, "5,500 10,700 17,200"),
+    (20, "6,400 13,200 22,000"),
+)  # fmt: skip
+
+
+def xp_table(page: int = 202, rows: tuple[tuple[int, str], ...] = XP_TABLE) -> list[Line]:
+    """The XP Budget per Character table as the PDF has it: a caption, a boxed heading, the
+    column head "Level" with "Low Moderate High" in the same line, and a row a level."""
+    lines = [
+        at(RIGHT, 730, "XP Budget per Character", TITLE, page),
+        at(378.8, 715.5, "——— Encounter Difficulty ———", TITLE, page),
+        at(317.5, 711.5, "Party’s ", TITLE, page),
+        Line(
+            317.5,
+            700.8,
+            [
+                Piece(317.5, 700.8, f"ABCDEF+{TITLE}", "Level\n"),
+                Piece(360.0, 700.8, f"ABCDEF+{TITLE}", "Low Moderate High\n"),
+            ],
+            page,
+        ),
+    ]
+    for n, (level, cells) in enumerate(rows):
+        lines.append(at(333.0, 686 - 15 * n, f"{level} {cells}", SANS, page))
+    return lines
+
+
+def encounters(rows: tuple[tuple[int, str], ...] = XP_TABLE) -> list[Line]:
+    """The Combat Encounters section (#2000), in the order the PDF reads: the left column of the
+    first page, then its right column (the table and Step 3), then the second page."""
+    return [
+        at(LEFT, 729, "Combat Encounters", TITLE, 202),
+        at(LEFT, 714, "These features can make a combat encounter more interesting:", BODY, 202),
+        at(LEFT, 684, "Changes in Elevation. Terrain that rewards clever positioning.", BOLD, 202),
+        at(LEFT, 472, "Combat Encounter Difficulty", TITLE, 202),
+        at(
+            LEFT,
+            456,
+            "Use these guidelines to create an encounter of a desired difficulty.",
+            BODY,
+            202,
+        ),
+        at(LEFT, 424, "Step 1: Choose a Difficulty", TITLE, 202),
+        at(LEFT, 412, "Three categories describe the range of encounter difficulty:", BODY, 202),
+        at(
+            LEFT,
+            382,
+            "Low Difficulty. An encounter of low difficulty has a scary moment.",
+            BOLD,
+            202,
+        ),
+        at(LEFT, 159, "Step 2: Determine Your XP Budget", TITLE, 202),
+        at(LEFT, 146, "Cross-reference the party’s level with the desired difficulty.", BODY, 202),
+        at(LEFT, 134, "Multiply the number in the table by the number of characters.", BODY, 202),
+        *xp_table(rows=rows),
+        at(RIGHT, 375, "Step 3: Spend Your Budget", TITLE, 202),
+        at(RIGHT, 362, "Every creature has an XP value in its stat block.", BODY, 202),
+        at(
+            RIGHT,
+            273,
+            "Example 1. A low-difficulty encounter for four level 1 characters.",
+            BOLD,
+            202,
+        ),
+        at(RIGHT, 219, "• 1 Bugbear Warrior (200 XP)", BOLD, 202),
+        at(RIGHT, 206, "• 2 Giant Wasps (100 XP each), for 200 XP total", BOLD, 202),
+        at(LEFT, 647, "Troubleshooting", TITLE, 203),
+        at(LEFT, 630, "Keep the following in mind.", BODY, 203),
+        at(LEFT, 599, "Many Creatures", TITLE, 203),
+        at(LEFT, 586, "The more creatures, the higher the risk of a lucky streak.", BODY, 203),
+        at(LEFT, 495, "Adjustments", TITLE, 203),
+        at(LEFT, 482, "A player’s absence might warrant removing creatures.", BODY, 203),
+        at(RIGHT, 733, "CR 0 Creatures", TITLE, 203),
+        at(RIGHT, 720, "Use CR 0 creatures sparingly.", BODY, 203),
+        at(RIGHT, 665, "Number of Stat Blocks", TITLE, 203),
+        at(RIGHT, 652, "Be mindful of the number of stat blocks.", BODY, 203),
+        at(RIGHT, 561, "Powerful Creatures", TITLE, 203),
+        at(
+            RIGHT,
+            548,
+            "A creature whose CR is higher than the level may deal heavy damage.",
+            BODY,
+            203,
+        ),
+        at(RIGHT, 469, "Unusual Features", TITLE, 203),
+        at(
+            RIGHT,
+            456,
+            "Consider not adding a monster with a feature low levels cannot beat.",
+            BODY,
+            203,
+        ),
+    ]
+
+
 def parsed() -> toolbox.Toolbox:
-    return toolbox.parse_toolbox(chapter())
+    return toolbox.parse_toolbox([*chapter(), *encounters()])
 
 
 class Rules(unittest.TestCase):
@@ -221,8 +322,29 @@ class Rules(unittest.TestCase):
                 "Fear and Mental Stress",
                 "Fear Effects",
                 "Cackle Fever",
+                *ENCOUNTER_TITLES,
             ],
         )
+
+    def test_the_combat_encounters_section_is_twelve_rules_tagged_with_its_name(self) -> None:
+        rules = {r.name: r for r in parsed().rules}
+        for title in ENCOUNTER_TITLES:
+            self.assertEqual(rules[title].tag, "Combat Encounters", title)
+        self.assertEqual(rules["Combat Encounters"].page, 202)
+        self.assertEqual(rules["Unusual Features"].page, 203)
+        self.assertIn("Low Difficulty.", rules["Step 1: Choose a Difficulty"].text)
+        self.assertIn("• 2 Giant Wasps (100 XP each)", rules["Step 3: Spend Your Budget"].text)
+
+    def test_the_xp_budget_table_is_a_line_a_level_with_the_numbers_as_printed(self) -> None:
+        text = {r.name: r for r in parsed().rules}["Step 2: Determine Your XP Budget"].text
+        lines = [line for line in text.splitlines() if line.startswith("Level ")]
+        self.assertEqual(len(lines), 20)
+        self.assertIn("Level 1: Low 50, Moderate 75, High 100 XP per character", lines)
+        self.assertIn("Level 3: Low 150, Moderate 225, High 400 XP per character", lines)
+        self.assertIn("Level 10: Low 1,600, Moderate 2,300, High 3,100 XP per character", lines)
+        self.assertIn("Level 20: Low 6,400, Moderate 13,200, High 22,000 XP per character", lines)
+        self.assertTrue(text.startswith("Cross-reference the party"))
+        self.assertNotIn("Moderate High", text.replace("Moderate 75, High", ""))  # no column head
 
     def test_a_heading_that_wraps_is_one_title(self) -> None:
         rule = next(r for r in parsed().rules if r.name.startswith("Curses and"))
@@ -290,6 +412,22 @@ class Rules(unittest.TestCase):
         )
 
 
+ENCOUNTER_TITLES = (
+    "Combat Encounters",
+    "Combat Encounter Difficulty",
+    "Step 1: Choose a Difficulty",
+    "Step 2: Determine Your XP Budget",
+    "Step 3: Spend Your Budget",
+    "Troubleshooting",
+    "Many Creatures",
+    "Adjustments",
+    "CR 0 Creatures",
+    "Number of Stat Blocks",
+    "Powerful Creatures",
+    "Unusual Features",
+)
+
+
 class Hazards(unittest.TestCase):
     def test_a_poison_has_its_type_price_and_words(self) -> None:
         poisons = {p.name: p for p in parsed().poisons}
@@ -332,6 +470,22 @@ class Hazards(unittest.TestCase):
 
 
 class Stops(unittest.TestCase):
+    def encounter_stop(self, rows: tuple[tuple[int, str], ...]) -> str:
+        with self.assertRaises(SrdError) as caught:
+            toolbox.parse_toolbox([*chapter(), *encounters(rows)])
+        return str(caught.exception)
+
+    def test_an_xp_budget_table_with_a_level_missing(self) -> None:
+        self.assertIn("19 levels, not the 20", self.encounter_stop(XP_TABLE[:19]))
+
+    def test_an_xp_budget_row_it_cannot_read(self) -> None:
+        rows = (*XP_TABLE[:4], (5, "500 750"), *XP_TABLE[5:])
+        self.assertIn("can't read the row", self.encounter_stop(rows))
+
+    def test_an_xp_budget_row_out_of_order(self) -> None:
+        rows = (XP_TABLE[1], XP_TABLE[0], *XP_TABLE[2:])
+        self.assertIn("can't read the row", self.encounter_stop(rows))
+
     def without(self, *texts: str) -> list[Line]:
         return [ln for ln in chapter() if not any(ln.text.startswith(t) for t in texts)]
 
@@ -431,7 +585,7 @@ class TheData(unittest.TestCase):
         kinds = [e["kind"] for e in self.data["entries"]]
         self.assertEqual(
             {k: kinds.count(k) for k in ("rule", "poison", "trap", "curse")},
-            {"rule": 36, "poison": 14, "trap": 8, "curse": 1},
+            {"rule": 48, "poison": 14, "trap": 8, "curse": 1},
         )
 
     def test_two_poisons_with_their_type_and_price(self) -> None:
@@ -466,8 +620,22 @@ class TheData(unittest.TestCase):
         self.assertEqual(self.data["section"], "Gameplay Toolbox")
         for e in self.data["entries"]:
             self.assertGreaterEqual(e["page"], 192)
-            self.assertLessEqual(e["page"], 201)
+            self.assertLessEqual(e["page"], 203)  # the Combat Encounters section ends there
             self.assertTrue(e["text"].strip())
+
+    def test_the_combat_encounters_section_is_in_the_file_with_its_budget_lines(self) -> None:
+        rules = [e for e in self.data["entries"] if e["kind"] == "rule"]
+        mine = [e for e in rules if e.get("tag") == "Combat Encounters"]
+        self.assertEqual([e["name"] for e in mine], list(ENCOUNTER_TITLES))
+        budget = self.by_name["rule", "Step 2: Determine Your XP Budget"]["text"]
+        for line in (
+            "Level 1: Low 50, Moderate 75, High 100 XP per character",
+            "Level 3: Low 150, Moderate 225, High 400 XP per character",
+            "Level 10: Low 1,600, Moderate 2,300, High 3,100 XP per character",
+            "Level 20: Low 6,400, Moderate 13,200, High 22,000 XP per character",
+        ):
+            self.assertIn(line, budget)
+        self.assertEqual(budget.count("\nLevel "), 20)
 
     def test_nothing_the_glossary_already_has_by_name_is_repeated(self) -> None:
         glossary = json.loads((DATA / "rules.json").read_text(encoding="utf-8"))["entries"]

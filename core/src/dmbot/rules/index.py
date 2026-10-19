@@ -171,6 +171,28 @@ def hazard_keys(kind: str, name: str) -> list[str]:
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
 
+# Other names for the Combat Encounters section's entries (#2000): the book's titles are steps
+# ("Step 2: Determine Your XP Budget"), which no DM types. Found by the name the DM would say.
+ENCOUNTER_ALIASES = {
+    "Combat Encounter Difficulty": ("encounter difficulty",),
+    "Step 1: Choose a Difficulty": ("choose a difficulty", "encounter difficulties"),
+    "Step 2: Determine Your XP Budget": (
+        "xp budget",
+        "encounter xp budget",
+        "determine your xp budget",
+    ),
+    "Step 3: Spend Your Budget": ("spend your budget", "spend your xp budget"),
+}
+
+
+def encounter_keys(name: str) -> list[str]:
+    """The other names an entry of the Combat Encounters section is found by (#2000)."""
+    own = normalize(name)
+    return [
+        k for k in dict.fromkeys(normalize(n) for n in ENCOUNTER_ALIASES.get(name, ())) if k != own
+    ]
+
+
 def equipment_keys(entry: Entry) -> list[str]:
     """The other names a weapon, an armor, a piece of gear or a tool is found by (#1931): see
     `gear_keys`; an armor is also found with "armor" after its name, because the SRD 5.1 calls it
@@ -316,6 +338,9 @@ class Index:
                     self._add(entry.edition, key, entry)
             elif entry.kind in HAZARD_KINDS:
                 for key in hazard_keys(entry.kind, entry.name):
+                    self._add(entry.edition, key, entry)
+            elif entry.kind == RULE and entry.dm_side:
+                for key in encounter_keys(entry.name):
                     self._add(entry.edition, key, entry)
         # The singulars of rule titles come last, and never take a name another entry of the same
         # edition already has: "Bonus Actions" (the combat rule) must not be found as "bonus
