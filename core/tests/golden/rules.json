@@ -8,7 +8,7 @@
   "`pytest tests/test_rules_golden.py` to see what is actually cited, and only then write expect, after",
   "checking it is what a DM should see. 'note' says why a surprising result is right. Never edit",
   "an expect just to turn the test green: a change here means a cue list moved, so decide it was meant.",
-  "known_gap: true marks a result that is pinned as it is today but could be better (the expect may improve)."
+  "known_gap: true marks a result pinned as it is today but that could be better (none at the moment)."
  ],
  "cases": [
   {
@@ -1265,15 +1265,8 @@
    "target": "2024",
    "fallback": "2014",
    "mode": "dm",
-   "note": "cites the Light spell: a spell named in the question is always cited; a torch alone is everyday gear",
-   "known_gap": true,
-   "expect": [
-    [
-     "spell",
-     "Light",
-     "2024"
-    ]
-   ]
+   "note": "fixed in #1956: a spell with an everyday name needs cast, spell or cantrip",
+   "expect": []
   },
   {
    "question": "I cast fireball",
@@ -1443,12 +1436,11 @@
    "target": "2024",
    "fallback": "2014",
    "mode": "dm",
-   "note": "cites the Attack rule: the glossary has no Opportunity Attack entry of its own",
-   "known_gap": true,
+   "note": "fixed in #1956: the singular of a rule title finds the rule",
    "expect": [
     [
      "rule",
-     "Attack",
+     "Opportunity Attacks",
      "2024"
     ]
    ]
@@ -1461,10 +1453,11 @@
    "expect": [
     [
      "rule",
-     "Attack",
+     "Opportunity Attacks",
      "2014"
     ]
-   ]
+   ],
+   "note": "fixed in #1956: the singular of a rule title finds the rule"
   },
   {
    "question": "what is a potion of healing",
@@ -1623,6 +1616,124 @@
    "fallback": "2014",
    "mode": "table both",
    "expect": []
+  },
+  {
+   "question": "opportunity attacks",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "opportunity attacks",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "an opportunity attack",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "an opportunity attack",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "rule",
+     "Opportunity Attacks",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "a torch costs",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Torch",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "a torch costs",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": [
+    [
+     "gear",
+     "Torch",
+     "2014"
+    ]
+   ]
+  },
+  {
+   "question": "they light the lantern",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "they light the lantern",
+   "target": "2014",
+   "fallback": "2024",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "I cast light on the torch",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Light",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "send a message to the guard",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Guard",
+     "2024"
+    ]
+   ]
   }
  ]
 }

@@ -979,6 +979,12 @@ class GameplayToolbox(unittest.TestCase):
             self.assertTrue(any(h.entry.dm_side for h in dms), target)
             self.assertEqual([h for h in table if h.entry.dm_side], [], target)
 
+    def test_a_spell_with_an_everyday_name_needs_cast_spell_or_cantrip(self) -> None:
+        for question in ("they light a torch", "send a message", "we sleep here", "fly home"):
+            self.assertEqual(self.hits(question), [], question)
+        for question in ("I cast light on the torch", "the light spell", "cast sleep"):
+            self.assertEqual([h.entry.kind for h in self.hits(question)], ["spell"], question)
+
     def test_a_table_question_still_gets_the_rules_glossary(self) -> None:
         table = self.build("how does cover work", table=True)
         self.assertEqual([h.entry.name for h in table.hits], ["Cover"])

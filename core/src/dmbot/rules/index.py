@@ -122,6 +122,18 @@ def monster_keys(name: str) -> list[str]:
 _POSSESSIVE_S = re.compile(r"['’]s\b")
 
 
+def rule_keys(name: str) -> list[str]:
+    """The singular of a rule title of two words or more whose last word is a plural ("Opportunity
+    Attacks" is also "opportunity attack"), because a question says it either way (#1956). One
+    word is left alone: "action" or "attack" alone is an everyday word, and "Attack" is a rule of
+    its own. A word ending "ss", "us" or "is" ("Darkness") is not a plural."""
+    *front, last = name.split()
+    if not front or len(last) < 4 or not last.endswith("s") or last.endswith(("ss", "us", "is")):
+        return []
+    key = normalize(" ".join([*front, last[:-1]]))
+    return [key] if key != normalize(name) else []
+
+
 def gear_keys(name: str) -> list[str]:
     """The other names a piece of gear, a mount or a tool is found by: the comma turned round
     ("Horse, Riding" is "Riding Horse"), and without the possessive's "s" ("Healer's Kit" is
@@ -380,6 +392,15 @@ class Index:
             elif entry.kind == RULE:
                 for key in rule_keys(entry):
                     self._add(entry.edition, key, entry)
+        # The singulars of rule titles come last, and never take a name another entry of the same
+        # edition already has: "Bonus Actions" (the combat rule) must not be found as "bonus
+        # action", which is the spellcasting rule's own name (#1956).
+        own_names = {(e.edition, normalize(e.name)) for e in self.entries}
+        for entry in self.entries:
+            if entry.kind == RULE:
+                for key in rule_keys(entry.name):
+                    if (entry.edition, key) not in own_names:
+                        self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
             if not found:
