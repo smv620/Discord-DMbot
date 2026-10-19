@@ -60,13 +60,14 @@ export const text = {
   loading: "Loading your account…",
 
   // Signed out
-  signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
+  signedOutHeading: "You're not signed in.",
+  signedOutLead: "Sign in to see your plan, your hours and your campaigns.",
+  newHeading: "New to DMbot?",
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
   startTryItSignIn:
     "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
-  haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
   signInMoved:
@@ -188,6 +189,9 @@ export const text = {
   // Campaigns
   campaignsHeading: "Your campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
+  /** The button under a long list (#1991): the real count, one or many. */
+  showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
+  showFewer: "Show fewer",
   lastPlayed: (iso: string): string => `Last played ${shortDate(iso)}`,
   notPlayed: "Not played yet",
   active: "Active",
@@ -271,14 +275,14 @@ export const text = {
   recordingLine: (server: string, date: string): string =>
     `${server}: DMbot may record you. You said yes on ${shortDate(date)}.`,
   recordingOld: (server: string): string =>
-    `${server}: not recording you. To allow it, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `${server}: not recording you. To allow it, press 🗂️ Menu in DMbot's private message in Discord.`,
   stopRecording: "Stop recording me",
   stopWarning: (server: string): string =>
     `Stop recording you in ${server}? DMbot won't write down anything you say from now on. The campaign's record will have gaps wherever you speak, so its summaries can miss things and plot holes can appear. You can start again any time in Discord.`,
   stopYes: "Yes, stop recording me",
   stopKeep: "Keep recording",
   stoppedRecording: (server: string): string =>
-    `Stopped. DMbot is not recording you in ${server}. To start again, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `Stopped. DMbot is not recording you in ${server}. To start again, press 🗂️ Menu in DMbot's private message in Discord.`,
 
   // My DMbot ID and experience points, and moving to a new Discord account (#1231)
   idHeading: "Your DMbot ID",

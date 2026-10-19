@@ -135,14 +135,17 @@ def gear_keys(name: str) -> list[str]:
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
 
 
-def equipment_keys(entry: Entry) -> list[str]:
-    """The other names a weapon, an armor, a piece of gear or a tool is found by (#1931): see
-    `gear_keys`; an armor is also found with "armor" after its name, because the SRD 5.1 calls it
-    "Plate" and the 5.2.1 "Plate Armor"."""
-    keys = gear_keys(entry.name)
-    if entry.kind == ARMOR and "armor" not in entry.name.lower() and entry.name != "Shield":
-        keys.append(normalize(f"{entry.name} armor"))
-    return [k for k in dict.fromkeys(keys) if k != normalize(entry.name)]
+# Gear the 5.2.1 names shorter than the 5.1 does, for the very same piece (the same price and
+# weight): the 5.2.1 entry is also found by the 5.1's name, so the legacy twin is never chosen
+# over it (#1937). Pieces that only look alike ("Hammer, Sledge" and "Sled") are not listed.
+SAME_GEAR = {
+    "Costume": ("Clothes, Costume",),
+    "Flask": ("Flask or Tankard",),
+    "Jug": ("Jug or Pitcher",),
+    "Mirror": ("Mirror, Steel",),
+    "Mule": ("Donkey or Mule",),
+    "Robe": ("Robes",),
+}
 
 
 def hazard_keys(kind: str, name: str) -> list[str]:
@@ -154,6 +157,22 @@ def hazard_keys(kind: str, name: str) -> list[str]:
         found += [f"{name} trap"] + (["pit trap"] if name.endswith(" Pit") else [])
     own = normalize(name)
     return [k for k in dict.fromkeys(normalize(n) for n in found) if k and k != own]
+
+
+def equipment_keys(entry: Entry) -> list[str]:
+    """The other names a weapon, an armor, a piece of gear or a tool is found by (#1931): see
+    `gear_keys`; an armor is also found with "armor" after its name, because the SRD 5.1 calls it
+    "Plate" and the 5.2.1 "Plate Armor"."""
+    keys = gear_keys(entry.name)
+    if entry.kind == ARMOR and "armor" not in entry.name.lower() and entry.name != "Shield":
+        keys.append(normalize(f"{entry.name} armor"))
+    if entry.kind == ARMOR and entry.name.endswith(" Armor"):
+        # The newer rules' "Plate Armor" is also "plate", the older name: the target must have
+        # every key the fallback has, or the fallback's piece is chosen over it (#1937).
+        keys.append(normalize(entry.name.removesuffix(" Armor")))
+    for older in SAME_GEAR.get(entry.name, ()) if entry.kind == GEAR else ():
+        keys += [normalize(older), *gear_keys(older)]
+    return [k for k in dict.fromkeys(keys) if k != normalize(entry.name)]
 
 
 def item_keys(name: str) -> list[str]:
@@ -268,6 +287,10 @@ class Index:
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
         self._alias_keys: set[tuple[str, str]] = set()  # (edition, key) added by an alias
         self._pools: dict[tuple[str, str], tuple[dict[str, Entry], list[str]]] = {}
+        self._newer_cache: dict[
+            tuple[str, str, tuple[str, ...]],
+            tuple[set[tuple[str, str, str]], dict[int, list[str]]],
+        ] = {}
         for entry in self.entries:
             self._add(entry.edition, normalize(entry.name), entry)
             if entry.kind == "monster":
@@ -453,6 +476,26 @@ class Index:
         found = self._by_edition.get(edition, {}).get(normalize(name), [])
         return any(e.kind in ASKED_FOR and (rules or e.kind != RULE) for e in found)
 
+    def _newer_and_names(
+        self, target: str, fallback: str, kinds: tuple[str, ...]
+    ) -> tuple[set[tuple[str, str, str]], dict[int, list[str]]]:
+        """(kind, name, class) the target has under every name it is found by (not only the ones
+        a typing matches), and the names each fallback entry is found by: a fallback entry the
+        target has under any of its names is not offered ("Plate" for "Plate Armor"). Worked out
+        once for each target, fallback and kinds, not on every keystroke (#1937)."""
+        cache_key = (target, fallback, kinds)
+        cached = self._newer_cache.get(cache_key)
+        if cached is None:
+            newer: set[tuple[str, str, str]] = set()
+            names_of: dict[int, list[str]] = {}
+            for name, entries in self._by_edition.get(target, {}).items():
+                newer.update((e.kind, name, _class_of(e)) for e in entries if e.kind in kinds)
+            for name, entries in self._by_edition.get(fallback, {}).items():
+                for e in entries:
+                    names_of.setdefault(id(e), []).append(name)
+            cached = self._newer_cache[cache_key] = (newer, names_of)
+        return cached
+
     def asked_names(
         self,
         typed: str,
@@ -471,16 +514,7 @@ class Index:
             return []
         found: list[tuple[int, str, Entry]] = []
         seen: set[int] = set()
-        # (kind, name, class) the target has under every name it is found by (not only the ones
-        # the typing matches), and the names each fallback entry is found by: a fallback entry
-        # the target has under any of its names is not offered ("Plate" for "Plate Armor").
-        newer: set[tuple[str, str, str]] = set()
-        names_of: dict[int, list[str]] = {}
-        for name, entries in self._by_edition.get(target, {}).items():
-            newer.update((e.kind, name, _class_of(e)) for e in entries if e.kind in kinds)
-        for name, entries in self._by_edition.get(fallback, {}).items():
-            for e in entries:
-                names_of.setdefault(id(e), []).append(name)
+        newer, names_of = self._newer_and_names(target, fallback, tuple(kinds))
         for rank, edition in enumerate((target, fallback)):
             if edition == FALLBACK_NONE or (rank and edition == target):
                 continue
