@@ -21,6 +21,9 @@ from tests.pg import DatabaseTest
 NOW = 1_800_000_000
 
 
+GOOD_GRADE = {"in_world": 5, "no_quotes": 5, "tension": 5, "ending": 5, "cues": 5}
+
+
 class Clock:
     def __init__(self) -> None:
         self.now = float(NOW)
@@ -258,7 +261,7 @@ class Working(Base):
         self.assertEqual(job.summary, job.original)
         self.assertEqual(job.game_day, 4)
         self.assertEqual(job.speakers, (fx.DM, fx.ALICE, fx.BOB))
-        self.assertEqual(job.calls, 4)
+        self.assertEqual(job.calls, 5)  # beats, prose, facts, grade, finish
         self.assertEqual(job.grade["tension"], 4)
         self.assertEqual(len(job.beats), 5)
         self.assertEqual([j.state for j in self.told.jobs], ["ready"])
@@ -698,7 +701,7 @@ class Working(Base):
             )
         self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
         job = await self.go()
-        self.assertEqual((job.state, job.tries, job.calls), ("ready", 1, 4))
+        self.assertEqual((job.state, job.tries, job.calls), ("ready", 1, 5))
         self.assertEqual(len(self.told.jobs), 2)  # told again
 
     async def test_a_decided_recap_is_never_the_bridge_for_a_dropped_one(self) -> None:
@@ -718,8 +721,8 @@ class Working(Base):
             )
         self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
         job = await self.go()
-        self.assertEqual((job.calls, job.spent), (4, 8))
-        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 8)
+        self.assertEqual((job.calls, job.spent), (5, 10))
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 10)
 
     async def test_the_grader_stops_at_the_jobs_ceiling(self) -> None:
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER))
@@ -770,7 +773,7 @@ class Working(Base):
         self.assertEqual(job.state, "ready")
         self.assertEqual((job.window_count, job.window_done), (windows, windows))
         self.assertEqual(len(job.beats), 5)  # the same beats found twice are one beat
-        self.assertEqual(job.calls, windows + 3)
+        self.assertEqual(job.calls, windows + 4)
         first, last = self.fast.sent[0], self.fast.sent[windows - 1]
         self.assertIn("part 1 of", self.fast.systems[0])
         self.assertIn(f"part {windows} of {windows}", self.fast.systems[windows - 1])
@@ -806,3 +809,124 @@ class Working(Base):
         self.fast.answers += [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
         job = await self.go()
         self.assertEqual((job.state, job.attempt, job.errors), ("ready", 0, 0))
+
+    # --- the fact check (#2064) -------------------------------------------------------
+
+    @staticmethod
+    def sentence(fragment: str) -> int:
+        """The number the fact check gives the canned recap's sentence holding `fragment`."""
+        found = [i for i, t in enumerate(rd.sentences_of(fx.SUMMARY), 1) if fragment in t]
+        assert len(found) == 1, found
+        return found[0]
+
+    async def flagged_then_clean(self, kind: str, fragment: str = "The torch burned") -> Job:
+        """A first draft with one flagged sentence, a revision with none."""
+        n = self.sentence(fragment)
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[fx.facts_answer([(n, kind)]), fx.CLEAN_FACTS]),
+        )
+        return await self.go()
+
+    async def test_a_place_that_moved_is_flagged_and_revised_once(self) -> None:
+        job = await self.flagged_then_clean("place")
+        n = self.sentence("The torch burned")
+        self.assertEqual(job.state, "ready")
+        retry = self.careful.sent[0]
+        self.assertIn(f"sentence {n} says something the beats do not say (place)", retry)
+        self.assertIn("The torch burned down a little", retry)  # the draft's own text
+        self.assertIn("<previous_draft>", retry)
+        self.assertEqual(len(self.careful.fact_sent), 2)  # the first draft and its revision
+        self.assertEqual(job.grade["faithful"], 5)  # the revision is clean
+        self.assertEqual(job.summary, fx.SUMMARY)
+
+    async def test_an_added_direction_is_flagged_as_a_direction(self) -> None:
+        await self.flagged_then_clean("direction")
+        self.assertIn("(direction)", self.careful.sent[0])
+
+    async def test_all_four_against_one_who_hid_his_is_a_contradiction(self) -> None:
+        await self.flagged_then_clean("contradiction")
+        self.assertIn("(contradiction)", self.careful.sent[0])
+
+    async def test_the_fact_check_reads_the_beats_with_their_places_and_numbered_sentences(
+        self,
+    ) -> None:
+        raw = dict(fx.BEATS["beats"][0], where="the keep's gate")
+        beats = {"beats": [raw, *fx.BEATS["beats"][1:]]}
+        import json
+
+        await self.setUpWorker(
+            fx.Canned(json.dumps(beats), fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        )
+        await self.go()
+        asked = self.careful.fact_sent[0]
+        self.assertIn("Where: the keep's gate.", asked)
+        self.assertIn("[1] Dusk settled", asked)
+        self.assertIn("Where: the keep's gate.", self.fast.sent[1])  # the writer sees it too
+
+    async def test_a_sentence_still_flagged_after_the_revision_is_cut_in_code(self) -> None:
+        n = self.sentence("The torch burned")
+        flag = fx.facts_answer([(n, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        notes: list[str] = []
+        self.worker._on_note = notes.append
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("The torch burned down a little", job.summary)
+        self.assertIn("Mira counted her breaths", job.summary)  # the rest stands
+        self.assertEqual(len(self.careful.sent), 1)  # one revision, never two
+        self.assertEqual(job.grade["faithful"], 4)  # one flag: not below the bar
+        self.assertTrue(any("Cut 1 sentence" in x for x in notes))
+
+    async def test_a_revision_that_fails_its_checks_leaves_the_first_draft_with_cuts(self) -> None:
+        n = self.sentence("The torch burned")
+        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(short, facts=[fx.facts_answer([(n, "place")])]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("The torch burned down a little", job.summary)
+        self.assertIn("Mira lifted her blade", job.summary)
+        self.assertEqual(self.worker._fallback, {})
+        self.assertEqual(self.worker._flags, {})
+
+    async def test_a_recap_cut_below_the_minimum_fails_plainly(self) -> None:
+        count = len(rd.sentences_of(fx.SUMMARY))
+        all_but_one = fx.facts_answer([(n, "invented") for n in range(2, count + 1)])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[all_but_one, all_but_one]),
+        )
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.UNMATCHED))
+
+    async def test_beats_the_recap_leaves_out_are_named_by_number_in_the_revision(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[fx.facts_answer(missing=[2, 99]), fx.CLEAN_FACTS]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("leaves out beat(s) 2, which change the story", self.careful.sent[0])
+        self.assertNotIn("99", self.careful.sent[0])  # a number that names no beat is dropped
+
+    async def test_a_fact_check_that_cannot_be_read_never_stops_a_recap(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(facts=["not the answer asked for"]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("faithful", job.grade)
+
+    async def test_a_recap_below_the_faithful_bar_is_below_the_bar(self) -> None:
+        self.assertEqual(
+            rd.weak({**GOOD_GRADE, "faithful": 3}),
+            ["say only what the beats say, in the place they say it"],
+        )
+        self.assertEqual(rd.weak({**GOOD_GRADE, "faithful": 4}), [])

@@ -69,14 +69,15 @@ class TheReport(unittest.IsolatedAsyncioTestCase):
         fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
         out = await run.run_text(inputs(), fast, fx.Canned())
         rows = calls_section(out)
-        self.assertEqual(rows[1], "Calls (4):")
-        stages = [r.split(" try ")[0].strip() for r in rows[2:6]]
-        self.assertEqual(stages, ["beats", "prose", "grade", "title"])
+        self.assertEqual(rows[1], "Calls (5):")
+        stages = [r.split(" try ")[0].strip() for r in rows[2:7]]
+        self.assertEqual(stages, ["beats", "prose", "facts", "grade", "title"])
         self.assertIn("checks: passed", rows[3])  # the prose call
         self.assertIn("words", rows[3])
-        self.assertIn("grade in_world 5", rows[4])
+        self.assertIn("flagged: nothing", rows[4])  # the fact check
+        self.assertIn("grade in_world 5", rows[5])
         self.assertEqual(rows[-1], "  Draft that became the recap: try 1")
-        self.assertIn("Calls (4):", "\n".join(run.report(out, {})))  # and it is in the report
+        self.assertIn("Calls (5):", "\n".join(run.report(out, {})))  # and it is in the report
 
     async def test_a_short_revision_and_a_cut_off_one_leave_the_first_draft_standing(self) -> None:
         short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")

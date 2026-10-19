@@ -37,7 +37,7 @@ from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-MAX_CALLS = 10  # AI calls for one recap: three stages, a retry each (two for the prose), the grader
+MAX_CALLS = 12  # AI calls for one recap: three stages, a retry each (two for the prose), the checks
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
 DAILY_CALLS = 40  # AI calls for one campaign's recaps in a day (a Try again is a new recap)
 BACKOFF_S = (60, 240, 960)
@@ -82,6 +82,8 @@ class Inputs:
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
 
 
+UNMATCHED = "Couldn't write a recap that matched the session."
+FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 
@@ -157,6 +159,11 @@ class RecapWorker:
         self._fallback: dict[
             tuple[int, str, int], tuple[rd.Prose, dict[str, int], cl.CallEvent | None]
         ] = {}
+        # The fact check's flags on a kept draft (#2064), and the jobs whose draft is already the
+        # one revision the check allows. In memory, like the drafts: after a restart the check
+        # just runs again.
+        self._flags: dict[tuple[int, str, int], rd.Facts] = {}
+        self._revised: set[tuple[int, str, int]] = set()
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -536,9 +543,11 @@ class RecapWorker:
             gid, cid, job, "prose", words=lambda: len(words(narration_of(prose.summary)))
         )
 
+        draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
+
         def checked(last_try: bool) -> list[str]:
             return rd.check_prose(
-                prose,
+                draft,
                 beats=sheet,
                 transcript=transcript,
                 allowed_names=inputs.allowed_names,
@@ -568,9 +577,42 @@ class RecapWorker:
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
+            facts = await self._facts(gid, cid, job, rd.pick_beats(sheet, length.beats), prose)
+        except AIOutOfFunds:
+            return await self._fail(gid, cid, job, FUNDS)
+        if facts is not None and not facts.clean:
+            if key in self._fallback and key not in self._flags:
+                # an earlier clean draft stands; this revision, flagged, does not
+                return await self._prose_failed(
+                    gid, cid, job, rd.facts_problems(facts, prose.summary), inputs, sheet, length
+                )
+            if key not in self._revised and job.attempt < PROSE_LAST_ATTEMPT:
+                # One revision, told which sentences and which beats (#2064); the draft is kept
+                # so that, if the revision fails its checks, this one stands with the flagged
+                # sentences cut.
+                problems = rd.facts_problems(facts, prose.summary)
+                self._revised.add(key)
+                self._flags[key] = facts
+                self._fallback[key] = (prose, {}, self._last.get((*key, "prose")))
+                self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
+                if self._on_problems is not None:
+                    self._on_problems(job.state, job.attempt, problems)
+                await self._store.update(
+                    gid, cid, job.session_at, attempt=job.attempt + 1, problems=problems
+                )
+                return await self._store.get(gid, cid, job.session_at)
+            cut = await self._cut(prose, facts, sheet, inputs, transcript, length)
+            if cut is None:
+                return await self._fail(gid, cid, job, UNMATCHED)
+            prose = cut
+        self._flags.pop(key, None)
+        self._revised.discard(key)
+        try:
             grade = await self._grade(gid, cid, job, sheet, prose.summary)
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
+        if facts is not None and grade:
+            grade["faithful"] = facts.score()
         weak = rd.weak(grade) if grade else []
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
@@ -626,6 +668,19 @@ class RecapWorker:
                 last=True,
                 refused=refused,
             ):
+                flags = self._flags.pop(key, None)
+                self._revised.discard(key)
+                if flags is not None:  # the kept draft still has its flagged sentences: cut them
+                    cut = await self._cut(prose, flags, sheet, inputs, transcript, length)
+                    if cut is None:
+                        return await self._fail(gid, cid, job, UNMATCHED)
+                    prose = cut
+                    try:
+                        grade = await self._grade(gid, cid, job, sheet, prose.summary)
+                    except AIOutOfFunds:
+                        return await self._fail(gid, cid, job, FUNDS)
+                    if grade:
+                        grade["faithful"] = flags.score()
                 if self._on_problems is not None:
                     self._on_problems(job.state, job.attempt, problems)
                 log.info(
@@ -688,6 +743,76 @@ class RecapWorker:
             last_error="",
         )
         return await self._store.get(gid, cid, job.session_at)
+
+    async def _facts(
+        self, gid: int, cid: str, job: Job, shown: Sequence[bt.Beat], prose: rd.Prose
+    ) -> rd.Facts | None:
+        """The fact check (#2064): the careful tier reads the numbered sentences against the
+        beats the writer was shown and answers with numbers and fixed kinds, never text. None when
+        it cannot be had (a failed or unreadable call): like the grader, it never stops a recap
+        that passed every check."""
+        fresh = await self._store.get(gid, cid, job.session_at) or job
+        if fresh.calls >= self._ceiling(fresh):
+            return None
+        await self._store.update(
+            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+        )
+        try:
+            reply = await self._careful.complete(
+                rd.FACTS_SYSTEM,
+                rd.facts_message(shown, prose.summary),
+                max_tokens=FACTS_TOKENS,
+                schema=rd.facts_schema(),
+            )
+        except AIOutOfFunds:
+            raise
+        except Exception as exc:
+            log.warning("Recap: the fact check failed (%s)", type(exc).__name__)
+            return None
+        facts = None
+        if not unusable(reply):
+            facts = rd.parse_facts(
+                reply.text, len(rd.sentence_spans(prose.summary)), {b.number for b in shown}
+            )
+        self._announce(gid, cid, job, self._careful, FACTS_TOKENS, reply, stage="facts")
+        self._annotate(
+            gid, cid, job, "facts",
+            checks=["shape"] if facts is None else [],
+            facts=facts.counts() if facts is not None else {},
+        )  # fmt: skip
+        return facts
+
+    async def _cut(
+        self,
+        prose: rd.Prose,
+        facts: rd.Facts,
+        sheet: Sequence[bt.Beat],
+        inputs: Inputs,
+        transcript: str,
+        length: rd.Length,
+    ) -> rd.Prose | None:
+        """The draft without the sentences still flagged, done in code. None when what is left
+        no longer meets the checks (the minimum length above all): then there is no recap."""
+        cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
+        if self._on_note is not None:
+            self._on_note(
+                f"Cut {len(facts.unsupported)} sentence(s) the fact check still flagged "
+                "after the one revision."
+            )
+        if rd.check_prose(
+            cut,
+            beats=sheet,
+            transcript=transcript,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+            previous=inputs.previous,
+            setting=inputs.setting,
+            length=length,
+            last=True,
+            refused=[],
+        ):
+            return None
+        return cut
 
     async def _grade(
         self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str
@@ -890,7 +1015,9 @@ class RecapWorker:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
-        for stage in ("beats", "prose", "grade", "title"):
+        self._flags.pop((gid, cid, job.session_at), None)
+        self._revised.discard((gid, cid, job.session_at))
+        for stage in ("beats", "prose", "facts", "grade", "title"):
             self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:

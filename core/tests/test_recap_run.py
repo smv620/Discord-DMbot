@@ -58,7 +58,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PASS  prose:", text)
         self.assertIn("Grader:", text)
         self.assertIn("below the bar: nothing", text)
-        self.assertIn("Calls: 4", text)  # beats, prose, grader, finish
+        self.assertIn("Calls: 5", text)  # beats, prose, fact check, grader, finish
         self.assertIn("spend $", text)
 
     async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:

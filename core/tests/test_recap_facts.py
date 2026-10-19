@@ -1,0 +1,147 @@
+"""The recap fact check's pure parts (#2064): numbered sentences, what the answer may say, the
+revision message, the cut in code, the places on beats, and the report. Invented fixtures only."""
+
+from __future__ import annotations
+
+import json
+import unittest
+from typing import ClassVar
+
+from dmbot.devtools.recap_run import __main__ as run
+from dmbot.recaps import beats as bt
+from dmbot.recaps import calls as cl
+from dmbot.recaps import draft as rd
+from tests import recap_fixtures as fx
+from tests.test_recap_calls import calls_section, inputs
+
+TEXT = (
+    "《Tense》 ((slow)) The party reached the old tower at dusk. They went north. "
+    "《Calm》 A fire was lit. Everyone gave up a blade."
+)
+
+
+class Sentences(unittest.TestCase):
+    def test_they_are_numbered_without_their_cues(self) -> None:
+        self.assertEqual(
+            rd.sentences_of(TEXT),
+            [
+                "The party reached the old tower at dusk.",
+                "They went north.",
+                "A fire was lit.",
+                "Everyone gave up a blade.",
+            ],
+        )
+
+    def test_a_cut_takes_the_sentence_and_keeps_the_mood(self) -> None:
+        cut = rd.cut_sentences(rd.Prose(TEXT, ("one", "two")), [2])
+        self.assertNotIn("north", cut.summary)
+        self.assertIn("《Calm》 A fire was lit.", cut.summary)
+        self.assertEqual(cut.music, ("one", "two"))
+
+    def test_a_section_left_with_no_words_goes_with_its_music(self) -> None:
+        cut = rd.cut_sentences(rd.Prose(TEXT, ("one", "two")), [3, 4])
+        self.assertNotIn("Calm", cut.summary)
+        self.assertEqual(cut.music, ("one",))
+
+    def test_a_number_that_names_no_sentence_cuts_nothing(self) -> None:
+        self.assertEqual(rd.cut_sentences(rd.Prose(TEXT, ("a", "b")), [0, 9]).summary, TEXT)
+
+
+class TheAnswer(unittest.TestCase):
+    def test_it_is_read_and_numbers_that_name_nothing_are_dropped(self) -> None:
+        raw = fx.facts_answer([(2, "direction"), (2, "place"), (9, "place")], missing=[1, 7])
+        facts = rd.parse_facts(raw, 4, {1, 2, 3})
+        assert facts is not None
+        self.assertEqual(facts.unsupported, ((2, "direction"),))
+        self.assertEqual(facts.missing, (1,))
+        self.assertEqual(facts.counts(), {"direction": 1, "missing": 1})
+        self.assertEqual(facts.score(), 3)
+
+    def test_a_kind_outside_the_list_or_a_bad_shape_is_not_an_answer(self) -> None:
+        bad = json.dumps({"unsupported": [{"sentence": 1, "kind": "vibes"}], "missing": []})
+        facts = rd.parse_facts(bad, 4, {1})
+        assert facts is not None
+        self.assertTrue(facts.clean)
+        self.assertIsNone(rd.parse_facts("{", 4, {1}))
+        self.assertIsNone(rd.parse_facts('{"unsupported":1,"missing":[]}', 4, {1}))
+
+    def test_nothing_flagged_scores_five_and_many_flags_not_below_one(self) -> None:
+        self.assertEqual(rd.Facts().score(), 5)
+        many = rd.Facts(tuple((n, "invented") for n in range(1, 9)))
+        self.assertEqual(many.score(), 1)
+
+    def test_the_revision_names_sentences_beats_and_kinds(self) -> None:
+        facts = rd.Facts(((2, "direction"),), (3,))
+        problems = rd.facts_problems(facts, TEXT)
+        self.assertEqual(
+            problems[0],
+            "sentence 2 says something the beats do not say (direction): They went north.",
+        )
+        self.assertIn("leaves out beat(s) 3", problems[1])
+        self.assertEqual(cl.kinds(problems), ["facts"])
+
+    def test_a_flagged_sentence_that_mentions_words_is_still_the_facts_kind(self) -> None:
+        facts = rd.Facts(((1, "invented"),))
+        text = "The words were many and no quotation marks were used."
+        self.assertEqual(cl.kinds(rd.facts_problems(facts, text)), ["facts"])
+
+
+class ThePlace(unittest.TestCase):
+    RAW: ClassVar[dict[str, object]] = {
+        "what": "The party was disarmed",
+        "who": ["Mira"],
+        "lines": [1],
+        "kind": "event",
+    }
+
+    def check(self, **extra: object) -> list[bt.Beat]:
+        raws = [{**self.RAW, **extra}] * 3
+        kept, _ = bt.check(
+            raws, lines={1: "Mira gave up her sword"}, speakers={1: fx.DM}, allowed_names=["Mira"],
+            secret_names=[],
+        )  # fmt: skip
+        return kept
+
+    def test_a_beat_carries_its_place_and_the_sheet_shows_it(self) -> None:
+        beat = self.check(where="  the keep's   gate ")[0]
+        self.assertEqual(beat.where, "the keep's gate")
+        self.assertIn("Where: the keep's gate.", bt.sheet([beat]))
+
+    def test_no_place_is_empty_and_not_shown(self) -> None:
+        beat = self.check()[0]
+        self.assertEqual(beat.where, "")
+        self.assertNotIn("Where", bt.sheet([beat]))
+
+    def test_a_long_place_is_cut_and_a_stored_beat_without_one_still_loads(self) -> None:
+        self.assertEqual(len(self.check(where="x" * 500)[0].where), bt.WHERE_MAX)
+        old = [{"what": "w", "who": [], "lines": [1], "kind": "event"}]
+        self.assertEqual(bt.from_json(old)[0].where, "")
+        kept = self.check(where="the gate")
+        self.assertEqual(bt.from_json(bt.as_json(kept)), kept)
+
+    def test_the_beat_prompt_asks_for_the_place_and_the_writer_may_not_move_it(self) -> None:
+        self.assertIn('"where"', bt.system())
+        self.assertIn("Never move an event to another place", rd.prose_system(None))
+        self.assertIn("Never say", rd.prose_system(None))
+
+
+class TheReport(unittest.IsolatedAsyncioTestCase):
+    async def test_the_facts_line_has_counts_and_no_text_of_the_session(self) -> None:
+        n = next(i for i, t in enumerate(rd.sentences_of(fx.SUMMARY), 1) if "torch burned" in t)
+        careful = fx.Canned(
+            fx.PROSE_ANSWER,
+            facts=[
+                fx.facts_answer([(n, "place"), (n + 1, "direction")], missing=[2]),
+                fx.CLEAN_FACTS,
+            ],
+        )
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        out = await run.run_text(inputs(), fast, careful)
+        rows = calls_section(out)
+        facts = [r for r in rows if r.strip().startswith("facts try")]
+        self.assertEqual(len(facts), 2)
+        self.assertIn("flagged: place 1, direction 1, missing 1", facts[0])
+        self.assertIn("flagged: nothing", facts[1])
+        section = "\n".join(rows)
+        for words in ("torch", "Greywater", "Mira", "burned"):
+            self.assertNotIn(words, section)  # counts only: no word of the session or the recap
