@@ -534,7 +534,7 @@ export const FIGHT_AND_ITEM_RULES_LIVE = false;
 // ENCOUNTER_NOTE), so the words promise neither.
 export const fightRuleSteps: Step[] = [
   {
-    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly. That's your call. /dmbot rule answers only you. If a player asks, DMbot says \"That's one for your DM.\"",
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
   },
 ];
 

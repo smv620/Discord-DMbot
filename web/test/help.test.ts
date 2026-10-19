@@ -272,7 +272,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(players.includes("attunement")).toBe(FIGHT_AND_ITEM_RULES_LIVE);
     const fight = fightRuleSteps.map((x) => x.text).join(" ");
     // DMbot reads the rule and does no sum and no ruling (sidebar/context.py ENCOUNTER_NOTE): the words promise neither.
-    expect(fight).toContain("It doesn't add up the monsters or say if the fight is easy or deadly. That's your call.");
+    expect(fight).toContain("It doesn't add up the monsters or say if the fight is easy or deadly: that's your call.");
     expect(fight).toContain("That's one for your DM.");
     expect(fight).not.toMatch(/calculat|encounter|budget math/i);
     // The fight step is the game master's alone; the magic item step is for everyone.
