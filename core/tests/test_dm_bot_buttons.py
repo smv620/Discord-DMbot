@@ -43,6 +43,8 @@ class Fake:
         self.consenting = {PLAYER, MEMBER}
         self.posted: list[tuple[int, str, Any]] = []
         self.channel: Any = None
+        self.pins: list[Any] = []  # the messages posted, to see which were pinned
+        self.pin_error: Exception | None = None
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
         return user_id in self.consenting
@@ -52,9 +54,12 @@ class Fake:
 
     async def post_message(self, channel_id: int, text: str, view: Any = None) -> Any:
         self.posted.append((channel_id, text, view))
-        return SimpleNamespace(
-            id=MESSAGE + len(self.posted), channel=SimpleNamespace(id=channel_id)
+        message = SimpleNamespace(
+            id=MESSAGE + len(self.posted), channel=SimpleNamespace(id=channel_id), pinned=False
         )
+        message.pin = AsyncMock(side_effect=self.pin_error)
+        self.pins.append(message)
+        return message
 
 
 class PanelTest(DatabaseTest):
@@ -318,10 +323,44 @@ class Keeping(PanelTest):
         campaign = await self.reload()
         existing = MagicMock()
         existing.edit = AsyncMock()
+        existing.pin = AsyncMock()
+        existing.pinned = False
         channel.fetch_message.return_value = existing
         await buttons.ensure_panel(self.bot, campaign)
         existing.edit.assert_awaited_once()
+        existing.pin.assert_awaited_once()  # one posted before pinning, or unpinned by hand
         self.assertEqual(self.bot.posted, [])
+
+    async def test_a_new_panel_is_pinned_and_one_already_pinned_is_left_alone(self) -> None:
+        campaign = await self.with_channel()
+        channel = self.a_channel()
+        message = await buttons.ensure_panel(self.bot, campaign)
+        assert message is not None
+        self.bot.pins[0].pin.assert_awaited_once()
+        await self.campaigns.set_dm_bot_message(GUILD, campaign.id, MESSAGE)
+        campaign = await self.reload()
+        pinned = MagicMock()
+        pinned.edit = AsyncMock()
+        pinned.pin = AsyncMock()
+        pinned.pinned = True
+        channel.fetch_message.return_value = pinned
+        await buttons.ensure_panel(self.bot, campaign)
+        pinned.pin.assert_not_awaited()
+
+    async def test_a_refused_or_failed_pin_never_stops_the_panel(self) -> None:
+        campaign = await self.with_channel()
+        self.a_channel()
+        refused = discord.Forbidden(MagicMock(status=403), "no")
+        failed = discord.HTTPException(MagicMock(status=400), "pin limit")
+        for error in (refused, failed):
+            self.bot.pins.clear()
+            await self.campaigns.set_dm_bot_message(GUILD, campaign.id, MESSAGE)
+            self.bot.channel.fetch_message.side_effect = discord.NotFound(
+                MagicMock(status=404), "x"
+            )
+            self.bot.pin_error = error
+            message = await buttons.ensure_panel(self.bot, await self.reload())
+            self.assertIsNotNone(message)
 
     async def test_a_deleted_panel_is_posted_again(self) -> None:
         campaign = await self.with_channel()

@@ -2,6 +2,8 @@
 
     python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT [--audio] [--keep] --yes
     python -m dmbot.devtools.recap_run --golden --yes
+    python -m dmbot.devtools.recap_run --transcript FILE --dm NAME [--names FILE] [--audio]
+        [--out DIR] --yes
 
 It runs the real recap worker (`RecapWorker`: the same windows, checks and grader as the job) on a
 stored session, or on the invented golden set, with paid AI calls. It says what it expects to cost
@@ -14,6 +16,20 @@ campaign, never goes anywhere else, and a recap that names a secret name is not 
 and the credits (needs ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID and ffmpeg). Keys come from the
 environment and are never printed. Paste nothing from the output into GitHub but the scores and
 counts.
+
+`--transcript FILE` (#1969) runs the same thing on a transcript file instead of a stored session,
+to test a game played before DMbot was listening or recorded with another tool: DMbot's own
+download, plain `Name: words` lines, or WebVTT and SRT (see `transcript_file.py`). `--dm NAME` is
+the DM's name as the file spells it; `--names FILE` gives names, `Ka'zeth = Kah-zeth` (how the
+voice says it) and `secret: Name` (the recap must never use it). **Consent:** an uploaded file has
+no consent records, so before any paid call the tool asks whether everyone in it agreed to be
+recorded and to this test, and anything but `yes` stops it. `--yes` covers the cost question and
+never this one. This is CLAUDE.md's consent rule applied to the owner's own table, offline.
+Nothing is stored: `--keep` is refused with a file, and the file is only read. `--out DIR` keeps
+the voice, music and mix mp3s there (the folder is private to the user) and the report prints
+which voice tag each cue became. The file and the outputs stay on the server; the tool never
+prints the transcript, only the recap the owner reads. **Paste nothing from the output into
+GitHub but the scores, counts and credits.**
 
 Differences from the live job, on purpose: no plan or daily cap applies (a test run is not a
 customer's), the names are read once at the start (the live job reads the secret names again at
@@ -41,11 +57,13 @@ from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.recap_measure.__main__ import beat_hits
 from dmbot.devtools.recap_measure.golden import GoldenError, load_golden
+from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
 from dmbot.memory.extractor import Client, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import names_a_secret, narration_of, strip_cues
 from dmbot.transcript.improvement import filter_lines
@@ -251,6 +269,16 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
     return lines
 
 
+def _copy_out(source: Path, into: Path) -> None:
+    """The mp3s, copied to a folder only this user can open (the owner's recap is private)."""
+    into.mkdir(parents=True, exist_ok=True, mode=0o700)
+    into.chmod(0o700)  # (mkdir's mode is narrowed by the umask and ignored for an existing folder)
+    for path in sorted(source.iterdir()):
+        target = into / path.name
+        shutil.copyfile(path, target)
+        target.chmod(0o600)
+
+
 async def run_audio(
     job: Job,
     inputs: pl.Inputs,
@@ -260,9 +288,13 @@ async def run_audio(
     guild_id: int = 0,
     campaign_id: str = "test-run",
     runner: Runner | None = None,
+    names: Sequence[SpokenName] = (),
+    keep_in: Path | None = None,
 ) -> list[str]:
     """The narration and music into a temporary folder: the lengths and the credits. Removed
-    afterwards; nothing is kept."""
+    afterwards; nothing is kept unless `keep_in` is given (#1969), when the mp3s are copied
+    there. `names`: the names with a "said as" spelling become the pronunciation dictionary."""
+    from dmbot.recaps.audio import names as nm
     from dmbot.recaps.audio import script as sc
     from dmbot.recaps.audio.render import Renderer, estimate_credits, run_ffmpeg
 
@@ -273,15 +305,34 @@ async def run_audio(
     renderer = Renderer(provider, files, runner=runner or run_ffmpeg)  # type: ignore[arg-type]
     folder = Path(tempfile.mkdtemp(prefix="recap-run-"))
     try:
-        made = await renderer.render(
-            guild_id, campaign_id, script, into=folder / "out", seed=job.session_at, dictionary=None
-        )
+        dictionary = None
+        spelled = nm.rules(names)
+        if spelled:  # secret names never get a rule: `rules` leaves them and what holds them out
+            dictionary = await provider.dictionary("recap-run", spelled)  # type: ignore[attr-defined]
+        try:
+            made = await renderer.render(
+                guild_id,
+                campaign_id,
+                script,
+                into=folder / "out",
+                seed=job.session_at,
+                dictionary=dictionary,
+            )
+        finally:
+            if dictionary is not None:  # a test run leaves nothing at the company, even on failure
+                await provider.forget_dictionary(dictionary.dictionary_id)  # type: ignore[attr-defined]
         sizes = {p.name: p.stat().st_size for p in (folder / "out").iterdir()}
+        kept: list[str] = []
+        if keep_in is not None:
+            await asyncio.to_thread(_copy_out, folder / "out", keep_in)
+            kept = ["", f"Kept in {keep_in} (on this server only; not for GitHub)."]
         return [
             "",
             f"Audio: {made.seconds:.1f} s, {made.credits} credits "
             f"(estimated {estimate_credits(script, ambience_needed=True)})",
             *(f"  {name}: {size // 1024} KB" for name, size in sorted(sizes.items())),
+            *([f"Pronunciation rules: {len(spelled)}"] if names else []),
+            *kept,
         ]
     finally:
         shutil.rmtree(folder, ignore_errors=True)
@@ -295,6 +346,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="a stored session: server id, campaign id, when it started (Unix seconds)",
     )  # fmt: skip
     what.add_argument("--golden", action="store_true", help="the invented golden set")
+    what.add_argument(
+        "--transcript", metavar="FILE",
+        help="a transcript file (DMbot's download, 'Name: words' lines, WebVTT or SRT)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--dm", metavar="NAME", help="with --transcript: the DM, as the file spells it"
+    )
+    parser.add_argument(
+        "--names", metavar="FILE",
+        help="with --transcript: names, 'Ka'zeth = Kah-zeth', and 'secret: Name' lines",
+    )  # fmt: skip
+    parser.add_argument("--out", metavar="DIR", help="with --audio: keep the mp3s in this folder")
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -305,6 +368,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.golden and (args.audio or args.keep):
         parser.error("--golden takes neither --audio nor --keep")
+    if args.transcript:
+        if args.keep:
+            parser.error(
+                "--keep can't be used with --transcript: a transcript file is never stored"
+            )
+        if not args.dm:
+            parser.error("--transcript needs --dm NAME, the DM's name as the file spells it")
+    elif args.dm or args.names:
+        parser.error("--dm and --names go with --transcript")
+    if args.out and not args.audio:
+        parser.error("--out keeps the audio, so it needs --audio")
     for item in args.price:
         try:
             prices_of([item], [])
@@ -409,6 +483,8 @@ async def main_async(args: argparse.Namespace) -> int:
         rows, clean = await run_golden(fast, careful, models, prices)
         print("\n".join(rows))
         return 0 if clean else 1
+    if args.transcript:
+        return await _transcript(args, fast, careful, models, prices)
     return await _session(args, fast, careful, models, prices)
 
 
@@ -514,7 +590,108 @@ async def _session(
         await db.close()
 
 
-async def _audio(out: Outcome) -> list[str]:
+def read_transcript_inputs(
+    args: argparse.Namespace,
+) -> tuple[pl.Inputs, tf.Transcript, list[SpokenName]]:
+    """The file, the DM and the names as the recap worker's inputs. Raises `tf.TranscriptError`
+    (and `OSError` for a file that can't be read) with plain words and never a line of the file."""
+    transcript = tf.parse(Path(args.transcript).read_text(encoding="utf-8-sig"))
+    dm = tf.dm_id(transcript, args.dm)
+    names = tf.parse_names(Path(args.names).read_text(encoding="utf-8-sig")) if args.names else []
+    allowed = [n.text for n in names if not n.secret] + list(transcript.characters)
+    secret = [n.text for n in names if n.secret]
+    secret_keys = {s.casefold() for s in secret}
+    inputs = pl.Inputs(
+        lines=tf.lines_of(transcript),
+        dm_ids={dm},
+        allowed_names=[a for a in dict.fromkeys(allowed) if a.casefold() not in secret_keys],
+        secret_names=secret,
+        previous="",
+        day=None,
+    )
+    return inputs, transcript, names
+
+
+async def _transcript(
+    args: argparse.Namespace,
+    fast: Client,
+    careful: Client,
+    models: tuple[str, str],
+    prices: dict[str, tuple[float, float]],
+    *,
+    ask: Callable[[str], str] = input,
+) -> int:
+    """`--transcript`: the file through the same worker as a stored session, in memory only."""
+    try:
+        inputs, transcript, names = read_transcript_inputs(args)
+    except (OSError, tf.TranscriptError) as exc:
+        print(f"recap_run: {exc}", file=sys.stderr)
+        return 2
+    calls, tokens = estimate(inputs)
+    price = prices.get(models[0])
+    print(
+        f"{transcript.format} file: {len(inputs.lines)} lines from {len(transcript.speakers)} "
+        f"speakers{_tolerated(transcript)}; up to {calls} AI calls; about {tokens} input tokens on "
+        "the first try "
+        f"({dollars(price, tokens, 4000)} on the fast tier; a retry uses the careful tier and "
+        "costs more)." + (" Plus about 7,000 provider credits for --audio." if args.audio else "")
+    )
+    if not args.yes:
+        print("Nothing was run. Add --yes to spend the money.")
+        return 0
+    # An uploaded file has no consent records. This is asked once, before any paid call, and
+    # --yes never answers it (CLAUDE.md: never process words from people who have not agreed).
+    try:
+        answer = ask(tf.CONSENT_QUESTION)
+    except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
+        answer = ""
+    if not tf.consent_given(answer):
+        print("recap_run: stopped. Nothing was sent to any service.")
+        return 4
+    out = await run_text(inputs, fast, careful, session_at=1, models=models)
+    lines = report(out, prices)
+    if lines == [REFUSED]:
+        print(REFUSED)
+        return 3
+    print("\n".join(lines))  # the paid text report first: nothing below can lose it
+    if out.job.state == "ready":
+        print("\n".join(_cue_lines(out)))
+        if args.audio:
+            try:
+                keep_in = Path(args.out) if args.out else None
+                print("\n".join(await _audio(out, names=names, keep_in=keep_in)))
+            except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
+                print(f"audio: failed ({type(exc).__name__}); the text above is unchanged")
+    return 0 if out.job.state == "ready" else 1
+
+
+def _tolerated(transcript: tf.Transcript) -> str:
+    """What the plain reader let through, as counts only: " (skipped 2 header lines, joined 5
+    wrapped lines)". Never the text."""
+    notes = []
+    if transcript.skipped:
+        notes.append(f"skipped {transcript.skipped} header lines")
+    if transcript.joined:
+        notes.append(f"joined {transcript.joined} wrapped lines")
+    return f" ({', '.join(notes)})" if notes else ""
+
+
+def _cue_lines(out: Outcome) -> list[str]:
+    from dmbot.recaps.audio import script as sc
+
+    try:
+        script = sc.build(
+            out.job.title, out.job.game_day, out.job.summary, secret_names=out.inputs.secret_names
+        )
+    except sc.SecretInScript:
+        return []
+    rows = tf.cue_map(out.job.summary, script)
+    return ["", f"Cues ({len(rows)}):", *rows] if rows else ["", "Cues: none in this recap"]
+
+
+async def _audio(
+    out: Outcome, *, names: Sequence[SpokenName] = (), keep_in: Path | None = None
+) -> list[str]:
     from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
     from dmbot.recaps.audio.files import AudioFiles
 
@@ -530,7 +707,9 @@ async def _audio(out: Outcome) -> list[str]:
         provider = ElevenLabs(http, voice_id=voice, speech_model=model)
         # The ambience cache is a temporary folder too, so a run costs what a first run costs.
         with tempfile.TemporaryDirectory(prefix="recap-run-cache-") as cache:
-            return await run_audio(out.job, out.inputs, provider, AudioFiles(Path(cache)))
+            return await run_audio(
+                out.job, out.inputs, provider, AudioFiles(Path(cache)), names=names, keep_in=keep_in
+            )
     finally:
         await http.close()
 

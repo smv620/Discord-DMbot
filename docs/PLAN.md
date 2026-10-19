@@ -1019,13 +1019,13 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   are not asked for an age and nothing of theirs is captured.
 - **Consent carries over** between sessions, per server. In **every session**, a consented
   person gets one short private reminder with the date they consented, plus a
-  **⚙️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in
+  **🗂️ Menu** button (#33, #34; the menu replaced a red 🛑 button, below). Rejoining in
   the same session doesn't send another (built 2026-10-05: once per person per session,
   not once per join).
-- **The ⚙️ Menu, and a warning before stopping** (owner decision, 2026-10-08: the big red
+- **The 🗂️ Menu, and a warning before stopping** (owner decision, 2026-10-08: the big red
   🛑 Stop recording me button on every private message was annoying). DMbot's private
   messages that offered 🛑 (the "you said yes" message, the per-session reminder, the
-  `/consent give` answer) carry one grey **⚙️ Menu** button instead. The menu is about that
+  `/consent give` answer) carry one grey **🗂️ Menu** button instead. The menu is about that
   one server and shows only what applies: **📜 My character sheet** (#723, moved in from
   its own button), **Stop recording me**, and **Close**. **Stop recording me** first shows
   one warning: "Stop recording you in <server>? DMbot won't write down anything you say
@@ -1038,12 +1038,12 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   - **Keep recording** changes nothing; it says "OK, DMbot keeps recording you in
     <server>" and how to stop later;
   - **in place on lasting messages** (2026-10-08, #807): on the per-session reminder and
-    the "you said yes" message, ⚙️ Menu swaps that message's buttons for the menu, Stop
+    the "you said yes" message, 🗂️ Menu swaps that message's buttons for the menu, Stop
     puts the warning at the top of that message's text, Yes leaves it reading "🛑
     Stopped…" with the ✅ consent button, and Keep or Close restore it exactly. So a reminder never
     keeps saying "recording you" after a stop. The warning is in the text, never an embed,
     because Discord hides embeds for people who turn previews off;
-  - ⚙️ Menu and `/consent revoke` answer from the in-memory consent first, never waiting
+  - 🗂️ Menu and `/consent revoke` answer from the in-memory consent first, never waiting
     on the database before Discord's 3-second limit, so stopping can't fail on a slow
     database;
   - a 🛑 button on a message sent before this change shows the warning too;
@@ -1150,7 +1150,7 @@ sidebar, the clock, cards and the after-session notes for the DM.
   to date. Every press answers **privately**, and what a person is offered depends on their role in that
   campaign, checked again on every press: a **game master** gets every button (⚙️ Settings and all it holds:
   homebrew, house rules, game masters, transcripts, the clock's settings, delete campaign for the plan
-  holder); a **player** gets their own things (their ⚙️ Menu: consent, Stop recording me, Delete my
+  holder); a **player** gets their own things (their 🗂️ Menu: consent, Stop recording me, Delete my
   transcripts; 📖 Look up a rule; where to read transcripts); anyone else in the server gets what any member
   may do (rule lookups, transcripts). A button nobody in a role may use is not shown to them.
 - **Nothing secret is ever posted there:** it is a public channel, so DM-screen content never goes into the
@@ -1422,7 +1422,7 @@ building:
   still in the server. People with private messages off use `/transcript`.
 - Until the cleaned download exists, there's only the "as heard" version. If saving
   fails at the start, the DM screen says there'll be no download for this session.
-- **Delete my past transcripts is built (#1532):** 🗑 in the ⚙️ Menu on the consent messages, and
+- **Delete my past transcripts is built (#1532):** 🗑 in the 🗂️ Menu on the consent messages, and
   `/dmbot delete-my-lines`. One warning with the numbers ("N lines in M sessions"), one confirmation, one
   transaction per server. What goes and what stays is in "Retention" below.
 - **Keep transcripts for is built (#1533, migration 0101):** see "Retention". The cleaned version,
@@ -2093,7 +2093,7 @@ reads the campaign memory and never changes it.
   events, and the transcript lines and sidebar questions and answers DMbot produced. No
   Discord id, name or server id is in the files, and the files are never in Postgres, a
   backup or the repository. Both yeses are checked before the audio is encoded, before it is
-  written and after. **Stop saving my voice** (⚙️ Menu), or **Stop recording me**, stops it at
+  written and after. **Stop saving my voice** (🗂️ Menu), or **Stop recording me**, stops it at
   once and deletes the person's files from every session; a kept session that lost a speaker
   is marked incomplete. Sessions nobody keeps (`python -m dmbot.devtools.test_library keep`)
   are deleted after 7 days by a daily job. Replaying them is a later issue.
@@ -3913,7 +3913,7 @@ says, and DMs would not pay for a service that claims their campaigns.
   recordings kept earlier name people only by made-up voice codes, so they are not re-filtered, and
   **Stop saving my voice** remains the way to delete one's kept voice (decided 2026-10-16, PR #1621).
 - **Raw audio:** DMbot does not store voice in the base product. The test library's voice saving stays
-  a separate yes (⚙️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
+  a separate yes (🗂️ Menu → Stop saving my voice); keeping audio for troubleshooting is decided later.
 - The terms and privacy changes are one WebDev PR (#1610), held for the owner's `approved: owner` label and
   recommended for a lawyer's read before it goes live; it merges only after the delete button and the
   opt-out exist.
@@ -3927,7 +3927,7 @@ DMbot already wrote down stays, and anyone in this server can still read it." (W
 "Delete my past transcripts" ships, that message must also say how to use it.)
 
 *Delete my past transcripts, built (2026-10-16, #1532).* The stop message now ends "Want it gone? Press
-⚙️ Menu, then 🗑 Delete my transcripts." (its buttons carry the Menu; the button is short so it fits a phone).
+🗂️ Menu, then 🗑 Delete my transcripts." (its buttons carry the Menu; the button is short so it fits a phone).
 The action covers one server and the pressing person only, in one transaction (nothing deleted if it
 fails); a running session's waiting lines of theirs are dropped under its save lock, and if they are still
 recorded, new lines are written from then on. **Goes:** their lines in both versions (including their `[DM Sidebar]` / `[Table Q]` questions and

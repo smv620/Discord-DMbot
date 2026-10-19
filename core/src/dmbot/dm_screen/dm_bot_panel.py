@@ -39,7 +39,7 @@ class Button(StrEnum):
     HELP = "help"
     RULE = "rule"  # 📖 Look up a rule: the form and private answer of /dmbot rule (#1691)
     TRANSCRIPTS = "transcripts"  # 📜 Transcripts: a link to the website's page, no callback
-    MY_MENU = "my_menu"  # ⚙️ Menu: Stop recording me, Delete my transcripts (about the person)
+    MY_MENU = "my_menu"  # 🗂️ Menu: Stop recording me, Delete my transcripts (about the person)
     MY_CHARACTER = "my_character"  # the player's character link in this campaign
     SETTINGS = "settings"  # the campaign's Settings card, game masters only
     NAMES = "names"  # 📇 Names: the names home card, game masters only (#1986)
@@ -62,7 +62,7 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
 }
 
 # Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing
-# menus and keep the labels they have everywhere else (⚙️ Menu, 📜 My character sheet, ⚙️ Settings).
+# menus and keep the labels they have everywhere else (🗂️ Menu, 📜 My character sheet, ⚙️ Settings).
 LABELS: dict[Button, str] = {
     Button.OPEN: "👤 My buttons",
     Button.HELP: "❓ Help",
