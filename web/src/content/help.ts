@@ -112,6 +112,30 @@ export const storyStateSteps: Step[] = [
 // the two in step and checks that no line points both ways.
 export const DM_BOT_CHANNEL_LIVE = false;
 
+// The 📇 Names button (#1986, #1987, core dm_screen/names_button.py) opens the same private names
+// card as /dmbot names. It is merged but not deployed, so its What's new entry "A 📇 Names button"
+// (whats-new.ts, `held`) is held and Help follows. Set this to true in the same change that moves
+// that entry out of `held`; a test keeps the two in step. Where the button is says "the DMbot
+// channel" only while that is live (DM_BOT_CHANNEL_LIVE), so no line points both ways.
+export const NAMES_BUTTON_LIVE = false;
+
+export const namesButtonSteps: Step[] = [
+  {
+    text: `${
+      DM_BOT_CHANNEL_LIVE
+        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Settings."
+        : "To see every name DMbot knows in your campaign, press ⚙️ Settings, then 📇 Names."
+    } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
+    names: [
+      { name: "Names", file: "dm_screen/names_button.py" },
+      { name: "Check names", file: "ui/names.py" },
+      { name: "Check who is who", file: "ui/names.py" },
+      { name: "Check what was said", file: "ui/names.py" },
+      { name: "/dmbot names", file: "bot.py" },
+    ],
+  },
+];
+
 export const settingsOnDmScreenSteps: Step[] = [
   {
     text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
@@ -468,6 +492,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
   ...(DM_BOT_CHANNEL_LIVE ? dmBotChannelSteps : settingsOnDmScreenSteps),
+  ...(NAMES_BUTTON_LIVE ? namesButtonSteps : []),
   ...(WHATS_ON_LIVE ? whatsOnSteps : []),
   {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
