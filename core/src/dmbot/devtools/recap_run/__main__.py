@@ -58,6 +58,7 @@ from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.recap_measure.__main__ import beat_hits
 from dmbot.devtools.recap_measure.golden import GoldenError, load_golden
+from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
 from dmbot.memory.extractor import Client, readable
@@ -457,7 +458,15 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--names", metavar="FILE",
         help="with --transcript: names, 'Ka'zeth = Kah-zeth', and 'secret: Name' lines",
     )  # fmt: skip
-    parser.add_argument("--out", metavar="DIR", help="with --audio: keep the mp3s in this folder")
+    what.add_argument(
+        "--review", metavar="DIR",
+        help="rebuild review.html from a folder a test run made (no paid call, no --yes)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--out", metavar="DIR",
+        help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
+        "--audio the mp3s",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -477,8 +486,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--transcript needs --dm NAME, the DM's name as the file spells it")
     elif args.dm or args.names:
         parser.error("--dm and --names go with --transcript")
-    if args.out and not args.audio:
-        parser.error("--out keeps the audio, so it needs --audio")
+    if args.out and not args.transcript:
+        parser.error("--out goes with --transcript")
+    if args.review and (args.audio or args.keep or args.price or args.yes):
+        parser.error(
+            "--review only rebuilds the page: it takes no --audio, --keep, --price or --yes"
+        )
     for item in args.price:
         try:
             prices_of([item], [])
@@ -573,6 +586,8 @@ async def run_golden(
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    if args.review:
+        return review_folder(Path(args.review))
     got = clients_from_env()
     if got is None:
         return 2
@@ -595,6 +610,36 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.transcript:
         return await _transcript(args, fast, careful, models, prices)
     return await _session(args, fast, careful, models, prices)
+
+
+def review_folder(folder: Path) -> int:
+    """`--review DIR`: rebuild the page from a folder. No key, no paid call."""
+    if not folder.is_dir():
+        print(f"recap_run: {folder} is not a folder", file=sys.stderr)
+        return 2
+    target = rv.write_page(folder)
+    print(f"Wrote {target}. Open it in a browser (it needs no network).")
+    return 0
+
+
+def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given: bool) -> None:
+    """`--out`: the recap and the report as files only this user can read (#2011). The caller
+    has already refused a recap that names a secret, so nothing here is checked twice."""
+    rv.private_dir(folder)
+    job = out.job
+    if job.summary and job.state == "ready":  # a recap that failed its checks is not kept
+        rv.write_private(
+            folder / rv.RECAP_FILE,
+            rv.recap_text(
+                job.title,
+                job.summary,
+                list(job.housekeeping),
+                list(job.music),
+                voice_tags=voice_tags_on(),
+                names_given=names_given,
+            ),
+        )
+    rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")
 
 
 def _golden_inputs(session: object) -> pl.Inputs:
@@ -757,20 +802,32 @@ async def _transcript(
     if not tf.consent_given(answer):
         print("recap_run: stopped. Nothing was sent to any service.")
         return 4
+    folder = Path(args.out) if args.out else None
+    if folder is not None and folder.is_dir():
+        rv.clear_old(folder)  # nothing of an earlier run is left to be mixed into this one
     out = await run_text(inputs, fast, careful, session_at=1, models=models)
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
+    printed = list(lines)
     if out.job.state == "ready":
-        print("\n".join(_cue_lines(out)))
+        cues = _cue_lines(out)
+        print("\n".join(cues))
+        printed += cues
+        if folder is not None:  # the text is saved before the audio can fail
+            save_text(folder, out, printed, names_given=bool(names))
         if args.audio:
             try:
-                keep_in = Path(args.out) if args.out else None
-                print("\n".join(await _audio(out, names=names, keep_in=keep_in)))
+                made = await _audio(out, names=names, keep_in=folder)
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
-                print(f"audio: failed ({type(exc).__name__}); the text above is unchanged")
+                made = [f"audio: failed ({type(exc).__name__}); the text above is unchanged"]
+            print("\n".join(made))
+            printed += made
+    if folder is not None:
+        save_text(folder, out, printed, names_given=bool(names))
+        print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
     return 0 if out.job.state == "ready" else 1
 
 

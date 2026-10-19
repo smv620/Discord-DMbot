@@ -363,7 +363,9 @@ class TheRefusals(unittest.TestCase):
 
     def test_the_other_flags_go_with_a_transcript_or_audio(self) -> None:
         self.assertIn("--transcript", self.refused("--golden", "--dm", "Sam"))
-        self.assertIn("--audio", self.refused("--transcript", "f.txt", "--dm", "Sam", "--out", "d"))
+        self.assertIn("--transcript", self.refused("--golden", "--out", "d"))
+        args = run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--out", "d"])
+        self.assertEqual(args.out, "d")  # the text is saved without --audio too
 
     def test_the_flags_are_accepted_together(self) -> None:
         args = run.parse_args(
