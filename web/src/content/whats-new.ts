@@ -263,8 +263,8 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "Recaps fit your session: a short game gets a short recap",
-    what: "A recap's length now follows your session: about 200 words for a one-hour game and about 400 for three hours, up to about 700 for the longest.",
-    reason: "Held with recaps (RECAPS_LIVE).",
+    what: "A recap's length now follows your session: about 200 words for a one-hour game, about 400 for three hours, and about 700 for a game of six hours or more.",
+    reason: "Held with recaps (RECAPS_LIVE, #2018).",
   },
   {
     date: "2026-10-16",
