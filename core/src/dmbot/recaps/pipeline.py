@@ -537,6 +537,7 @@ class RecapWorker:
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             previous=inputs.previous,
+            transcript="\n".join(x.text for x in self._said(inputs, set(job.speakers))),
         )
         if finish is None:
             return await self._retry_or_fail(gid, cid, job, problems)

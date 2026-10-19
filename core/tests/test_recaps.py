@@ -48,7 +48,7 @@ def prose_problems(summary: str = fx.SUMMARY, music: str = fx.MUSIC, **kw: Any) 
         "transcript": TRANSCRIPT,
         "allowed_names": fx.NAMES,
         "secret_names": [],
-        "length": rd.length_for(4.0),  # the canned recap is 353 words: a 4-hour session's
+        "length": rd.length_for(2.5),  # the canned recap is 353 words: a 2.5-hour session's
     }
     return rd.check_prose(prose, **{**args, **kw})
 
@@ -221,15 +221,18 @@ class TheProse(unittest.TestCase):
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
         self.assertTrue(any("between 280 and 420" in p for p in long), long)
 
-    def test_the_target_is_150_words_and_50_an_hour_to_the_nearest_10_and_at_most_500(self) -> None:
+    def test_the_target_is_100_words_and_100_an_hour_to_the_nearest_10_and_at_most_700(
+        self,
+    ) -> None:
         for hours, target in (
-            (0.5, 180),
+            (0.5, 150),
             (1, 200),
-            (2, 250),
-            (4, 350),
-            (6, 450),
-            (8, 500),
-            (20, 500),
+            (2.5, 350),
+            (3, 400),
+            (4, 500),
+            (6, 700),
+            (8, 700),
+            (20, 700),
         ):
             self.assertEqual(rd.length_for(hours).target, target, hours)
 
@@ -239,7 +242,7 @@ class TheProse(unittest.TestCase):
 
     def test_every_limit_scales_with_the_target(self) -> None:
         for hours, beats, sections, paragraphs in (
-            (0.5, 3, 2, 2), (1, 3, 2, 2), (2, 6, 3, 2), (4, 10, 5, 4), (8, 10, 6, 5),
+            (0.5, 3, 2, 2), (1, 3, 2, 2), (3, 9, 5, 4), (4, 10, 6, 5), (8, 10, 6, 7),
         ):  # fmt: skip
             length = rd.length_for(hours)
             self.assertEqual(
@@ -247,9 +250,10 @@ class TheProse(unittest.TestCase):
                 (beats, sections, paragraphs),
                 hours,
             )
-            self.assertEqual(length.summary_max, round(length.target * 9.5))
+            self.assertEqual(length.summary_max, length.last_high * 8)
             self.assertGreater(length.max_tokens, length.last_high)
         self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max)  # the editor's cap
+        self.assertEqual(rd.SUMMARY_MAX, 7560)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:
@@ -267,7 +271,7 @@ class TheProse(unittest.TestCase):
         text = "《Tense》 " + " ".join(["calm"] * 889)
         (problem,) = [p for p in prose_problems(text, "1. Strings.") if "words" in p]
         self.assertIn(
-            "Your draft was 889 words. This session ran about 4 hours: write about 350 words, "
+            "Your draft was 889 words. This session ran about 2.5 hours: write about 350 words, "
             "between 280 and 420",
             problem,
         )
@@ -317,7 +321,7 @@ class TheProse(unittest.TestCase):
             transcript=transcript,
             allowed_names=fx.NAMES,
             secret_names=["Zarathul"],
-            length=rd.length_for(4.0),
+            length=rd.length_for(2.5),
         )
         copy = [p for p in found if "copies the table" in p]
         self.assertTrue(copy and all("Zarathul" not in p and "starting" not in p for p in copy))
@@ -385,8 +389,8 @@ class TheProse(unittest.TestCase):
         self.assertEqual(rd.pick_beats(many[:6]), many[:6])  # a short sheet whole
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
-        system = rd.prose_system(None, rd.length_for(4.0))
-        self.assertIn("about 4 hours, so write about 350 words (between 280 and 420)", system)
+        system = rd.prose_system(None, rd.length_for(2.5))
+        self.assertIn("about 2.5 hours, so write about 350 words (between 280 and 420)", system)
         self.assertIn("about 4 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
@@ -523,15 +527,22 @@ class TheOpeningWords(unittest.TestCase):
 
     def test_ordinary_openers_and_words_used_in_lower_case_are_not_names(self) -> None:
         self.assertEqual(prose_problems(), [])  # the fixture opens sentences with They, The, ...
-        text = fx.SUMMARY.replace("Nothing answered.", "Lantern light fell. Nothing answered.")
-        # "Lantern" is not a name when the text also says "lantern"/"torch" in lower case...
-        self.assertTrue(any("Lantern" in p for p in prose_problems(text)))
-        text = text.replace("small flame", "small lantern flame")
+        # An ordinary word opens a sentence without being a name (#2013); a made-up one does not.
+        text = fx.SUMMARY.replace("Nothing answered.", "Steel rang out. Nothing answered.")
         self.assertEqual(prose_problems(text), [])
+        text = fx.SUMMARY.replace("Nothing answered.", "Zarathon rang out. Nothing answered.")
+        self.assertTrue(any("Zarathon" in p for p in prose_problems(text)))
+        # ...unless it is used as a name mid-sentence, or the table said it in lower case.
+        text = fx.SUMMARY.replace("Nothing answered.", "Steel waited. Then Steel spoke.")
+        self.assertTrue(any("Steel" in p for p in prose_problems(text)))
+        text = fx.SUMMARY.replace("Nothing answered.", "Zarathon rang out. Nothing answered.")
+        self.assertEqual(prose_problems(text, transcript=TRANSCRIPT + " a zarathon bell"), [])
 
-    def test_a_name_in_the_beat_sheet_may_open_a_sentence(self) -> None:
-        text = fx.SUMMARY.replace("Nothing answered.", "Oskar waited. Nothing answered.")
-        self.assertEqual(prose_problems(text), [])
+    def test_a_name_said_anywhere_in_the_session_is_known(self) -> None:
+        text = fx.SUMMARY.replace("Nothing answered.", "Zarathon waited. Nothing answered.")
+        self.assertTrue(any("Zarathon" in p for p in prose_problems(text)))
+        # said in a line that no beat shows the writer: still known (#2013)
+        self.assertEqual(prose_problems(text, transcript=TRANSCRIPT + " Zarathon slept"), [])
 
     def test_the_title_and_housekeeping_are_checked_from_the_first_word(self) -> None:
         self.assertEqual(proper_nouns("Varkus rises", sentence_starts=True), ["Varkus"])

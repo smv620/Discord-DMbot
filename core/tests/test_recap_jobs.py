@@ -200,7 +200,7 @@ class Working(Base):
         inputs: bool = True,
         names: Collection[str] = fx.NAMES,
         window_chars: int = 40_000,
-        hours: float = 4.0,
+        hours: float = 2.5,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -220,7 +220,7 @@ class Working(Base):
                 previous="",
                 day=4,
                 window_chars=window_chars,
-                hours=hours,  # the canned recap is 353 words: a 4-hour session's (#2013)
+                hours=hours,  # the canned recap is 353 words: a 2.5-hour session's (#2013)
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:

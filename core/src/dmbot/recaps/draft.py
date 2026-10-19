@@ -5,9 +5,9 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and its length follows the session's: about 150 words plus 50
-  for each hour played (`length_for`), at most 500, within 20% of that (35% over on the last try:
-  length is a quality target and not a grounding rule, owner decision on #2013);
+- it opens with an emotion cue `《…》` and its length follows the session's: about 100 words plus
+  100 for each hour played (`length_for`), at most 700, within 20% of that (35% over on the last
+  try: length is a quality target and not a grounding rule, owner decision on #2013);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -21,6 +21,7 @@ too goes to the AI as quoted data.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from collections.abc import Collection, Sequence
@@ -37,15 +38,17 @@ from dmbot.recaps.text import (
     words,
 )
 
-BASE_WORDS = 150  # the recap's length: this many words, and 50 more for each hour played
-WORDS_PER_HOUR = 50
-WORDS_CEILING = 500  # a 7-hour session or longer
+BASE_WORDS = 100  # the recap's length: this many words, and 100 more for each hour played
+WORDS_PER_HOUR = 100
+WORDS_CEILING = 700  # a 6-hour session or longer
 RANGE = 0.20  # a draft within this far of the target passes
 LAST_UP = 0.35  # on the last try a draft this far over the target still passes (never under)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
-CHARS_PER_WORD = 9.5  # characters allowed for each target word: 6.3 an average word, 35% over
-SUMMARY_MAX = round(WORDS_CEILING * CHARS_PER_WORD)  # the longest summary at all (the web editor)
+CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
+SUMMARY_MAX = round(
+    WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD
+)  # the longest at all (web editor)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
 TITLE_MAX = 80
@@ -171,11 +174,12 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """150 words and 50 for each hour played, to the nearest 10 and at most 500 (1 hour 200, 4
-    hours 350, 6 hours 450); within 20% of it, and up to 35% over on the last try. The other limits
-    follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6), a paragraph for
-    every 100 words (2 or more), 9.5 characters a word and a token budget for the words, the
-    music prompts and the form."""
+    """100 words and 100 for each hour played, to the nearest 10 and at most 700 (0.5 hours 150, 1
+    hour 200, 3 hours 400, 6 hours or more 700); within 20% of it, and up to 35% over on the last
+    try. The other limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
+    a paragraph for every 100 words (2 or more), 8 characters for each word of the longest
+    accepted draft (so the cap never cuts a draft the length check passes) and a token budget for
+    the words, the music prompts and the form."""
     target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
     high = round(target * (1 + RANGE))
     last_high = round(target * (1 + LAST_UP))
@@ -185,7 +189,7 @@ def length_for(hours: float) -> Length:
         low=round(target * (1 - RANGE)),
         high=high,
         last_high=last_high,
-        summary_max=round(target * CHARS_PER_WORD),
+        summary_max=round(last_high * CHARS_PER_WORD),
         beats=min(10, max(3, round(3 * hours))),
         sections=min(SECTIONS_MAX, max(1, target // 70)),
         paragraphs=max(2, round(target / 100)),
@@ -399,12 +403,14 @@ def check_prose(
         )
     if _QUOTED.search(narration):
         problems.append("no quotation marks: tell it as narration")
-    known = _known(beats, allowed_names, previous, setting)
+    # A name said anywhere in the session's lines is known, shown to the writer or not (#2013).
+    known = _known(beats, allowed_names, previous, setting) | set(words(transcript))
     unknown = sorted(
         {
             n
             for n in proper_nouns(narration, sentence_starts=True)
             if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES
+            and not _ordinary_opener(n, narration, transcript)
         }
     )
     # A secret name is never written into a retry message, which is stored and printed; the
@@ -427,6 +433,33 @@ def check_prose(
             f"it copies the table word for word{hint}: tell that part in your own words"
         )
     return problems
+
+
+@functools.cache
+def _english() -> frozenset[str]:
+    """Ordinary words, for telling "Steel rang out" from a made-up name at a sentence's start: the
+    lower-case words of the free rules' own text (spells, creatures, rules: some 20,000 words)
+    and the game words the Transcript Cleaner already knows. No outside list is needed."""
+    from dmbot.memory.scan import COMMON, GAME_TERMS
+    from dmbot.rules.index import srd
+
+    found = {w for e in srd().entries for w in _LOWER_WORD.findall(e.text)}
+    return frozenset(found | set(COMMON) | set(GAME_TERMS))
+
+
+_LOWER_WORD = re.compile(r"\b[a-z]{3,}\b")
+
+
+def _ordinary_opener(name: str, narration: str, transcript: str) -> bool:
+    """A single capitalised word that is an ordinary word (or one the table says in lower case) and
+    is never capitalised in the middle of a sentence is a sentence's first word, not a name
+    (#2013). A made-up word fails this, and so does any word used as a name mid-sentence."""
+    if " " in name:
+        return False
+    word = _POSSESSIVE.sub("", name).lower().strip("'’-")
+    if re.search(rf"[a-z,;:]\s+{re.escape(name)}\b", narration):
+        return False  # capitalised mid-sentence: used as a name
+    return word in _english() or word in set(_LOWER_WORD.findall(transcript))
 
 
 def copied_run(text: str, transcript: str) -> str:
@@ -455,6 +488,7 @@ def check_finish(
     allowed_names: Collection[str],
     secret_names: Collection[str],
     previous: str = "",
+    transcript: str = "",
 ) -> tuple[Finish | None, list[str]]:
     """The title and bullets if they pass (bullets with their beat numbers taken off), and what
     was wrong. Every bullet names a real beat; names come from the beats or the summary."""
@@ -472,7 +506,9 @@ def check_finish(
         bullets.append(match.group(2).strip())
     if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
         problems.append("the housekeeping is too long: short bullets, at most twelve")
-    known = _known(beats, allowed_names, previous, None) | set(words(summary))
+    known = (
+        _known(beats, allowed_names, previous, None) | set(words(summary)) | set(words(transcript))
+    )
     unknown = sorted(
         {
             n
