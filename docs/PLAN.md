@@ -3712,8 +3712,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   **How long a recap is** (owner, 2026-10-19, #2013, after the owner's real 652-line session came
   out at nearly 900 words against a fixed 350 to 550): the length follows the session. The target is
   **100 words for every hour played, plus 100**, rounded to the nearest 10, at most 700 (1 hour 200,
-  3 hours 400, 4 hours 500). A draft within 20% of the target passes; the last try may run up to 35%
-  over, since length is a quality target and not a grounding rule. Names, copying and secrets stay
+  3 hours 400, 4 hours 500). A draft passes from 50% under the target to 20% over it (owner,
+  2026-10-19, after recap test 9 lost a 218-word draft against a 224-word minimum: a short recap is
+  better than none); the last try may run up to 35% over, since length is a quality target and not
+  a grounding rule. The writer is still asked for the target itself. Names, copying and secrets stay
   strict on every try; a name counts as said when anyone said it in the session's kept lines (as for
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
