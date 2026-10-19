@@ -336,11 +336,12 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
         f"and {length.high}, at most {length.sections} sections, one music prompt for each."
     )
     head = "\nYour last draft was rejected: " + _data("; ".join(problems)) + ". "
-    if any("words" in p for p in problems):  # the revision must not shrink or balloon (test 4)
-        head += (
-            f"Keep it between {length.low} and {length.high} words: do not cut it down to fix "
-            "the other problems, and add detail from the beats if it is short. "
-        )
+    # A revision must not shrink or balloon, whatever the problem: a rewrite for cue placement alone
+    # came back at 173 words for a 280-word target (test 7).
+    head += (
+        f"Keep it between {length.low} and {length.high} words: do not cut it down to fix "
+        "the other problems, and add detail from the beats if it is short. "
+    )
     if rejected is None:
         return head + "Write the whole recap again, fixing exactly that. " + form
     return (
