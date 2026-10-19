@@ -557,10 +557,10 @@ class RecapWorker:
             problems = []
             if self._on_note is not None:
                 self._on_note(
-                    f"Accepted at {len(words(narration_of(prose.summary)))} words: outside the "
-                    f"{length.low} to {length.high} for about {length.hours:g} hours, within "
-                    f"{round(rd.LAST_UP * 100)}% over or {round(rd.LAST_DOWN * 100)}% under the "
-                    f"target {length.target}, and every other check passed."
+                    f"Accepted at {len(words(narration_of(prose.summary)))} words: over the "
+                    f"{length.high} for about {length.hours:g} hours, within "
+                    f"{round(rd.LAST_UP * 100)}% over the target {length.target}, and every "
+                    "other check passed."
                 )
         self._annotate(gid, cid, job, "prose", checks=lambda: cl.kinds(problems))
         if problems:
