@@ -488,6 +488,16 @@ class MagicItems(unittest.TestCase):
         )
         self.assertIn("Disadvantage on Stealth", self.build("how heavy is plate armor").prompt)
 
+    def test_a_short_armor_name_needs_a_cue_and_is_the_2024_armor(self) -> None:
+        # (#1937) "plate" and "leather" are the 5.1's names for Plate Armor and Leather Armor
+        got = [(h.entry.name, h.entry.edition) for h in self.hits("what is the AC of plate")]
+        self.assertEqual(got, [("Plate Armor", "2024")])
+        got = [(h.entry.name, h.entry.edition) for h in self.hits("how heavy is leather armor")]
+        self.assertEqual(got, [("Leather Armor", "2024")])
+        for question in ("the leather pouch", "he wears plate", "a hide of the beast"):
+            armor = [h for h in self.hits(question) if h.entry.kind == "armor"]
+            self.assertEqual(armor, [], question)
+
     def test_an_everyday_weapon_or_property_word_alone_adds_nothing(self) -> None:
         for question in ("the guard swings a club", "the light is dim", "a heavy door", "push it"):
             gear = [h for h in self.hits(question) if h.entry.kind in ("weapon", "armor", "rule")]

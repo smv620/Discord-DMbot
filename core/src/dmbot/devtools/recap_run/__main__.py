@@ -2,6 +2,8 @@
 
     python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT [--audio] [--keep] --yes
     python -m dmbot.devtools.recap_run --golden --yes
+    python -m dmbot.devtools.recap_run --transcript FILE --dm NAME [--names FILE] [--audio]
+        [--out DIR] --yes
 
 It runs the real recap worker (`RecapWorker`: the same windows, checks and grader as the job) on a
 stored session, or on the invented golden set, with paid AI calls. It says what it expects to cost
@@ -14,6 +16,20 @@ campaign, never goes anywhere else, and a recap that names a secret name is not 
 and the credits (needs ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID and ffmpeg). Keys come from the
 environment and are never printed. Paste nothing from the output into GitHub but the scores and
 counts.
+
+`--transcript FILE` (#1969) runs the same thing on a transcript file instead of a stored session,
+to test a game played before DMbot was listening or recorded with another tool: DMbot's own
+download, plain `Name: words` lines, or WebVTT and SRT (see `transcript_file.py`). `--dm NAME` is
+the DM's name as the file spells it; `--names FILE` gives names, `Ka'zeth = Kah-zeth` (how the
+voice says it) and `secret: Name` (the recap must never use it). **Consent:** an uploaded file has
+no consent records, so before any paid call the tool asks whether everyone in it agreed to be
+recorded and to this test, and anything but `yes` stops it. `--yes` covers the cost question and
+never this one. This is CLAUDE.md's consent rule applied to the owner's own table, offline.
+Nothing is stored: `--keep` is refused with a file, and the file is only read. `--out DIR` keeps
+the voice, music and mix mp3s there (the folder is private to the user) and the report prints
+which voice tag each cue became. The file and the outputs stay on the server; the tool never
+prints the transcript, only the recap the owner reads. **Paste nothing from the output into
+GitHub but the scores, counts and credits.**
 
 Differences from the live job, on purpose: no plan or daily cap applies (a test run is not a
 customer's), the names are read once at the start (the live job reads the secret names again at
@@ -35,19 +51,24 @@ import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.recap_measure.__main__ import beat_hits
 from dmbot.devtools.recap_measure.golden import GoldenError, load_golden
+from dmbot.devtools.recap_run import review as rv
+from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
 from dmbot.memory.extractor import Client, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import names_a_secret, narration_of, strip_cues
+from dmbot.recaps.text import names_a_secret, narration_of, proper_nouns, strip_cues
+from dmbot.recaps.text import words as words_of
 from dmbot.transcript.improvement import filter_lines
 from dmbot.transcription.config import load_transcription_settings
 
@@ -86,6 +107,9 @@ class Outcome:
     careful: Counting
     stopped: str = ""  # why it did not finish, in plain words
     notes: list[str] = field(default_factory=list)
+    sheets: list[list[dict[str, Any]]] = field(default_factory=list)  # each beat sheet tried
+    # (stage, try, the check's problems) for each prose or finish check that failed (#1969)
+    failures: list[tuple[str, int, list[str]]] = field(default_factory=list)
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -97,9 +121,11 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     return pl.MAX_CALLS + windows - 1, tokens
 
 
-def dollars(price: tuple[float, float] | None, tokens_in: int, tokens_out: int) -> str:
+def dollars(
+    price: tuple[float, float] | None, tokens_in: int, tokens_out: int, model: str = "MODEL"
+) -> str:
     if price is None:
-        return "no price on file for this model (give --price MODEL=IN,OUT)"
+        return f"no price on file for this model (give --price {model}=IN,OUT)"
     return f"${(tokens_in * price[0] + tokens_out * price[1]) / 1_000_000:.3f}"
 
 
@@ -115,6 +141,8 @@ async def run_text(
     """The recap worker on one session, in memory. Returns the job as it ended."""
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
+    failures: list[tuple[str, int, list[str]]] = []
+    notes: list[str] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
     async def load(gid: int, cid: str, job: Job) -> pl.Inputs:
@@ -137,6 +165,10 @@ async def run_text(
         consenting=lambda gid: agreed,
         allowed=allowed,
         notify=nobody,
+        on_problems=lambda stage, attempt, problems: failures.append(
+            (stage, attempt + 1, list(problems))
+        ),
+        on_note=notes.append,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -151,7 +183,16 @@ async def run_text(
         if job == before:
             stopped = "no progress"
             break
-    return Outcome(store.job, inputs, fast_c, careful_c, stopped)
+    return Outcome(
+        store.job,
+        inputs,
+        fast_c,
+        careful_c,
+        stopped,
+        notes=notes,
+        sheets=store.sheets,
+        failures=failures,
+    )
 
 
 def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
@@ -167,10 +208,13 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         speakers={s.number: s.user_id for s in mine},
         allowed_names=inputs.allowed_names,
         secret_names=inputs.secret_names,
+        dm_ids=inputs.dm_ids,
+        transcript_words={w for s in mine for w in words_of(s.text)},
     )
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
     prose = rd.Prose(job.summary, tuple(job.music))
     transcript = "\n".join(s.text for s in mine)
+    length = rd.length_for(rd.session_hours(mine, inputs.hours))
     issues = rd.check_prose(
         prose,
         beats=sheet,
@@ -179,10 +223,19 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         secret_names=inputs.secret_names,
         previous=inputs.previous,
         setting=inputs.setting,
+        length=length,
+        last=True,  # the last try may stand up to 35% over the target (#2013)
     )
     out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
     words = len(narration_of(job.summary).split())
-    out.append((f"{words} words", rd.MIN_WORDS <= words <= rd.MAX_WORDS, ""))
+    out.append(
+        (
+            f"{words} words (about {length.hours:g} hours: target {length.target}, "
+            f"{length.low} to {length.high})",
+            length.low <= words <= length.last_high,
+            "" if words <= length.high else "over the range, accepted on the last try",
+        )
+    )
     out.append((f"{len(kept)} beats kept", len(kept) >= bt.MIN_BEATS, ""))
     out.append(
         (
@@ -192,6 +245,74 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         )
     )
     return out
+
+
+def explain_sheets(out: Outcome) -> list[str]:
+    """Why each beat sheet failed its checks (#1997): the check's own words, how many beats were
+    kept against the least a recap needs, and the names it did not accept. This is the owner's
+    private run on their own terminal, so a name from the sheet may print; a line of the
+    transcript never does."""
+    said = list(readable(out.inputs.lines))
+    speakers = set(out.job.speakers) or {s.user_id for s in said}
+    mine = [s for s in said if s.user_id in speakers]
+    everything = {w for s in mine for w in words_of(s.text)}  # the speakers used, like the job
+    rows: list[str] = []
+    for number, sheet in enumerate(out.sheets, start=1):
+        kept, problems = bt.check(
+            sheet,
+            lines={s.number: s.text for s in mine},
+            speakers={s.number: s.user_id for s in mine},
+            allowed_names=out.inputs.allowed_names,
+            secret_names=out.inputs.secret_names,
+            dm_ids=out.inputs.dm_ids,
+            transcript_words=everything,
+        )
+        rows.append(
+            f"Beat sheet, try {number}: {len(sheet)} beats written, {len(kept)} kept "
+            f"(a recap needs at least {bt.MIN_BEATS})."
+        )
+        rows += [f"  problem: {p}" for p in problems] or ["  no problem found on this check"]
+        by_number = {s.number: s.text for s in mine}
+        unknown: list[str] = []
+        for beat in sheet:
+            cited = beat.get("lines")
+            numbers = [n for n in (cited if isinstance(cited, list) else []) if n in by_number]
+            said_words = {w for n in numbers for w in words_of(by_number[n])}
+            who = beat.get("who")
+            names = [
+                *proper_nouns(str(beat.get("what", ""))),
+                *(str(w) for w in (who if isinstance(who, list) else [])),
+            ]
+            unknown += bt.unsaid_names(names, said_words, out.inputs.allowed_names, everything)
+        if unknown:
+            rows.append("  names it did not accept: " + ", ".join(dict.fromkeys(unknown)))
+    return rows
+
+
+STAGE_WORDS = {
+    "queued": "beat sheet",
+    "beats": "beat sheet",
+    "checked": "prose",
+    "prose": "title and housekeeping",
+}  # a job's state when a check failed -> the step that was being checked
+
+
+def explain_failures(out: Outcome) -> list[str]:
+    """Why the prose or the finishing step failed its checks (#1969): the check's own words, for
+    each try. They are fixed sentences and the recap's own names, never a line of the transcript;
+    a problem that holds a name the DM keeps secret is not printed."""
+    secret = [n.casefold() for n in out.inputs.secret_names]
+    rows: list[str] = []
+    for stage, attempt, problems in out.failures:
+        rows.append(
+            f"Step {STAGE_WORDS.get(stage, stage)}, try {attempt}: {len(problems)} problem(s)."
+        )
+        for problem in problems:
+            held = any(name and name in problem.casefold() for name in secret)
+            rows.append(
+                "  problem: " + ("(it names something the DM keeps secret)" if held else problem)
+            )
+    return rows
 
 
 def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
@@ -229,6 +350,12 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
             lines.append(
                 f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" ({detail})" if detail else "")
             )
+    if job.state != "ready" and out.sheets:
+        lines += ["", *explain_sheets(out)]
+    if job.state != "ready" and out.failures:
+        lines += ["", *explain_failures(out)]
+    if out.notes:
+        lines += ["", *(f"Note: {n}" for n in out.notes)]
     if job.grade:
         weak = rd.weak(job.grade)
         lines += [
@@ -238,10 +365,15 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         ]
     tokens_in = out.fast.input_tokens + out.careful.input_tokens
     tokens_out = out.fast.output_tokens + out.careful.output_tokens
-    spend = dollars(prices.get(out.fast.model), out.fast.input_tokens, out.fast.output_tokens)
+    spend = dollars(
+        prices.get(out.fast.model), out.fast.input_tokens, out.fast.output_tokens, out.fast.model
+    )
     if out.careful.calls:
         spend += " + " + dollars(
-            prices.get(out.careful.model), out.careful.input_tokens, out.careful.output_tokens
+            prices.get(out.careful.model),
+            out.careful.input_tokens,
+            out.careful.output_tokens,
+            out.careful.model,
         )
     lines += [
         "",
@@ -249,6 +381,16 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         f"{out.careful.calls} careful); tokens in {tokens_in}, out {tokens_out}; spend {spend}",
     ]
     return lines
+
+
+def _copy_out(source: Path, into: Path) -> None:
+    """The mp3s, copied to a folder only this user can open (the owner's recap is private)."""
+    into.mkdir(parents=True, exist_ok=True, mode=0o700)
+    into.chmod(0o700)  # (mkdir's mode is narrowed by the umask and ignored for an existing folder)
+    for path in sorted(source.iterdir()):
+        target = into / path.name
+        shutil.copyfile(path, target)
+        target.chmod(0o600)
 
 
 async def run_audio(
@@ -260,28 +402,59 @@ async def run_audio(
     guild_id: int = 0,
     campaign_id: str = "test-run",
     runner: Runner | None = None,
+    voice_tags: bool = True,
+    names: Sequence[SpokenName] = (),
+    keep_in: Path | None = None,
 ) -> list[str]:
     """The narration and music into a temporary folder: the lengths and the credits. Removed
-    afterwards; nothing is kept."""
+    afterwards; nothing is kept unless `keep_in` is given (#1969), when the mp3s are copied
+    there. `names`: the names with a "said as" spelling become the pronunciation dictionary."""
+    from dmbot.recaps.audio import names as nm
     from dmbot.recaps.audio import script as sc
     from dmbot.recaps.audio.render import Renderer, estimate_credits, run_ffmpeg
 
     try:
-        script = sc.build(job.title, job.game_day, job.summary, secret_names=inputs.secret_names)
+        script = sc.build(
+            job.title,
+            job.game_day,
+            job.summary,
+            secret_names=inputs.secret_names,
+            emotion_tags=voice_tags,
+        )
     except sc.SecretInScript:
         return ["audio: not made (the text names a secret)"]
     renderer = Renderer(provider, files, runner=runner or run_ffmpeg)  # type: ignore[arg-type]
     folder = Path(tempfile.mkdtemp(prefix="recap-run-"))
     try:
-        made = await renderer.render(
-            guild_id, campaign_id, script, into=folder / "out", seed=job.session_at, dictionary=None
-        )
+        dictionary = None
+        spelled = nm.rules(names)
+        if spelled:  # secret names never get a rule: `rules` leaves them and what holds them out
+            dictionary = await provider.dictionary("recap-run", spelled)  # type: ignore[attr-defined]
+        try:
+            made = await renderer.render(
+                guild_id,
+                campaign_id,
+                script,
+                into=folder / "out",
+                seed=job.session_at,
+                dictionary=dictionary,
+            )
+        finally:
+            if dictionary is not None:  # a test run leaves nothing at the company, even on failure
+                await provider.forget_dictionary(dictionary.dictionary_id)  # type: ignore[attr-defined]
         sizes = {p.name: p.stat().st_size for p in (folder / "out").iterdir()}
+        kept: list[str] = []
+        if keep_in is not None:
+            await asyncio.to_thread(_copy_out, folder / "out", keep_in)
+            kept = ["", f"Kept in {keep_in} (on this server only; not for GitHub)."]
         return [
             "",
+            f"Voice mood tags: {'on' if voice_tags else 'off'} (DMBOT_RECAP_VOICE_TAGS)",
             f"Audio: {made.seconds:.1f} s, {made.credits} credits "
             f"(estimated {estimate_credits(script, ambience_needed=True)})",
             *(f"  {name}: {size // 1024} KB" for name, size in sorted(sizes.items())),
+            *([f"Pronunciation rules: {len(spelled)}"] if names else []),
+            *kept,
         ]
     finally:
         shutil.rmtree(folder, ignore_errors=True)
@@ -295,6 +468,31 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="a stored session: server id, campaign id, when it started (Unix seconds)",
     )  # fmt: skip
     what.add_argument("--golden", action="store_true", help="the invented golden set")
+    what.add_argument(
+        "--transcript", metavar="FILE",
+        help="a transcript file (DMbot's download, 'Name: words' lines, WebVTT or SRT)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--dm", metavar="NAME", help="with --transcript: the DM, as the file spells it"
+    )
+    parser.add_argument(
+        "--names", metavar="FILE",
+        help="with --transcript: names, 'Ka'zeth = Kah-zeth', and 'secret: Name' lines",
+    )  # fmt: skip
+    what.add_argument(
+        "--review", metavar="DIR",
+        help="rebuild review.html from a folder a test run made (no paid call, no --yes)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--hours", type=float, metavar="H",
+        help="how long the session ran, in hours: the recap's length follows it (default: from "
+        "the file's times, or for a file with none, estimated from the words)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--out", metavar="DIR",
+        help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
+        "--audio the mp3s",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -305,6 +503,25 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.golden and (args.audio or args.keep):
         parser.error("--golden takes neither --audio nor --keep")
+    if args.transcript:
+        if args.keep:
+            parser.error(
+                "--keep can't be used with --transcript: a transcript file is never stored"
+            )
+        if not args.dm:
+            parser.error("--transcript needs --dm NAME, the DM's name as the file spells it")
+    elif args.dm or args.names:
+        parser.error("--dm and --names go with --transcript")
+    if args.out and not args.transcript:
+        parser.error("--out goes with --transcript")
+    if args.hours is not None and not 0.25 <= args.hours <= 24:
+        parser.error("--hours is the session's length in hours, from 0.25 to 24")
+    if args.hours is not None and args.golden:
+        parser.error("--golden takes no --hours")
+    if args.review and (args.audio or args.keep or args.price or args.yes):
+        parser.error(
+            "--review only rebuilds the page: it takes no --audio, --keep, --price or --yes"
+        )
     for item in args.price:
         try:
             prices_of([item], [])
@@ -331,6 +548,14 @@ def prices_of(given: Sequence[str], models: Sequence[str]) -> dict[str, tuple[fl
     return out
 
 
+_OPEN_CLIENTS: list[AnthropicClient] = []
+
+
+async def _close_clients() -> None:
+    while _OPEN_CLIENTS:
+        await _OPEN_CLIENTS.pop().close()
+
+
 def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
@@ -342,6 +567,7 @@ def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
         print(f"recap_run: {exc}", file=sys.stderr)
         return None
     ai = AnthropicClient(key, models)
+    _OPEN_CLIENTS.append(ai)  # closed when the run ends, so no "unclosed session" warning (#1997)
     return (
         ai.tier(AIModelTier.FAST),
         ai.tier(AIModelTier.CAREFUL),
@@ -390,6 +616,8 @@ async def run_golden(
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    if args.review:
+        return review_folder(Path(args.review))
     got = clients_from_env()
     if got is None:
         return 2
@@ -409,7 +637,39 @@ async def main_async(args: argparse.Namespace) -> int:
         rows, clean = await run_golden(fast, careful, models, prices)
         print("\n".join(rows))
         return 0 if clean else 1
+    if args.transcript:
+        return await _transcript(args, fast, careful, models, prices)
     return await _session(args, fast, careful, models, prices)
+
+
+def review_folder(folder: Path) -> int:
+    """`--review DIR`: rebuild the page from a folder. No key, no paid call."""
+    if not folder.is_dir():
+        print(f"recap_run: {folder} is not a folder", file=sys.stderr)
+        return 2
+    target = rv.write_page(folder)
+    print(f"Wrote {target}. Open it in a browser (it needs no network).")
+    return 0
+
+
+def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given: bool) -> None:
+    """`--out`: the recap and the report as files only this user can read (#2011). The caller
+    has already refused a recap that names a secret, so nothing here is checked twice."""
+    rv.private_dir(folder)
+    job = out.job
+    if job.summary and job.state == "ready":  # a recap that failed its checks is not kept
+        rv.write_private(
+            folder / rv.RECAP_FILE,
+            rv.recap_text(
+                job.title,
+                job.summary,
+                list(job.housekeeping),
+                list(job.music),
+                voice_tags=voice_tags_on(),
+                names_given=names_given,
+            ),
+        )
+    rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")
 
 
 def _golden_inputs(session: object) -> pl.Inputs:
@@ -514,7 +774,154 @@ async def _session(
         await db.close()
 
 
-async def _audio(out: Outcome) -> list[str]:
+def read_transcript_inputs(
+    args: argparse.Namespace,
+) -> tuple[pl.Inputs, tf.Transcript, list[SpokenName]]:
+    """The file, the DM and the names as the recap worker's inputs. Raises `tf.TranscriptError`
+    (and `OSError` for a file that can't be read) with plain words and never a line of the file."""
+    transcript = tf.parse(Path(args.transcript).read_text(encoding="utf-8-sig"))
+    dm = tf.dm_id(transcript, args.dm)
+    names = tf.parse_names(Path(args.names).read_text(encoding="utf-8-sig")) if args.names else []
+    allowed = [n.text for n in names if not n.secret] + list(transcript.characters)
+    secret = [n.text for n in names if n.secret]
+    secret_keys = {s.casefold() for s in secret}
+    hours = args.hours
+    if hours is None and not transcript.timed:  # a Craig file: no times, so from the words
+        hours = rd.estimated_hours(sum(len(u.text.split()) for u in transcript.utterances))
+    inputs = pl.Inputs(
+        lines=tf.lines_of(transcript),
+        dm_ids={dm},
+        allowed_names=[a for a in dict.fromkeys(allowed) if a.casefold() not in secret_keys],
+        secret_names=secret,
+        previous="",
+        day=None,
+        hours=hours,
+    )
+    return inputs, transcript, names
+
+
+async def _transcript(
+    args: argparse.Namespace,
+    fast: Client,
+    careful: Client,
+    models: tuple[str, str],
+    prices: dict[str, tuple[float, float]],
+    *,
+    ask: Callable[[str], str] = input,
+) -> int:
+    """`--transcript`: the file through the same worker as a stored session, in memory only."""
+    try:
+        inputs, transcript, names = read_transcript_inputs(args)
+    except (OSError, tf.TranscriptError) as exc:
+        print(f"recap_run: {exc}", file=sys.stderr)
+        return 2
+    calls, tokens = estimate(inputs)
+    price = prices.get(models[0])
+    print(_length_line(args, transcript, inputs))
+    print(
+        f"{transcript.format} file: {len(inputs.lines)} lines from {len(transcript.speakers)} "
+        f"speakers{_tolerated(transcript)}; up to {calls} AI calls; about {tokens} input tokens on "
+        "the first try "
+        f"({dollars(price, tokens, 4000)} on the fast tier; a retry uses the careful tier and "
+        "costs more)." + (" Plus about 7,000 provider credits for --audio." if args.audio else "")
+    )
+    if not args.yes:
+        print("Nothing was run. Add --yes to spend the money.")
+        return 0
+    # An uploaded file has no consent records. This is asked once, before any paid call, and
+    # --yes never answers it (CLAUDE.md: never process words from people who have not agreed).
+    try:
+        answer = ask(tf.CONSENT_QUESTION)
+    except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
+        answer = ""
+    if not tf.consent_given(answer):
+        print("recap_run: stopped. Nothing was sent to any service.")
+        return 4
+    folder = Path(args.out) if args.out else None
+    if folder is not None and folder.is_dir():
+        rv.clear_old(folder)  # nothing of an earlier run is left to be mixed into this one
+    out = await run_text(inputs, fast, careful, session_at=1, models=models)
+    lines = report(out, prices)
+    if lines == [REFUSED]:
+        print(REFUSED)
+        return 3
+    print("\n".join(lines))  # the paid text report first: nothing below can lose it
+    printed = list(lines)
+    if out.job.state == "ready":
+        cues = _cue_lines(out)
+        print("\n".join(cues))
+        printed += cues
+        if folder is not None:  # the text is saved before the audio can fail
+            save_text(folder, out, printed, names_given=bool(names))
+        if args.audio:
+            try:
+                made = await _audio(out, names=names, keep_in=folder)
+            except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
+                made = [f"audio: failed ({type(exc).__name__}); the text above is unchanged"]
+            print("\n".join(made))
+            printed += made
+    if folder is not None:
+        save_text(folder, out, printed, names_given=bool(names))
+        print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
+    return 0 if out.job.state == "ready" else 1
+
+
+def _length_line(args: argparse.Namespace, transcript: tf.Transcript, inputs: pl.Inputs) -> str:
+    """How long the session was and so how long the recap will be (#2013)."""
+    said = readable(inputs.lines)
+    hours = rd.session_hours(said, inputs.hours)
+    length = rd.length_for(hours)
+    how = (
+        "from --hours"
+        if args.hours is not None
+        else "estimated from the words; give --hours to set it"
+        if not transcript.timed
+        else "from the file's times"
+    )
+    return (
+        f"length: about {hours:g} hours ({how}); the recap will be about {length.target} words "
+        f"(between {length.low} and {length.high})."
+    )
+
+
+def _tolerated(transcript: tf.Transcript) -> str:
+    """What the plain reader let through, as counts only: " (skipped 2 header lines, joined 5
+    wrapped lines, skipped 80 cut-out lines)". Never the text."""
+    notes = []
+    if transcript.skipped:
+        notes.append(f"skipped {transcript.skipped} header lines")
+    if transcript.joined:
+        notes.append(f"joined {transcript.joined} wrapped lines")
+    if transcript.cut_out:
+        notes.append(f"skipped {transcript.cut_out} cut-out lines")
+    return f" ({', '.join(notes)})" if notes else ""
+
+
+def voice_tags_on() -> bool:
+    """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
+    return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+
+
+def _cue_lines(out: Outcome) -> list[str]:
+    from dmbot.recaps.audio import script as sc
+
+    try:
+        script = sc.build(
+            out.job.title,
+            out.job.game_day,
+            out.job.summary,
+            secret_names=out.inputs.secret_names,
+            emotion_tags=voice_tags_on(),  # the cue map must show what the audio will say
+        )
+    except sc.SecretInScript:
+        return []
+    rows = tf.cue_map(out.job.summary, script)
+    return ["", f"Cues ({len(rows)}):", *rows] if rows else ["", "Cues: none in this recap"]
+
+
+async def _audio(
+    out: Outcome, *, names: Sequence[SpokenName] = (), keep_in: Path | None = None
+) -> list[str]:
     from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
     from dmbot.recaps.audio.files import AudioFiles
 
@@ -530,7 +937,16 @@ async def _audio(out: Outcome) -> list[str]:
         provider = ElevenLabs(http, voice_id=voice, speech_model=model)
         # The ambience cache is a temporary folder too, so a run costs what a first run costs.
         with tempfile.TemporaryDirectory(prefix="recap-run-cache-") as cache:
-            return await run_audio(out.job, out.inputs, provider, AudioFiles(Path(cache)))
+            tags = voice_tags_on()
+            return await run_audio(
+                out.job,
+                out.inputs,
+                provider,
+                AudioFiles(Path(cache)),
+                voice_tags=tags,
+                names=names,
+                keep_in=keep_in,
+            )
     finally:
         await http.close()
 
@@ -547,8 +963,15 @@ async def keep(recaps: RecapStore, gid: int, cid: str, out: Outcome, dm_user_id:
     )  # fmt: skip
 
 
+async def _run(args: argparse.Namespace) -> int:
+    try:
+        return await main_async(args)
+    finally:
+        await _close_clients()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    return asyncio.run(main_async(parse_args(argv)))
+    return asyncio.run(_run(parse_args(argv)))
 
 
 if __name__ == "__main__":

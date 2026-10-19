@@ -5,6 +5,7 @@ another server's campaign. The real campaign and memory stores, against the data
 from __future__ import annotations
 
 import unittest.mock
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -43,6 +44,8 @@ class Fake:
         self.consenting = {PLAYER, MEMBER}
         self.posted: list[tuple[int, str, Any]] = []
         self.channel: Any = None
+        self.pins: list[Any] = []  # the messages posted, to see which were pinned
+        self.pin_error: Exception | None = None
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
         return user_id in self.consenting
@@ -52,9 +55,16 @@ class Fake:
 
     async def post_message(self, channel_id: int, text: str, view: Any = None) -> Any:
         self.posted.append((channel_id, text, view))
-        return SimpleNamespace(
-            id=MESSAGE + len(self.posted), channel=SimpleNamespace(id=channel_id)
+        message = SimpleNamespace(
+            id=MESSAGE + len(self.posted), channel=SimpleNamespace(id=channel_id), pinned=False
         )
+        message.pin = AsyncMock(side_effect=self.pin_error)
+        self.pins.append(message)
+        return message
+
+
+def _note(order: list[str], what: str, **_: Any) -> None:
+    order.append(what)
 
 
 class PanelTest(DatabaseTest):
@@ -85,6 +95,8 @@ class PanelTest(DatabaseTest):
         it.guild = SimpleNamespace(id=guild)
         it.user = member
         it.response.send_message = send_message
+        it.response.defer = AsyncMock()  # the answer-first buttons defer, then send a follow-up
+        it.followup.send = send_message
         it.sent = sent
         return it
 
@@ -148,7 +160,7 @@ class Cards(PanelTest):
     async def test_the_card_holds_only_the_buttons_of_that_role(self) -> None:
         await self.make_player()
         expected = {
-            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings"],
+            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings", "Names"],
             PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
             MEMBER: [*OPEN_TO_ALL, "Menu"],
             GUEST: OPEN_TO_ALL,
@@ -172,6 +184,30 @@ class Cards(PanelTest):
         await buttons.HelpButton(self.campaign.id).callback(it)
         self.assertTrue(it.sent["ephemeral"])
         self.assertTrue(it.sent["text"])
+
+    async def test_my_buttons_and_help_answer_before_any_slow_read(self) -> None:
+        # Discord drops a button not answered in 3 seconds (#1964): both defer first, privately,
+        # and send what they have as the follow-up. The campaign read is the slow part.
+        for button in (buttons.OpenButton, buttons.HelpButton):
+            it = self.press(GUEST)
+            order: list[str] = []
+            real = self.bot.campaigns.get
+
+            async def slow_get(*a: Any, _real: Any = real, _order: list[str] = order) -> Any:
+                _order.append("read")
+                return await _real(*a)
+
+            it.response.defer = AsyncMock(side_effect=partial(_note, order, "defer"))
+            with unittest.mock.patch.object(self.bot.campaigns, "get", slow_get):
+                await button(self.campaign.id).callback(it)
+            self.assertEqual(order[:2], ["defer", "read"], button.__name__)
+            it.response.defer.assert_awaited_once_with(ephemeral=True)
+            self.assertTrue(it.sent["ephemeral"])
+
+    async def test_a_gone_campaign_is_said_in_the_follow_up(self) -> None:
+        it = self.press(GUEST)
+        await buttons.HelpButton("0" * 32).callback(it)
+        self.assertEqual(it.sent["text"], buttons.GONE)
 
     async def test_the_transcripts_button_is_a_link_to_the_websites_page(self) -> None:
         it = self.press(GUEST)
@@ -318,10 +354,44 @@ class Keeping(PanelTest):
         campaign = await self.reload()
         existing = MagicMock()
         existing.edit = AsyncMock()
+        existing.pin = AsyncMock()
+        existing.pinned = False
         channel.fetch_message.return_value = existing
         await buttons.ensure_panel(self.bot, campaign)
         existing.edit.assert_awaited_once()
+        existing.pin.assert_awaited_once()  # one posted before pinning, or unpinned by hand
         self.assertEqual(self.bot.posted, [])
+
+    async def test_a_new_panel_is_pinned_and_one_already_pinned_is_left_alone(self) -> None:
+        campaign = await self.with_channel()
+        channel = self.a_channel()
+        message = await buttons.ensure_panel(self.bot, campaign)
+        assert message is not None
+        self.bot.pins[0].pin.assert_awaited_once()
+        await self.campaigns.set_dm_bot_message(GUILD, campaign.id, MESSAGE)
+        campaign = await self.reload()
+        pinned = MagicMock()
+        pinned.edit = AsyncMock()
+        pinned.pin = AsyncMock()
+        pinned.pinned = True
+        channel.fetch_message.return_value = pinned
+        await buttons.ensure_panel(self.bot, campaign)
+        pinned.pin.assert_not_awaited()
+
+    async def test_a_refused_or_failed_pin_never_stops_the_panel(self) -> None:
+        campaign = await self.with_channel()
+        self.a_channel()
+        refused = discord.Forbidden(MagicMock(status=403), "no")
+        failed = discord.HTTPException(MagicMock(status=400), "pin limit")
+        for error in (refused, failed):
+            self.bot.pins.clear()
+            await self.campaigns.set_dm_bot_message(GUILD, campaign.id, MESSAGE)
+            self.bot.channel.fetch_message.side_effect = discord.NotFound(
+                MagicMock(status=404), "x"
+            )
+            self.bot.pin_error = error
+            message = await buttons.ensure_panel(self.bot, await self.reload())
+            self.assertIsNotNone(message)
 
     async def test_a_deleted_panel_is_posted_again(self) -> None:
         campaign = await self.with_channel()

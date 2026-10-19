@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 import facts from "../src/content/plans.json";
 import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
-import { initiativeLine, peopleListLine } from "../src/content/privacy-channels";
+import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -125,6 +125,7 @@ describe("the facts #433 asks for", () => {
     // The people list and initiative lines show only while their features are live (#1810).
     expect(privacy().includes(peopleListLine.lead)).toBe(peopleListLine.live);
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
+    expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
@@ -272,14 +273,14 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("no tracking or ad cookies");
   });
 
-  // Stopping now goes through the ⚙️ Menu (#807, #830): no page may send people to a
+  // Stopping now goes through the 🗂️ Menu (#807, #830): no page may send people to a
   // "Stop recording me" button that isn't there.
-  it.each(["terms", "privacy"])("%s: stopping is explained through the ⚙️ Menu", (name) => {
+  it.each(["terms", "privacy"])("%s: stopping is explained through the 🗂️ Menu", (name) => {
     const body = text(rendered.get(name)?.querySelector("main") ?? rendered.get(name) ?? null);
     const stops = [...body.matchAll(/Stop recording me/g)];
     expect(stops.length).toBeGreaterThan(0);
     for (const stop of stops) {
-      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
+      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("🗂️ Menu");
     }
   });
 
@@ -501,6 +502,6 @@ describe("privacy lines for new features (#1810)", () => {
     expect(initiativeLine.text).toContain("only people who said yes");
     expect(initiativeLine.text).toContain("not tied to any person");
     expect(peopleListLine.text).toContain("never shows secrets, notes");
-    for (const line of [initiativeLine, peopleListLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
+    for (const line of [initiativeLine, peopleListLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });

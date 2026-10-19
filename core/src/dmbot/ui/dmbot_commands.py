@@ -902,7 +902,7 @@ async def dmbot_help(interaction: discord.Interaction) -> None:
     description="Delete what DMbot wrote down from you in this server",
 )
 async def delete_my_lines_command(interaction: discord.Interaction) -> None:
-    """The same as 🗑 Delete my past transcripts in the ⚙️ Menu (#1532): one warning with the
+    """The same as 🗑 Delete my past transcripts in the 🗂️ Menu (#1532): one warning with the
     numbers, one confirmation. Only the person's own lines in this one server."""
     from dmbot.consent_dm import ask_delete
 
