@@ -323,7 +323,12 @@ class Transcripts(Base):
             "dmbot_web_transcript_campaigns",
             "dmbot_web_transcript_characters",
         ):
-            self.assertEqual(callers(door), {"schema.py", "web/transcripts.py"}, door)
+            allowed = {"schema.py", "web/transcripts.py"}
+            if door == "dmbot_web_transcript_sessions":
+                # The recap pages ask it whether a session's transcript was deleted (#2022): the
+                # website's role has no grant on the tables, so this door is the only way in.
+                allowed.add("web/recaps.py")
+            self.assertEqual(callers(door), allowed, door)
 
 
 class DeletedTranscripts(Transcripts):
