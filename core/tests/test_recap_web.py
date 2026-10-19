@@ -24,6 +24,7 @@ from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -105,6 +106,37 @@ class TheDmsPage(Base):
         self.assertIn("《Tense》", one["summary"])  # and kept for the edit box
         self.assertTrue(one["canPost"] and one["canEdit"] and one["canTryAgain"])
         self.assertEqual(one["triesLeft"], 2)
+
+    async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
+        """(#2022) The recap stays; its page says the transcript went, and when, and how long the
+        table keeps them. Read through the transcripts page's own door, scoped to the recap's
+        server, so another campaign's deletion never shows on this one."""
+        transcripts = TranscriptStore(self.db)
+        # Each campaign's session started at 100, the time its recap carries.
+        mine = await transcripts.open_session(THURSDAY.id, self.one.id, 100)
+        theirs = await transcripts.open_session(THURSDAY.id, self.two.id, 100)
+        for sid in (mine, theirs):
+            await transcripts.end_session(THURSDAY.id, sid, 200)
+        [before] = await list_recaps(self.web, self.session)
+        self.assertIsNone(before["transcriptsDeletedAt"])
+        self.assertIsNone(before["keepDays"])
+
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET transcript_keep_days = 90 WHERE guild_id = %s AND id = %s",
+                (THURSDAY.id, self.one.id),
+            )
+        # Another campaign's session going first changes nothing here.
+        await transcripts.delete_session_transcript(THURSDAY.id, self.two.id, theirs, 10**6, 400)
+        [still] = await list_recaps(self.web, self.session)
+        self.assertIsNone(still["transcriptsDeletedAt"])
+
+        await transcripts.delete_session_transcript(THURSDAY.id, self.one.id, mine, 10**6, 300)
+        [listed] = await list_recaps(self.web, self.session)
+        read = await read_recap(self.web, self.session, self.ref)
+        for view in (listed, read):
+            self.assertEqual((view["transcriptsDeletedAt"], view["keepDays"]), (300, 90))
+        self.assertEqual(read["title"], "The Silver Lock")  # the recap itself stays
 
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")

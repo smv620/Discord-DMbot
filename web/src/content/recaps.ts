@@ -67,6 +67,11 @@ export const text = {
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
   textHeading: "Recap",
+  // The session's transcript was deleted by the table's "Keep transcripts for" setting (#2022).
+  transcriptDeleted: (day: string, keepDays?: number | null): string =>
+    keepDays
+      ? `Transcript deleted on ${day} (your table keeps transcripts for ${keepDays === 365 ? "1 year" : `${keepDays} days`}). The recap stays.`
+      : `Transcript deleted on ${day}. The recap stays.`,
   housekeepingHeading: "Housekeeping",
   housekeepingNone: "Nothing to sort out.",
   edit: "Edit",

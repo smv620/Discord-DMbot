@@ -209,6 +209,11 @@ export interface Recap {
   canDrop: boolean;
   /** The narration and music (#1383, #1418). Missing from an API older than that. */
   audio?: RecapAudioState;
+  /** When the session's transcript was deleted by "Keep transcripts for" (Unix seconds, as the
+   * Transcripts page has it), else null; the recap stays (#2022). Missing from an older API. */
+  transcriptsDeletedAt?: number | null;
+  /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
+  keepDays?: number | null;
 }
 
 /** One campaign's recaps used this month, as `GET /me/recaps` says (`recapsThisMonth`, #1428,

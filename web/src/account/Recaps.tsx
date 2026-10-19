@@ -136,6 +136,11 @@ function List({ api }: { api: AccountApi }) {
                   .filter(Boolean)
                   .join(" · ")}
               </span>
+              {r.transcriptsDeletedAt && (
+                <span class="small">
+                  {text.transcriptDeleted(sessionDay(r.transcriptsDeletedAt), r.keepDays)}
+                </span>
+              )}
               <span class="tags">
                 <span class="tag">{statusLine(r)}</span>
               </span>
@@ -517,6 +522,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           .filter(Boolean)
           .join(" · ")}
       </p>
+      {recap.transcriptsDeletedAt && (
+        <p class="small">
+          {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
+        </p>
+      )}
       {!decided && !recap.working && recap.state !== "failed" && (
         <>
           <p class="lead">{text.onlyYou}</p>
