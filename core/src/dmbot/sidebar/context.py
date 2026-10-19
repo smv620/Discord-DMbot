@@ -156,7 +156,7 @@ PEOPLE_LINE_MAX = 160
 def _text_max(entry: Entry) -> int:
     """How much of an entry is sent: a class feature, a species and an entry of the DM's chapter
     (a trap, a poison) are long."""
-    if entry.dm_side:
+    if entry.dm_side or is_magic_rule(entry):  # the longest Magic Items rule is 1,486 (#2001)
         return FEATURE_TEXT_MAX
     return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(entry.kind, ENTRY_TEXT_MAX)
 
@@ -292,6 +292,7 @@ def mentioned_rules(
     props = any(w.lower() in PROPERTY_CUES for w in words)
     shop = any(w.lower() in GEAR_CUES for w in words)
     hazard = any(w.lower() in HAZARD_CUES for w in words)
+    magic = any(w.lower() in MAGIC_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -313,6 +314,13 @@ def mentioned_rules(
                     and is_everyday_property(glossary.entry)
                 ):
                     glossary = None  # "Light", "Slow": a property only when weapons are meant
+                if (
+                    glossary is not None
+                    and size == 1
+                    and is_magic_rule(glossary.entry)
+                    and not magic
+                ):
+                    glossary = None  # "Potions", "Rings": magic items only when asked
                 hits = [glossary] if glossary is not None else []
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
@@ -355,6 +363,27 @@ def mentioned_rules(
         if budget is not None and all(budget.entry is not h.entry for _, h in found):
             # Last, so it only fills a free place and never pushes out a creature the DM named.
             found.append((len(words) + 1, budget))
+    if any(w.lower() in RARITY_WORDS for w in words) and any(
+        w.lower() in PRICE_WORDS for w in words
+    ):
+        # "what does rarity mean for price": the values table, not the sentence on rarity (#2001).
+        values = index.lookup(MAGIC_VALUES, target, fallback, kind=RULE)
+        if values is not None:
+            found = [(at, values if h.entry.name == MAGIC_RARITY else h) for at, h in found]
+    lowered = [w.lower() for w in words]
+    if (
+        any(w in CRAFT_WORDS for w in lowered)
+        and any(w in CRAFT_COST_WORDS for w in lowered)
+        and any(w in CRAFT_MAGIC_WORDS for w in lowered)
+    ):
+        # "how long does crafting a rare item take": the time and cost table (#2001), in the
+        # place of the general crafting rule and not for "a longsword", which the data lacks.
+        costs = index.lookup(MAGIC_CRAFT_COST, target, fallback, kind=RULE)
+        if costs is not None:
+            at = next(i for i, w in enumerate(lowered) if w in CRAFT_WORDS)
+            found = [(i, h) for i, h in found if h.entry.name != MAGIC_CRAFTING]
+            if all(h.entry is not costs.entry for _, h in found):
+                found.append((at, costs))
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -462,6 +491,54 @@ PROPERTY_TAGS = frozenset({"Weapon Property", "Mastery Property"})
 EVERYDAY_PROPERTIES = frozenset(
     {"light", "heavy", "range", "loading", "thrown", "push", "slow", "sap", "nick", "ammunition"}
 )
+
+
+# The Magic Items section's rules (#2001): a one-word name ("Potions", "Rings", "Rarity") is an
+# everyday word, so it counts only when the question is about magic items, as the cue words show;
+# a longer name ("Magic Armor", "Command Word") is specific enough alone. The glossary's
+# Attunement needs no cue ("attune" is its own).
+MAGIC_CUES = frozenset(
+    {
+        "item",
+        "items",
+        "attune",
+        "attuned",
+        "attuning",
+        "attunement",
+        "identify",
+        "identifying",
+        "charges",
+        "cursed",
+        "craft",
+        "crafting",
+        "crafted",
+        "sentient",
+        "rarity",
+        "rarities",
+    }
+)
+RARITY_WORDS = frozenset({"rarity", "rarities"})
+CRAFT_WORDS = frozenset({"craft", "crafting", "crafted"})
+# Crafting is a magic item rule here only with a word that says so: the SRD's ordinary crafting
+# (a longsword) is in "Equipment" and is not in the data.
+CRAFT_MAGIC_WORDS = frozenset(
+    {"magic", "magical", "item", "items", "rare", "uncommon", "legendary", "common", "rarity"}
+)
+CRAFT_COST_WORDS = frozenset(
+    {"time", "long", "days", "cost", "costs", "much", "gold", "gp", "expensive", "price", "cheap"}
+)
+MAGIC_CRAFTING = "Crafting Magic Items"
+MAGIC_CRAFT_COST = "Crafting: Time and Cost"
+PRICE_WORDS = frozenset(
+    {"price", "prices", "cost", "costs", "worth", "value", "values", "gold", "gp", "sell", "buy"}
+)
+MAGIC_VALUES = "Magic Item Values by Rarity"
+MAGIC_RARITY = "Magic Item Rarity"
+
+
+def is_magic_rule(entry: Entry) -> bool:
+    """A rule of the SRD's Magic Items section (the players' and the GM's alike)."""
+    return entry.kind == RULE and entry.details.get("tag") == "Magic Items"
 
 
 def is_everyday_property(entry: Entry) -> bool:

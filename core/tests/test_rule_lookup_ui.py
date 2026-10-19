@@ -832,10 +832,15 @@ class FeatureLookup(LookupTest):
             "demonic possession",
             "extreme cold",
             "xp budget",
+            "paired items",
+            "sentient magic items",
         ):
             text = self.sent(await self.command(name, PLAYER))[0]
             self.assertEqual(text, ui.DM_ONLY, name)
         self.assertIn("📖 **Cover**", self.sent(await self.command("cover", PLAYER))[0])
+        charges = self.sent(await self.command("magic item charges", PLAYER))[0]
+        self.assertIn("📖 **Magic Item Charges**", charges)
+        self.assertIn("SRD 5.2.1, Magic Items, p. 206", charges)
 
     async def test_the_name_list_holds_the_dms_chapter_for_a_dm_and_not_for_a_player(self) -> None:
         for typed, label in (

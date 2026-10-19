@@ -158,12 +158,62 @@ ENCOUNTER_ALIASES = {
 }
 
 
-def encounter_keys(name: str) -> list[str]:
-    """The other names an entry of the Combat Encounters section is found by (#2000)."""
-    own = normalize(name)
-    return [
-        k for k in dict.fromkeys(normalize(n) for n in ENCOUNTER_ALIASES.get(name, ())) if k != own
-    ]
+# Other names for the Magic Items section's rules (#2001): what a player says is not the book's
+# title ("charges", "crafting", "a cursed item"). The glossary's own Attunement is also found as
+# "attune", "attuned" and "attuning", since "can I attune to a Bag of Holding" never says
+# "attunement".
+MAGIC_ALIASES = {
+    "Attunement Prerequisites": ("attunement requirements", "attunement prerequisite"),
+    "Magic Item Categories": ("item categories", "magic item category", "item category"),
+    "Magic Armor": ("magic armour",),
+    "Magic Potions": ("magic potion", "potions", "mixing potions", "mix potions", "potion mixing"),
+    "Magic Rings": ("magic ring",),
+    "Magic Rods": ("magic rod",),
+    "Magic Scrolls": ("magic scroll",),
+    "Magic Staffs": ("magic staff", "magic staves"),
+    "Magic Wands": ("magic wand",),
+    "Magic Weapons": ("magic weapon",),
+    "Wondrous Items": ("wondrous item",),
+    "Magic Item Rarity": ("rarity", "item rarity", "item rarities", "magic item rarities"),
+    "Magic Item Values by Rarity": (
+        "magic item values",
+        "magic item value",
+        "item values",
+        "rarity values",
+        "rarity value",
+    ),
+    "Activating a Magic Item": ("activating", "activating magic items", "activate a magic item"),
+    "Consumable Items": ("consumable item", "consumable magic items"),
+    "Magic Item Charges": ("charges", "item charges", "charges of a magic item"),
+    "The Next Dawn": ("next dawn",),
+    "Cursed Items": ("cursed item", "cursed magic items", "cursed magic item"),
+    "Magic Item Resilience": ("item resilience", "magic item durability"),
+    "Crafting Magic Items": (
+        "craft magic items",
+        "craft a magic item",
+        "crafting magic item",
+        "magic item crafting",
+    ),
+    "Crafting: Time and Cost": (
+        "crafting time",
+        "crafting cost",
+        "crafting time and cost",
+        "magic item crafting time and cost",
+    ),
+    "Crafting: Tools": ("crafting tools", "magic item tools"),
+    "Crafting: Spells": ("crafting spells",),
+    "Crafting: Arcana Proficiency": ("crafting arcana",),
+    "Sentient Magic Items": ("sentient item", "sentient items", "sentient magic item"),
+    "Attunement": ("attune", "attuned", "attuning"),
+}
+
+
+def rule_keys(entry: Entry) -> list[str]:
+    """The other names a rule of the Combat Encounters or Magic Items section, or the glossary's
+    Attunement, is found by (#2000, #2001)."""
+    own = normalize(entry.name)
+    names = (*ENCOUNTER_ALIASES.get(entry.name, ()), *MAGIC_ALIASES.get(entry.name, ()))
+    return [k for k in dict.fromkeys(normalize(n) for n in names) if k != own]
 
 
 def equipment_keys(entry: Entry) -> list[str]:
@@ -300,8 +350,8 @@ class Index:
             elif entry.kind in HAZARD_KINDS:
                 for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
-            elif entry.kind == RULE and entry.dm_side:
-                for key in encounter_keys(entry.name):
+            elif entry.kind == RULE:
+                for key in rule_keys(entry):
                     self._add(entry.edition, key, entry)
         for older, current in alias_pairs:
             found = self._by_edition.get(alias_edition, {}).get(normalize(current))
