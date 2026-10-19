@@ -86,7 +86,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Delete my transcripts",
-    what: "Press ⚙️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
+    what: "Press 🗂️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
   },
   {
     date: "2026-10-16",

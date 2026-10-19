@@ -51,6 +51,7 @@ import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
 from dmbot.config import ConfigError, parse_ai_models
@@ -65,7 +66,8 @@ from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import names_a_secret, narration_of, strip_cues
+from dmbot.recaps.text import names_a_secret, narration_of, proper_nouns, strip_cues
+from dmbot.recaps.text import words as words_of
 from dmbot.transcript.improvement import filter_lines
 from dmbot.transcription.config import load_transcription_settings
 
@@ -104,6 +106,7 @@ class Outcome:
     careful: Counting
     stopped: str = ""  # why it did not finish, in plain words
     notes: list[str] = field(default_factory=list)
+    sheets: list[list[dict[str, Any]]] = field(default_factory=list)  # each beat sheet tried
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -169,7 +172,7 @@ async def run_text(
         if job == before:
             stopped = "no progress"
             break
-    return Outcome(store.job, inputs, fast_c, careful_c, stopped)
+    return Outcome(store.job, inputs, fast_c, careful_c, stopped, sheets=store.sheets)
 
 
 def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
@@ -185,6 +188,8 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         speakers={s.number: s.user_id for s in mine},
         allowed_names=inputs.allowed_names,
         secret_names=inputs.secret_names,
+        dm_ids=inputs.dm_ids,
+        transcript_words={w for s in mine for w in words_of(s.text)},
     )
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
     prose = rd.Prose(job.summary, tuple(job.music))
@@ -210,6 +215,48 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         )
     )
     return out
+
+
+def explain_sheets(out: Outcome) -> list[str]:
+    """Why each beat sheet failed its checks (#1997): the check's own words, how many beats were
+    kept against the least a recap needs, and the names it did not accept. This is the owner's
+    private run on their own terminal, so a name from the sheet may print; a line of the
+    transcript never does."""
+    said = list(readable(out.inputs.lines))
+    speakers = set(out.job.speakers) or {s.user_id for s in said}
+    mine = [s for s in said if s.user_id in speakers]
+    everything = {w for s in mine for w in words_of(s.text)}  # the speakers used, like the job
+    rows: list[str] = []
+    for number, sheet in enumerate(out.sheets, start=1):
+        kept, problems = bt.check(
+            sheet,
+            lines={s.number: s.text for s in mine},
+            speakers={s.number: s.user_id for s in mine},
+            allowed_names=out.inputs.allowed_names,
+            secret_names=out.inputs.secret_names,
+            dm_ids=out.inputs.dm_ids,
+            transcript_words=everything,
+        )
+        rows.append(
+            f"Beat sheet, try {number}: {len(sheet)} beats written, {len(kept)} kept "
+            f"(a recap needs at least {bt.MIN_BEATS})."
+        )
+        rows += [f"  problem: {p}" for p in problems] or ["  no problem found on this check"]
+        by_number = {s.number: s.text for s in mine}
+        unknown: list[str] = []
+        for beat in sheet:
+            cited = beat.get("lines")
+            numbers = [n for n in (cited if isinstance(cited, list) else []) if n in by_number]
+            said_words = {w for n in numbers for w in words_of(by_number[n])}
+            who = beat.get("who")
+            names = [
+                *proper_nouns(str(beat.get("what", ""))),
+                *(str(w) for w in (who if isinstance(who, list) else [])),
+            ]
+            unknown += bt.unsaid_names(names, said_words, out.inputs.allowed_names, everything)
+        if unknown:
+            rows.append("  names it did not accept: " + ", ".join(dict.fromkeys(unknown)))
+    return rows
 
 
 def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
@@ -247,6 +294,8 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
             lines.append(
                 f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" ({detail})" if detail else "")
             )
+    if job.state != "ready" and out.sheets:
+        lines += ["", *explain_sheets(out)]
     if job.grade:
         weak = rd.weak(job.grade)
         lines += [
@@ -405,6 +454,14 @@ def prices_of(given: Sequence[str], models: Sequence[str]) -> dict[str, tuple[fl
     return out
 
 
+_OPEN_CLIENTS: list[AnthropicClient] = []
+
+
+async def _close_clients() -> None:
+    while _OPEN_CLIENTS:
+        await _OPEN_CLIENTS.pop().close()
+
+
 def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
@@ -416,6 +473,7 @@ def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
         print(f"recap_run: {exc}", file=sys.stderr)
         return None
     ai = AnthropicClient(key, models)
+    _OPEN_CLIENTS.append(ai)  # closed when the run ends, so no "unclosed session" warning (#1997)
     return (
         ai.tier(AIModelTier.FAST),
         ai.tier(AIModelTier.CAREFUL),
@@ -667,12 +725,14 @@ async def _transcript(
 
 def _tolerated(transcript: tf.Transcript) -> str:
     """What the plain reader let through, as counts only: " (skipped 2 header lines, joined 5
-    wrapped lines)". Never the text."""
+    wrapped lines, skipped 80 cut-out lines)". Never the text."""
     notes = []
     if transcript.skipped:
         notes.append(f"skipped {transcript.skipped} header lines")
     if transcript.joined:
         notes.append(f"joined {transcript.joined} wrapped lines")
+    if transcript.cut_out:
+        notes.append(f"skipped {transcript.cut_out} cut-out lines")
     return f" ({', '.join(notes)})" if notes else ""
 
 
@@ -726,8 +786,15 @@ async def keep(recaps: RecapStore, gid: int, cid: str, out: Outcome, dm_user_id:
     )  # fmt: skip
 
 
+async def _run(args: argparse.Namespace) -> int:
+    try:
+        return await main_async(args)
+    finally:
+        await _close_clients()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    return asyncio.run(main_async(parse_args(argv)))
+    return asyncio.run(_run(parse_args(argv)))
 
 
 if __name__ == "__main__":

@@ -143,6 +143,68 @@ class TheFormats(unittest.TestCase):
         self.assertEqual((got.skipped, got.joined), (0, 1))
         self.assertEqual(len(got.utterances), 9)
 
+    def test_craigs_cut_out_placeholders_are_dropped_and_counted_apart(self) -> None:
+        text = "\n".join(
+            [
+                "Sam: The gate stands open.",
+                "{non-game context}",
+                "Mia: Mira steps in.",
+                "{non-game context}",
+                "{non-game context}",
+                "Sam: A torch is lit.",
+            ]
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.format, tf.PLAIN)
+        self.assertEqual((got.cut_out, got.joined), (3, 0))
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [
+                ("Sam", "The gate stands open."),
+                ("Mia", "Mira steps in."),
+                ("Sam", "A torch is lit."),
+            ],
+        )
+        self.assertNotIn("non-game", "".join(u.text for u in got.utterances))
+
+    def test_a_leading_placeholder_is_stripped_and_an_empty_utterance_dropped(self) -> None:
+        text = "\n".join(
+            [
+                "Sam: {non-game context} then, at the dawn, we ride.",
+                "Mia: {non-game context}",
+                "Sam: Onward.",
+            ]
+        )
+        got = tf.parse(text)
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [("Sam", "then, at the dawn, we ride."), ("Sam", "Onward.")],
+        )
+
+    def test_a_wrapped_line_after_an_emptied_utterance_joins_that_speaker_not_the_one_before(
+        self,
+    ) -> None:
+        text = "\n".join(
+            [f"Sam: line {n}" for n in range(8)]
+            + ["Mia: {non-game context}", "and then she spoke.", "Sam: Onward."]
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.utterances[-2].speaker, "Mia")
+        self.assertEqual(got.utterances[-2].text, "and then she spoke.")
+
+    def test_many_cut_outs_do_not_count_against_the_quarter_limit(self) -> None:
+        lines: list[str] = []
+        for n in range(10):
+            lines += [f"Sam: line {n}", "{non-game context}", "{non-game context}"]
+        got = tf.parse("\n".join(lines))
+        self.assertEqual((got.cut_out, got.joined, len(got.utterances)), (20, 0, 10))
+
+    def test_a_longer_braced_note_is_not_a_cut_out(self) -> None:
+        long_note = "{" + "x" * 41 + "}"
+        text = "\n".join([*[f"Sam: line {n}" for n in range(8)], long_note])
+        got = tf.parse(text)
+        self.assertEqual((got.cut_out, got.joined), (0, 1))
+
     def test_a_header_before_the_first_utterance_is_skipped_and_counted(self) -> None:
         text = (
             "Craig recording of the Test Table\nRecorded 2026-10-01\n\n"
@@ -406,6 +468,16 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         )
         _, _, spoken = run.read_transcript_inputs(args)
         self.assertEqual(spoken, [SpokenName("Oskar", "Oss-kar")])
+
+    async def test_the_summary_line_counts_the_cut_out_lines_apart_from_the_joined_ones(
+        self,
+    ) -> None:
+        text = self.story().replace("\n", "\n{non-game context}\n", 2)
+        story = self.file("craig2.txt", text)
+        code, said, _ = await self.go(None, "--transcript", story, "--dm", "Sam")
+        self.assertEqual(code, 0)
+        self.assertIn("skipped 2 cut-out lines", said)
+        self.assertNotIn("joined", said.split("skipped 2 cut-out lines")[0][-40:])
 
     async def test_the_summary_line_counts_what_the_plain_reader_let_through(self) -> None:
         text = "A header\nof two lines\n" + self.story().replace(

@@ -2673,3 +2673,9 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   Result from the core log (the server's name as the log gives it): "Clearing the old per-server commands in <id> (Dunjeons and Dragins)", then "Server <id>: old per-server commands removed". 0 errors since the restart. Connected to 2 servers; ears connected. The start-up log has no "Features" line in this build; not checked further.
   DISCORD_CLEAR_GUILD_COMMANDS is empty in .env (the owner emptied it). The running process still holds the value it started with until the next restart; the next restart reads the empty value.
   Still to check by the owner: /dmbot shows each command once in that server, and in the owner's test server (1561035576076017774) and dnd_testing. Then the Stripe test 1 rerun.
+
+2026-10-19 00:26 UTC  dev1  RECAP TEST 1 (recap_run --transcript, the owner's own file, --audio, recaps stay off). Result: NOT FINISHED, by design. The recap failed the grounding check (every detail must come from what was said), so nothing was written; the --out folder is empty.
+  Scores and counts only: 652 lines, 5 speakers, 3 header lines skipped, 79 wrapped lines joined. Calls: 4 (3 fast, 1 careful); tokens in 21091, out 6810. Spend about $0.042 (the careful model has no price on file, so its share is not in the figure). Audio not made.
+  Consent: the owner answered yes to the consent question for everyone in the file and to this test.
+  Tool notes for CloudDev: after the run, aiohttp "Unclosed client session" and "Unclosed connector" warnings print (a teardown leak; the run still ends). The careful model needs --price MODEL=IN,OUT to be costed.
+  Still to do: the owner decides whether to try again or to change the recap; the transcript copies are in the server's ~/recap-test folder and /tmp in the container, and are deleted when the owner says.
