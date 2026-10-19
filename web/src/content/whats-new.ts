@@ -205,6 +205,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-19",
+    title: "A 📇 Names button",
+    what: "Press 📇 Names to see, search and fix the names DMbot remembers. Any after-session check you haven't done yet waits there too. Only game masters see it.",
+    reason: "Merged (#1987); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-18",
     title: "See what DMbot looked at",
     what: "Under a rules answer on your DM screen, press 📖 What I looked at to see the rules it used, with the book and page number. Press a rule to open it. Only you see it.",
