@@ -553,6 +553,25 @@ export const ruleKindDmSteps: Step[] = [
   },
 ];
 
+// DMbot stops a session by itself when nobody is there (#2034, #2038): nobody in the voice channel
+// for 5 minutes, or nobody has spoken or typed for the campaign's quiet limit (30 minutes, or 60, 90,
+// Off). It warns on the DM screen first, with a Keep listening button. The numbers MIRROR core
+// idle_stop.py (EMPTY_S, WARN_S) and campaigns/store.py (QUIET_STOP_CHOICES): change them together.
+// Held with the What's new entry "Stops listening when no one's there" until dev1 deploys
+// #2038. Set this to true in the same change that moves that entry out of `held`; a test keeps the
+// two in step.
+export const QUIET_STOP_LIVE = false;
+
+export const quietStopSteps: Step[] = [
+  {
+    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 30 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 30 minutes, use the 🔇 Stop when quiet button in ⚙️ Settings: each press goes to 60, 90 and Off, then back to 30. Off turns off only the quiet stop; the empty-channel stop always stays on.",
+    names: [
+      { name: "Keep listening", file: "dm_screen/quiet_stop.py" },
+      { name: "Stop when quiet", file: "dm_screen/settings.py" },
+    ],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
@@ -670,6 +689,7 @@ export const dmSteps: Step[] = [
     text: "When the game is over, type /dmbot stop.",
     names: [{ name: "/dmbot stop", file: "bot.py" }],
   },
+  ...(QUIET_STOP_LIVE ? quietStopSteps : []),
   {
     text: "To keep a copy of a campaign, type /dmbot backup (paid campaigns only). The copy also keeps how often names were said and by whom, but after a restore only for people who are still recorded.",
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
