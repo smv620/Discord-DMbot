@@ -589,12 +589,14 @@ class TheRetryAndTheJson(unittest.TestCase):
         self.assertNotIn("<previous_draft>", bare)
         self.assertIn(str(length.target), bare)
 
-    def test_a_length_problem_tells_the_writer_not_to_cut_the_draft(self) -> None:
+    def test_every_revision_is_told_to_keep_the_length(self) -> None:
         length = rd.length_for(3.2)
         prose = rd.Prose("《Tense》 short", ("m",))
         text = rd.prose_retry(["Your draft was 287 words"], prose, length)
         self.assertIn(f"between {length.low} and {length.high} words: do not cut it", text)
-        self.assertNotIn("do not cut", rd.prose_retry(["a name is not allowed"], prose, length))
+        # whatever the problem: a cue-placement rewrite came back at 173 words (test 7)
+        other = rd.prose_retry(["the cues come in the wrong places"], prose, length)
+        self.assertIn(f"between {length.low} and {length.high} words: do not cut it", other)
 
     def test_no_music_prompts_at_all_are_made_in_code_from_the_moods(self) -> None:
         """Recap test 4: a draft came back with 0 music prompts for 4 sections."""

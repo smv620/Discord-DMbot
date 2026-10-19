@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Collection
 from itertools import pairwise
 from typing import Any
 
-from dmbot.ai import AIError, AIOutOfFunds
+from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import pipeline as pl
@@ -513,6 +513,41 @@ class Working(Base):
         self.assertIn("<previous_draft>", self.careful.sent[0])  # the weak draft, to revise (#2026)
         self.assertIn("keep the stakes", self.careful.sent[0])
         self.assertEqual(job.grade["tension"], 2)  # recorded as it was, never hidden
+
+    async def test_a_revision_that_fails_the_checks_leaves_the_first_draft_standing(self) -> None:
+        # test 7, run7-off: the first draft passed but graded weak; its revision came back far too
+        # short and the next try was cut off, and the whole recap failed (#2008)
+        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        cut = Reply("{", cut=True)
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE),
+            fx.Canned(short, cut),
+        )
+        self.fast.answers += [fx.FINISH_ANSWER]
+        notes: list[str] = []
+        self.worker._on_note = notes.append
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(job.grade["tension"], 2)  # the first draft's own grade
+        self.assertTrue(job.summary.startswith("《"))
+        self.assertEqual(len(self.careful.sent), 1)  # one revision tried, not three
+        self.assertTrue(any("first draft stands" in n for n in notes))
+
+    async def test_a_cut_off_revision_leaves_the_first_draft_standing_too(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE),
+            fx.Canned(Reply("{", cut=True)),
+        )
+        self.fast.answers += [fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual((job.state, job.grade["tension"]), ("ready", 2))
+        self.assertEqual(len(self.careful.sent), 1)
+
+    async def test_without_a_passing_first_draft_the_failing_tries_still_fail_the_job(self) -> None:
+        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, short), fx.Canned(short, short))
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
 
     async def test_a_grader_that_fails_never_stops_a_recap_that_passed_its_checks(self) -> None:
         await self.setUpWorker(

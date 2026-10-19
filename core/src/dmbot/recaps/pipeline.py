@@ -143,6 +143,13 @@ class RecapWorker:
         # passes or the job fails.
         self._rejected_prose: dict[tuple[int, str, int], rd.Prose] = {}
         self._rejected_finish: dict[tuple[int, str, int], tuple[str, list[str]]] = {}
+        # A draft that passed every check but was graded below the bar, kept while its revision is
+        # tried (in memory, like the rejected drafts): if the revision fails the checks, this draft
+        # stands instead of the whole recap failing (#2008, test 7: a revision came back 173 words
+        # and the third try was cut off, though the first draft had passed).
+        self._fallback: dict[
+            tuple[int, str, int], tuple[rd.Prose, dict[str, int], list[str], int | None]
+        ] = {}
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -448,15 +455,11 @@ class RecapWorker:
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         if why := unusable(raw):
-            return await self._retry_or_fail(gid, cid, job, [why], last_attempt=PROSE_LAST_ATTEMPT)
+            return await self._prose_failed(gid, cid, job, [why])
         prose = rd.parse_prose(raw.text)
         if prose is None:
-            return await self._retry_or_fail(
-                gid,
-                cid,
-                job,
-                ["answer with the sections JSON asked for"],
-                last_attempt=PROSE_LAST_ATTEMPT,
+            return await self._prose_failed(
+                gid, cid, job, ["answer with the sections JSON asked for"]
             )
         fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
         if fixed != prose:
@@ -508,20 +511,66 @@ class RecapWorker:
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-            return await self._retry_or_fail(
-                gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
-            )
+            return await self._prose_failed(gid, cid, job, problems)
         try:
             grade = await self._grade(gid, cid, job, sheet, prose.summary)
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
         weak = rd.weak(grade) if grade else []
+        to_confirm = rd.kept_names(
+            prose.summary,
+            beats=sheet,
+            transcript=transcript,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+            previous=inputs.previous,
+            setting=inputs.setting,
+        )[: un.MAX_TO_CONFIRM]
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
+            self._fallback[key] = (prose, grade, to_confirm, inputs.day)
             await self._store.update(
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
             return await self._store.get(gid, cid, job.session_at)
+        self._fallback.pop(key, None)
+        return await self._accept_prose(gid, cid, job, key, prose, grade, to_confirm, inputs.day)
+
+    async def _prose_failed(
+        self, gid: int, cid: str, job: Job, problems: Sequence[str]
+    ) -> Job | None:
+        """The prose stage's try failed. After a draft that passed but graded weak, the revision
+        failing leaves that draft standing (the recap is never worse than its first, good-enough
+        draft); otherwise the usual retry, and the third try's failure fails the job."""
+        key = (gid, cid, job.session_at)
+        kept = self._fallback.pop(key, None)
+        if kept is None:
+            return await self._retry_or_fail(
+                gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
+            )
+        if self._on_problems is not None:
+            self._on_problems(job.state, job.attempt, problems)
+        prose, grade, to_confirm, day = kept
+        log.info("Recap: the revision failed %d check(s); the first draft stands", len(problems))
+        if self._on_note is not None:
+            self._on_note(
+                "The revised recap failed a check, so the first draft stands: it passed every "
+                "check, and the grader scored it below the bar on cue placement or mood."
+            )
+        return await self._accept_prose(gid, cid, job, key, prose, grade, to_confirm, day)
+
+    async def _accept_prose(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        key: tuple[int, str, int],
+        prose: rd.Prose,
+        grade: dict[str, int],
+        to_confirm: list[str],
+        day: int | None,
+    ) -> Job | None:
+        """The prose stage's draft is the recap's: store it and go on to the next stage."""
         self._rejected_prose.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
@@ -532,16 +581,8 @@ class RecapWorker:
             summary=prose.summary,
             original=prose.summary,
             music=list(prose.music),
-            to_confirm=rd.kept_names(
-                prose.summary,
-                beats=sheet,
-                transcript=transcript,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                setting=inputs.setting,
-            )[: un.MAX_TO_CONFIRM],
-            game_day=inputs.day,
+            to_confirm=to_confirm,
+            game_day=day,
             grade=grade,
             attempt=0,
             errors=0,
@@ -743,6 +784,7 @@ class RecapWorker:
     def _forget(self, gid: int, cid: str, job: Job) -> None:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
+        self._fallback.pop((gid, cid, job.session_at), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
         """A player whose lines were used stopped being recorded: begin again without them, a
