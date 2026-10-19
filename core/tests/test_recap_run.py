@@ -4,6 +4,7 @@ fake provider: nothing is paid for."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -55,6 +56,111 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("below the bar: nothing", text)
         self.assertIn("Calls: 4", text)  # beats, prose, grader, finish
         self.assertIn("spend $", text)
+
+    async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:
+        # Both tries cite no real line, so the sheet is refused twice (#1997).
+        bad = (
+            '{"beats": [{"what": "A dragon came", "who": ["Varkus"], "lines": [99],'
+            ' "kind": "event"}]}'
+        )
+        out = await run.run_text(inputs(), fx.Canned(bad), fx.Canned(bad))
+        self.assertEqual(out.job.state, "failed")
+        self.assertEqual(len(out.sheets), 2)
+        text = "\n".join(run.report(out, {}))
+        self.assertIn(
+            "Beat sheet, try 1: 1 beats written, 0 kept (a recap needs at least 3).", text
+        )
+        self.assertIn("Beat sheet, try 2:", text)
+        self.assertIn("problem: 1 beat(s) cut: no line", text)
+        self.assertIn("problem: only 0 usable beat(s)", text)
+
+    async def test_the_names_a_sheet_was_not_given_are_printed_for_the_owners_terminal(
+        self,
+    ) -> None:
+        bad = (
+            '{"beats": [{"what": "Lord Varkus met them", "who": ["Varkus"], "lines": [1],'
+            ' "kind": "event"}]}'
+        )
+        out = await run.run_text(inputs(), fx.Canned(bad), fx.Canned(bad))
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("names it did not accept:", text)
+        self.assertIn("Varkus", text)
+        for _, said in fx.LINES:
+            self.assertNotIn(said, text)  # a line of the transcript never prints
+
+    async def test_a_word_only_a_non_speaker_said_does_not_rescue_a_name(self) -> None:
+        # The words come from the speakers the job used, like the live worker (consent).
+        out = await run.run_text(inputs(), fx.Canned(), fx.Canned())
+        stranger = fx.lines()[0].__class__(99000, 4242, "Okthandom waits at the gate.", "x")
+        wide = replace(out.inputs, lines=[*out.inputs.lines, stranger])
+        bad = (
+            '{"beats": [{"what": "They reached Okthandom", "who": [], "lines": [1],'
+            ' "kind": "event"}]}'
+        )
+        failed = replace(
+            out, inputs=wide, sheets=[json.loads(bad)["beats"]] * 2,
+            job=replace(out.job, state="failed", speakers=(fx.DM, fx.ALICE, fx.BOB)),
+        )  # fmt: skip
+        text = "\n".join(run.explain_sheets(failed))
+        self.assertIn("names it did not accept: Okthandom", text)
+
+    async def test_a_run_that_fails_its_prose_twice_says_why_for_each_try(self) -> None:
+        # The beats pass; the draft is refused twice (#1969). The report names the checks, in
+        # fixed sentences: no line of the transcript is printed.
+        bad = "SUMMARY:\nThey walked on.\nMUSIC:\nsoft strings\n"
+        out = await run.run_text(inputs(), fx.Canned(fx.BEATS_ANSWER, bad), fx.Canned(bad))
+        self.assertEqual(out.job.state, "failed")
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("Step prose, try 1:", text)
+        self.assertIn("Step prose, try 2:", text)
+        self.assertIn("problem: it must open with an emotion cue", text)
+        for _, said in fx.LINES:
+            self.assertNotIn(said, text)
+
+    async def test_a_failed_check_that_names_a_secret_prints_no_name(self) -> None:
+        job = (await run.run_text(inputs(), happy(), fx.Canned())).job
+        out = run.Outcome(
+            replace(job, state="failed"),
+            inputs(secret_names=["Zarathul"]),
+            run.Counting(fx.Canned(), "f"),
+            run.Counting(fx.Canned(), "c"),
+            failures=[("checked", 2, ["names that are not in the beat sheet: Zarathul, Mira"])],
+        )
+        text = "\n".join(run.explain_failures(out))
+        self.assertNotIn("Zarathul", text)
+        self.assertIn("keeps secret", text)
+
+    async def test_a_model_without_a_price_is_told_the_exact_flag(self) -> None:
+        out = await run.run_text(inputs(), happy(), fx.Canned(), models=("m-fast", "m-careful"))
+        self.assertIn("--price m-fast=IN,OUT", "\n".join(run.report(out, {})))
+
+    def test_the_default_careful_model_has_a_price_on_file(self) -> None:
+        from dmbot.ai import DEFAULT_MODELS
+
+        self.assertIn(DEFAULT_MODELS.careful, run.prices_of([], [DEFAULT_MODELS.careful]))
+
+    async def test_a_finished_run_prints_no_beat_sheet_diagnosis(self) -> None:
+        out = await run.run_text(inputs(), happy(), fx.Canned())
+        self.assertNotIn("Beat sheet, try", "\n".join(run.report(out, {})))
+
+    async def test_the_clients_are_closed_when_the_run_ends(self) -> None:
+        closed: list[bool] = []
+
+        class Fake:
+            async def close(self) -> None:
+                closed.append(True)
+
+        run._OPEN_CLIENTS.append(Fake())  # type: ignore[arg-type]  # a stand-in with close()
+        with patch.object(run, "main_async", return_value=0):
+            self.assertEqual(await run._run(run.parse_args(["--golden"])), 0)
+        self.assertEqual(closed, [True])
+        self.assertEqual(run._OPEN_CLIENTS, [])
+
+        run._OPEN_CLIENTS.append(Fake())  # type: ignore[arg-type]
+        boom = patch.object(run, "main_async", side_effect=RuntimeError("boom"))
+        with boom, self.assertRaises(RuntimeError):
+            await run._run(run.parse_args(["--golden"]))
+        self.assertEqual(closed, [True, True])  # closed on a failure too
 
     async def test_a_model_with_no_price_is_said_not_guessed(self) -> None:
         out = await run.run_text(inputs(), happy(), fx.Canned())
