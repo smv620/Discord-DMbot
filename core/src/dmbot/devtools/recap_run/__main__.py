@@ -107,6 +107,8 @@ class Outcome:
     stopped: str = ""  # why it did not finish, in plain words
     notes: list[str] = field(default_factory=list)
     sheets: list[list[dict[str, Any]]] = field(default_factory=list)  # each beat sheet tried
+    # (stage, try, the check's problems) for each prose or finish check that failed (#1969)
+    failures: list[tuple[str, int, list[str]]] = field(default_factory=list)
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -118,9 +120,11 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     return pl.MAX_CALLS + windows - 1, tokens
 
 
-def dollars(price: tuple[float, float] | None, tokens_in: int, tokens_out: int) -> str:
+def dollars(
+    price: tuple[float, float] | None, tokens_in: int, tokens_out: int, model: str = "MODEL"
+) -> str:
     if price is None:
-        return "no price on file for this model (give --price MODEL=IN,OUT)"
+        return f"no price on file for this model (give --price {model}=IN,OUT)"
     return f"${(tokens_in * price[0] + tokens_out * price[1]) / 1_000_000:.3f}"
 
 
@@ -136,6 +140,7 @@ async def run_text(
     """The recap worker on one session, in memory. Returns the job as it ended."""
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
+    failures: list[tuple[str, int, list[str]]] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
     async def load(gid: int, cid: str, job: Job) -> pl.Inputs:
@@ -158,6 +163,9 @@ async def run_text(
         consenting=lambda gid: agreed,
         allowed=allowed,
         notify=nobody,
+        on_problems=lambda stage, attempt, problems: failures.append(
+            (stage, attempt + 1, list(problems))
+        ),
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -172,7 +180,9 @@ async def run_text(
         if job == before:
             stopped = "no progress"
             break
-    return Outcome(store.job, inputs, fast_c, careful_c, stopped, sheets=store.sheets)
+    return Outcome(
+        store.job, inputs, fast_c, careful_c, stopped, sheets=store.sheets, failures=failures
+    )
 
 
 def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
@@ -259,6 +269,32 @@ def explain_sheets(out: Outcome) -> list[str]:
     return rows
 
 
+STAGE_WORDS = {
+    "queued": "beat sheet",
+    "beats": "beat sheet",
+    "checked": "prose",
+    "prose": "title and housekeeping",
+}  # a job's state when a check failed -> the step that was being checked
+
+
+def explain_failures(out: Outcome) -> list[str]:
+    """Why the prose or the finishing step failed its checks (#1969): the check's own words, for
+    each try. They are fixed sentences and the recap's own names, never a line of the transcript;
+    a problem that holds a name the DM keeps secret is not printed."""
+    secret = [n.casefold() for n in out.inputs.secret_names]
+    rows: list[str] = []
+    for stage, attempt, problems in out.failures:
+        rows.append(
+            f"Step {STAGE_WORDS.get(stage, stage)}, try {attempt}: {len(problems)} problem(s)."
+        )
+        for problem in problems:
+            held = any(name and name in problem.casefold() for name in secret)
+            rows.append(
+                "  problem: " + ("(it names something the DM keeps secret)" if held else problem)
+            )
+    return rows
+
+
 def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
     text = " ".join([job.title, job.summary, *job.housekeeping, *job.music])
     return names_a_secret(text, inputs.secret_names, inputs.allowed_names)
@@ -296,6 +332,8 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
             )
     if job.state != "ready" and out.sheets:
         lines += ["", *explain_sheets(out)]
+    if job.state != "ready" and out.failures:
+        lines += ["", *explain_failures(out)]
     if job.grade:
         weak = rd.weak(job.grade)
         lines += [
@@ -305,10 +343,15 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         ]
     tokens_in = out.fast.input_tokens + out.careful.input_tokens
     tokens_out = out.fast.output_tokens + out.careful.output_tokens
-    spend = dollars(prices.get(out.fast.model), out.fast.input_tokens, out.fast.output_tokens)
+    spend = dollars(
+        prices.get(out.fast.model), out.fast.input_tokens, out.fast.output_tokens, out.fast.model
+    )
     if out.careful.calls:
         spend += " + " + dollars(
-            prices.get(out.careful.model), out.careful.input_tokens, out.careful.output_tokens
+            prices.get(out.careful.model),
+            out.careful.input_tokens,
+            out.careful.output_tokens,
+            out.careful.model,
         )
     lines += [
         "",
@@ -744,12 +787,21 @@ def _tolerated(transcript: tf.Transcript) -> str:
     return f" ({', '.join(notes)})" if notes else ""
 
 
+def voice_tags_on() -> bool:
+    """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
+    return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+
+
 def _cue_lines(out: Outcome) -> list[str]:
     from dmbot.recaps.audio import script as sc
 
     try:
         script = sc.build(
-            out.job.title, out.job.game_day, out.job.summary, secret_names=out.inputs.secret_names
+            out.job.title,
+            out.job.game_day,
+            out.job.summary,
+            secret_names=out.inputs.secret_names,
+            emotion_tags=voice_tags_on(),  # the cue map must show what the audio will say
         )
     except sc.SecretInScript:
         return []
@@ -775,7 +827,7 @@ async def _audio(
         provider = ElevenLabs(http, voice_id=voice, speech_model=model)
         # The ambience cache is a temporary folder too, so a run costs what a first run costs.
         with tempfile.TemporaryDirectory(prefix="recap-run-cache-") as cache:
-            tags = os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+            tags = voice_tags_on()
             return await run_audio(
                 out.job,
                 out.inputs,

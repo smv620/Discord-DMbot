@@ -104,6 +104,41 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         text = "\n".join(run.explain_sheets(failed))
         self.assertIn("names it did not accept: Okthandom", text)
 
+    async def test_a_run_that_fails_its_prose_twice_says_why_for_each_try(self) -> None:
+        # The beats pass; the draft is refused twice (#1969). The report names the checks, in
+        # fixed sentences: no line of the transcript is printed.
+        bad = "SUMMARY:\nThey walked on.\nMUSIC:\nsoft strings\n"
+        out = await run.run_text(inputs(), fx.Canned(fx.BEATS_ANSWER, bad), fx.Canned(bad))
+        self.assertEqual(out.job.state, "failed")
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("Step prose, try 1:", text)
+        self.assertIn("Step prose, try 2:", text)
+        self.assertIn("problem: it must open with an emotion cue", text)
+        for _, said in fx.LINES:
+            self.assertNotIn(said, text)
+
+    async def test_a_failed_check_that_names_a_secret_prints_no_name(self) -> None:
+        job = (await run.run_text(inputs(), happy(), fx.Canned())).job
+        out = run.Outcome(
+            replace(job, state="failed"),
+            inputs(secret_names=["Zarathul"]),
+            run.Counting(fx.Canned(), "f"),
+            run.Counting(fx.Canned(), "c"),
+            failures=[("checked", 2, ["names that are not in the beat sheet: Zarathul, Mira"])],
+        )
+        text = "\n".join(run.explain_failures(out))
+        self.assertNotIn("Zarathul", text)
+        self.assertIn("keeps secret", text)
+
+    async def test_a_model_without_a_price_is_told_the_exact_flag(self) -> None:
+        out = await run.run_text(inputs(), happy(), fx.Canned(), models=("m-fast", "m-careful"))
+        self.assertIn("--price m-fast=IN,OUT", "\n".join(run.report(out, {})))
+
+    def test_the_default_careful_model_has_a_price_on_file(self) -> None:
+        from dmbot.ai import DEFAULT_MODELS
+
+        self.assertIn(DEFAULT_MODELS.careful, run.prices_of([], [DEFAULT_MODELS.careful]))
+
     async def test_a_finished_run_prints_no_beat_sheet_diagnosis(self) -> None:
         out = await run.run_text(inputs(), happy(), fx.Canned())
         self.assertNotIn("Beat sheet, try", "\n".join(run.report(out, {})))
