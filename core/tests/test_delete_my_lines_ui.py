@@ -115,7 +115,7 @@ class Stopped(unittest.TestCase):
     def test_the_stop_message_says_how_to_delete(self) -> None:
         text = c.stopped_text("Dragon Club")
         self.assertIn(c.ALREADY_RECORDED, text)
-        self.assertIn("Want it gone? Press ⚙️ Menu, then **🗑 Delete my transcripts**.", text)
+        self.assertIn("Want it gone? Press 🗂️ Menu, then **🗑 Delete my transcripts**.", text)
         self.assertIn(c.DELETE_LABEL, c.HOW_TO_DELETE)  # the message and the button can't drift
 
     def test_the_labels_fit_a_phone_and_the_menu_has_room(self) -> None:
