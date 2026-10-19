@@ -303,15 +303,26 @@ export default function Account({
 function SignedOut({ notice }: { notice: string | null }) {
   const { api } = useShared();
   const signIn = api.signInUrl();
+  // Sign-in comes first (#2003): on a phone this page used to open on the plans, and the plain
+  // Sign in button sat below all of them, so a returning DM thought they could only buy.
   return (
     <div class="stack">
-      {notice && (
-        <p class="warn" role="alert">
-          {notice}
-        </p>
-      )}
-      <p class="lead">{text.signInLead}</p>
-      <div class="panel">
+      <section class="panel" aria-labelledby="signed-out-heading">
+        {notice && (
+          <p class="warn" role="alert">
+            {notice}
+          </p>
+        )}
+        <h2 id="signed-out-heading">{text.signedOutHeading}</h2>
+        <p>{text.signedOutLead}</p>
+        <a class="button" href={signIn}>
+          {text.signIn}
+        </a>
+        <p class="muted small">{text.signInNote}</p>
+        <EmailSignIn />
+      </section>
+      <section class="panel" aria-labelledby="new-heading">
+        <h2 id="new-heading">{text.newHeading}</h2>
         <a class="button" href={signIn}>
           {text.startTryItFree}
         </a>
@@ -323,15 +334,7 @@ function SignedOut({ notice }: { notice: string | null }) {
             </a>
           )}
         />
-      </div>
-      <div class="panel">
-        <p>{text.haveAccount}</p>
-        <a class="button secondary" href={signIn}>
-          {text.signIn}
-        </a>
-        <p class="muted small">{text.signInNote}</p>
-      </div>
-      <EmailSignIn />
+      </section>
     </div>
   );
 }
@@ -366,8 +369,8 @@ function EmailSignIn() {
     }
   };
   return (
-    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
-      <h2 id="email-heading">{text.emailHeading}</h2>
+    <form class="email-sign-in" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+      <h3 id="email-heading">{text.emailHeading}</h3>
       <label for="email-address">{text.emailLabel}</label>
       <input
         id="email-address"
