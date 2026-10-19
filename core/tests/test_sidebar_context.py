@@ -103,6 +103,104 @@ class MentionedRules(unittest.TestCase):
         self.assertIn("Goblin", prompt)
 
 
+class CombatEncounters(unittest.TestCase):
+    """The SRD's Combat Encounters section (#2000): the DM's, found only when asked for."""
+
+    def hits(self, question: str, *, table: bool = False) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014", table=table)
+
+    def names(self, question: str, *, table: bool = False) -> list[str]:
+        return [h.entry.name for h in self.hits(question, table=table)]
+
+    def prompt(self, question: str, *, table: bool = False) -> str:
+        return context.build(
+            question,
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+            table=table,
+        ).prompt
+
+    def test_the_cue_words_find_the_budget_entry(self) -> None:
+        for question in (
+            "how do I work out the xp budget",
+            "what is a deadly encounter",
+            "how do I choose encounter difficulty",
+            "what is the difficulty of a fight with 4 goblins",
+        ):
+            self.assertIn("Step 2: Determine Your XP Budget", self.names(question), question)
+
+    def test_a_fight_with_a_party_finds_it_and_the_line_for_the_level_asked(self) -> None:
+        question = "how hard is a fight with 4 goblins for 4 level 3 characters"
+        self.assertEqual(self.names(question)[0], "Step 2: Determine Your XP Budget")
+        prompt = self.prompt(question)
+        self.assertIn("Level 3: Low 150, Moderate 225, High 400 XP per character", prompt)
+        self.assertNotIn("Level 2:", prompt)
+        self.assertNotIn("Level 4:", prompt)
+        (hit,) = [h for h in self.hits(question) if h.entry.name.startswith("Step 2")]
+        self.assertEqual(hit.entry.citation, "SRD 5.2.1, Gameplay Toolbox, p. 202")
+
+    def test_cr_with_a_party_finds_it_and_a_creatures_cr_does_not(self) -> None:
+        self.assertIn("Step 2: Determine Your XP Budget", self.names("what cr for my party"))
+        self.assertNotIn("Step 2: Determine Your XP Budget", self.names("what's a goblin's CR"))
+        (hit,) = self.hits("what's a goblin's CR")
+        self.assertEqual(hit.entry.kind, "monster")
+
+    def test_plain_questions_leave_it_alone(self) -> None:
+        for question in ("how does long rest work", "what is a fight", "does a goblin have xray"):
+            self.assertFalse(
+                [n for n in self.names(question) if "XP" in n or "Encounter" in n], question
+            )
+
+    def test_a_table_question_gets_none_of_it(self) -> None:
+        question = "how hard is a fight with 4 goblins for 4 level 3 characters"
+        self.assertNotIn("XP Budget", self.prompt(question, table=True))
+
+    def test_a_named_creature_is_never_pushed_out_by_the_budget(self) -> None:
+        names = self.names("how hard is a fight with a goblin, an ogre and a wolf for the party")
+        self.assertEqual(len(names), 3)
+        self.assertNotIn("Step 2: Determine Your XP Budget", names)
+
+    def test_everyday_combat_talk_leaves_it_alone(self) -> None:
+        for question in (
+            "what is a deadly trap",
+            "how does surprise work in combat for characters",
+            "what level can a wizard fight",
+            "what is the xp for a level 3 goblin",
+            "troubleshooting my mic",
+        ):
+            self.assertFalse(
+                [n for n in self.names(question) if "Budget" in n or "Encounter" in n], question
+            )
+
+    def test_xp_or_difficulty_alone_is_everyday_talk(self) -> None:
+        for question in ("how much xp does a goblin give", "what is the difficulty of the lock"):
+            self.assertNotIn("Step 2: Determine Your XP Budget", self.names(question), question)
+        self.assertIn("Step 2: Determine Your XP Budget", self.names("xp for a party of four"))
+
+    def test_levels_are_read_in_the_ways_a_dm_says_them(self) -> None:
+        for question in (
+            "xp budget for levels 3 and 4",
+            "xp budget for 3rd level and 4th level characters",
+        ):
+            entry = self.hits(question)[0].entry
+            kept = context.only_levels_asked(entry, question)
+            self.assertIn("Level 3:", kept, question)
+            self.assertIn("Level 4:", kept, question)
+            self.assertNotIn("Level 5:", kept, question)
+
+    def test_only_the_levels_asked_are_kept(self) -> None:
+        entry = next(h.entry for h in self.hits("xp budget for level 10 and level 20 characters"))
+        kept = context.only_levels_asked(entry, "xp budget for level 10 and level 20 characters")
+        self.assertIn("Level 10:", kept)
+        self.assertIn("Level 20:", kept)
+        self.assertNotIn("Level 11:", kept)
+        self.assertIn("do not multiply", kept)
+
+
 class TheRulesGlossary(unittest.TestCase):
     """The SRD's Rules Glossary (#1884): cited when the question names nothing else."""
 

@@ -510,7 +510,7 @@ class Building(unittest.TestCase):
                     say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
         # the chapter as the toolbox reader's own tests have it, and the heading that ends it
         toolbox = toolbox_chapter()
-        combat = [say("Combat Encounters", TITLE, 14)]
+        combat = [say("Magic Items", TITLE, 14)]
         classes = [
             say("Classes", TITLE, 20),
             say("Barbarian", TITLE, 20),

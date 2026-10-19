@@ -1,5 +1,5 @@
-"""Turning the SRD 5.2.1's Gameplay Toolbox chapter into rules, poisons, traps and curses (#1935).
-Pure: no PDF, no files.
+"""Turning the SRD 5.2.1's Gameplay Toolbox chapter into rules, poisons, traps and curses (#1935),
+and its Combat Encounters section into rules (#2000). Pure: no PDF, no files.
 
 The chapter is a run of titles in the semi-bold sans font at a column's edge, each with serif
 paragraphs under it. A **poison** is a title that ends in its price (`Purple Worm Poison (2,000
@@ -9,6 +9,10 @@ Contagion` line; a **curse** is the one bold-italic lead-in under Environmental 
 Possession). Every other title that is kept is a **rule**. The tables set in the sans fonts are
 turned into one line per row (the travel terrain, the sample fear and mental stress DCs, each trap's
 levels), because their cells do not read as sentences when run together.
+
+The Combat Encounters section (how hard a fight is, the XP budget, choosing monsters and
+troubleshooting) is rules too, tagged `Combat Encounters`; its one table, the XP Budget per
+Character, becomes one line per level. The Magic Items section after it is left out (a later issue).
 
 The tool stops, naming the page, at a title it has no place for, at a poison without its type, at a
 trap without its trigger, duration or effect, at a table it can't read and at a name that comes
@@ -37,9 +41,11 @@ from dmbot.devtools.srd.parse import (
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, Line
 
 CHAPTER = "Gameplay Toolbox"
-# Where the chapter's kept sections end: the encounter-building advice and the magic item rules
-# (categories, values, crafting, sentient items) come after, and are left out.
-AFTER = "Combat Encounters"
+# Where the kept sections end: the magic item rules (categories, values, crafting, sentient items)
+# come after the Combat Encounters section, and are left out for now.
+AFTER = "Magic Items"
+ENCOUNTERS = "Combat Encounters"
+ENCOUNTER_TAG = "Combat Encounters"  # the tag of every rule from that section
 # A title that ends on one of these carries on in the line below it ("Curses and" / "Magical
 # Contagions"). The titles above and below "Environmental Effects" / "Deep Water" are only 18
 # points apart too, so the gap alone can't tell the two apart.
@@ -86,6 +92,24 @@ RULES = frozenset(
         "Parts of a Trap",
     }
 )
+# The Combat Encounters section's titles, in the order it has them (#2000). They are rules with the
+# section's name as their tag.
+ENCOUNTER_RULES = frozenset(
+    {
+        "Combat Encounters",
+        "Combat Encounter Difficulty",
+        "Step 1: Choose a Difficulty",
+        "Step 2: Determine Your XP Budget",
+        "Step 3: Spend Your Budget",
+        "Troubleshooting",
+        "Many Creatures",
+        "Adjustments",
+        "CR 0 Creatures",
+        "Number of Stat Blocks",
+        "Powerful Creatures",
+        "Unusual Features",
+    }
+)
 # What is left out and why: advice to the DM who builds the game, and headings with no rule under
 # them. The key is the title as printed; the sections under "Creating a Background" are its steps.
 LEFT_OUT = {
@@ -117,7 +141,7 @@ EXPECTED_LEFT_OUT = {
     "Example Traps": 1,
 }
 # A table's caption: its rows are put in the text of the entry above it.
-FOLDED = frozenset({"Sample Fear DCs", "Sample Mental Stress Effects"})
+FOLDED = frozenset({"Sample Fear DCs", "Sample Mental Stress Effects", "XP Budget per Character"})
 POISON_TITLE = re.compile(r"^(?P<name>.+) \((?P<price>\d[\d,]* GP)\)$")
 POISON_TYPE = re.compile(r"^(?P<type>Contact|Ingested|Inhaled|Injury) Poison$")
 _BAND = r"(?:Deadly|Nuisance) Trap \(Levels \d+–\d+\)"
@@ -136,6 +160,8 @@ TERRAIN_ROW = re.compile(
 FEAR_HEADER = "Example Save DC"
 FEAR_ROW = re.compile(r"^(?P<words>.*\S) (?P<dc>\d+)$")
 STRESS_HEADERS = ("Save Psychic", "Example DC Damage")
+XP_ROW = re.compile(r"^(?P<level>\d{1,2}) (?P<low>[\d,]+) (?P<moderate>[\d,]+) (?P<high>[\d,]+)$")
+XP_LEVELS = 20
 STRESS_ROW = re.compile(r"^(?P<words>.*\S) (?P<dc>\d+) (?P<damage>\d+d\d+)$")
 # The five tables that scale a trap, by their caption: the words of each column and what its
 # cells look like. A new caption is a table the tool doesn't know (stop).
@@ -327,6 +353,8 @@ def _table(lines: Sequence[Line], start: int, mender: Mender) -> tuple[list[str]
         return _stress(cells, page, mender), k
     if head in LEVELS_TABLES:
         return _levels(head, cells, page), k
+    if "Encounter Difficulty" in head and "Level" in head:
+        return _xp_budget(cells, page), k
     raise SrdError(f"A table on page {page} that the tool doesn't know: {head!r}")
 
 
@@ -365,6 +393,29 @@ def _terrain(cells: list[str], page: int) -> list[str]:
             "not the 11 and 2 it has"
         )
     return [*rows, *notes]
+
+
+def _xp_budget(cells: list[str], page: int) -> list[str]:
+    """The XP Budget per Character table, one line a level: "Level 3: Low 150, Moderate 225, High
+    400 XP per character" (#2000). The column heads ("Low Moderate High") are skipped; any other
+    cell that is not a row, or a missing level, stops the build."""
+    rows: list[str] = []
+    for cell in cells:
+        if cell == "Low Moderate High":
+            continue
+        found = XP_ROW.match(cell)
+        if found is None or int(found["level"]) != len(rows) + 1:
+            raise SrdError(f"XP Budget per Character on page {page}: can't read the row {cell!r}")
+        rows.append(
+            f"Level {found['level']}: Low {found['low']}, Moderate {found['moderate']}, "
+            f"High {found['high']} XP per character"
+        )
+    if len(rows) != XP_LEVELS:
+        raise SrdError(
+            f"XP Budget per Character on page {page}: {len(rows)} levels, "
+            f"not the {XP_LEVELS} it has"
+        )
+    return rows
 
 
 def _rows_by_dc(
@@ -530,7 +581,8 @@ def parse_toolbox(lines: Sequence[Line]) -> Toolbox:
             raise SrdError(
                 f"{name!r} on page {page}: an italic line the tool can't place: {head!r}"
             )
-        if name not in RULES:
+        encounter = name in ENCOUNTER_RULES
+        if name not in RULES and not encounter:
             raise SrdError(f"Page {page}: a title the tool has no place for: {name!r}")
         body = list(section.lines)
         if name == MOVEMENT_SECTION:
@@ -549,7 +601,7 @@ def parse_toolbox(lines: Sequence[Line]) -> Toolbox:
         if not text:
             raise SrdError(f"Rule {name!r} on page {page}: no description")
         once("rule", name, page)
-        toolbox.rules.append(Rule(name, "", text, page, ()))
+        toolbox.rules.append(Rule(name, ENCOUNTER_TAG if encounter else "", text, page, ()))
     return toolbox
 
 
