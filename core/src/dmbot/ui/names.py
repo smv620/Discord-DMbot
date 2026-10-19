@@ -1228,6 +1228,23 @@ def held_back_text(names: list[str]) -> str:
     )
 
 
+def recap_names_text(count: int) -> str:
+    """For the DM screen when a recap used names DMbot didn't know yet (#2027): the names are
+    listed on the DM's recap page, not here, so nothing is spoiled for players who peek."""
+    return (
+        f"📝 **{_plural(count, 'name')} from the recap to check.** They were said at the table "
+        "and DMbot didn't know them yet. Say which are in your game: the check opens privately "
+        "for the DM."
+    )
+
+
+def recap_names_reminder(count: int) -> str:
+    return (
+        f"📝 **{_plural(count, 'name')} from the last recap** still waiting to be checked. "
+        "The check opens privately for the DM."
+    )
+
+
 def after_session_text(names: list[str]) -> str:
     """For the DM screen (players may see it under peek; the names come from the
     transcript anyone can read, so nothing is spoiled)."""

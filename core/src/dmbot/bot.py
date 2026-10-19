@@ -221,7 +221,7 @@ from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import DM, FIX, KEEP, Heard, MemoryRuleError, name_key
+from dmbot.memory.models import DM, FIX, KEEP, PROPOSED, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
@@ -355,7 +355,14 @@ from dmbot.ui.line_fix import (
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton, UndoConnectionButton
 from dmbot.ui.name_lists import UndoListButton
-from dmbot.ui.names import ReviewButton, after_session_text, held_back_text, review_view
+from dmbot.ui.names import (
+    ReviewButton,
+    after_session_text,
+    held_back_text,
+    recap_names_reminder,
+    recap_names_text,
+    review_view,
+)
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
@@ -2040,6 +2047,7 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         self._track(self._pre_session_note(table), "pre-session-note")  # #1403
         self._track(self._waiting_recaps(table), "waiting-recaps")  # #1474
+        self._track(self._waiting_recap_names(table), "waiting-recap-names")  # #2027
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
         table.fight_task = self._track_loop(fightbot.run(self, table), "fightbot")  # #1129
@@ -7375,10 +7383,81 @@ class DMBot(commands.AutoShardedBot):
                     "📜 I couldn't write this session's recap. "
                     f"Try again from your recap page{where}",
                 )
+        if campaign is not None and job.state == "ready" and job.to_confirm:
+            await self._queue_recap_names(gid, cid, job, campaign)
         if campaign is not None and not campaign.recaps_email:
             return  # no email by the DM's choice
         if self.mailer is not None and self.recaps is not None:
             await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
+
+    async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
+        """Names the recap kept that DMbot didn't know (#2027) go into the after-session name
+        check as suggestions, and the DM screen says so at once, with the check's button. They are
+        only proposed: nothing is written to story memory until the DM says yes. The names
+        themselves stay on the DM's recap page, so nothing reaches players who peek. Once only
+        (`names_state`); a failure costs the notice, never the recap."""
+        if self.memory is None or self.recaps is None:
+            return
+        try:
+            if not await self.recaps.set_names_state(gid, cid, job.session_at, 1, only_from=0):
+                return
+            known = set(await self.memory.known_keys(gid, cid))
+            added = 0
+            for name in job.to_confirm:
+                if name_key(name) in known:
+                    continue  # the list has it (or the DM said it is not a name) since
+                try:
+                    await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=name,
+                        source="scan",
+                        description="Used in a recap",
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a name from the recap: %s", exc)
+                    continue
+                added += 1
+            if added and campaign.dm_screen_channel_id is not None:
+                await self.post(
+                    campaign.dm_screen_channel_id, recap_names_text(added), view=review_view(cid)
+                )
+            if self.lookup is not None and not any(
+                t.campaign_id == cid for t in self.tables.values()
+            ):
+                self.lookup.drop([cid])
+        except Exception:
+            log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _waiting_recap_names(self, table: Table) -> None:
+        """A session starts and names from a recap are still unanswered (#2027): the DM screen
+        reminds once, with the check's button. Not after a restart in the middle of a session.
+        Names the DM answered since are not counted, and nothing is said when none are left."""
+        if self.recaps is None or self.memory is None or table.campaign_id is None or table.resumed:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                waiting = await self.recaps.names_waiting(gid, cid)
+                if not waiting:
+                    return
+                proposed = {
+                    name_key(e.name)
+                    for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
+                }
+                for session_at, names in waiting:
+                    if not await self.recaps.set_names_state(gid, cid, session_at, 2, only_from=1):
+                        continue
+                    left = sum(1 for n in names if name_key(n) in proposed)
+                    if left and self.tables.get(gid) is table:
+                        await self.post(
+                            table.screen_channel_id,
+                            recap_names_reminder(left),
+                            view=review_view(cid),
+                        )
+            except Exception:
+                log.exception("The waiting-names reminder failed")
 
     async def run_recaps(self) -> None:
         """One round of the recap worker: the due jobs of each server this bot serves, a few at a

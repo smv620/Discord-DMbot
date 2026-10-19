@@ -2038,6 +2038,16 @@ INITIATIVE_STYLE_BACKFILL = """
     DROP POLICY migrate_backfill ON campaigns;
 """
 
+RECAP_TO_CONFIRM = """
+    -- Names a recap kept that no list had, for the DM to confirm (#2027): shown under the DM's
+    -- copy as "Facts to be confirmed" and queued in the name check. names_state: 0 not yet told,
+    -- 1 the DM screen was told, 2 and reminded at the next session. Defaulted columns change no
+    -- rows, so no row-level-security policy is needed.
+    ALTER TABLE recap_jobs ADD COLUMN to_confirm TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE recap_jobs ADD COLUMN names_state INTEGER NOT NULL DEFAULT 0
+        CHECK (names_state BETWEEN 0 AND 2);
+"""
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -6882,6 +6892,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0128_npcs_channel", NPCS_CHANNEL),  # the NPC roster channel (#1761)
     ("0129_initiative_style", INITIATIVE_STYLE),  # the initiative style FightBot heard (#1784)
     ("0130_initiative_style_backfill", INITIATIVE_STYLE_BACKFILL),  # old switch folded in (#1791)
+    (
+        "0131_recap_to_confirm",
+        RECAP_TO_CONFIRM,
+    ),  # names a recap kept, for the DM to confirm (#2027)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

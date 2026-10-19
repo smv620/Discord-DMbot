@@ -344,6 +344,8 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
             "Music prompts:",
             *(f"{i}. {m}" for i, m in enumerate(job.music, start=1)),
         ]
+        if job.to_confirm:
+            lines += ["", "Facts to be confirmed:", *(f"- {n}" for n in job.to_confirm)]
     if job.summary:
         lines += ["", "Checks:"]
         for name, ok, detail in final_checks(job, out.inputs):
@@ -667,6 +669,7 @@ def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given
                 list(job.music),
                 voice_tags=voice_tags_on(),
                 names_given=names_given,
+                to_confirm=list(job.to_confirm),
             ),
         )
     rv.write_private(folder / rv.REPORT_FILE, "\n".join(printed) + "\n")

@@ -107,6 +107,16 @@ class TheDmsPage(Base):
         self.assertTrue(one["canPost"] and one["canEdit"] and one["canTryAgain"])
         self.assertEqual(one["triesLeft"], 2)
 
+    async def test_the_names_to_confirm_are_on_the_dms_page_only(self) -> None:
+        """(#2027) Names the recap kept that DMbot did not know: the DM's own copy lists them;
+        they are never part of the text that is edited or posted."""
+        await self.store.update(THURSDAY.id, self.one.id, 100, to_confirm=["Zarathon Keep", "Yrsa"])
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["toConfirm"], ["Zarathon Keep", "Yrsa"])
+        self.assertNotIn("Zarathon", one["summary"] + one["text"])
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(listed[0]["toConfirm"], ["Zarathon Keep", "Yrsa"])
+
     async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
         """(#2022) The recap stays; its page says the transcript went, and when, and how long the
         table keeps them. Read through the transcripts page's own door, scoped to the recap's

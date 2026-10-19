@@ -13,6 +13,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.store import Job, RecapSection, RecapStore
+from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests.pg import DatabaseTest
 
@@ -201,6 +202,7 @@ class Working(Base):
         names: Collection[str] = fx.NAMES,
         window_chars: int = 40_000,
         hours: float = 2.5,
+        heard: str = "",
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -213,7 +215,7 @@ class Working(Base):
             if not inputs:
                 return None
             return pl.Inputs(
-                lines=fx.lines(),
+                lines=[*fx.lines(), Line(9000, fx.DM, heard, heard)] if heard else fx.lines(),
                 dm_ids={fx.DM},
                 allowed_names=list(names),
                 secret_names=self.secret,
@@ -393,6 +395,25 @@ class Working(Base):
         self.assertIn("Lord Varkus laughed.", self.careful.sent[1])
         self.assertIn("between", self.careful.sent[1])
         self.assertNotIn("<previous_draft>", self.fast.sent[1])  # the first try has none
+
+    async def test_a_misheard_name_is_respelled_and_a_name_said_at_the_table_is_kept(self) -> None:
+        """#2027: "Care Dinval" becomes the known "Caer-Dineval" in code; "Breathing Stair" was
+        said in the lines and no list has it, so it stays and is queued for the DM; neither is
+        a reason to retry."""
+        text = fx.PROSE_ANSWER.replace(
+            "Nothing answered.", "Care Dinval waited by the Descending Stair. Nothing answered."
+        )
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, text, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            names=[*fx.NAMES, "Caer-Dineval"],
+            heard="a stair descends into darkness; the Descending Stair",
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("Caer-Dineval waited", job.summary)
+        self.assertNotIn("Care Dinval", job.summary)
+        self.assertEqual(job.to_confirm, ("Descending Stair",))
+        self.assertEqual(len(self.careful.sent), 0)  # no retry
 
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
         await self.setUpWorker(

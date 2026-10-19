@@ -16,6 +16,7 @@ import contextlib
 import html
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +31,7 @@ _CUES_HEAD = re.compile(r"^Cues \(\d+\):$")
 _HEADING = re.compile(r"^\*\*Session Summary: (.+)\*\*$")
 S_TITLE, S_CUES, S_PLAIN = "Title", "Summary, with the cues", "Summary, cues removed"
 S_HOUSE, S_MUSIC = "Mechanical Housekeeping", "Music prompts"
+S_CONFIRM = "Facts to be confirmed"
 _NO_CUES = "As the table reads it (no cues):"
 
 
@@ -41,6 +43,7 @@ class Review:
     with_cues: str = ""
     plain: str = ""
     housekeeping: list[str] = field(default_factory=list)
+    to_confirm: list[str] = field(default_factory=list)  # the DM's copy only (#2027)
     music: list[str] = field(default_factory=list)
     voice_tags: bool | None = None  # None: the folder does not say
     names_given: bool = False  # a names file was given, so names are worth listening for
@@ -80,6 +83,7 @@ def recap_text(
     *,
     voice_tags: bool,
     names_given: bool = False,
+    to_confirm: Sequence[str] = (),
 ) -> str:
     """`recap.txt`: the recap as the AI wrote it, the same as players read it, and the rest."""
     tags = "on" if voice_tags else "off"
@@ -92,6 +96,8 @@ def recap_text(
         f"== {S_HOUSE} ==\n" + "\n".join(f"- {b}" for b in housekeeping),
         f"== {S_MUSIC} ==\n" + "\n".join(f"{n}. {m}" for n, m in enumerate(music, start=1)),
     ]
+    if to_confirm:  # the DM's copy ends with the names to confirm; never narrated or posted
+        parts.append(f"== {S_CONFIRM} ==\n" + "\n".join(f"- {n}" for n in to_confirm))
     return "\n\n".join(parts) + "\n"
 
 
@@ -141,12 +147,15 @@ def _from_report(report: str, review: Review) -> None:
     review.plain = "\n".join(rest[:end]).strip()
     bullets: list[str] = []
     prompts: list[str] = []
+    confirm: list[str] = []
     into: list[str] | None = None
     for ln in rest[end:]:
         if ln == "Housekeeping:":
             into = bullets
         elif ln == "Music prompts:":
             into = prompts
+        elif ln == "Facts to be confirmed:":
+            into = confirm
         elif ln in ("Checks:", "") or ln.startswith(("Grader:", "Calls:")):
             if ln != "":
                 into = None
@@ -154,6 +163,7 @@ def _from_report(report: str, review: Review) -> None:
             into.append(ln)
     review.housekeeping = [re.sub(r"^- ", "", b) for b in bullets]
     review.music = [re.sub(r"^\d+\. ", "", m) for m in prompts]
+    review.to_confirm = [re.sub(r"^- ", "", n) for n in confirm]
 
 
 def read_folder(folder: Path) -> Review:
@@ -170,6 +180,7 @@ def read_folder(folder: Path) -> Review:
         review.plain = parts.get(S_PLAIN, "")
         review.housekeeping = _bullets(parts.get(S_HOUSE, ""), re.compile(r"^- "))
         review.music = _bullets(parts.get(S_MUSIC, ""), re.compile(r"^\d+\. "))
+        review.to_confirm = _bullets(parts.get(S_CONFIRM, ""), re.compile(r"^- "))
     report = folder / REPORT_FILE
     if report.is_file():
         review.report = report.read_text(encoding="utf-8")
@@ -427,6 +438,15 @@ def page(review: Review, folder: Path, *, with_names: bool = False) -> str:
         )
     else:
         recap = plain = house = music = saved
+    confirm = (
+        "<h2>Facts to be confirmed</h2>"
+        '<p class="note">Names the recap used that DMbot does not know yet. For the DM only.</p>'
+        '<div class="card"><ul>'
+        + "".join(f"<li>{_E(n)}</li>" for n in review.to_confirm)
+        + "</ul></div>"
+        if review.to_confirm
+        else ""
+    )
     meanings = (
         '<h2>How each tag changes the voice</h2><div class="card"><ul>'
         + "".join(f"<li>{cue_meaning(c)}</li>" for c in review.cue_map)
@@ -465,6 +485,7 @@ A grey tag is a pause or a change of pace.</p>
 <div class="card">{house}</div>
 <h2>What the music was asked for</h2>
 <div class="card">{music}</div>
+{confirm}
 {report}
 </main>
 <script>{_PAGE_JS}</script>

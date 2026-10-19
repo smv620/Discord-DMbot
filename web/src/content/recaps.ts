@@ -75,6 +75,9 @@ export const text = {
       : `Transcript deleted on ${day}. The recap is kept.`,
   housekeepingHeading: "Housekeeping",
   housekeepingNone: "Nothing to sort out.",
+  toConfirmHeading: "Facts to be confirmed",
+  toConfirmNote:
+    "Names the recap used that DMbot doesn't know yet. They were said in your session. Only you see this list; it is never posted.",
   edit: "Edit",
   editLabel: "Recap",
   housekeepingLabel: "Housekeeping (one line for each)",

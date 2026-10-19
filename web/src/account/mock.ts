@@ -312,6 +312,7 @@ export function mockRecaps(): Recap[] {
         "Mira is down to 4 hit points.",
         "The party owes the ferryman a story.",
       ],
+      toConfirm: ["Brynwater Ferry"],
       canEdit: true,
       canPost: true,
       canTryAgain: true,
