@@ -61,11 +61,12 @@ from dmbot.devtools.recap_measure.golden import GoldenError, load_golden
 from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
-from dmbot.memory.extractor import Client, readable
+from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.names import SpokenName
+from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import names_a_secret, narration_of, proper_nouns, strip_cues
 from dmbot.recaps.text import words as words_of
