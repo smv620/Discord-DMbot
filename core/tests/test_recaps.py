@@ -575,6 +575,10 @@ class TheRetryAndTheLooseForm(unittest.TestCase):
         )
         self.assertEqual(rd.parse_finish("**The Silver Lock**\n"), ("The Silver Lock", []))
 
+    def test_an_unlabelled_reply_to_us_is_not_a_title(self) -> None:
+        for raw in ("Sure! Here you go:", "I cannot write that", "Here is the title:\nThe Gate"):
+            self.assertIsNone(rd.parse_finish(raw), raw)
+
     def test_an_unlabelled_finish_that_is_junk_still_fails(self) -> None:
         self.assertIsNone(rd.parse_finish("I am not able to write a title for this long session"))
         self.assertIsNone(rd.parse_finish("- [2] Mira drew her blade."))

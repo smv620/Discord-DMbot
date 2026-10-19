@@ -254,7 +254,7 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
         f"Keep the form: SUMMARY: (about {length.target} words, between {length.low} and "
         f"{length.high}) then MUSIC: 1. … one prompt for each 《…》 section."
     )
-    head = "\nYour last draft was rejected: " + "; ".join(problems) + ". "
+    head = "\nYour last draft was rejected: " + _data("; ".join(problems)) + ". "
     if rejected is None:
         return head + "Write the whole recap again, fixing exactly that. " + form
     music = "\n".join(f"{i}. {m}" for i, m in enumerate(rejected.music, start=1))
@@ -268,7 +268,7 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
 def finish_retry(problems: Sequence[str], rejected: tuple[str, list[str]] | None) -> str:
     """The same for the title and the housekeeping: the rejected answer and the form again."""
     form = "Keep the form: TITLE: … then HOUSEKEEPING: one `- [beat number] …` line each."
-    head = "\nYour last answer was rejected: " + "; ".join(problems) + ". "
+    head = "\nYour last answer was rejected: " + _data("; ".join(problems)) + ". "
     if rejected is None:
         return head + "Write it again. " + form
     title, bullets = rejected
@@ -377,6 +377,7 @@ def parse_finish(raw: str) -> tuple[str, list[str]] | None:
     return title, bullets
 
 
+_CHAT = re.compile(r"(sure|here|certainly|of course|okay|i)\b", re.IGNORECASE)
 _BULLET = re.compile(r"^\s*[-*•]?\s*(\[\d{1,3}\].*)$")
 
 
@@ -385,8 +386,8 @@ def _unlabelled_finish(raw: str) -> tuple[str, list[str]] | None:
     if not lines or _BULLET.match(lines[0]) or re.match(r"[\W_]*HOUSEKEEPING\b", lines[0], re.I):
         return None
     title = " ".join(re.sub(r"^[\s#*_>\"“]+|[\s*_\"”]+$", "", lines[0]).split())
-    if not title or len(title.split()) > TITLE_WORDS:
-        return None
+    if not title or len(title.split()) > TITLE_WORDS or _CHAT.match(title) or title.endswith(":"):
+        return None  # a reply to us ("Sure! Here you go:", a refusal), not a title
     bullets = [m.group(1).strip() for m in (_BULLET.match(x) for x in lines[1:]) if m]
     return title, bullets
 
@@ -434,7 +435,8 @@ def _all_known(name: str, known: set[str]) -> bool:
     """A name passes when every word of it is known. `proper_nouns` keeps "Dun-Varra's" whole but
     `known` is made of `words()`, which split at a hyphen, so the whole could never be found
     (#2026); each word is looked up instead, as `is_known_name` does."""
-    return set(words(name)) <= known | NOT_NAMES
+    mine = set(words(name))
+    return not mine or mine <= known | NOT_NAMES
 
 
 def check_prose(

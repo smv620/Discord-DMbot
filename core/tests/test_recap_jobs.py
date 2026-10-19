@@ -407,6 +407,10 @@ class Working(Base):
         # ...and a draft that names him anyway is refused, three times, and nothing is kept.
         self.assertEqual((job.state, job.summary), ("failed", ""))
         self.assertIn("secret", self.careful.sent[0])
+        # a rejected draft that names a secret is never sent back (#2026)
+        for sent in self.careful.sent:
+            self.assertNotIn("Oskar", sent)
+            self.assertNotIn("<previous_draft>", sent)
 
     async def test_too_few_beats_left_after_the_cuts_fails_plainly(self) -> None:
         await self.setUpWorker(
@@ -423,6 +427,7 @@ class Working(Base):
         self.fast.answers += [fx.WEAK_GRADE, fx.FINISH_ANSWER]
         job = await self.go()
         self.assertEqual(job.state, "ready")
+        self.assertIn("<previous_draft>", self.careful.sent[0])  # the weak draft, to revise (#2026)
         self.assertIn("keep the stakes", self.careful.sent[0])
         self.assertEqual(job.grade["tension"], 2)  # recorded as it was, never hidden
 

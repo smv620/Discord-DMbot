@@ -29,7 +29,7 @@ from dmbot.memory.extractor import Client, Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import CUE, narration_of, words
+from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
@@ -456,7 +456,7 @@ class RecapWorker:
                 )
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
-            self._rejected_prose[key] = prose
+            self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._retry_or_fail(
                 gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
             )
@@ -466,6 +466,7 @@ class RecapWorker:
             return await self._fail(gid, cid, job, FUNDS)
         weak = rd.weak(grade) if grade else []
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
+            self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             await self._store.update(
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
@@ -543,7 +544,7 @@ class RecapWorker:
             transcript="\n".join(x.text for x in self._said(inputs, set(job.speakers))),
         )
         if finish is None:
-            self._rejected_finish[key] = parsed
+            self._keep_rejected(key, parsed, inputs, [parsed[0], *parsed[1]])
             return await self._retry_or_fail(gid, cid, job, problems)
         self._rejected_finish.pop(key, None)
         await self._store.update(
@@ -624,6 +625,24 @@ class RecapWorker:
         self._forget(gid, cid, job)
         await self._store.update(gid, cid, job.session_at, state="failed", last_error=why[:200])
         return await self._store.get(gid, cid, job.session_at)
+
+    def _keep_rejected(
+        self,
+        key: tuple[int, str, int],
+        draft: rd.Prose | tuple[str, list[str]],
+        inputs: Inputs,
+        texts: Sequence[str],
+    ) -> None:
+        """Keep a rejected draft to send back on the retry (#2026), unless it names a secret: the
+        checks keep secret names out of every retry message, and so must the draft. The retry
+        then goes without it."""
+        if names_a_secret(" ".join(texts), inputs.secret_names, inputs.allowed_names):
+            self._rejected_prose.pop(key, None)
+            self._rejected_finish.pop(key, None)
+        elif isinstance(draft, rd.Prose):
+            self._rejected_prose[key] = draft
+        else:
+            self._rejected_finish[key] = draft
 
     def _forget(self, gid: int, cid: str, job: Job) -> None:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
