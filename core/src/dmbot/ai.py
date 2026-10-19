@@ -133,15 +133,20 @@ DEFAULT_MODELS = AIModels(
     careful="claude-sonnet-5-5",
     deep="claude-opus-5-5",
 )
+# The model the fast tier is measured against, for the comparison tool only (#2055): never a
+# default, and not used by the bot. A job names a tier, so this is the one place the id is written.
+FAST_CANDIDATE = "claude-haiku-5-5"
 CONNECT_TIMEOUT_S = 15
 
 # List prices in dollars per million tokens, (input, output), base tokens, from
-# https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15). For the
-# money caps on reading an adventure (`dmbot.memory.story_plan`). A model that is not here (an
-# override in .env, or the strongest tier) is priced at DEFAULT_PRICE, high on purpose.
-PRICE_PER_MILLION: dict[str, tuple[int, int]] = {
+# https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15, Haiku 5.5
+# 2026-10-19: its prompts over 100,000 tokens pay $0.50 and $2.50; DMbot's calls are far shorter).
+# For the money caps on reading an adventure (`dmbot.memory.story_plan`). A model that is not here
+# (an override in .env, or the strongest tier) is priced at DEFAULT_PRICE, high on purpose.
+PRICE_PER_MILLION: dict[str, tuple[float, float]] = {
     "claude-sonnet-5-5": (2, 10),
     "claude-haiku-4-5-20251001": (1, 5),
+    "claude-haiku-5-5": (0.10, 0.50),  # measured against the fast tier's model (#2055), not live
 }
 DEFAULT_PRICE = (15, 75)
 
