@@ -112,6 +112,7 @@ async def _with_transcript_marks(
             "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
         )
         found = (await cur.fetchone() or {}).get("found") or {}
+        # Keyed by start time: unique for a campaign (transcript_sessions' own key).
         deleted = {
             int(s["startedAt"]): int(s["transcriptsDeletedAt"])
             for s in found.get("sessions", [])
@@ -185,7 +186,11 @@ async def month_usage(
     return out
 
 
-async def _one(conn: Conn, ref: str, session: Session) -> tuple[int, str, int, dict[str, Any]]:
+async def _one(
+    conn: Conn, ref: str, session: Session, *, marks: bool = True
+) -> tuple[int, str, int, dict[str, Any]]:
+    """The recap's row, with its session's transcript marks unless `marks` is off: the checks that
+    only need its state before a write skip the extra door call (#2022)."""
     parsed = parse_ref(ref)
     if parsed is None:
         raise RecapError("not_found")
@@ -200,7 +205,8 @@ async def _one(conn: Conn, ref: str, session: Session) -> tuple[int, str, int, d
     row = await cur.fetchone()
     if row is None:
         raise RecapError("not_found")
-    [row] = await _with_transcript_marks(conn, guild_id, [row])
+    if marks:
+        [row] = await _with_transcript_marks(conn, guild_id, [row])
     return guild_id, campaign_id, session_at, row
 
 
@@ -222,7 +228,7 @@ async def edit_recap(
     if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         cur = await conn.execute(
             "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",
@@ -237,7 +243,7 @@ async def edit_recap(
 async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
     """`post` (the bot sends it), `drop` (Don't post) or `again` (Try again, at most twice)."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
         args: tuple[Any, ...] = (gid, cid, at)
         if action == "post":
@@ -272,7 +278,7 @@ async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any
     """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
     the campaign, a recap that is ready and not yet decided, and once every 10 minutes."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         cur = await conn.execute("SELECT dmbot_recap_audio_again(%s, %s, %s) AS r", (gid, cid, at))
         found = await cur.fetchone()
         outcome = found["r"] if found else "not_allowed"
