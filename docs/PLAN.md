@@ -2359,6 +2359,8 @@ sheet re-read or a sidebar question fires once, on the first words (acting twice
 missing a name). The words each piece has in the copies are kept for the last 3,000 pieces; an older
 one is skipped quietly.
 
+**Transcript Cleaner step 6: built (2026-10-19, #2048, #127): the AI ranks the options of "Did they mean…?" and never fixes a line.** When a question is about to be posted, one fast-model call (the off-topic filter's, so the same plans) reads the line as heard, the last 3 spoken lines of the scene (only people still recorded; no speaker names) and the options' names, and answers with one option's name or "none" in a fixed shape (structured outputs, `transcript/rank_options.py`). The likely option goes first and its button says "Marron (likely)"; the DM still answers, and nothing changes a line without that answer. "None", an unknown name, a refusal, an error or more than 3 s leaves the question as it was; nothing is sent when the line, the scene or an option holds a secret name. At most 40 calls a session (`DMBOT_CLEANER_RANK_MAX`, 0 is off), about a cent an hour of play. The session's end log line counts calls, likely, none, errors and how often the DM picked the likely name: that number decides whether a silent fix could ever be allowed, which is not decided here.
+
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
 `{non-game_content}` and not analyzed further, which saves cost. In the cleaned

@@ -101,6 +101,7 @@ class Settings:
     # Which model tier reads the transcript, and how many calls one session may make (#1363).
     story_extractor_tier: str = "fast"
     story_extractor_max_calls: int = 480
+    cleaner_rank_max: int = 40  # "Did they mean…?" ranking calls a session; 0 turns it off (#2048)
     story_extractor_max_calls_day: int = 960  # per campaign, a day (two sessions' worth)
     # Continuity warnings (#1320): where each level starts and how much confirmed story a
     # campaign needs first. Backend settings, tuned on the golden set; no switch shown to anyone.
@@ -260,6 +261,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + extractor_day_raw
             + '".'
         )
+    rank_raw = get("DMBOT_CLEANER_RANK_MAX") or "40"
+    if not (rank_raw.isascii() and rank_raw.isdigit()) or int(rank_raw) > 1000:
+        raise ConfigError(
+            'DMBOT_CLEANER_RANK_MAX must be a whole number from 0 to 1000, got "' + rank_raw + '".'
+        )
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
@@ -348,6 +354,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),
+        cleaner_rank_max=int(rank_raw),
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
         recall_budget=recall_budget,

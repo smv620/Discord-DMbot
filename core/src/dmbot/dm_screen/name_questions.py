@@ -227,7 +227,12 @@ def question_view(guild_id: int, asked: questions.Asked) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for place, (_, name) in enumerate(asked.options[:MAX_OPTIONS]):
         view.add_item(
-            NameQuestionButton(guild_id, asked.id, str(place), questions.option_label(name))
+            NameQuestionButton(
+                guild_id,
+                asked.id,
+                str(place),
+                questions.option_label(name, likely=asked.likely and place == 0),
+            )
         )
     view.add_item(NameQuestionButton(guild_id, asked.id, questions.TYPE, questions.TYPE_LABEL))
     view.add_item(

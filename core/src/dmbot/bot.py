@@ -292,7 +292,7 @@ from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out, lookback, refix, speaker_ai
+from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
@@ -601,6 +601,15 @@ class Table:
     # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
     names_fixed: int = 0
     names_asked: int = 0
+    # The AI ranking of "Did they mean…?" options (#2048), counts only, for the session's end log:
+    # calls, "likely" chosen, "none", errors; and of the questions answered with a likely first
+    # option, how many the DM picked it for.
+    rank_calls: int = 0
+    rank_likely: int = 0
+    rank_none: int = 0
+    rank_errors: int = 0
+    rank_answered: int = 0
+    rank_picked: int = 0
     # Lines the off-topic filter left out, each run with Put it back (#677), likewise.
     left_out: left_out.LeftOut = field(default_factory=left_out.LeftOut)
     left_out_message: discord.Message | None = None
@@ -2384,6 +2393,17 @@ class DMBot(commands.AutoShardedBot):
                         table.time_suggest.calls,
                         table.time_suggest.tokens_in,
                         table.time_suggest.tokens_out,
+                    )
+                if table.rank_calls:  # counts only, never a line or a name (#2048)
+                    log.info(
+                        "Did-they-mean ranking: %d calls, %d likely, %d none, %d errors; "
+                        "the DM picked the likely name in %d of %d answers",
+                        table.rank_calls,
+                        table.rank_likely,
+                        table.rank_none,
+                        table.rank_errors,
+                        table.rank_picked,
+                        table.rank_answered,
                     )
                 if table.topic_calls:  # for cost per session hour (#52)
                     log.info(
@@ -5734,6 +5754,13 @@ class DMBot(commands.AutoShardedBot):
             if book.is_open(asked.id):
                 book.close(name_questions.STOPPED, time.monotonic())
             return
+        asked = await self._rank_question(table, asked)
+        if not self.consent.has_consent(table.guild_id, asked.speaker):  # (after the wait)
+            if book.is_open(asked.id):
+                book.close(name_questions.STOPPED, time.monotonic())
+            return
+        if not book.is_open(asked.id):
+            return  # closed or replaced during the wait: nothing to post
         name = self.name_of(table.guild_id, asked.speaker)
         speaker = "Someone" if name.startswith("<@") else discord.utils.escape_markdown(name)
         md = discord.utils.escape_markdown
@@ -5763,6 +5790,59 @@ class DMBot(commands.AutoShardedBot):
         )
         with contextlib.suppress(discord.HTTPException):
             await message.edit(content=closed, view=None)
+
+    async def _rank_question(
+        self, table: Table, asked: name_questions.Asked
+    ) -> name_questions.Asked:
+        """Ask the fast AI which option is most likely and put it first, marked "(likely)"
+        (#2048). It only orders the buttons: the DM still answers, and any failure, an
+        answer of "none", the per-session cap or a secret name near the line leaves the
+        question as it was. Counts only are logged. Never held up longer than `TIMEOUT_S`."""
+        ai = self.topic_ai
+        names = [name for _, name in asked.options]
+        if (
+            ai is None
+            or table.rank_calls >= self.settings.cleaner_rank_max
+            or len(asked.options) < 2
+            or len(set(names)) < len(names)  # two of one name: a pick by name would be unsure
+        ):
+            return asked
+        lookup = await self._names_now(table)  # fresh: a name may have just been made secret
+        if lookup is None:
+            return asked
+        secret = {  # a clue only some people know is as secret as a secret name
+            entry.key
+            for entry in lookup.names
+            if entry.secret
+            or getattr(lookup.entities.get(entry.entity_id), "audience_limited", False)
+        }
+        agreed = [
+            t for _, who, t in table.recent.spoken if self.consent.has_consent(table.guild_id, who)
+        ]
+        scene = agreed[-rank_options.SCENE_LINES :]
+        line = f"{asked.prev_line} {asked.line}" if asked.prev_line else asked.line
+        if not rank_options.safe_to_send([*names, asked.heard, line, *scene], secret):
+            return asked  # a secret name is in it, or is an option: nothing is sent
+        table.rank_calls += 1
+        try:
+            reply = await asyncio.wait_for(
+                ai.complete(
+                    rank_options.SYSTEM,
+                    rank_options.prompt(asked.heard, line, scene, names),
+                    max_tokens=rank_options.MAX_TOKENS,
+                    schema=rank_options.schema(names),
+                ),
+                rank_options.TIMEOUT_S,
+            )
+        except Exception:
+            table.rank_errors += 1
+            return asked
+        choice = None if reply.refused or reply.cut else rank_options.read(reply.text, names)
+        if choice is None:
+            table.rank_none += 1
+            return asked
+        table.rank_likely += 1
+        return table.questions.rank(asked.id, choice) or asked
 
     async def _close_question(self, table: Table, text: str = name_questions.GONE) -> None:
         """Take the open question's buttons down, saying why (they stopped being
@@ -6403,6 +6483,10 @@ class DMBot(commands.AutoShardedBot):
             self.lookup.mark_stale(guild_id, campaign_id)  # the next line uses the answer
         # No batch: it was already saved before, so there's nothing for Undo to take back.
         undo = (campaign_id, batch) if batch is not None else None
+        if asked.likely:  # did the DM take the AI's first option? (#2048: a count, nothing more)
+            table.rank_answered += 1
+            if pick == "0":
+                table.rank_picked += 1
         if book.is_open(question_id):
             book.close(name_questions.ANSWERED, now())
             table.question_message = None
