@@ -778,6 +778,57 @@ class ClassFeatures(unittest.TestCase):
             self.assertIsNotNone(srd.lookup(current, "2024", kind="rule"), current)
             self.assertIsNotNone(srd.lookup(older, "2014", kind="rule"), older)
 
+    def test_a_direct_lookup_of_the_short_name_gives_the_2024_piece_not_its_2014_twin(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str, kind: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        # (#1937) "plate" is the 5.1's name for the 5.2.1's Plate Armor
+        self.assertEqual(found("plate", "2024", "2014", "armor"), ("Plate Armor", "2024", ""))
+        self.assertEqual(found("leather", "2024", "2014", "armor"), ("Leather Armor", "2024", ""))
+        self.assertEqual(
+            found("studded leather", "2024", "2014", "armor"), ("Studded Leather Armor", "2024", "")
+        )
+        self.assertEqual(found("hide", "2024", "2014", "armor"), ("Hide Armor", "2024", ""))
+        # in a 2014 campaign the 2014 piece is its own, whichever name is typed
+        self.assertEqual(
+            found("plate armor", "2014", "2024", "armor"), ("Plate", "2014", "[Legacy 2014]")
+        )
+        self.assertEqual(
+            found("plate", "2014", "2024", "armor"), ("Plate", "2014", "[Legacy 2014]")
+        )
+        # the same piece of gear under the 5.1's longer name (same price and weight)
+        for typed, name in (
+            ("robes", "Robe"),
+            ("steel mirror", "Mirror"),
+            ("mirror, steel", "Mirror"),
+            ("clothes, costume", "Costume"),
+            ("flask or tankard", "Flask"),
+            ("jug or pitcher", "Jug"),
+            ("donkey or mule", "Mule"),
+        ):
+            self.assertEqual(found(typed, "2024", "2014", "gear"), (name, "2024", ""), typed)
+        # a piece that only looks alike stays the 2014 one, tagged
+        self.assertEqual(
+            found("hammer, sledge", "2024", "2014", "gear"),
+            ("Hammer, Sledge", "2014", "[Legacy 2014]"),
+        )
+        self.assertEqual(found("chain mail", "2024", "2014", "armor")[1], "2024")
+
+    def test_the_names_the_list_offers_are_the_same_with_the_short_keys(self) -> None:
+        srd = index.srd()
+        found = srd.asked_names("leather", "2024", "2014", kinds=index.EQUIPMENT_KINDS)
+        self.assertEqual(
+            [(e.name, e.edition) for e in found if e.kind == "armor"],
+            [("Leather Armor", "2024"), ("Studded Leather Armor", "2024")],
+        )
+        again = srd.asked_names("leather", "2024", "2014", kinds=index.EQUIPMENT_KINDS)
+        self.assertEqual(found, again)  # (the sets behind it are worked out once)
+        self.assertIn(("2024", "2014", tuple(index.EQUIPMENT_KINDS)), srd._newer_cache)
+
     def test_a_2014_tool_label_says_its_price_not_its_group(self) -> None:
         from dmbot.ui import rule_card
 

@@ -200,6 +200,7 @@ class Working(Base):
         inputs: bool = True,
         names: Collection[str] = fx.NAMES,
         window_chars: int = 40_000,
+        hours: float = 2.5,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -219,6 +220,7 @@ class Working(Base):
                 previous="",
                 day=4,
                 window_chars=window_chars,
+                hours=hours,  # the canned recap is 353 words: a 2.5-hour session's (#2013)
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:
@@ -342,24 +344,62 @@ class Working(Base):
         self.assertIn("Varkus", self.careful.sent[0])
         self.assertNotIn("Varkus", job.summary)
 
-    async def test_prose_that_fails_twice_fails_the_job(self) -> None:
+    async def test_prose_that_fails_three_times_fails_the_job(self) -> None:
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
-        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented))
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented, invented))
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
         self.assertEqual(job.summary, "")  # a failed draft is never kept
 
+    async def test_a_recap_a_little_long_is_accepted_only_on_the_third_try_and_says_so(
+        self,
+    ) -> None:
+        # A 1-hour session: about 200 words, 160 to 240, up to 270 on the last try.
+        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 250) + "\nMUSIC:\n1. Low strings.\n"
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(long, long),
+            hours=1.0,
+        )
+        notes: list[str] = []
+        self.worker._on_note = notes.append
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(
+            len(self.careful.sent), 2
+        )  # refused on the first two, accepted on the third
+        self.assertEqual(len(notes), 1)
+        self.assertIn("250 words", notes[0])
+        self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
+
+    async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
+        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 280) + "\nMUSIC:\n1. Low strings.\n"
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+
+    async def test_a_third_prose_try_happens_only_after_two_failures(self) -> None:
+        invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, invented, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(invented, fx.PROSE_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(self.careful.sent), 2)  # the second and the third try
+        self.assertIn("Varkus", self.careful.sent[1])  # told which name, on the retry only
+
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER),
-            fx.Canned(fx.PROSE_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, fx.PROSE_ANSWER),
             secret=["Oskar"],
             names=["Mira", "Greywater Keep"],  # the bot never offers a secret as a known name
         )
         job = await self.go()
         # The beats that name Oskar were cut, so the prose is told none of them...
         self.assertNotIn("Oskar", self.fast.sent[1])
-        # ...and a draft that names him anyway is refused, twice, and nothing is kept.
+        # ...and a draft that names him anyway is refused, three times, and nothing is kept.
         self.assertEqual((job.state, job.summary), ("failed", ""))
         self.assertIn("secret", self.careful.sent[0])
 

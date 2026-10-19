@@ -39,6 +39,25 @@
     border-radius: var(--radius);
   }
 
+  /* The email sign-in sits inside the signed-out panel (#2003), so it is a form, not a second panel. */
+  .account .email-sign-in {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+
+  .account .email-sign-in h3 {
+    font-size: var(--text-base);
+    margin: 0;
+  }
+
+  .account .email-sign-in p {
+    margin: 0;
+  }
+
   .account .panel h2 {
     font-size: var(--text-lg);
     margin: 0;
