@@ -245,7 +245,11 @@ function AudioPanel({
       setLost(true);
     }
   };
+  // Several files failing on the same links are one failure, not a second one.
+  const failedLinks = useRef<RecapAudioLinks | null>(null);
   const failed = (): void => {
+    if (failedLinks.current === links) return;
+    failedLinks.current = links;
     if (retried.current) {
       setLost(true);
       return;

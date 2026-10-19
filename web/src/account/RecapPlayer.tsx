@@ -26,6 +26,8 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
   const [musicVol, setMusicVol] = useState(1);
   const [trouble, setTrouble] = useState(false);
   const dragging = useRef(false);
+  const reported = useRef(new Set<string>());
+  const links = `${voice}|${music}`;
 
   const all = (): HTMLAudioElement[] =>
     [voiceEl.current, musicEl.current].filter((a): a is HTMLAudioElement => a !== null);
@@ -49,7 +51,10 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
     all().forEach((a) => a.pause());
     setPlaying(false);
   };
-  const cannotPlay = (): void => {
+  // A play() cut short by our own pause (the follower waiting for a buffering lead, or Pause right
+  // after Play) rejects with AbortError: that is not a file that won't play.
+  const cannotPlay = (error?: unknown): void => {
+    if (error instanceof DOMException && error.name === "AbortError") return;
     stop();
     setTrouble(true);
   };
@@ -85,6 +90,8 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
     loaded.current = now;
     setPlaying(false);
     setAt(0);
+    setEnd(0);
+    setTrouble(false);
   }, [voice, music]);
 
   // Drift is checked a few times a second while playing, not only on the lead's own updates.
@@ -131,10 +138,23 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
     onWaiting: onLeadWaiting,
     onPlaying: onLeadPlaying,
     onEnded: onLeadEnded,
+    // A pause or play from outside the page (a media key, a headset) moves the button too.
+    onPause: () => {
+      setPlaying(false);
+      all().forEach((a) => a !== l() && a.pause());
+    },
+    onPlay: () => setPlaying(true),
+  };
+  const failedFor = reported.current;
+  const fail = (): void => {
+    stop();
+    if (failedFor.has(links)) return; // two files failing together ask for fresh links once
+    failedFor.add(links);
+    onFail();
   };
   const common = {
     preload: "none" as const,
-    onError: onFail,
+    onError: fail,
     onLoadedMetadata: show,
   };
   const leadIsVoice = Boolean(voice);
@@ -180,6 +200,8 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
           aria-valuetext={`${clock(at)} of ${clock(end)}`}
           onPointerDown={() => (dragging.current = true)}
           onPointerUp={() => (dragging.current = false)}
+          onPointerCancel={() => (dragging.current = false)}
+          onChange={() => (dragging.current = false)}
           onInput={(e) => seek(parseFloat((e.currentTarget as HTMLInputElement).value))}
         />
         <span class="small" aria-hidden="true">
@@ -199,7 +221,7 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
               />{" "}
               {panelWords.voice}{" "}
               <span class="small" aria-hidden="true">
-                {voiceOn ? panelWords.on : panelWords.off}
+                {voiceOn ? panelWords.switchOn : panelWords.switchOff}
               </span>
             </label>
             <label class="volume">
@@ -231,7 +253,7 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
               />{" "}
               {panelWords.music}{" "}
               <span class="small" aria-hidden="true">
-                {musicOn ? panelWords.on : panelWords.off}
+                {musicOn ? panelWords.switchOn : panelWords.switchOff}
               </span>
             </label>
             <label class="volume">

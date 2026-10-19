@@ -24,7 +24,10 @@ function Line({ text }: { text: string }) {
   return (
     <>
       {text.split(CUE).map((part, i) => {
-        if (part.startsWith("《") && part.endsWith("》")) {
+        // split() with a capture group puts the cues at the odd places, so plain text that merely
+        // looks like a cue (too long for core's pattern) stays text.
+        if (i % 2 === 0) return part;
+        if (part.startsWith("《")) {
           return (
             <span
               key={i}
@@ -35,7 +38,7 @@ function Line({ text }: { text: string }) {
             </span>
           );
         }
-        if (part.startsWith("((") && part.endsWith("))")) {
+        if (part.startsWith("((")) {
           return (
             <span key={i} class="cue pace">
               {part.slice(2, -2)}

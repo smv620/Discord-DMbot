@@ -158,6 +158,8 @@ describe("the audio part of the recap page", () => {
     );
     const [voice, music] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
     Object.defineProperty(voice!, "duration", { value: 100, configurable: true });
+    Object.defineProperty(music!, "duration", { value: 100, configurable: true });
+    fireEvent(voice!, new Event("loadedmetadata"));
     fireEvent.input(screen.getByRole("slider", { name: panelWords.position }), {
       target: { value: "42" },
     });
@@ -180,7 +182,7 @@ describe("the audio part of the recap page", () => {
     api.recap = async (ref) => ({
       ...(await read(ref)),
       text: "The party crossed the ford. The door opened.",
-      summary: "《Tense》 The party crossed the ford. ((pause)) The door opened.",
+      summary: `《Tense》 The party crossed the ford. ((pause)) The door opened. 《${"x".repeat(70)}》`,
     });
     render(<Recaps api={api} path={path} />);
     await screen.findByText(panelWords.cuesHeading);
@@ -194,6 +196,8 @@ describe("the audio part of the recap page", () => {
       .find((p) => p.closest("section")?.querySelector("h3")?.textContent === "Recap");
     expect(posted?.textContent).not.toMatch(/[《》]|\(\(/);
     expect(posted?.closest("section")?.querySelector(".cue")).toBeNull();
+    // A long 《…》 that core's pattern would not match stays plain text, not a tag.
+    expect(document.querySelectorAll(".cue")).toHaveLength(2);
   });
 
   it("shows no cue section when the text has no cues, or while the audio is off", async () => {
@@ -208,6 +212,87 @@ describe("the audio part of the recap page", () => {
     render(<Recaps api={api} path={path} />);
     await screen.findByText(/The party crossed/);
     expect(screen.queryByText(panelWords.cuesHeading)).toBeNull();
+  });
+
+  it("a play() cut short by our own pause is not 'won't play'", async () => {
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValue(new DOMException("", "AbortError"));
+    render(<Recaps api={withAudio(ready)} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
+    await Promise.resolve();
+    expect(screen.queryByText(panelWords.wontPlay)).toBeNull();
+    play.mockRestore();
+  });
+
+  it("the follower waits while the voice buffers, and the end goes back to the start", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    render(<Recaps api={withAudio(ready)} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
+    const [voice, music] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
+    pause.mockClear();
+    const paused: Element[] = [];
+    pause.mockImplementation(function (this: HTMLMediaElement) {
+      paused.push(this);
+    });
+    fireEvent(voice!, new Event("waiting"));
+    expect(paused).toEqual([music]);
+    music!.currentTime = 30;
+    fireEvent(voice!, new Event("ended"));
+    expect(music!.currentTime).toBe(0);
+    expect(screen.getByRole("button", { name: panelWords.play })).toBeTruthy();
+    play.mockRestore();
+    pause.mockRestore();
+  });
+
+  it("a pause from outside the page (a media key) moves the button back to Play", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    render(<Recaps api={withAudio(ready)} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
+    expect(screen.getByRole("button", { name: panelWords.pause })).toBeTruthy();
+    fireEvent(document.querySelector("audio")!, new Event("pause"));
+    expect(await screen.findByRole("button", { name: panelWords.play })).toBeTruthy();
+    play.mockRestore();
+  });
+
+  it("with only the music, the music leads and has its own switch", async () => {
+    const api = withAudio(ready);
+    api.recapAudioLinks = async () => ({ music: "#only-music", mix: "#demo-mix" });
+    render(<Recaps api={api} path={path} />);
+    await screen.findByRole("switch", { name: panelWords.music });
+    expect(screen.queryByRole("switch", { name: panelWords.voice })).toBeNull();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: panelWords.play }));
+    expect(play).toHaveBeenCalledTimes(1);
+    play.mockRestore();
+  });
+
+  it("a switched-off file's volume can't be moved", async () => {
+    render(<Recaps api={withAudio(ready)} path={path} />);
+    await screen.findByRole("switch", { name: panelWords.voice });
+    fireEvent.click(screen.getByRole("switch", { name: panelWords.voice }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("slider", { name: panelWords.voiceVolume }) as HTMLInputElement).disabled,
+      ).toBe(true),
+    );
+    expect(
+      (screen.getByRole("slider", { name: panelWords.musicVolume }) as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  it("two files failing together ask for fresh links once, not twice", async () => {
+    const api = withAudio(ready);
+    render(<Recaps api={api} path={path} />);
+    await waitFor(() => expect(document.querySelectorAll("audio")).toHaveLength(3));
+    const [voice, music] = [...document.querySelectorAll("audio")];
+    fireEvent.error(voice!);
+    fireEvent.error(music!);
+    await waitFor(() =>
+      expect(api.calls.filter((c) => c.startsWith("recapAudioLinks"))).toHaveLength(2),
+    );
+    expect(screen.queryByText(panelWords.expired)).toBeNull();
   });
 
   it("asks for fresh links when a player can't load its file", async () => {
