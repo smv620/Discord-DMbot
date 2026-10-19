@@ -224,6 +224,12 @@ export const held: Held[] = [
       "Merged (#1890, #1891, #1912, #1913, #1919); #1935 is in review; held until dev1 deploys it.",
   },
   {
+    date: "2026-10-19",
+    title: "Ask how hard a fight is",
+    what: "Game masters can ask DMbot how hard a fight will be, or the XP budget for their party's level, and read the rules on magic items like attunement and charges.",
+    reason: "Merged (#2004, #2006); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-17",
     title: "See what's switched on",
     what: "In Settings, press What's switched on to see which of DMbot's extras are turned on for your table. Only the game masters see it.",

@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -262,6 +262,22 @@ describe("Help: the website's read-only pages (#1588)", () => {
     // The place named matches the channel's own switch: never "the DMbot channel" before it is live.
     expect(words.includes("DMbot channel")).toBe(DM_BOT_CHANNEL_LIVE);
     for (const step of namesButtonSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+  });
+
+  it("holds the fight and magic item steps with their held What's new entry, and flips them together (#2023)", () => {
+    expect(held.map((h) => h.title).includes("Ask how hard a fight is")).toBe(!FIGHT_AND_ITEM_RULES_LIVE);
+    const gm = dmSteps.map((x) => x.text).join(" ");
+    const players = playerSteps.map((x) => x.text).join(" ");
+    expect(gm.includes("XP budget")).toBe(FIGHT_AND_ITEM_RULES_LIVE);
+    expect(players.includes("attunement")).toBe(FIGHT_AND_ITEM_RULES_LIVE);
+    const fight = fightRuleSteps.map((x) => x.text).join(" ");
+    // DMbot reads the rule and does no sum and no ruling (sidebar/context.py ENCOUNTER_NOTE): the words promise neither.
+    expect(fight).toContain("It does not work out the difficulty: that is your call.");
+    expect(fight).toContain("That's one for your DM.");
+    expect(fight).not.toMatch(/calculat|encounter|budget math/i);
+    // The fight step is the game master's alone; the magic item step is for everyone.
+    expect(players).not.toContain("XP budget");
+    for (const step of [...fightRuleSteps, ...magicItemRuleSteps]) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
   });
 
   it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {

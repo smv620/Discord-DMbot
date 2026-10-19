@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { ruleExamples, ruleKindSteps } from "../src/content/help";
+import { fightRuleSteps, magicItemRuleSteps, ruleExamples, ruleKindSteps } from "../src/content/help";
 import { held } from "../src/content/whats-new";
 
 const dataDir = fileURLToPath(new URL("../../core/src/dmbot/rules/data/", import.meta.url));
@@ -90,7 +90,10 @@ describe("rule examples in Help", () => {
   });
 
   it("names every example in the Help step or the held entry, so the list cannot drift from the words", () => {
-    const words = [...ruleKindSteps.map((s) => s.text), held.find((h) => h.title === "Look up any rule")?.what ?? ""].join(" ");
+    const words = [
+      ...[...ruleKindSteps, ...fightRuleSteps, ...magicItemRuleSteps].map((s) => s.text),
+      ...["Look up any rule", "Ask how hard a fight is"].map((t) => held.find((h) => h.title === t)?.what ?? ""),
+    ].join(" ");
     for (const example of ruleExamples) {
       expect(words, `${example.text} is in the words`).toContain(example.text);
     }
