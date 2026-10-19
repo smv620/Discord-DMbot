@@ -128,6 +128,9 @@ export const namesButtonSteps: Step[] = [
     } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
     names: [
       { name: "Names", file: "dm_screen/names_button.py" },
+      { name: "Check names", file: "ui/names.py" },
+      { name: "Check who is who", file: "ui/names.py" },
+      { name: "Check what was said", file: "ui/names.py" },
       { name: "/dmbot names", file: "bot.py" },
     ],
   },
