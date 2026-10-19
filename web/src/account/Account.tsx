@@ -971,9 +971,11 @@ function CampaignRow({
       </p>
       <p class="tags">
         <span class={`tag ${campaign.status}`}>
+          <span aria-hidden="true">{campaign.status === "active" ? "🟢" : "⏸️"}</span>{" "}
           {campaign.status === "active" ? text.active : text.paused}
         </span>
         <span class="tag">
+          <span aria-hidden="true">{campaign.role === "owner" ? "👑" : "🤝"}</span>{" "}
           {campaign.role === "owner"
             ? noLimits
               ? text.youRunItFree
