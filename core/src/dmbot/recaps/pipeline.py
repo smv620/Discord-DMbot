@@ -29,12 +29,13 @@ from dmbot.memory.extractor import Client, Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import words
+from dmbot.recaps.text import CUE, narration_of, words
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-MAX_CALLS = 9  # AI calls for one recap: three stages, a retry each, and the grader
+MAX_CALLS = 10  # AI calls for one recap: three stages, a retry each (two for the prose), the grader
+PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
 DAILY_CALLS = 40  # AI calls for one campaign's recaps in a day (a Try again is a new recap)
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
@@ -75,6 +76,7 @@ class Inputs:
     day: int | None
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
     window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
+    hours: float | None = None  # hours played when known (recap_run); else from the lines' times
 
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
@@ -96,7 +98,11 @@ class RecapWorker:
         audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
+        on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
+        on_note: Callable[[str], None] | None = None,
     ) -> None:
+        self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
+        self._on_note = on_note  # plain notes a test run puts in its report (#2013)
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -372,7 +378,14 @@ class RecapWorker:
         sheet = bt.from_json(job.beats)
         if len(sheet) < bt.MIN_BEATS:
             return await self._fail(gid, cid, job, TOO_LITTLE)
-        message = rd.prose_message(sheet, inputs.previous, inputs.allowed_names, inputs.day)
+        # The recap's length follows the session's hours (#2013). The writer is shown at most
+        # `length.beats` of a long sheet; the checks still use all of it, so a name from any beat
+        # is known.
+        said = self._said(inputs, set(job.speakers))
+        length = rd.length_for(rd.session_hours(said, inputs.hours))
+        message = rd.prose_message(
+            rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
+        )
         if job.problems:
             message += (
                 "\nYour last draft was rejected: "
@@ -384,9 +397,9 @@ class RecapWorker:
             cid,
             job,
             self._client(job),
-            rd.prose_system(inputs.setting),
+            rd.prose_system(inputs.setting, length),
             message,
-            rd.MAX_TOKENS,
+            length.max_tokens,
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
@@ -394,20 +407,56 @@ class RecapWorker:
             return await self._restart(gid, cid, job)
         prose = rd.parse_prose(raw)
         if prose is None:
-            return await self._retry_or_fail(gid, cid, job, ["follow the form: SUMMARY then MUSIC"])
-        transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
-        problems = rd.check_prose(
-            prose,
-            beats=sheet,
-            transcript=transcript,
-            allowed_names=inputs.allowed_names,
-            secret_names=inputs.secret_names,
-            previous=inputs.previous,
-            setting=inputs.setting,
-        )
+            return await self._retry_or_fail(
+                gid,
+                cid,
+                job,
+                ["answer in the form SUMMARY: (the narration), then MUSIC: (numbered prompts)"],
+                last_attempt=PROSE_LAST_ATTEMPT,
+            )
+        fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
+        if fixed != prose:
+            log.info(
+                "Recap: put right in code: %d to %d sections, %d to %d music prompts",
+                len(CUE.findall(prose.summary)),
+                len(CUE.findall(fixed.summary)),
+                len(prose.music),
+                len(fixed.music),
+            )
+        prose = fixed
+        transcript = "\n".join(s.text for s in said)
+        last = job.attempt >= PROSE_LAST_ATTEMPT
+
+        def checked(last_try: bool) -> list[str]:
+            return rd.check_prose(
+                prose,
+                beats=sheet,
+                transcript=transcript,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                length=length,
+                last=last_try,
+            )
+
+        problems = checked(False)
+        if problems and last and not checked(True):
+            # Length is a quality target, not a grounding rule: on the last try a draft up to
+            # 35% over the target stands if everything else passes (owner, #2013).
+            problems = []
+            if self._on_note is not None:
+                self._on_note(
+                    f"Accepted at {len(words(narration_of(prose.summary)))} words: over the "
+                    f"{length.low} to {length.high} for about {length.hours:g} hours, within "
+                    f"{round(rd.LAST_UP * 100)}% of the target {length.target}, and every other "
+                    "check passed."
+                )
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
-            return await self._retry_or_fail(gid, cid, job, problems)
+            return await self._retry_or_fail(
+                gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
+            )
         try:
             grade = await self._grade(gid, cid, job, sheet, prose.summary)
         except AIOutOfFunds:
@@ -488,6 +537,7 @@ class RecapWorker:
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             previous=inputs.previous,
+            transcript="\n".join(x.text for x in self._said(inputs, set(job.speakers))),
         )
         if finish is None:
             return await self._retry_or_fail(gid, cid, job, problems)
@@ -524,10 +574,13 @@ class RecapWorker:
     # --- ways out -----------------------------------------------------------------------
 
     async def _retry_or_fail(
-        self, gid: int, cid: str, job: Job, problems: Sequence[str]
+        self, gid: int, cid: str, job: Job, problems: Sequence[str], *, last_attempt: int = 1
     ) -> Job | None:
-        """A check failed: once more on the careful tier, then the job fails plainly."""
-        if job.attempt >= 1:
+        """A check failed: once more on the careful tier (the prose stage twice more), then the
+        job fails plainly."""
+        if self._on_problems is not None:  # the live job keeps only the first try's problems
+            self._on_problems(job.state, job.attempt, problems)
+        if job.attempt >= last_attempt:
             return await self._fail(gid, cid, job, FAILED_CHECKS)
         await self._store.update(
             gid, cid, job.session_at, attempt=job.attempt + 1, problems=list(problems)

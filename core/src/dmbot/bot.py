@@ -1062,6 +1062,7 @@ class DMBot(commands.AutoShardedBot):
                 switched=self.recap_audio_switched,
                 allowance=self.recap_audio_allowance,
                 max_credits=settings.recap_audio_max_credits,
+                voice_tags=settings.recap_voice_tags,
             )
         # The off-topic filter (#52), the audio check and the DM sidebar.
         self.topic_ai = (

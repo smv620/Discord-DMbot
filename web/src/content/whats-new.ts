@@ -19,6 +19,16 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-19",
+    title: "My Account puts sign-in first",
+    what: "When you are not signed in, My Account now says so and puts Sign in with Discord and the email link at the top. The plans come after, under New to DMbot?.",
+  },
+  {
+    date: "2026-10-19",
+    title: "A shorter campaigns list",
+    what: "On My Account, Your campaigns shows the five you played most recently, with a button for the older ones. A paused campaign, or one with a hand-over waiting, always stays in view.",
+  },
+  {
     date: "2026-10-18",
     title: "Search and link Help steps",
     what: "The Help page has a search box that shows only the steps with your words in them. Every section and step also has its own link, and a Copy link button beside each section to paste it to a friend.",
@@ -194,6 +204,12 @@ export const held: Held[] = [
     title: "A 📇 Names button",
     what: "Press 📇 Names to see, search and fix the names DMbot remembers. Any after-session check you haven't done yet waits there too. Only game masters see it.",
     reason: "Merged (#1987); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-18",
+    title: "See what DMbot looked at",
+    what: "Under a rules answer on your DM screen, press 📖 What I looked at to see the rules it used, with the book and page number. Press a rule to open it. Only you see it.",
+    reason: "Waits for #1957 to deploy.",
   },
   {
     date: "2026-10-18",

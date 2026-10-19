@@ -60,13 +60,14 @@ export const text = {
   loading: "Loading your account…",
 
   // Signed out
-  signInLead: "Sign in with Discord to see your plan, your hours and your campaigns.",
+  signedOutHeading: "You're not signed in.",
+  signedOutLead: "Sign in to see your plan, your hours and your campaigns.",
+  newHeading: "New to DMbot?",
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",
   startTryItFree: "Start Try It, free",
   startTryItSignIn:
     "Free for 30 days. No card needed. You'll sign in with Discord first, then confirm your plan.",
-  haveAccount: "Already have a plan?",
   seePrices: "See the plans",
   signInFailed: "You didn't finish signing in. Tap Sign in with Discord to try again.",
   signInMoved:
@@ -188,6 +189,9 @@ export const text = {
   // Campaigns
   campaignsHeading: "Your campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
+  /** The button under a long list (#1991): the real count, one or many. */
+  showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
+  showFewer: "Show fewer",
   lastPlayed: (iso: string): string => `Last played ${shortDate(iso)}`,
   notPlayed: "Not played yet",
   active: "Active",
