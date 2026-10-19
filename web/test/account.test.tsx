@@ -42,6 +42,56 @@ describe("states", () => {
     );
   });
 
+  it("signed out: says so first, then Discord, then the email link, and the plans last (#2003)", async () => {
+    show("signed-out");
+    await screen.findByRole("heading", { name: text.signedOutHeading });
+    const order = [
+      document.getElementById("signed-out-heading"),
+      screen.getByText(text.signedOutLead),
+      screen.getByRole("link", { name: text.signIn }),
+      document.getElementById("email-heading"),
+      screen.getByLabelText(text.emailLabel),
+      screen.getByRole("button", { name: text.emailButton }),
+      document.getElementById("new-heading"),
+      screen.getByRole("link", { name: text.startTryItFree }),
+      screen.getAllByRole("link", { name: /^Choose / })[0]!,
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `step ${i}`,
+      ).toBeTruthy();
+    }
+    expect(screen.getByRole("heading", { name: text.newHeading })).toBeTruthy();
+    // Every way in goes through the same Discord sign-in, and there is one sign-in button before the plans.
+    expect(screen.getAllByRole("link", { name: text.signIn })).toHaveLength(1);
+  });
+
+  it("signed out, an API older than the email link: no email heading, Discord still first (#2003)", async () => {
+    const api = mockApi("signed-out");
+    delete api.emailSignInRequest;
+    render(<Account api={api} go={vi.fn()} search="" />);
+    await screen.findByRole("heading", { name: text.signedOutHeading });
+    expect(document.getElementById("email-heading")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: text.signIn }).compareDocumentPosition(
+        document.getElementById("new-heading")!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("signed out: a notice shows inside the sign-in panel, above the heading (#2003)", async () => {
+    show("signed-out", "?signin=failed");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(text.signInFailed);
+    const panel = document.querySelector("[aria-labelledby='signed-out-heading']")!;
+    expect(panel.contains(alert)).toBe(true);
+    expect(
+      alert.compareDocumentPosition(document.getElementById("signed-out-heading")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("signed out after a failed sign-in: says so and what to do", async () => {
     show("signed-out", "?signin=failed");
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInFailed);
@@ -1354,5 +1404,83 @@ describe("sign in by email, DMbot ID, experience points and move code (#1231)", 
     show("try-it");
     await screen.findByText(text.greeting("Belleros"));
     expect(screen.queryByRole("button", { name: text.moveButton })).toBeNull();
+  });
+});
+
+describe("a long campaigns list folds (#1991)", () => {
+  // Invented campaigns on the pretend API's first signed-in account.
+  function showMany(count: number, extra: Partial<Me> = {}) {
+    const api = mockApi("table");
+    const base = scenarioMe("table")!;
+    const campaigns = Array.from({ length: count }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: "active" as const,
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns, ...extra }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+  }
+  const rows = () => document.querySelectorAll("#campaigns-list > li").length;
+
+  it("three campaigns: no button", async () => {
+    showMany(3);
+    await screen.findByText("Test Campaign 02");
+    expect(rows()).toBe(3);
+    expect(screen.queryByRole("button", { name: /older campaign/ })).toBeNull();
+  });
+
+  it("twelve: five shown and a button for seven; pressing it shows all, Show fewer folds again", async () => {
+    showMany(12);
+    await screen.findByText("Test Campaign 11");
+    expect(rows()).toBe(5);
+    const more = screen.getByRole("button", { name: text.showOlder(7) });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(more.getAttribute("aria-controls")).toBe("campaigns-list");
+    expect(document.getElementById("campaigns-list")).toBeTruthy();
+    fireEvent.click(more);
+    await waitFor(() => expect(rows()).toBe(12));
+    const fewer = screen.getByRole("button", { name: text.showFewer });
+    expect(fewer.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fewer);
+    await waitFor(() => expect(rows()).toBe(5));
+    expect(document.activeElement?.id).toBe("campaigns-heading");
+  });
+
+  it("says one older campaign in the singular", () => {
+    expect(text.showOlder(1)).toBe("Show 1 older campaign");
+    expect(text.showOlder(7)).toBe("Show 7 older campaigns");
+  });
+
+  it("an old paused campaign shows first too", async () => {
+    const base = scenarioMe("table")!;
+    const api = mockApi("table");
+    const campaigns = Array.from({ length: 12 }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: i === 0 ? ("paused" as const) : ("active" as const),
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+  });
+
+  it("an old campaign with an unanswered hand-over offer shows first", async () => {
+    const base = scenarioMe("table")!;
+    showMany(12, {
+      offers: {
+        incoming: base.offers.incoming,
+        outgoing: [{ id: "off-test", campaignId: "cmp-test-0", campaignName: "Test Campaign 00", serverName: "Test Table", personName: "Test Person", expiresAt: "2026-12-01T00:00:00Z" }],
+      },
+    });
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+    expect(screen.getByRole("button", { name: text.showOlder(6) })).toBeTruthy();
   });
 });

@@ -88,7 +88,7 @@ STOP_STALE = (
 )
 STOPPING = "Stopping…"
 ONLY_DM_STOPS = (
-    "Only the DM can stop the session. To stop recording *you*, press **⚙️ Menu** in "
+    "Only the DM can stop the session. To stop recording *you*, press **🗂️ Menu** in "
     "DMbot's private message, then **Stop recording me**, then **Yes**, or type "
     "`/consent revoke`."
 )
@@ -264,7 +264,7 @@ def transcript_card(campaign_name: str) -> str:
             "Chat that's clearly not about the game may be shortened to a note like \"[8s of "
             'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
             "**Who is recorded:** only people who said yes in DMbot's private message. "
-            "Changed your mind? Press **⚙️ Menu** in that message, then **Stop recording me**, "
+            "Changed your mind? Press **🗂️ Menu** in that message, then **Stop recording me**, "
             "then **Yes**, "
             "or type `/consent revoke` here or in any channel. Only you see the answer. "
             "What's already here stays.",
@@ -469,7 +469,7 @@ def joined_not_recorded_message(name: str) -> str:
 # A test server (#1019): said once at /dmbot start, in the DM screen.
 TEST_SESSION = (
     '🧪 Test session. Only players who chose "Save my voice for tests" have their voice kept. '
-    "Everyone else is still written down as usual. Players can stop any time in ⚙️ Menu."
+    "Everyone else is still written down as usual. Players can stop any time in 🗂️ Menu."
 )
 
 

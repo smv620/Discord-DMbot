@@ -307,8 +307,9 @@ terminal output or Discord screenshots copied to it.
   not opted in. Bots are never captured. This is enforced in ears (allowlist) and
   re-checked in core, including after every async step. Consent is given with a DM
   button (slash command as fallback), carries over per server, and every join triggers
-  a reminder with the consent date and a **⚙️ Menu** button whose menu holds **Stop
-  recording me** (owner decision, 2026-10-08). Stopping shows one short, factual warning
+  a reminder with the consent date and a **🗂️ Menu** button whose menu holds **Stop
+  recording me** (owner decision, 2026-10-08; the icon changed from ⚙️ at the owner's Test K
+  on 2026-10-18, #1966, so it no longer looks like ⚙️ Settings). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
 - **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
