@@ -4,9 +4,18 @@
 // RECAP_AUDIO_LIVE is true (recap-words.ts).
 export const panelWords = {
   heading: "Narration and music",
-  voice: "Narration",
-  music: "Music and ambience",
-  mix: "Both together",
+  voice: "Voice",
+  music: "Music",
+  mix: "Both mixed",
+  play: "Play",
+  pause: "Pause",
+  position: "Where you are in the recap",
+  voiceVolume: "Voice volume",
+  musicVolume: "Music volume",
+  wontPlay: "The sound couldn't play. Try Play again, or use Both mixed below.",
+  cuesHeading: "Where the music changes",
+  cuesNote:
+    "The tags show where the voice or music changes. The players never see them.",
   off: "There is no audio for this recap.",
   queued: "The audio is being made. This page shows it when it is ready.",
   failed: "The audio couldn't be made. The text is fine.",

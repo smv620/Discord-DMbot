@@ -344,3 +344,70 @@
   margin: 0.35rem 0;
   overflow-wrap: anywhere;
 }
+
+/* The recap's voice and music player, and the cue tags in its text (#2017). */
+.account .recap-player {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.account .recap-player .seek {
+  flex: 1 1 10rem;
+  min-width: 8rem;
+}
+
+.account .mix-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.account .mix-line label {
+  min-width: 6rem;
+}
+
+/* A mood is a colour made from its name, as on the test review page; a pace is plain grey. */
+.account .cue {
+  display: inline-block;
+  padding: 0 0.45em;
+  border-radius: 1em;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  vertical-align: 0.1em;
+}
+
+.account .cue.mood {
+  background: hsl(var(--hue) 70% 85%);
+  color: hsl(var(--hue) 55% 22%);
+  border: 1px solid hsl(var(--hue) 50% 60%);
+}
+
+.account .cue.pace {
+  background: #e7e7e7;
+  color: #444;
+  border: 1px dashed #999;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account .cue.mood {
+    background: hsl(var(--hue) 40% 24%);
+    color: hsl(var(--hue) 80% 85%);
+  }
+
+  :root:not([data-theme="light"]) .account .cue.pace {
+    background: #32353b;
+    color: #ddd;
+  }
+}
+
+:root[data-theme="dark"] .account .cue.mood {
+  background: hsl(var(--hue) 40% 24%);
+  color: hsl(var(--hue) 80% 85%);
+}
+
+:root[data-theme="dark"] .account .cue.pace {
+  background: #32353b;
+  color: #ddd;
+}

@@ -268,6 +268,13 @@ export const held: Held[] = [
       "Needs the owner's ElevenLabs account and the first real narrated recap (#1385). When it is on, move this up and turn on RECAP_AUDIO_LIVE in recap-words.ts (it needs RECAPS_LIVE and the add-on's price too).",
   },
   {
+    date: "2026-10-19",
+    title: "Play a recap's voice and music together",
+    what: "On a narrated recap's page, one Play button plays the voice and the music together. Switch Voice or Music off, or turn either down, to hear one without the other. Where the music changes shows as small tags in your copy of the text; your players never see them.",
+    reason:
+      "Waits for narrated recaps (RECAP_AUDIO_LIVE, #1385). When it is on, move this up with that entry (#2017).",
+  },
+  {
     date: "2026-10-16",
     title: "DMbot's helper answers questions",
     what: "Ask the team a question from your account page and you get an email at once to say we have it. DMbot's helper, an AI program and not a person, answers first, a person on the team takes over if it cannot help or you ask, and your account page shows who answered.",
