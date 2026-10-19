@@ -300,12 +300,14 @@ _SETTABLE = frozenset(
         "initiative_style",
         "transcript_keep_days",
         "transcript_deleted_noted",
+        "quiet_stop_minutes",
         "recaps_text",
         "recaps_audio",
         "recaps_email",
     }
 )
 RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
+QUIET_STOP_CHOICES = (30, 60, 90, 0)  # minutes of silence before a stop; 0 is off (#2034)
 KEEP_CHOICES = (None, 365, 90, 30)  # how long transcripts are kept (#1533); None is forever
 
 
@@ -795,6 +797,19 @@ class CampaignStore:
                 "UPDATE campaigns SET transcript_keep_days = %s, transcript_deleted_noted = FALSE"
                 " WHERE guild_id = %s AND id = %s",
                 (days, guild_id, campaign_id),
+            )
+            return await self._require(conn, guild_id, campaign_id)
+
+    async def set_quiet_stop(self, guild_id: int, campaign_id: str, minutes: int) -> Campaign:
+        """Minutes of silence before DMbot stops the session itself (#2034): 30, 60 or 90, or 0
+        for off. A running session follows the change from its next check."""
+        if minutes not in QUIET_STOP_CHOICES:
+            raise CampaignError("Pick one of the choices: 30, 60 or 90 minutes, or Off.")
+        async with self._db.guild(guild_id) as conn:
+            await self._require(conn, guild_id, campaign_id)
+            await conn.execute(
+                "UPDATE campaigns SET quiet_stop_minutes = %s WHERE guild_id = %s AND id = %s",
+                (minutes, guild_id, campaign_id),
             )
             return await self._require(conn, guild_id, campaign_id)
 
@@ -1355,6 +1370,7 @@ class CampaignStore:
                 "initiative_style": campaign.initiative_style,
                 "story_mode": campaign.story_mode,
                 "transcript_keep_days": campaign.transcript_keep_days,
+                "quiet_stop_minutes": campaign.quiet_stop_minutes,
                 "recaps_text": campaign.recaps_text,
                 "recaps_audio": campaign.recaps_audio,
                 "recaps_email": campaign.recaps_email,
@@ -1491,6 +1507,12 @@ class CampaignStore:
                                 " WHERE guild_id = %s AND id = %s",
                                 (guild_id, campaign_id),
                             )
+                    if info["quiet_stop_minutes"] != 30:  # a new one starts at the default
+                        await conn.execute(
+                            "UPDATE campaigns SET quiet_stop_minutes = %s"
+                            " WHERE guild_id = %s AND id = %s",
+                            (info["quiet_stop_minutes"], guild_id, campaign_id),
+                        )
                     if info["transcript_keep_days"] is not None:  # a new one keeps forever
                         await conn.execute(
                             "UPDATE campaigns SET transcript_keep_days = %s"
@@ -1735,6 +1757,7 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         if "transcript_keep_days" in row
         else None,
         transcript_deleted_noted=bool(row.get("transcript_deleted_noted", False)),
+        quiet_stop_minutes=int(row.get("quiet_stop_minutes", 30)),  # older schemas have none
         recaps_text=bool(row.get("recaps_text", True)),  # older schemas (tests) have none
         recaps_audio=bool(row.get("recaps_audio", True)),
         recaps_email=bool(row.get("recaps_email", True)),
@@ -1943,6 +1966,11 @@ def _validate_backup(
     if not isinstance(story_mode, str) or story_mode not in STORY_MODES:
         raise CampaignError(DAMAGED)
 
+    # Backups made before the quiet-stop setting existed use the default, 30 minutes (#2034).
+    quiet_stop = campaign.get("quiet_stop_minutes", 30)
+    if type(quiet_stop) is not int or quiet_stop not in QUIET_STOP_CHOICES:
+        raise CampaignError(DAMAGED)
+
     # Backups made before the keep setting existed keep transcripts forever.
     keep_days = campaign.get("transcript_keep_days")
     if keep_days is not None and (type(keep_days) is not int or keep_days not in KEEP_CHOICES):
@@ -1993,6 +2021,7 @@ def _validate_backup(
         "story_mode": story_mode,
         "initiative_style": initiative_style,
         "transcript_keep_days": keep_days,
+        "quiet_stop_minutes": quiet_stop,
         **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,

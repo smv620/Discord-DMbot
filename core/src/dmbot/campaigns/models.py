@@ -165,6 +165,9 @@ class Campaign:
     # days after a session ended. `transcript_deleted_noted`: the DM screen has said so once.
     transcript_keep_days: int | None = None
     transcript_deleted_noted: bool = False
+    # Minutes with nobody speaking before DMbot stops a session by itself (#2034): 30, 60 or 90,
+    # or 0 for off. The empty-channel stop is always on and has no setting.
+    quiet_stop_minutes: int = 30
     # The DM's recap choices (#1421): write a recap after each session, make the narration and
     # music, email when it is ready. They only ever turn things off: the plan decides the rest.
     recaps_text: bool = True
