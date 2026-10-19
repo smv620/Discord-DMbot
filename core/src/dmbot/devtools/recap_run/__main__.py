@@ -91,9 +91,19 @@ class Counting:
     input_tokens: int = 0
     output_tokens: int = 0
 
-    async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = 8000,
+        schema: dict[str, Any] | None = None,
+    ) -> Reply:
         self.calls += 1  # counted when made: a call that fails was still a call
-        reply = await self.client.complete(system, text, max_tokens=max_tokens)
+        if schema is None:
+            reply = await self.client.complete(system, text, max_tokens=max_tokens)
+        else:
+            reply = await self.client.complete(system, text, max_tokens=max_tokens, schema=schema)
         self.input_tokens += reply.input_tokens
         self.output_tokens += reply.output_tokens
         return reply

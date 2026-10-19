@@ -271,7 +271,15 @@ class TierClient:
     def __repr__(self) -> str:  # never the key
         return f"TierClient(tier={self.tier.value!r}, model={self.model!r})"
 
-    async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = 8000,
+        schema: dict[str, Any] | None = None,
+    ) -> Reply:
+        """`schema`: ask for the answer as JSON of this shape (structured outputs, #2039)."""
         return await self._client.complete(
             system,
             text,
@@ -279,6 +287,7 @@ class TierClient:
             max_tokens=max_tokens,
             feature=self.feature,
             cache_system=self.cache_system,
+            schema=schema,
         )
 
 
@@ -354,6 +363,7 @@ class AnthropicClient:
         max_tokens: int = 8000,
         feature: str | None = None,
         cache_system: bool = False,
+        schema: dict[str, Any] | None = None,
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
@@ -374,6 +384,7 @@ class AnthropicClient:
                     can_refuse=lower is not None,
                     feature=feature,
                     cache_system=cache_system,
+                    schema=schema,
                 )
             except _ModelRefused as refused:
                 if lower is None:
@@ -413,7 +424,11 @@ class AnthropicClient:
         can_refuse: bool,
         feature: str | None = None,
         cache_system: bool = False,
+        schema: dict[str, Any] | None = None,
     ) -> Reply:
+        # `schema`: structured outputs (#2039). The Messages API takes `output_config.format`
+        # with `type: json_schema`; no beta header, and every model in the tier chain supports
+        # it. The answer text is then JSON of that shape (unless it was cut off or refused).
         # `cache_system`: ask the service to remember the system text between calls, which it
         # charges much less to read again. It only does so above a minimum length that depends on
         # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
@@ -427,6 +442,8 @@ class AnthropicClient:
             ),
             "messages": [{"role": "user", "content": text}],
         }
+        if schema is not None:
+            body["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
         headers = {
             "x-api-key": self._key,
             "anthropic-version": API_VERSION,

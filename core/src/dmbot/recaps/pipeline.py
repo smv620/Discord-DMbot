@@ -23,9 +23,10 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
+from typing import Any, Protocol
 
-from dmbot.ai import AIOutOfFunds
-from dmbot.memory.extractor import Client, Said, readable
+from dmbot.ai import AIOutOfFunds, Reply
+from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import unknown_names as un
@@ -78,6 +79,20 @@ class Inputs:
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
     window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
+
+
+class Client(Protocol):
+    """The AI client a recap job uses: like the extractor's, plus `schema` for structured
+    outputs (#2039): the answer text is then JSON of that shape."""
+
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = ...,
+        schema: dict[str, Any] | None = ...,
+    ) -> Reply: ...
 
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
@@ -245,12 +260,16 @@ class RecapWorker:
         system: str,
         text: str,
         max_tokens: int,
+        schema: dict[str, Any] | None = None,
     ) -> str | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
         await self._store.update(gid, cid, job.session_at, calls=job.calls + 1, spent=job.spent + 1)
         try:
-            reply = await client.complete(system, text, max_tokens=max_tokens)
+            if schema is None:
+                reply = await client.complete(system, text, max_tokens=max_tokens)
+            else:  # structured outputs (#2039): the answer is JSON of this shape
+                reply = await client.complete(system, text, max_tokens=max_tokens, schema=schema)
         except AIOutOfFunds:
             await self._fail(gid, cid, job, FUNDS)
             return None
@@ -403,18 +422,19 @@ class RecapWorker:
             rd.prose_system(inputs.setting, length),
             message,
             length.max_tokens,
+            schema=rd.prose_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        prose = rd.parse_prose(raw, length)
+        prose = rd.parse_prose(raw)
         if prose is None:
             return await self._retry_or_fail(
                 gid,
                 cid,
                 job,
-                ["answer in the form SUMMARY: (the narration), then MUSIC: (numbered prompts)"],
+                ["answer with the sections JSON asked for"],
                 last_attempt=PROSE_LAST_ATTEMPT,
             )
         fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
@@ -542,7 +562,14 @@ class RecapWorker:
         if job.problems:
             message += rd.finish_retry(job.problems, self._rejected_finish.get(key))
         raw = await self._call(
-            gid, cid, job, self._client(job), rd.housekeeping_system(), message, 600
+            gid,
+            cid,
+            job,
+            self._client(job),
+            rd.housekeeping_system(),
+            message,
+            900,
+            schema=rd.finish_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
@@ -551,7 +578,7 @@ class RecapWorker:
         parsed = rd.parse_finish(raw)
         if parsed is None:
             return await self._retry_or_fail(
-                gid, cid, job, ["follow the form: TITLE then HOUSEKEEPING"]
+                gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
         transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
         # Near-miss names put right here too (#2027), and the names the DM is to confirm added.

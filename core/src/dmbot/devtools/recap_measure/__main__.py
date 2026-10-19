@@ -125,6 +125,7 @@ async def run_one(fast: Client, session: Session) -> Score:
             rd.prose_system(None, length),
             rd.prose_message(rd.pick_beats(kept, length.beats), "", session.names, None),
             max_tokens=length.max_tokens,
+            schema=rd.prose_schema(),
         )
         prose = rd.parse_prose(written.text)
     return score_session(session, raw, prose, session.title)

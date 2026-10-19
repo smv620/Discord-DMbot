@@ -72,6 +72,22 @@ class Client(unittest.IsolatedAsyncioTestCase):
         await ai.tier(AIModelTier.FAST).complete("rules", "doc")
         self.assertEqual(session.sent["json"]["system"], "rules")
 
+    async def test_a_schema_is_sent_as_structured_outputs_only_when_asked(self) -> None:
+        """#2039: `output_config.format` with `type: json_schema`, no beta header."""
+        body = {"content": [{"type": "text", "text": "{}"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertNotIn("output_config", session.sent["json"])
+        schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST, schema=schema)
+        self.assertEqual(
+            session.sent["json"]["output_config"],
+            {"format": {"type": "json_schema", "schema": schema}},
+        )
+        self.assertNotIn("anthropic-beta", session.sent["headers"])
+        await ai.tier(AIModelTier.CAREFUL).complete("rules", "doc", schema=schema)  # a tier client
+        self.assertEqual(session.sent["json"]["output_config"]["format"]["schema"], schema)
+
     async def test_cache_writes_and_reads_are_counted_for_the_spend_watch(self) -> None:
         body = {
             "content": [{"type": "text", "text": "x"}],
