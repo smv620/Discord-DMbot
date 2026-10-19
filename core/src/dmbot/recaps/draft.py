@@ -623,7 +623,7 @@ def check_prose(
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
     catch a copy. `length`: what the session's recap must come to; `last`: the last try, which may
-    run over it by 35%, and comes to the same least as any (length is a quality target; names, copying and secrets are not)."""
+    run over it by 35% (length is a quality target; names, copying and secrets are not)."""
     length = length or length_for(2.0)
     problems: list[str] = []
     summary = prose.summary
