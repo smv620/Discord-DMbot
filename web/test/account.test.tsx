@@ -1356,3 +1356,64 @@ describe("sign in by email, DMbot ID, experience points and move code (#1231)", 
     expect(screen.queryByRole("button", { name: text.moveButton })).toBeNull();
   });
 });
+
+describe("a long campaigns list folds (#1991)", () => {
+  // Invented campaigns on the pretend API's first signed-in account.
+  function showMany(count: number, extra: Partial<Me> = {}) {
+    const api = mockApi("table");
+    const base = scenarioMe("table")!;
+    const campaigns = Array.from({ length: count }, (_, i) => ({
+      id: `cmp-test-${i}`,
+      name: `Test Campaign ${String(i).padStart(2, "0")}`,
+      serverName: "Test Table",
+      lastPlayedAt: `2026-09-${String(i + 1).padStart(2, "0")}T19:00:00Z`,
+      status: "active" as const,
+      role: "owner" as const,
+    }));
+    api.me = vi.fn(async (): Promise<Me | null> => ({ ...base, campaigns, ...extra }));
+    render(<Account api={api} go={vi.fn()} search="" />);
+  }
+  const rows = () => document.querySelectorAll("#campaigns-list > li").length;
+
+  it("three campaigns: no button", async () => {
+    showMany(3);
+    await screen.findByText("Test Campaign 02");
+    expect(rows()).toBe(3);
+    expect(screen.queryByRole("button", { name: /older campaign/ })).toBeNull();
+  });
+
+  it("twelve: five shown and a button for seven; pressing it shows all, Show fewer folds again", async () => {
+    showMany(12);
+    await screen.findByText("Test Campaign 11");
+    expect(rows()).toBe(5);
+    const more = screen.getByRole("button", { name: text.showOlder(7) });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(more.getAttribute("aria-controls")).toBe("campaigns-list");
+    expect(document.getElementById("campaigns-list")).toBeTruthy();
+    fireEvent.click(more);
+    await waitFor(() => expect(rows()).toBe(12));
+    const fewer = screen.getByRole("button", { name: text.showFewer });
+    expect(fewer.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fewer);
+    await waitFor(() => expect(rows()).toBe(5));
+    expect(document.activeElement?.id).toBe("campaigns-heading");
+  });
+
+  it("says one older campaign in the singular", () => {
+    expect(text.showOlder(1)).toBe("Show 1 older campaign");
+    expect(text.showOlder(7)).toBe("Show 7 older campaigns");
+  });
+
+  it("an old campaign with an unanswered hand-over offer shows first", async () => {
+    const base = scenarioMe("table")!;
+    showMany(12, {
+      offers: {
+        incoming: base.offers.incoming,
+        outgoing: [{ id: "off-test", campaignId: "cmp-test-0", campaignName: "Test Campaign 00", serverName: "Test Table", personName: "Test Person", expiresAt: "2026-12-01T00:00:00Z" }],
+      },
+    });
+    await screen.findByText("Test Campaign 00");
+    expect(rows()).toBe(6);
+    expect(screen.getByRole("button", { name: text.showOlder(6) })).toBeTruthy();
+  });
+});
