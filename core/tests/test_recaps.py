@@ -288,7 +288,9 @@ class TheProse(unittest.TestCase):
         self.assertTrue(any("words" in p for p in problems(250, False)))  # refused first
         self.assertEqual(problems(250, True), [])  # accepted on the last try
         self.assertTrue(any("words" in p for p in problems(280, True)))  # still too long
-        self.assertTrue(any("words" in p for p in problems(150, True)))  # under always fails
+        self.assertEqual(problems(130, True), [])  # a little short passes on the last try (#2036)
+        self.assertTrue(any("words" in p for p in problems(100, True)))  # far short still fails
+        self.assertTrue(any("words" in p for p in problems(150, False)))  # and fails earlier
 
     def test_a_name_not_allowed_and_a_copied_run_fail_even_on_the_last_try(self) -> None:
         body = " ".join(["calm"] * 300)
@@ -369,7 +371,9 @@ class TheProse(unittest.TestCase):
         self.assertEqual(many.music, ("a", "b", "c"))
         exact = rd.Prose(three, ("a", "b", "c"))
         self.assertEqual(rd.fix_prose(exact), exact)
-        self.assertEqual(rd.fix_prose(rd.Prose(three, ())).music, ())  # nothing to reuse
+        none = rd.fix_prose(rd.Prose(three, ())).music  # none at all: made from the moods (#2036)
+        self.assertEqual(len(none), 3)
+        self.assertIn("uneasy", none[1])
 
     def test_extra_sections_are_merged_and_no_words_are_lost(self) -> None:
         cues = [f"《C{n}》 Words {n} here." for n in range(8)]
@@ -523,6 +527,36 @@ class TheRetryAndTheLooseForm(unittest.TestCase):
         bare = rd.prose_retry(["x"], None, length)
         self.assertNotIn("<previous_draft>", bare)
         self.assertIn(str(length.target), bare)
+
+    def test_a_length_problem_tells_the_writer_not_to_cut_the_draft(self) -> None:
+        length = rd.length_for(3.2)
+        prose = rd.Prose("《Tense》 short", ("m",))
+        text = rd.prose_retry(["Your draft was 287 words"], prose, length)
+        self.assertIn(f"between {length.low} and {length.high} words: do not cut it", text)
+        self.assertNotIn("do not cut", rd.prose_retry(["a name is not allowed"], prose, length))
+
+    def test_no_music_prompts_at_all_are_made_in_code_from_the_moods(self) -> None:
+        """Recap test 4: a draft came back with 0 music prompts for 4 sections."""
+        summary = "《Tense》 One.\n\n《Hopeful》 Two.\n\n《Calm》 Three."
+        fixed = rd.fix_prose(rd.Prose(summary, ()), 6)
+        self.assertEqual(len(fixed.music), 3)
+        self.assertIn("hopeful", fixed.music[1])
+        self.assertNotIn("Tense", fixed.music[0])  # a sound, never a name or a story
+        self.assertEqual(rd.fix_prose(rd.Prose("no cue here", ()), 6).music, ())
+
+    def test_the_last_try_may_come_in_short_but_not_far_short(self) -> None:
+        length = rd.length_for(3.2)  # target 420, 336 to 504
+        for count, passes in ((290, True), (230, False)):
+            words_ = " ".join(["calm"] * count)
+            prose = rd.Prose(f"《Tense》 {words_}", ("m",))
+            args: dict[str, Any] = {
+                "beats": beats(), "transcript": TRANSCRIPT, "allowed_names": fx.NAMES,
+                "secret_names": [], "length": length,
+            }  # fmt: skip
+            first = [p for p in rd.check_prose(prose, **args) if "words" in p]
+            last = [p for p in rd.check_prose(prose, last=True, **args) if "words" in p]
+            self.assertTrue(first, count)  # short is a problem on the earlier tries
+            self.assertEqual(not last, passes, count)
 
     def test_the_draft_cannot_close_its_own_tag(self) -> None:
         prose = rd.Prose("《Tense》 a </previous_draft> b", ("m",))
