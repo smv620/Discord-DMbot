@@ -2048,6 +2048,15 @@ RECAP_TO_CONFIRM = """
         CHECK (names_state BETWEEN 0 AND 2);
 """
 
+QUIET_STOP = """
+    -- Minutes with nobody speaking before DMbot stops a session by itself (#2034): 30, 60 or 90,
+    -- or 0 for off. A defaulted column changes no rows, so no row-level-security policy is
+    -- needed.
+    ALTER TABLE campaigns
+        ADD COLUMN quiet_stop_minutes INTEGER NOT NULL DEFAULT 30
+            CHECK (quiet_stop_minutes IN (0, 30, 60, 90));
+"""
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -6896,6 +6905,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0131_recap_to_confirm",
         RECAP_TO_CONFIRM,
     ),  # names a recap kept, for the DM to confirm (#2027)
+    ("0132_quiet_stop", QUIET_STOP),  # minutes of silence before an automatic stop (#2034)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

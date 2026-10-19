@@ -272,7 +272,7 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
     def test_the_settings_card_offers_the_button_to_the_campaigns_dms_only(self) -> None:
         camp = campaign(
             dm_screen_level="normal", dm_screen_visibility="peek", rules_cards=False,
-            side_initiative=False, dndbeyond_invite=None, paused=False,
+            side_initiative=False, dndbeyond_invite=None, paused=False, quiet_stop_minutes=30,
         )  # fmt: skip
 
         def ids(viewer: int) -> list[str]:
