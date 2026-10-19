@@ -332,7 +332,7 @@ class TheCueMap(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                "  《Tense》 -> music only",
+                "  《Tense》 -> [urgently]",
                 "  ((pause)) -> [short pause]",
                 "  《whisper》 -> [whispers]",
                 "  ((slow)) -> music only",
@@ -363,7 +363,9 @@ class TheRefusals(unittest.TestCase):
 
     def test_the_other_flags_go_with_a_transcript_or_audio(self) -> None:
         self.assertIn("--transcript", self.refused("--golden", "--dm", "Sam"))
-        self.assertIn("--audio", self.refused("--transcript", "f.txt", "--dm", "Sam", "--out", "d"))
+        self.assertIn("--transcript", self.refused("--golden", "--out", "d"))
+        args = run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--out", "d"])
+        self.assertEqual(args.out, "d")  # the text is saved without --audio too
 
     def test_the_flags_are_accepted_together(self) -> None:
         args = run.parse_args(
@@ -432,7 +434,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asked, [tf.CONSENT_QUESTION])  # once
         self.assertIn("The Silver Lock", text)
         self.assertIn("Cues (3):", text)
-        self.assertIn("《Tense》 -> music only", text)
+        self.assertIn("《Tense》 -> [urgently]", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)  # the report never holds the transcript itself
 
