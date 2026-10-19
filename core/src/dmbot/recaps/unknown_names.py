@@ -12,7 +12,7 @@ Pure functions; nothing here touches Discord or the database."""
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.recaps.text import narration_of, words
@@ -59,6 +59,10 @@ def _close(a: str, b: str) -> bool:
     return _distance(a, b) <= (1 if max(len(a), len(b)) <= SHORT_NAME else MAX_DISTANCE)
 
 
+def _put(spelled: str) -> Callable[[re.Match[str]], str]:
+    return lambda _match: spelled
+
+
 def respell(
     text: str,
     *,
@@ -98,9 +102,8 @@ def respell(
                     refused.append(joined)  # the closest name is secret: say nothing about it
                 elif best:
                     spelled = min(best)[1]
-                    out = re.sub(
-                        rf"(?<![\w'’-]){re.escape(bare)}(?![\w-])", lambda _m, s=spelled: s, out
-                    )
+                    # a function, so a backslash in the name is not read as an escape
+                    out = re.sub(rf"(?<![\w'’-]){re.escape(bare)}(?![\w-])", _put(spelled), out)
     return Respelled(out, tuple(refused))
 
 

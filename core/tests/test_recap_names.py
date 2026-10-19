@@ -20,6 +20,7 @@ from dmbot.recaps import post
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.audio import script
 from dmbot.recaps.store import RecapStore
+from dmbot.recaps.text import words
 from tests import recap_fixtures as fx
 from tests.pg import DatabaseTest
 from tests.test_recap_jobs import Clock
@@ -35,7 +36,7 @@ def respelled(text: str, **kw: Any) -> un.Respelled:
     args: dict[str, Any] = {
         "names": NAMES,
         "secret_names": [],
-        "known_words": {w for n in NAMES for w in rd.words(n)},
+        "known_words": {w for n in NAMES for w in words(n)},
     }
     return un.respell(text, **{**args, **kw})
 
@@ -246,7 +247,7 @@ def bot_with(**kw: Any) -> Any:
 
 
 class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
-    CAMPAIGN = SimpleNamespace(dm_screen_channel_id=77)
+    CAMPAIGN: Any = SimpleNamespace(dm_screen_channel_id=77)
 
     def job(self) -> Any:
         return SimpleNamespace(
@@ -321,7 +322,7 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
 
     async def test_the_next_session_reminds_once_with_the_unanswered_count(self) -> None:
-        table = SimpleNamespace(
+        table: Any = SimpleNamespace(
             guild_id=GUILD, campaign_id=CID, screen_channel_id=66, resumed=False
         )
         bot = bot_with()
@@ -339,7 +340,7 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         bot.post.assert_not_awaited()
 
     async def test_all_answered_means_no_reminder(self) -> None:
-        table = SimpleNamespace(
+        table: Any = SimpleNamespace(
             guild_id=GUILD, campaign_id=CID, screen_channel_id=66, resumed=False
         )
         bot = bot_with()
