@@ -138,7 +138,7 @@ function List({ api }: { api: AccountApi }) {
               </span>
               {r.transcriptsDeletedAt && (
                 <span class="small">
-                  {text.transcriptDeleted(sessionDay(r.transcriptsDeletedAt), r.keepDays)}
+                  {text.transcriptDeleted(sessionDay(r.transcriptsDeletedAt))}
                 </span>
               )}
               <span class="tags">

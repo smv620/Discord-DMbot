@@ -27,22 +27,23 @@ function withDeleted(extra: Partial<Recap>): AccountApi {
 describe("the words", () => {
   it("name the day and how long the table keeps transcripts", () => {
     expect(text.transcriptDeleted("3 March 2027", 90)).toBe(
-      "Transcript deleted on 3 March 2027 (your table keeps transcripts for 90 days). The recap stays.",
+      "Transcript deleted on 3 March 2027, as your table keeps transcripts for 90 days. The recap is kept.",
     );
-    expect(text.transcriptDeleted("3 March 2027", 365)).toContain("for 1 year)");
+    expect(text.transcriptDeleted("3 March 2027", 365)).toContain("for 1 year.");
   });
 
   it("leave the limit out when the table keeps transcripts forever, or an older API said nothing", () => {
     for (const days of [null, undefined]) {
       expect(text.transcriptDeleted("3 March 2027", days)).toBe(
-        "Transcript deleted on 3 March 2027. The recap stays.",
+        "Transcript deleted on 3 March 2027. The recap is kept.",
       );
     }
   });
 });
 
 describe("the recap pages", () => {
-  const line = text.transcriptDeleted(sessionDay(DELETED), 90);
+  const line = text.transcriptDeleted(sessionDay(DELETED), 90); // the recap's own page
+  const short = text.transcriptDeleted(sessionDay(DELETED)); // the list
   const path = `/account/recaps/${base.ref}`;
 
   it("say it on the recap's own page, which still shows the recap and has no transcript link", async () => {
@@ -61,7 +62,8 @@ describe("the recap pages", () => {
         path="/account/recaps"
       />,
     );
-    expect((await screen.findAllByText(line)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(short)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/keeps transcripts/)).toBeNull(); // the reason is on the page only
   });
 
   it("say nothing when the transcript is still there, or the API is older than this", async () => {
