@@ -474,6 +474,32 @@ export const whatsOnSteps: Step[] = [
   },
 ];
 
+// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
+// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
+// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
+// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const RULE_KINDS_LIVE = false;
+
+export const ruleKindSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first. If the newer rules have nothing by that name, you get the older 2014 one, marked [Legacy 2014].",
+  },
+  {
+    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
+  },
+  {
+    text: "Things for the DM, like traps, poisons, curses and diseases, are not for players. If you ask for one, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// The game master sees what players do not (core ui/rule_lookup.py: DM_ONLY, the player branch and the
+// typeahead filter). Held with RULE_KINDS_LIVE: it deploys with the same rules data.
+export const ruleKindDmSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds things for you alone, like traps, poisons, curses and diseases. Only you see the answer.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
@@ -695,6 +721,7 @@ export const dmSteps: Step[] = [
   ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
+  ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
@@ -845,21 +872,6 @@ export const fightBotStep: Step = {
   text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
   names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
 };
-
-// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
-// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
-// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
-// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
-export const RULE_KINDS_LIVE = false;
-
-export const ruleKindSteps: Step[] = [
-  {
-    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
-  },
-  {
-    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
-  },
-];
 
 export const playerSteps: Step[] = [
   consentStep,

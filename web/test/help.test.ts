@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -476,6 +476,21 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words.match(/longsword/gi)?.length, "longsword once in the Help step").toBe(1);
     for (const example of ["cover", "rage", "Bag of Holding", "longsword", "Alert", "Goliath"]) {
       expect(entry, example).toContain(example);
+    }
+  });
+
+  it("explains the 2014 mark and the game master's own entries, only while the rule kinds are live (#1961)", () => {
+    const player = playerSteps.map((x) => x.text).join(" ");
+    const dm = dmSteps.map((x) => x.text).join(" ");
+    expect(player.includes("marked [Legacy 2014].")).toBe(RULE_KINDS_LIVE);
+    expect(player.includes("That's one for your DM.")).toBe(RULE_KINDS_LIVE);
+    expect(dm.includes("things for you alone, like traps, poisons, curses and diseases")).toBe(RULE_KINDS_LIVE);
+    const words = [...ruleKindSteps, ...ruleKindDmSteps].map((x) => x.text).join(" ");
+    expect(words).not.toMatch(/fallback|index|SRD 5\.1/i); // the source line on each answer names the book
+    // The entry says the same three things, so the held entry and the steps flip together.
+    const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
+    for (const part of ["[Legacy 2014]", "like traps, poisons, curses and diseases", "That's one for your DM"]) {
+      expect(entry, part).toContain(part);
     }
   });
 
