@@ -476,7 +476,7 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.host.saved, [])  # the plan said no: nothing to remember
 
     async def test_an_answer_about_discord_or_dmbot_is_not_in_the_transcript(self) -> None:
-        self.answerer.answer_to_give = FakeAnswer("Press ⚙️ Menu.", in_game=False)
+        self.answerer.answer_to_give = FakeAnswer("Press 🗂️ Menu.", in_game=False)
         await self.sidebar.on_dm_message(dm_message(content="check how to stop recording me"))
         self.assertEqual([x.sidebar for x in self.host.saved], [SIDEBAR_QUESTION])
 

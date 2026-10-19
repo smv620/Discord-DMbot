@@ -156,9 +156,45 @@ PEOPLE_LINE_MAX = 160
 def _text_max(entry: Entry) -> int:
     """How much of an entry is sent: a class feature, a species and an entry of the DM's chapter
     (a trap, a poison) are long."""
-    if entry.dm_side:
+    if entry.dm_side or is_magic_rule(entry):  # the longest Magic Items rule is 1,486 (#2001)
         return FEATURE_TEXT_MAX
     return {FEATURE: FEATURE_TEXT_MAX, SPECIES: SPECIES_TEXT_MAX}.get(entry.kind, ENTRY_TEXT_MAX)
+
+
+# "level 3", "levels 3 and 4", "3rd level": every level named keeps its line.
+_LEVEL_ASKED = re.compile(
+    r"\blevels?\s+(\d{1,2}(?:\s*(?:,|and|&|or|to|-)\s*\d{1,2})*)\b"
+    r"|\b(\d{1,2})(?:st|nd|rd|th)[ -]level\b",
+    re.IGNORECASE,
+)
+
+
+ENCOUNTER_NOTE = (
+    "(DMbot: quote the line as written, per character, with its source; do not multiply, add "
+    "up XP or call the fight easy or hard. That is the DM's.)"
+)
+
+
+def only_levels_asked(entry: Entry, question: str) -> str:
+    """The XP budget table's lines for the levels the question names ("level 3 characters", "levels
+    3 and 4"), with the entry's own sentences: the sidebar cites the line asked for, not twenty
+    (#2000). A question naming no level of the table gets the whole entry. The note after it keeps
+    the AI from doing the sum or ruling on the fight: the DM does both."""
+    text = entry.text
+    if entry.name != ENCOUNTER_BUDGET or not entry.dm_side:
+        return text
+    asked = {
+        int(n)
+        for first, second in _LEVEL_ASKED.findall(question)
+        for n in re.findall(r"\d+", first or second)
+    }
+    # The table's lines are the only ones starting "Level N:" (the parser's format, pinned by
+    # its tests); the entry's own sentences before them stay whatever level is asked.
+    rows = [line for line in text.split("\n") if re.match(r"Level \d+:", line)]
+    wanted = [line for line in rows if int(line[6:].split(":", 1)[0]) in asked]
+    if wanted:
+        text = "\n".join(line for line in text.split("\n") if line not in rows or line in wanted)
+    return f"{text}\n{ENCOUNTER_NOTE}"
 
 
 def shorten(text: str, limit: int) -> str:
@@ -209,6 +245,29 @@ def other_edition(hit: Hit, index: Index, target: str, fallback: str) -> Hit | N
     return None
 
 
+def asked_about(words: list[str], start: int) -> bool:
+    """Is the one-word name at `words[start]` the subject of a question about it (#1989)?"""
+    low = [w.lower() for w in words]
+    name = low[start]
+    before, after = low[:start], low[start + 1 :]
+    if after and (after[0] == "spell" or (after[0] in _LEVEL_AFTER and name in _LEVEL_SPELLS)):
+        return True
+    if before and before[-1] == "the":  # "how does the command work"
+        before = before[:-1]
+    for lead, follow in _BEFORE_AFTER:
+        if tuple(before[-len(lead) :]) == lead and after and after[0] in follow:
+            return True
+    for frame in _RANGE_FRAMES:
+        if tuple(before[-len(frame) :]) == frame and (not after or after[0] in _RANGE_THEN):
+            return True
+    # "can X ...", "does X ..." at the start of the question (or after what/who/how/which).
+    if before and before[-1] in ("can", "does", "do"):
+        opener = before[:-1]
+        if (not opener or opener[-1] in _CAN_LEAD) and (not after or after[0] in _CAN_THEN):
+            return True
+    return False
+
+
 def mentioned_rules(
     question: str,
     index: Index,
@@ -238,6 +297,7 @@ def mentioned_rules(
                 and hit.entry.kind == "spell"
                 and normalize(window[0]) in EVERYDAY_SPELLS
                 and not spell_cue
+                and not asked_about(words, start)
             ):
                 hit = None  # "they light a torch" is not the Light spell (#1956)
             if hit is None and size > 1:
@@ -266,6 +326,7 @@ def mentioned_rules(
     props = any(w.lower() in PROPERTY_CUES for w in words)
     shop = any(w.lower() in GEAR_CUES for w in words)
     hazard = any(w.lower() in HAZARD_CUES for w in words)
+    magic = any(w.lower() in MAGIC_CUES for w in words)
     asked: list[tuple[int, list[Hit]]] = []
     for size in range(ITEM_WINDOW, 0, -1) if not found else ():
         for start in range(len(words) - size + 1):
@@ -297,6 +358,13 @@ def mentioned_rules(
                     and ((size == 1 and not props) or index.has_asked_for(name, target))
                 ):
                     glossary = None
+                if (
+                    glossary is not None
+                    and size == 1
+                    and is_magic_rule(glossary.entry)
+                    and not magic
+                ):
+                    glossary = None  # "Potions", "Rings": magic items only when asked
                 hits = [glossary] if glossary is not None else []
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
@@ -334,6 +402,32 @@ def mentioned_rules(
             for start, h in found
             if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
         ]
+    if asks_about_encounters(words):  # "how hard is this fight": the XP budget, first (#2000)
+        budget = index.lookup(ENCOUNTER_BUDGET, target, fallback, kind=RULE)
+        if budget is not None and all(budget.entry is not h.entry for _, h in found):
+            # Last, so it only fills a free place and never pushes out a creature the DM named.
+            found.append((len(words) + 1, budget))
+    if any(w.lower() in RARITY_WORDS for w in words) and any(
+        w.lower() in PRICE_WORDS for w in words
+    ):
+        # "what does rarity mean for price": the values table, not the sentence on rarity (#2001).
+        values = index.lookup(MAGIC_VALUES, target, fallback, kind=RULE)
+        if values is not None:
+            found = [(at, values if h.entry.name == MAGIC_RARITY else h) for at, h in found]
+    lowered = [w.lower() for w in words]
+    if (
+        any(w in CRAFT_WORDS for w in lowered)
+        and any(w in CRAFT_COST_WORDS for w in lowered)
+        and any(w in CRAFT_MAGIC_WORDS for w in lowered)
+    ):
+        # "how long does crafting a rare item take": the time and cost table (#2001), in the
+        # place of the general crafting rule and not for "a longsword", which the data lacks.
+        costs = index.lookup(MAGIC_CRAFT_COST, target, fallback, kind=RULE)
+        if costs is not None:
+            at = next(i for i, w in enumerate(lowered) if w in CRAFT_WORDS)
+            found = [(i, h) for i, h in found if h.entry.name != MAGIC_CRAFTING]
+            if all(h.entry is not costs.entry for _, h in found):
+                found.append((at, costs))
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -349,6 +443,32 @@ def mentioned_rules(
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
         unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique
+
+
+# The DM's encounter-building rules (#2000) are found only when the question is about building or
+# judging a fight: a word that is only about encounters, or a fight with how hard it is, or a CR
+# beside the party. "What's a goblin's CR" is the creature, not the budget.
+ENCOUNTER_BUDGET = "Step 2: Determine Your XP Budget"
+ENCOUNTER_WORDS = frozenset({"encounter", "encounters", "budget"})
+# "xp" and "difficulty" are everyday ("how much xp does a goblin give", "the lock's difficulty"):
+# they count only beside a fight, a party or a level.
+WEAK_ENCOUNTER_WORDS = frozenset({"xp", "difficulty", "deadly"})
+FIGHT_WORDS = frozenset({"fight", "fights", "battle", "battles", "combat"})
+HARDNESS_WORDS = frozenset(
+    {"hard", "harder", "easy", "easier", "tough", "difficult", "dangerous", "lethal", "challenging"}
+)
+PARTY_WORDS = frozenset({"party", "characters", "players"})
+
+
+def asks_about_encounters(words: list[str]) -> bool:
+    low = {w.lower() for w in words}
+    if low & ENCOUNTER_WORDS:
+        return True
+    if low & WEAK_ENCOUNTER_WORDS and low & (FIGHT_WORDS | {"party"}):
+        return True
+    if low & FIGHT_WORDS and low & HARDNESS_WORDS:
+        return True
+    return "cr" in low and bool(low & (FIGHT_WORDS | PARTY_WORDS))
 
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
@@ -413,6 +533,24 @@ SPELL_WORDS = frozenset({"spell", "spells", "cast", "casts", "casting", "cantrip
 # Spells whose names are everyday words ("they light a torch", "send a message", "fly home"): cited
 # only when the question also says cast, spell or cantrip (#1956).
 EVERYDAY_SPELLS = frozenset({"light", "message", "sleep", "command", "fly"})
+# A question *about* the word is a cue too (#1989): "how does command work", "what does sleep do".
+# Fixed frames over the words around the name, no model. Each is (words before the name, words right
+# after it).
+_BEFORE_AFTER = (
+    (("how", "does"), ("work", "works")),
+    (("what", "does"), ("do", "does")),
+    (("how", "long", "does"), ("last", "lasts")),
+)
+_RANGE_FRAMES = (("range", "of"), ("duration", "of"))
+_RANGE_THEN = frozenset({"for", "on", "against"})  # "range of light from a torch" is a torch
+# "light level" and "message saves" are everyday phrases; "sleep level" and "fly save" are not.
+_LEVEL_AFTER = frozenset({"level", "save", "saves"})
+_LEVEL_SPELLS = frozenset({"sleep", "command", "fly"})
+# "can sleep affect undead", "does sleep work on elves": only when the question starts that way (or
+# after what/who/how/which), and only before a word that asks what the spell does or at its end;
+# "the party can sleep" and "can sleep at the inn" are people sleeping.
+_CAN_THEN = frozenset({"affect", "target", "stack", "work", "reach", "last", "hit"})
+_CAN_LEAD = frozenset({"what", "who", "how", "which"})
 # Words only gear has: they may take the place of a spell of the same name ("AC", "damage" may not)
 ONLY_GEAR_CUES = frozenset(
     {"weapon", "weapons", "armor", "mastery", "masteries", "property", "properties"} | GEAR_CUES
@@ -423,6 +561,54 @@ PROPERTY_TAGS = frozenset({"Weapon Property", "Mastery Property"})
 EVERYDAY_PROPERTIES = frozenset(
     {"light", "heavy", "range", "loading", "thrown", "push", "slow", "sap", "nick", "ammunition"}
 )
+
+
+# The Magic Items section's rules (#2001): a one-word name ("Potions", "Rings", "Rarity") is an
+# everyday word, so it counts only when the question is about magic items, as the cue words show;
+# a longer name ("Magic Armor", "Command Word") is specific enough alone. The glossary's
+# Attunement needs no cue ("attune" is its own).
+MAGIC_CUES = frozenset(
+    {
+        "item",
+        "items",
+        "attune",
+        "attuned",
+        "attuning",
+        "attunement",
+        "identify",
+        "identifying",
+        "charges",
+        "cursed",
+        "craft",
+        "crafting",
+        "crafted",
+        "sentient",
+        "rarity",
+        "rarities",
+    }
+)
+RARITY_WORDS = frozenset({"rarity", "rarities"})
+CRAFT_WORDS = frozenset({"craft", "crafting", "crafted"})
+# Crafting is a magic item rule here only with a word that says so: the SRD's ordinary crafting
+# (a longsword) is in "Equipment" and is not in the data.
+CRAFT_MAGIC_WORDS = frozenset(
+    {"magic", "magical", "item", "items", "rare", "uncommon", "legendary", "common", "rarity"}
+)
+CRAFT_COST_WORDS = frozenset(
+    {"time", "long", "days", "cost", "costs", "much", "gold", "gp", "expensive", "price", "cheap"}
+)
+MAGIC_CRAFTING = "Crafting Magic Items"
+MAGIC_CRAFT_COST = "Crafting: Time and Cost"
+PRICE_WORDS = frozenset(
+    {"price", "prices", "cost", "costs", "worth", "value", "values", "gold", "gp", "sell", "buy"}
+)
+MAGIC_VALUES = "Magic Item Values by Rarity"
+MAGIC_RARITY = "Magic Item Rarity"
+
+
+def is_magic_rule(entry: Entry) -> bool:
+    """A rule of the SRD's Magic Items section (the players' and the GM's alike)."""
+    return entry.kind == RULE and entry.details.get("tag") == "Magic Items"
 
 
 def is_everyday_property(entry: Entry) -> bool:
@@ -784,7 +970,7 @@ def build(
         sections.append("RULES ENTRIES (the free rules, word for word):")
         for hit in hits:
             entry = hit.entry
-            text = shorten(entry.text, _text_max(entry))
+            text = shorten(only_levels_asked(entry, question), _text_max(entry))
             tag = f" {hit.tag}" if hit.tag else ""
             facts = entry.facts
             facts = f" FACTS: {facts}. TEXT:" if facts else ""

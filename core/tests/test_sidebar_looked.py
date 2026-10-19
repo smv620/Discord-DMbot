@@ -75,8 +75,9 @@ class TheList(unittest.TestCase):
         self.assertEqual((shield.value, armor.value), ("Shield", "Shield (armor)"))
 
     def test_an_entry_only_the_older_rules_have_is_tagged(self) -> None:
-        (plate,) = listed("how much AC does plate give")
-        self.assertIn("Legacy 2014", plate.place)
+        # (Plate is no longer one: the 2024 Plate Armor is found by "plate" since #1937.)
+        (abacus,) = listed("how much does an abacus cost")
+        self.assertIn("Legacy 2014", abacus.place)
 
     def test_house_rules_come_first_labelled_and_have_no_card(self) -> None:
         ctx = context.build(

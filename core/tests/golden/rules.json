@@ -1734,6 +1734,177 @@
      "2024"
     ]
    ]
+  },
+  {
+   "question": "how does command work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "#1989: a question about the word is a cue",
+   "expect": [
+    [
+     "spell",
+     "Command",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what does sleep do",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "how long does fly last",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Fly",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "what's the range of message",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Message",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "can sleep affect undead",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "sleep level",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the guard gives a command",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "monster",
+     "Guard",
+     "2024"
+    ]
+   ],
+   "note": "no Command spell (#1989); the Guard is cited as it is for any 'guard' (like 'send a message to the guard')"
+  },
+  {
+   "question": "we sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "can we sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'can' with a person in between is not a cue: someone sleeping",
+   "expect": []
+  },
+  {
+   "question": "how does the command work",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Command",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "does sleep work on elves",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": [
+    [
+     "spell",
+     "Sleep",
+     "2024"
+    ]
+   ]
+  },
+  {
+   "question": "the light level in the room",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "'level' after light is an everyday phrase (#1989)",
+   "expect": []
+  },
+  {
+   "question": "range of light from a torch",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "the party can sleep",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "he can fly",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "expect": []
+  },
+  {
+   "question": "can sleep at the inn",
+   "target": "2024",
+   "fallback": "2014",
+   "mode": "dm",
+   "note": "a person sleeping, not one of the asking words",
+   "expect": []
   }
  ]
 }

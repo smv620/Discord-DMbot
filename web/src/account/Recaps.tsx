@@ -23,9 +23,11 @@ import {
   type RecapMonth,
   type RecapAudioLinks,
 } from "./api";
+import CuedText, { hasCues } from "./CuedText";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
+import RecapPlayer from "./RecapPlayer";
 
 const POLL_MS = 5000;
 
@@ -134,6 +136,11 @@ function List({ api }: { api: AccountApi }) {
                   .filter(Boolean)
                   .join(" · ")}
               </span>
+              {r.transcriptsDeletedAt && (
+                <span class="small">
+                  {text.transcriptDeleted(sessionDay(r.transcriptsDeletedAt))}
+                </span>
+              )}
               <span class="tags">
                 <span class="tag">{statusLine(r)}</span>
               </span>
@@ -209,8 +216,9 @@ function AudioOffer({ api }: { api: AccountApi }) {
   );
 }
 
-/** The narration and music (#1418): three players while the audio matches the text, otherwise a
- * line saying where it is, and a button to make it again. Only while the audio is on. */
+/** The narration and music (#1418, #2017): one player for the voice and music together plus the mixed
+ * file while the audio matches the text, otherwise a line saying where it is, and a button to make it
+ * again. Only while the audio is on. */
 function AudioPanel({
   api,
   recap,
@@ -242,7 +250,11 @@ function AudioPanel({
       setLost(true);
     }
   };
+  // Several files failing on the same links are one failure, not a second one.
+  const failedLinks = useRef<RecapAudioLinks | null>(null);
   const failed = (): void => {
+    if (failedLinks.current === links) return;
+    failedLinks.current = links;
     if (retried.current) {
       setLost(true);
       return;
@@ -297,11 +309,6 @@ function AudioPanel({
     }
   };
 
-  const players: [keyof RecapAudioLinks, string][] = [
-    ["voice", panelWords.voice],
-    ["music", panelWords.music],
-    ["mix", panelWords.mix],
-  ];
   const line =
     audio.state === "queued"
       ? panelWords.queued
@@ -315,22 +322,22 @@ function AudioPanel({
   return (
     <section class="panel" aria-labelledby="recap-audio-panel">
       <h3 id="recap-audio-panel">{panelWords.heading}</h3>
-      {playable &&
-        players.map(
-          ([kind, label]) =>
-            links[kind] && (
-              <div key={kind}>
-                <p class="small">{label}</p>
-                <audio
-                  controls
-                  preload="none"
-                  src={links[kind]}
-                  aria-label={label}
-                  onError={failed}
-                />
-              </div>
-            ),
-        )}
+      {playable && (links.voice || links.music) && (
+        <RecapPlayer voice={links.voice} music={links.music} onFail={failed} />
+      )}
+      {playable && links.mix && (
+        <div>
+          <p class="small">{panelWords.mix}</p>
+          <p class="muted small">{panelWords.mixNote}</p>
+          <audio
+            controls
+            preload="none"
+            src={links.mix}
+            aria-label={panelWords.mix}
+            onError={failed}
+          />
+        </div>
+      )}
       {playable && lost && (
         <p class="warn" role="alert">
           {panelWords.expired}
@@ -515,6 +522,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           .filter(Boolean)
           .join(" · ")}
       </p>
+      {recap.transcriptsDeletedAt && (
+        <p class="small">
+          {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
+        </p>
+      )}
       {!decided && !recap.working && recap.state !== "failed" && (
         <>
           <p class="lead">{text.onlyYou}</p>
@@ -586,6 +598,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 <p key={i}>{p}</p>
               ))}
             </section>
+            {RECAP_AUDIO_LIVE && recap.audio && hasCues(recap.summary) && (
+              <section class="panel" aria-labelledby="recap-cues">
+                <h3 id="recap-cues">{panelWords.cuesHeading}</h3>
+                <p class="muted small">{panelWords.cuesNote}</p>
+                <CuedText text={recap.summary} />
+              </section>
+            )}
             <section class="panel">
               <h3>{text.housekeepingHeading}</h3>
               {recap.housekeeping.length === 0 ? (

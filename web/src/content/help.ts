@@ -80,12 +80,61 @@ export const secretClueSteps: Step[] = [
   },
 ];
 
+// Who is alive or dead and who carries the one-of-a-kind things (#1284; core memory/states.py,
+// ui/claims_review.py). The facts come from lines the game master says yes to after a session,
+// and those lines come from the story extractor, which stays off until its prompt passes the
+// measurement (#1282). So the steps are held with the What's new entry "Who is alive, who
+// carries what". Set this to true in the same change that moves that entry out of `held`; a
+// test keeps the two, the privacy line and these steps in step.
+export const STORY_STATES_LIVE = false;
+
+export const storyStateSteps: Step[] = [
+  {
+    text: "DMbot remembers who is alive or dead, what has been destroyed, and who carries the one-of-a-kind things. It learns this from what you say yes to after a session (press 🗣️ Check what was said) and, for who carries what, from connections you make on a name's card.",
+    names: [{ name: "🗣️ Check what was said", file: "ui/claims_review.py" }],
+  },
+  {
+    text: "To say an item is the only one, type /dmbot names, press 🔍 Find a name, open the item's card and press ☝️ Only one exists. DMbot guesses that a named item, like a magic sword, is the only one. If that is wrong, press Allow more than one on its card.",
+    names: [
+      { name: "☝️ Only one exists", file: "ui/name_card.py" },
+      { name: "Allow more than one", file: "ui/name_card.py" },
+    ],
+  },
+  {
+    text: "When something doesn't fit, for example a character you marked dead who speaks again, or one sword in two hands, DMbot asks you privately after the session. Only you see this. Players never do, and it is never in a transcript. DMbot only points it out. You decide: fix the fact or leave it.",
+  },
+];
+
 // The DMbot channel (#1666, #1676) moves the buttons off the DM screen, so every Help line that
 // sent people to ⚙️ Settings "on the DM screen" changes with it. It is held with the What's new
 // entry "A DMbot channel for buttons" (whats-new.ts, `held`) until it has been seen on the test
 // server. Set this to true in the same change that moves that entry out of `held`; a test keeps
 // the two in step and checks that no line points both ways.
 export const DM_BOT_CHANNEL_LIVE = false;
+
+// The 📇 Names button (#1986, #1987, core dm_screen/names_button.py) opens the same private names
+// card as /dmbot names. It is merged but not deployed, so its What's new entry "A 📇 Names button"
+// (whats-new.ts, `held`) is held and Help follows. Set this to true in the same change that moves
+// that entry out of `held`; a test keeps the two in step. Where the button is says "the DMbot
+// channel" only while that is live (DM_BOT_CHANNEL_LIVE), so no line points both ways.
+export const NAMES_BUTTON_LIVE = false;
+
+export const namesButtonSteps: Step[] = [
+  {
+    text: `${
+      DM_BOT_CHANNEL_LIVE
+        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Settings."
+        : "To see every name DMbot knows in your campaign, press ⚙️ Settings, then 📇 Names."
+    } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
+    names: [
+      { name: "Names", file: "dm_screen/names_button.py" },
+      { name: "Check names", file: "ui/names.py" },
+      { name: "Check who is who", file: "ui/names.py" },
+      { name: "Check what was said", file: "ui/names.py" },
+      { name: "/dmbot names", file: "bot.py" },
+    ],
+  },
+];
 
 export const settingsOnDmScreenSteps: Step[] = [
   {
@@ -106,9 +155,9 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
+    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get 🗂️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
     names: [
-      { name: "⚙️ Menu", file: "consent_dm.py" },
+      { name: "🗂️ Menu", file: "consent_dm.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
@@ -425,6 +474,85 @@ export const whatsOnSteps: Step[] = [
   },
 ];
 
+// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
+// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
+// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
+// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const RULE_KINDS_LIVE = false;
+
+export const ruleKindSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first. If the newer rules have nothing by that name, you get the older 2014 one, marked [Legacy 2014].",
+  },
+  {
+    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
+  },
+  {
+    text: "Things for the DM, like traps, poisons, curses and diseases, are not for players. If you ask for one, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// Every rule the Help text and the held "Look up any rule" entry name as an example, with the kind it is
+// meant to be, so test/rule-examples.test.ts can check each one is in the rules data the bot reads.
+// `text` is the exact wording in the sentence; `name` is the entry's name where it differs; `class` is
+// for a class feature ("rogue evasion" is the Rogue's Evasion).
+export interface RuleExample {
+  text: string;
+  kind: string;
+  name?: string;
+  class?: string;
+}
+export const ruleExamples: RuleExample[] = [
+  { text: "cover", kind: "rule" },
+  { text: "dash", kind: "rule" },
+  { text: "long rest", kind: "rule" },
+  { text: "rage", kind: "feature" },
+  { text: "rogue evasion", kind: "feature", name: "Evasion", class: "Rogue" },
+  { text: "Bag of Holding", kind: "item" },
+  { text: "longsword", kind: "weapon" },
+  { text: "plate armor", kind: "armor" },
+  { text: "Thieves' Tools", kind: "tool" },
+  { text: "Healer's Kit", kind: "gear" },
+  { text: "Alert", kind: "feat" },
+  { text: "Goliath", kind: "species" },
+  { text: "Sage", kind: "background" },
+  { text: "Orc (creature)", kind: "monster", name: "Orc" },
+  { text: "xp budget", kind: "rule", name: "Step 2: Determine Your XP Budget" },
+  { text: "attunement", kind: "rule", name: "Attunement" },
+  { text: "charges", kind: "rule", name: "Magic Item Charges" },
+];
+
+// What the rules index gained on 2026-10-19: how hard a fight is (the SRD's Combat Encounters section,
+// for the game master only, #2000) and the Magic Items section (attunement, charges, rarity, value,
+// #2001), found by /dmbot rule and the DM sidebar (core rules/index.py, sidebar/context.py). Held with
+// the What's new entry "Look up fight difficulty rules" until dev1 deploys it (#2004, #2006). Set this to true
+// in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const FIGHT_AND_ITEM_RULES_LIVE = false;
+
+// The game master's step: the XP budget is the DM's chapter (`dm_side`), so players get "That's one for
+// your DM." DMbot reads the lines for the levels named and does no sum and no ruling (sidebar/context.py
+// ENCOUNTER_NOTE), so the words promise neither.
+export const fightRuleSteps: Step[] = [
+  {
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// For everyone: the Magic Items section is open rules, not the DM's chapter.
+export const magicItemRuleSteps: Step[] = [
+  {
+    text: "You can look up the rules for magic items the same way: type /dmbot rule, then \"attunement\" or \"charges\". You can also ask what rarity means and what an item is worth by rarity.",
+  },
+];
+
+// The game master sees what players do not (core ui/rule_lookup.py: DM_ONLY, the player branch and the
+// typeahead filter). Held with RULE_KINDS_LIVE: it deploys with the same rules data.
+export const ruleKindDmSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds things for you alone, like traps, poisons, curses and diseases. Only you see the answer.",
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
@@ -443,6 +571,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
   ...(DM_BOT_CHANNEL_LIVE ? dmBotChannelSteps : settingsOnDmScreenSteps),
+  ...(NAMES_BUTTON_LIVE ? namesButtonSteps : []),
   ...(WHATS_ON_LIVE ? whatsOnSteps : []),
   {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
@@ -645,6 +774,9 @@ export const dmSteps: Step[] = [
   ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
+  ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
+  ...(STORY_STATES_LIVE ? storyStateSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
@@ -702,6 +834,17 @@ export const dmSteps: Step[] = [
   },
 ];
 
+// The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
+// entry is held and this Help step follows. Set this to true in the same change that moves that
+// entry out of `held`; a test ties the two.
+export const SIDEBAR_SOURCES_LIVE = false;
+
+export const sidebarSourceSteps: Step[] = [
+  {
+    text: "Where did that come from? Under a rules answer, press 📖 What I looked at. You get the source of each rule it used, with the book and page number. Press a rule to open it. Only you see it.",
+  },
+];
+
 /**
  * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
  * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
@@ -730,6 +873,7 @@ export const quickAnswers: Step[] = [
   {
     text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
   },
+  ...(SIDEBAR_SOURCES_LIVE ? sidebarSourceSteps : []),
 ];
 
 /** The recaps steps, with the narration add-on's price from its one constant while narration is on
@@ -760,7 +904,7 @@ export const noThanksStep: Step = {
 };
 
 export const stopStep: Step = {
-  text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
+  text: "To stop at any time, press 🗂️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
   names: [
     { name: "Menu", file: "consent_dm.py" },
     { name: "Stop recording me", file: "consent_dm.py" },
@@ -811,8 +955,10 @@ export const playerSteps: Step[] = [
     text: "To look up a rule, type /dmbot rule and a few words, in any of the campaign's channels. Only you see the answer. It comes from the free rules, your table's house rules, and the homebrew your game master turned on. Entries from a shared book are tagged [Shared book], and [Shared book] [Legacy 2014] if that book is for older rules than your table plays. Each person can ask once every 3 seconds. The answer ends with \"Your DM decides what applies at your table.\"",
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
+  ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? magicItemRuleSteps : []),
   {
-    text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
+    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {

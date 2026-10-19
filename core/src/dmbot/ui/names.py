@@ -13,6 +13,7 @@ import difflib
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -172,8 +173,30 @@ def ranked_same_as(heard: str, entities: list[Entity]) -> list[Entity]:
 # ---- home ------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class Reviews:
+    """How many answers of each kind wait for the DM, besides the new names (#1986). The same
+    reviews the after-session posts open, counted again so a DM who missed the post can still
+    answer. Counts only: nothing here says what was said or by whom."""
+
+    heard: int = 0  # ❓ "Did they mean…?"
+    people: int = 0  # 🧑 who is who
+    claims: int = 0  # 🗣️ what was said (only when the story extractor is on)
+
+
+def review_line(reviews: Reviews) -> str | None:
+    """One plain line for the waiting reviews, or None when nothing waits."""
+    parts = [
+        f"{_plural(reviews.heard, 'name')} to double-check" if reviews.heard else "",
+        f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
+        f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
+    ]
+    parts = [p for p in parts if p]
+    return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
+
+
 def home_text(
-    names: CampaignLookup, campaign: Campaign, waiting: int
+    names: CampaignLookup, campaign: Campaign, waiting: int, reviews: Reviews | None = None
 ) -> tuple[str, list[tuple[str, str, str]]]:
     """The overview (about 15 lines, under Discord's limit): how many names of each
     kind, the waiting check, names heard last session and names added lately. Returns
@@ -209,6 +232,9 @@ def home_text(
         )
     if waiting:
         lines.append(f"📝 **{_plural(waiting, 'new name')} from your sessions to check.**")
+    review = review_line(reviews) if reviews else None
+    if review:
+        lines.append(review)
     shown: list[tuple[str, str, str]] = []
 
     def section(title: str, ids: list[str]) -> None:
@@ -241,7 +267,11 @@ def home_text(
 
 class NamesHome(_Menu):
     def __init__(
-        self, campaign_id: str, waiting: int, shown: list[tuple[str, str, str]] | None = None
+        self,
+        campaign_id: str,
+        waiting: int,
+        shown: list[tuple[str, str, str]] | None = None,
+        reviews: Reviews | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -273,6 +303,19 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
         self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
+        # The reviews the after-session posts open, one button each, only while something waits
+        # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
+        if reviews:
+            for count, label, handler in (
+                (reviews.heard, "❓ Check names", self._check_heard),
+                (reviews.people, "🧑 Check who is who", self._check_people),
+                (reviews.claims, "🗣️ Check what was said", self._check_claims),
+            ):
+                if count:
+                    shown_count = str(count) if count < 100 else "99+"  # keeps the label short
+                    self.add_item(
+                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=4)
+                    )
         if shown:
             self.open = _Select(
                 self._open,
@@ -352,12 +395,57 @@ class NamesHome(_Menu):
     async def _check(self, interaction: discord.Interaction) -> None:
         await start_review(interaction, self.campaign_id)
 
+    async def _check_heard(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.heard_review import start_heard_review
+
+        await start_heard_review(interaction, self.campaign_id)
+
+    async def _check_people(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.people_review import start_people_review
+
+        await start_people_review(interaction, self.campaign_id)
+
+    async def _check_claims(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.claims_review import start_claims_review
+
+        await start_claims_review(interaction, self.campaign_id)
+
     async def _sheets(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import refresh_all
 
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
             await refresh_all(interaction, campaign.id, campaign.guild_id)
+
+
+async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) -> Reviews:
+    """The reviews waiting for the DM, counted as the posts after a session count them. A count
+    that can't be read is left out (zero), never an error on the home card."""
+    bot: Any = _bot(interaction)
+    guild_id = campaign.guild_id
+    heard = people = claims = 0
+    try:
+        if bot.heard_questions is not None:
+            heard = await bot.heard_questions.count(guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't count the names waiting to be checked")
+    memory = _memory(interaction)
+    try:
+        if memory is not None:
+            people = len(await memory.people_suggestions(guild_id, campaign.id))
+    except Exception:
+        log.exception("Couldn't count the who-is-who questions")
+    try:
+        if memory is not None and bot.extractor_ai is not None:  # the switch is on
+            from dmbot.memory.claims import ClaimStore
+
+            agreed = await bot.consent.consenting(guild_id)
+            claims = await ClaimStore(memory).waiting_for_check(
+                guild_id, campaign.id, opted_in=agreed
+            )
+    except Exception:
+        log.exception("Couldn't count the things said at the table")
+    return Reviews(heard=heard, people=people, claims=claims)
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -379,8 +467,13 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
         return
     waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
-    text, shown = home_text(names, campaign, waiting)
-    await _send(interaction, text, NamesHome(campaign.id, waiting, shown))
+    reviews = (
+        await waiting_reviews(interaction, campaign)
+        if sees_secrets(campaign, interaction.user.id)
+        else None
+    )
+    text, shown = home_text(names, campaign, waiting, reviews)
+    await _send(interaction, text, NamesHome(campaign.id, waiting, shown, reviews))
 
 
 class CampaignChoice(_Menu):
