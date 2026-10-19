@@ -113,6 +113,7 @@ describe("the switches and What's new agree", () => {
     ["Choose what recaps do", RECAPS_LIVE],
     ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
+    ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {
     expect(held.some((h) => h.title === title)).toBe(!on);
     expect(entries.some((e) => e.title === title)).toBe(on);

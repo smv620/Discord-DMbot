@@ -72,6 +72,7 @@ describe("What's new", () => {
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
+      "Play a recap's voice and music together", // with it (#2017)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
