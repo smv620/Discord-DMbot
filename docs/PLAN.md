@@ -1346,6 +1346,7 @@ Code changes: #87.
     Someone speaking or rejoining cancels the warning.
   - **The stop** is the same as ⏹ Stop: the transcript is saved, the session-end messages go out and the
     recap starts. The DM screen says why it stopped, and hours stop being counted.
+    *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -2357,6 +2358,8 @@ their words forgotten here too.
 sheet re-read or a sidebar question fires once, on the first words (acting twice is worse than
 missing a name). The words each piece has in the copies are kept for the last 3,000 pieces; an older
 one is skipped quietly.
+
+**Transcript Cleaner step 6: built (2026-10-19, #2048, #127): the AI ranks the options of "Did they mean…?" and never fixes a line.** When a question is about to be posted, one fast-model call (the off-topic filter's, so the same plans) reads the line as heard, the last 3 spoken lines of the scene (only people still recorded; no speaker names) and the options' names, and answers with one option's name or "none" in a fixed shape (structured outputs, `transcript/rank_options.py`). The likely option goes first and its button says "Marron (likely)"; the DM still answers, and nothing changes a line without that answer. "None", an unknown name, a refusal, an error or more than 3 s leaves the question as it was; nothing is sent when the line, the scene or an option holds a secret name. At most 40 calls a session (`DMBOT_CLEANER_RANK_MAX`, 0 is off), about a cent an hour of play. The session's end log line counts calls, likely, none, errors and how often the DM picked the likely name: that number decides whether a silent fix could ever be allowed, which is not decided here.
 
 **Off-topic filter (decided 2026-10-04; updated 2026-10-05).** A very light, fast AI pass
 right after the Cleaner. Scheduling, life updates, and other non-game talk are labeled
@@ -3739,6 +3742,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   needs no presence permission.
   *Built, recap name fixes (2026-10-19, #2026):* a name passes when every word of it is known, so a hyphenated name from the names file ("Dun-Varra's") is no longer refused; a retry sends the rejected draft (`<previous_draft>`, `<previous_answer>` for the title) with the target and the form and asks for a revision, never resending a draft that names a secret; an answer that only lost its SUMMARY or TITLE label is read leniently and still checked.
   *Built, names the recap kept (2026-10-19, #2027):* `recaps/unknown_names.py` respells a near miss to the known name (same word count and first letter, one letter off, two for names over eight letters, plain English words never), and refuses a word whose closest name is secret; `draft.kept_names` finds the names said in the session that no list has; they are stored in `recap_jobs.to_confirm` (migration 0131, at most 10), shown as **Facts to be confirmed** on the DM's recap page and in `recap_run`'s files, queued as proposed suggestions (source `scan`), and told to the DM once on the DM screen and in a private message with the check's button; a reminder follows once at the next session start.
+  *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
