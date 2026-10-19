@@ -22,6 +22,7 @@ from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.audio.worker import text_hash
+from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
@@ -155,7 +156,7 @@ class TheDmsPage(Base):
     async def test_edits_that_are_empty_or_too_big_are_refused(self) -> None:
         for summary, bullets in (
             ("  ", []),
-            ("x" * 4001, []),
+            ("x" * (SUMMARY_MAX + 1), []),
             ("ok", ["b"] * 13),
             ("ok", ["b" * 141]),
         ):

@@ -5,7 +5,9 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and runs 350 to 550 words (about 2½ to 4 minutes read aloud);
+- it opens with an emotion cue `《…》` and runs 350 to 550 words (about 2½ to 4 minutes read aloud;
+  on the last try 15% over or under is accepted, since length is a quality target and not a
+  grounding rule, #2013);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -37,13 +39,17 @@ from dmbot.recaps.text import (
 
 MIN_WORDS = 350
 MAX_WORDS = 550
-SUMMARY_MAX = 4000  # characters: 550 words fit with room for the DM's own edits
+AIM_WORDS = 450  # what the prompt asks for: the middle of the range, so a miss still lands in it
+PROSE_BEATS = 10  # most beats the writer is shown: a long session's recap stays one page (#2013)
+LENGTH_SLACK = 0.15  # on the last try a length this far outside the range is still accepted
+SUMMARY_MAX = 4600  # characters: 632 words (the range's top and the slack) with room to edit
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
 TITLE_MAX = 80
 TITLE_WORDS = 8
 MUSIC_MAX = 240  # characters of one music cue
 SECTIONS_MAX = 6  # emotion sections in one recap
+COPY_HINT_WORDS = 3  # words of a copied run named in the retry, so the writer can find it
 COPY_WORDS = 6  # a run of this many words in a row from the table is a copy, quoted or not
 PREVIOUS_MAX = 1500
 MAX_TOKENS = 2200
@@ -69,7 +75,8 @@ You are given a numbered BEAT SHEET. Write only from it. Use nothing else about 
 Write in this exact form, with these labels on their own lines:
 
 SUMMARY:
-<narration, {low} to {high} words>
+<narration: aim for {aim} words ({low} to {high} is allowed), in 3 or 4 paragraphs, about 40 \
+words for each beat>
 MUSIC:
 1. <one prompt for each 《…》 section of the summary, in order>
 
@@ -85,7 +92,9 @@ exactly where the beat sheet ends.
 3. Narration only, in the story world: no quotation marks and no quotes, no table talk, no dice, \
 no rules, no player names. Use character names.
 4. Say only what the beats say happened. Never invent an event, a place, a person or a name. \
-Use only names from the beat sheet or the NAMES list, spelled as there.
+Use only the names in the <names> list, spelled as there: any other name makes the recap fail.
+5. The beats are facts, not wording. Never repeat 6 words in a row from a beat: say it in your \
+own words.
 
 MUSIC: one short prompt for each 《…》 section, in order, describing only the sound: instruments, \
 tempo, mood, ambience, and that it sits quietly under a spoken voice. Never name a game, a \
@@ -148,6 +157,7 @@ def prose_system(setting: str | None) -> str:
     line = f"The campaign is set in {setting}." if setting else ""
     return (
         PROSE_SYSTEM.replace("{setting_line}", line)
+        .replace("{aim}", str(AIM_WORDS))
         .replace("{low}", str(MIN_WORDS))
         .replace("{high}", str(MAX_WORDS))
         .replace("{sections}", str(SECTIONS_MAX))
@@ -159,6 +169,7 @@ def prose_message(
     beats: Sequence[Beat], previous: str, names: Collection[str], day: int | None
 ) -> str:
     parts = [f"<beats>\n{sheet(beats)}\n</beats>"]
+    names = {*names, *(w for b in beats for w in b.who)}  # the beats' own names are allowed too
     if previous.strip():
         parts.append(
             f"<previous>\n{quoted(' '.join(previous.split())[:PREVIOUS_MAX])}\n</previous>"
@@ -176,6 +187,42 @@ def housekeeping_system() -> str:
 def housekeeping_message(beats: Sequence[Beat], summary: str) -> str:
     body = quoted(narration_of(summary))
     return f"<beats>\n{sheet(beats)}\n</beats>\n<summary>\n{body}\n</summary>"
+
+
+def pick_beats(beats: Sequence[Beat], limit: int = PROSE_BEATS) -> list[Beat]:
+    """At most `limit` beats for the writer, in the order they happened: the first (the opening)
+    and the last (where the session stopped, which the recap must end on) always, and of the rest
+    those with the most characters in them and the most lines behind them. A long session's sheet
+    has up to 120 beats; the recap is one page, so it can't tell them all (#2013). Beats keep their
+    numbers, which housekeeping cites. A shorter sheet is returned whole."""
+    if len(beats) <= limit:
+        return list(beats)
+    middle = sorted(
+        beats[1:-1],
+        key=lambda b: (len(b.who), len(b.lines), -b.number),
+        reverse=True,
+    )
+    keep = {beats[0].number, beats[-1].number, *(b.number for b in middle[: limit - 2])}
+    return [b for b in beats if b.number in keep]
+
+
+def fix_prose(prose: Prose) -> Prose:
+    """What is only mechanical about the answer's form, put right in code and not by a retry
+    (#2013). Too many `《…》` sections: the extra cues are taken out and their words stay in the
+    section before. Too many music prompts: the first ones are kept. Too few: the last prompt is
+    used again for the sections left (a music prompt only describes a sound, so this invents no
+    story). A summary with no cue, or no music prompt at all, is left for the checks."""
+    summary = prose.summary
+    cues = list(CUE.finditer(summary))
+    if len(cues) > SECTIONS_MAX:
+        for match in reversed(cues[SECTIONS_MAX:]):
+            summary = summary[: match.start()] + summary[match.end() :]
+        summary = re.sub(r"[ \t]{2,}", " ", summary)
+    sections = min(len(cues), SECTIONS_MAX)
+    music = list(prose.music)
+    if music and sections:
+        music = music[:sections] + [music[-1]] * max(0, sections - len(music))
+    return Prose(summary, tuple(music))
 
 
 def parse_prose(raw: str) -> Prose | None:
@@ -205,9 +252,17 @@ def parse_finish(raw: str) -> tuple[str, list[str]] | None:
 
 
 def _sections(raw: str, labels: Sequence[str]) -> dict[str, list[str]]:
+    """The answer cut at its labels. Models write a label many ways: `SUMMARY:`, `**SUMMARY:**`,
+    `**SUMMARY**`, `## Summary`, `Summary —`; any case, with markdown marks around it (#2013). A
+    label is only read when it ends the line or is followed by a colon or a dash, so a sentence
+    that starts with the word ("Music drifted in") is narration and stays so."""
     found: dict[str, list[str]] = {}
     label: str | None = None
-    pattern = re.compile(r"^\s*(" + "|".join(labels) + r")\s*:\s*(.*)$", re.IGNORECASE)
+    pattern = re.compile(
+        r"^[\s>#*_]*(" + "|".join(labels) + r")[\s*_]*"
+        r"(?::|[—–]|\s-\s|(?=\s*$))[\s*_]*(.*)$",
+        re.IGNORECASE,
+    )
     for line in raw.splitlines():
         match = pattern.match(line)
         if match:
@@ -242,26 +297,34 @@ def check_prose(
     secret_names: Collection[str],
     previous: str = "",
     setting: str | None = None,
+    slack: float = 0.0,
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
-    catch a copy."""
+    catch a copy. `slack`: how far outside the length range is still accepted (the last try
+    passes `LENGTH_SLACK`): length is a quality target, names, copying and secrets are not."""
     problems: list[str] = []
     summary = prose.summary
     if not CUE.match(summary.lstrip()):
         problems.append("it must open with an emotion cue like 《Tense》")
     narration = narration_of(summary)
     count = len(words(narration))
-    if not MIN_WORDS <= count <= MAX_WORDS:
-        problems.append(f"it is {count} words: write {MIN_WORDS} to {MAX_WORDS}")
+    if not round(MIN_WORDS * (1 - slack)) <= count <= round(MAX_WORDS * (1 + slack)):
+        problems.append(
+            f"Your draft was {count} words. Write between {MIN_WORDS} and {MAX_WORDS}: "
+            f"aim for {AIM_WORDS}"
+        )
     if len(summary) > SUMMARY_MAX:
         problems.append(f"the summary is over {SUMMARY_MAX} characters")
     cues = CUE.findall(summary)
     if len(cues) > SECTIONS_MAX:
         problems.append(f"at most {SECTIONS_MAX} emotion sections")
     if len(prose.music) != len(cues):
-        problems.append("give exactly one music prompt for each 《…》 section")
+        problems.append(
+            f"give exactly one music prompt for each 《…》 section: {len(cues)} sections, "
+            f"{len(prose.music)} prompts"
+        )
     if any(len(m) > MUSIC_MAX for m in prose.music):
         problems.append("a music prompt is too long")
     if any(_MUSIC_BANNED.search(m) for m in prose.music):
@@ -279,20 +342,37 @@ def check_prose(
         }
     )
     if unknown:
-        problems.append(f"names that are not in the beat sheet: {', '.join(unknown[:5])}")
+        problems.append(
+            f"names that are not allowed: {', '.join(unknown[:5])}. Use only the names listed, "
+            "or leave the name out"
+        )
     if names_a_secret(" ".join([summary, *prose.music]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")
-    if copies_the_table(narration, transcript):
-        problems.append("it copies the table word for word: tell it in your own words")
+    copied = copied_run(narration, transcript)
+    if copied:
+        problems.append(
+            f'it copies the table word for word, starting "{copied}": '
+            "tell that part in your own words"
+        )
     return problems
+
+
+def copied_run(text: str, transcript: str) -> str:
+    """The first words of the first run of `COPY_WORDS` words in a row that `text` takes from the
+    transcript, quoted or not, as `COPY_HINT_WORDS` words of the text's own; "" when none. The
+    retry names them so the writer can find the passage (#2013): they are words the writer wrote."""
+    heard = words(transcript)
+    grams = {tuple(heard[i : i + COPY_WORDS]) for i in range(len(heard) - COPY_WORDS + 1)}
+    said = words(text)
+    for i in range(len(said) - COPY_WORDS + 1):
+        if tuple(said[i : i + COPY_WORDS]) in grams:
+            return " ".join(said[i : i + COPY_HINT_WORDS])
+    return ""
 
 
 def copies_the_table(text: str, transcript: str) -> bool:
     """A run of `COPY_WORDS` words in a row taken from the transcript, quoted or not."""
-    heard = words(transcript)
-    grams = {tuple(heard[i : i + COPY_WORDS]) for i in range(len(heard) - COPY_WORDS + 1)}
-    said = words(text)
-    return any(tuple(said[i : i + COPY_WORDS]) in grams for i in range(len(said) - COPY_WORDS + 1))
+    return bool(copied_run(text, transcript))
 
 
 def check_finish(

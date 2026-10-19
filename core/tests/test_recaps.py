@@ -14,7 +14,7 @@ from dmbot.recaps import draft as rd
 from dmbot.recaps import post
 from dmbot.recaps.notify import _kind, page_link, parse_ref
 from dmbot.recaps.store import Job
-from dmbot.recaps.text import names_a_secret, proper_nouns, strip_cues, words
+from dmbot.recaps.text import CUE, names_a_secret, proper_nouns, strip_cues, words
 from tests import recap_fixtures as fx
 
 SAID = readable(fx.lines())
@@ -216,9 +216,99 @@ class TheProse(unittest.TestCase):
 
     def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
-        self.assertTrue(any("write 350 to 550" in p for p in short), short)
+        self.assertTrue(any("Write between 350 and 550" in p for p in short), short)
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
-        self.assertTrue(any("write 350 to 550" in p for p in long), long)
+        self.assertTrue(any("Write between 350 and 550" in p for p in long), long)
+
+    def test_a_length_retry_gives_the_real_count_and_the_range(self) -> None:
+        text = "《Tense》 " + " ".join(["calm"] * 889)
+        (problem,) = [p for p in prose_problems(text, "1. Strings.") if "words" in p]
+        self.assertIn("Your draft was 889 words. Write between 350 and 550: aim for 450", problem)
+
+    def test_an_overshoot_within_fifteen_percent_is_accepted_on_the_last_try_and_twenty_is_not(
+        self,
+    ) -> None:
+        def problems(n: int) -> list[str]:
+            return prose_problems(
+                "《Tense》 " + " ".join(["calm"] * n), "1. Strings.", slack=rd.LENGTH_SLACK
+            )
+
+        self.assertEqual(problems(620), [])  # 12.7% over the top
+        self.assertEqual(problems(300), [])  # 14% under the bottom
+        self.assertTrue(any("words" in p for p in problems(660)))  # 20% over
+        self.assertTrue(any("words" in p for p in problems(250)))
+        self.assertTrue(prose_problems("《Tense》 " + " ".join(["calm"] * 620), "1. Strings."))
+
+    def test_a_name_not_allowed_and_a_copied_run_fail_even_with_the_slack(self) -> None:
+        body = " ".join(["calm"] * 400)
+        unknown = prose_problems(f"《Tense》 Lord Varkus {body}", "1. Strings.", slack=0.15)
+        self.assertTrue(any("not allowed" in p and "Varkus" in p for p in unknown), unknown)
+        run = " ".join(TRANSCRIPT.split()[:8])
+        copied = prose_problems(f"《Tense》 {body} {run}", "1. Strings.", slack=0.15)
+        (hint,) = [p for p in copied if "copies the table" in p]
+        self.assertIn('starting "', hint)  # the first three words of the run, to find it
+        first3 = " ".join(words(run)[:3])
+        self.assertIn(first3, hint)
+
+    def test_the_label_is_read_in_the_ways_models_write_it(self) -> None:
+        for summary_label, music_label in (
+            ("SUMMARY:", "MUSIC:"),
+            ("**SUMMARY:**", "**MUSIC:**"),
+            ("**SUMMARY**", "**MUSIC**"),
+            ("## Summary", "## Music"),
+            ("Summary —", "Music —"),
+            ("summary:", "music:"),
+            ("### **Summary**", "### **Music**"),
+        ):
+            raw = f"{summary_label}\n《Tense》 The gate stood open.\n{music_label}\n1. Strings.\n"
+            prose = rd.parse_prose(raw)
+            self.assertIsNotNone(prose, summary_label)
+            assert prose is not None
+            self.assertEqual(prose.summary, "《Tense》 The gate stood open.", summary_label)
+            self.assertEqual(prose.music, ("Strings.",), summary_label)
+
+    def test_a_sentence_that_starts_with_the_word_is_not_a_label(self) -> None:
+        raw = "SUMMARY:\n《Tense》 Music drifted down the hall.\nSummary of events were grim.\n"
+        prose = rd.parse_prose(raw + "MUSIC:\n1. Strings.\n")
+        assert prose is not None
+        self.assertIn("Music drifted down the hall.", prose.summary)
+        self.assertIn("Summary of events were grim.", prose.summary)
+
+    def test_the_music_count_is_put_right_in_code_both_ways(self) -> None:
+        three = "《Tense》 One. 《Uneasy》 Two. 《Wonder》 Three."
+        few = rd.fix_prose(rd.Prose(three, ("a", "b")))
+        self.assertEqual(few.music, ("a", "b", "b"))  # the last prompt again: no story invented
+        many = rd.fix_prose(rd.Prose(three, ("a", "b", "c", "d", "e")))
+        self.assertEqual(many.music, ("a", "b", "c"))
+        exact = rd.Prose(three, ("a", "b", "c"))
+        self.assertEqual(rd.fix_prose(exact), exact)
+        self.assertEqual(rd.fix_prose(rd.Prose(three, ())).music, ())  # nothing to reuse
+
+    def test_extra_sections_are_merged_and_no_words_are_lost(self) -> None:
+        cues = [f"《C{n}》 Words {n} here." for n in range(8)]
+        fixed = rd.fix_prose(rd.Prose(" ".join(cues), tuple(f"m{n}" for n in range(8))))
+        self.assertEqual(len(CUE.findall(fixed.summary)), rd.SECTIONS_MAX)
+        self.assertTrue(fixed.summary.startswith("《C0》"))  # the first cues, in order
+        for n in range(8):
+            self.assertIn(f"Words {n} here.", fixed.summary)  # every word stays
+        self.assertEqual(len(fixed.music), rd.SECTIONS_MAX)
+
+    def test_the_writer_is_given_at_most_ten_beats_with_the_ends_and_the_numbers_kept(self) -> None:
+        many = [bt.Beat(n, f"B{n}.", ("Mira",) * (n % 3), (n,), "event") for n in range(1, 21)]
+        shown = rd.pick_beats(many)
+        self.assertEqual(len(shown), rd.PROSE_BEATS)
+        self.assertEqual((shown[0].number, shown[-1].number), (1, 20))
+        self.assertEqual([b.number for b in shown], sorted(b.number for b in shown))
+        self.assertEqual(rd.pick_beats(many[:6]), many[:6])  # a short sheet whole
+
+    def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
+        system = rd.prose_system(None)
+        self.assertIn("aim for 450 words", system)
+        self.assertIn("3 or 4 paragraphs", system)
+        self.assertIn("Never repeat 6 words in a row", system)
+        message = rd.prose_message(beats(), "", ["Alder"], None)
+        self.assertIn("Alder", message)  # the campaign's names
+        self.assertIn("Mira", message)  # and the beats' own
 
     def test_it_must_open_with_a_cue_and_have_a_music_prompt_for_each(self) -> None:
         self.assertTrue(

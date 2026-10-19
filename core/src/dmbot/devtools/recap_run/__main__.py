@@ -142,6 +142,7 @@ async def run_text(
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
     failures: list[tuple[str, int, list[str]]] = []
+    notes: list[str] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
     async def load(gid: int, cid: str, job: Job) -> pl.Inputs:
@@ -167,6 +168,7 @@ async def run_text(
         on_problems=lambda stage, attempt, problems: failures.append(
             (stage, attempt + 1, list(problems))
         ),
+        on_note=notes.append,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -182,7 +184,14 @@ async def run_text(
             stopped = "no progress"
             break
     return Outcome(
-        store.job, inputs, fast_c, careful_c, stopped, sheets=store.sheets, failures=failures
+        store.job,
+        inputs,
+        fast_c,
+        careful_c,
+        stopped,
+        notes=notes,
+        sheets=store.sheets,
+        failures=failures,
     )
 
 
@@ -213,10 +222,25 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         secret_names=inputs.secret_names,
         previous=inputs.previous,
         setting=inputs.setting,
+        slack=rd.LENGTH_SLACK,  # the last try may stand 15% outside the range (#2013)
     )
     out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
     words = len(narration_of(job.summary).split())
-    out.append((f"{words} words", rd.MIN_WORDS <= words <= rd.MAX_WORDS, ""))
+    in_range = rd.MIN_WORDS <= words <= rd.MAX_WORDS
+    near = (
+        round(rd.MIN_WORDS * (1 - rd.LENGTH_SLACK))
+        <= words
+        <= round(rd.MAX_WORDS * (1 + rd.LENGTH_SLACK))
+    )
+    out.append(
+        (
+            f"{words} words",
+            near,
+            ""
+            if in_range
+            else f"outside {rd.MIN_WORDS} to {rd.MAX_WORDS}, accepted on the last try",
+        )
+    )
     out.append((f"{len(kept)} beats kept", len(kept) >= bt.MIN_BEATS, ""))
     out.append(
         (
@@ -335,6 +359,8 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         lines += ["", *explain_sheets(out)]
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
+    if out.notes:
+        lines += ["", *(f"Note: {n}" for n in out.notes)]
     if job.grade:
         weak = rd.weak(job.grade)
         lines += [

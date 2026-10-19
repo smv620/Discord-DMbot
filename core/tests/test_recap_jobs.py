@@ -342,24 +342,35 @@ class Working(Base):
         self.assertIn("Varkus", self.careful.sent[0])
         self.assertNotIn("Varkus", job.summary)
 
-    async def test_prose_that_fails_twice_fails_the_job(self) -> None:
+    async def test_prose_that_fails_three_times_fails_the_job(self) -> None:
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
-        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented))
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented, invented))
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
         self.assertEqual(job.summary, "")  # a failed draft is never kept
 
+    async def test_a_third_prose_try_happens_only_after_two_failures(self) -> None:
+        invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, invented, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(invented, fx.PROSE_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(self.careful.sent), 2)  # the second and the third try
+        self.assertIn("Varkus", self.careful.sent[1])  # told which name, on the retry only
+
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER),
-            fx.Canned(fx.PROSE_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, fx.PROSE_ANSWER),
             secret=["Oskar"],
             names=["Mira", "Greywater Keep"],  # the bot never offers a secret as a known name
         )
         job = await self.go()
         # The beats that name Oskar were cut, so the prose is told none of them...
         self.assertNotIn("Oskar", self.fast.sent[1])
-        # ...and a draft that names him anyway is refused, twice, and nothing is kept.
+        # ...and a draft that names him anyway is refused, three times, and nothing is kept.
         self.assertEqual((job.state, job.summary), ("failed", ""))
         self.assertIn("secret", self.careful.sent[0])
 
