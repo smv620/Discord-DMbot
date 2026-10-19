@@ -1335,6 +1335,17 @@ Code changes: #87.
 - The end-of-session message on the DM screen ends its facts with one line of name counts when any is
   above zero (#1510): "✏️ Names: DMbot fixed 3 by itself, asked you about 2 (1 not answered), you
   corrected 1, players suggested 2 (1 still waiting)." Counts of the session only; nothing is stored.
+- **DMbot stops by itself when nobody is there** (owner, 2026-10-19, #2034). A forgotten session would
+  keep billing listening minutes against the owner's hours. People only count: a bot in the voice
+  channel (a music bot, DMbot itself) is nobody, by Discord's own bot flag, the same test the consent
+  allowlist uses.
+  - **The rules:** no person in the voice channel for 5 minutes (always on), or no person speaking or
+    typing in table chat for 30 minutes. The DM sets this in ⚙️ Settings → Stop when quiet: 30, 60 or
+    90 minutes, or Off for tables that take long silent breaks.
+  - **A warning first:** the DM screen says it will stop in 5 minutes, with a **Keep listening** button.
+    Someone speaking or rejoining cancels the warning.
+  - **The stop** is the same as ⏹ Stop: the transcript is saved, the session-end messages go out and the
+    recap starts. The DM screen says why it stopped, and hours stop being counted.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
