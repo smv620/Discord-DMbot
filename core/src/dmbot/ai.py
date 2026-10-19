@@ -215,6 +215,7 @@ class Reply:
     refused: bool = (
         False  # the service declined (stop reason "refusal"): the text is not the answer
     )
+    stop: str = ""  # the service's own word for why it stopped (end_turn, max_tokens ...)
 
 
 def _model_unavailable(status: int, body_text: str) -> bool:
@@ -520,6 +521,7 @@ class AnthropicClient:
             cache_read_tokens=count("cache_read_input_tokens"),
             cache_write_tokens=count("cache_creation_input_tokens"),
             refused=data.get("stop_reason") == "refusal",
+            stop=data["stop_reason"] if isinstance(data.get("stop_reason"), str) else "",
         )
         if self._watch is not None:
             # `input_tokens` leaves out what the cache wrote or read. Count a write in full and

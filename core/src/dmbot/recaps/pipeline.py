@@ -28,6 +28,7 @@ from typing import Any, Protocol
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
+from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
@@ -81,6 +82,7 @@ class Inputs:
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
 
 
+GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 
 
@@ -135,9 +137,14 @@ class RecapWorker:
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
+        on_call: Callable[[cl.CallEvent], None] | None = None,
     ) -> None:
         self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._on_note = on_note  # plain notes a test run puts in its report (#2013)
+        # Each AI call as it returns, for a test run's "Calls" section (#2053): counts and fixed
+        # words only. The worker fills in the event as the answer is checked.
+        self._on_call = on_call
+        self._last: dict[tuple[int, str, int, str], cl.CallEvent] = {}
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
@@ -147,7 +154,9 @@ class RecapWorker:
         # tried (in memory, like the rejected drafts): if the revision fails the checks, this draft
         # stands instead of the whole recap failing (#2008, test 7: a revision came back 173 words
         # and the third try was cut off, though the first draft had passed).
-        self._fallback: dict[tuple[int, str, int], tuple[rd.Prose, dict[str, int]]] = {}
+        self._fallback: dict[
+            tuple[int, str, int], tuple[rd.Prose, dict[str, int], cl.CallEvent | None]
+        ] = {}
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -309,7 +318,46 @@ class RecapWorker:
                 error=type(exc).__name__,
             )
             return None
+        self._announce(gid, cid, job, client, max_tokens, reply)
         return reply
+
+    def _announce(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        client: Client,
+        limit: int,
+        reply: Reply,
+        *,
+        stage: str = "",
+        grade: dict[str, int] | None = None,
+    ) -> None:
+        """Tell the observer about a call that returned (#2053). Nothing else reads this."""
+        if self._on_call is None:
+            return
+        stage = stage or cl.STAGE_OF_STATE.get(job.state, job.state)
+        stop = reply.stop or ("refusal" if reply.refused else "max_tokens" if reply.cut else "")
+        stop = stop if stop in cl.STOPS else "other"  # fixed words only, whatever the service says
+        event = cl.CallEvent(
+            stage,
+            job.attempt + 1,
+            "fast" if client is self._fast else "careful",
+            reply.input_tokens,
+            reply.output_tokens,
+            limit,
+            stop,
+            grade=dict(grade or {}),
+        )
+        self._last[(gid, cid, job.session_at, stage)] = event
+        self._on_call(event)
+
+    def _annotate(self, gid: int, cid: str, job: Job, stage: str, **fields: Any) -> None:
+        """Add what a check found to the latest call of that stage."""
+        event = self._last.get((gid, cid, job.session_at, stage))
+        if event is not None:  # (a value given as a function is worked out only when observed)
+            for name, value in fields.items():
+                setattr(event, name, value() if callable(value) else value)
 
     def _client(self, job: Job) -> Client:
         return self._fast if job.attempt == 0 else self._careful
@@ -348,6 +396,7 @@ class RecapWorker:
             return await self._restart(gid, cid, job)
         parsed = bt.parse(raw.text)
         if parsed is None:
+            self._annotate(gid, cid, job, "beats", checks=["shape"])
             return await self._retry_or_fail(gid, cid, job, ["answer in the JSON form asked for"])
         beats = [*(job.beats or []), *parsed]
         last = k + 1 == len(parts)
@@ -379,6 +428,8 @@ class RecapWorker:
             transcript_words={w for s in said for w in words(s.text)},
         )
         usable = len(kept) >= bt.MIN_BEATS and not any("in no beat" in p for p in problems)
+        # (a long session reads in windows; the check is of the whole sheet: it marks the last)
+        self._annotate(gid, cid, job, "beats", checks=lambda: cl.kinds(problems))
         if not usable:
             if len(kept) < bt.MIN_BEATS and job.attempt >= 1:
                 return await self._fail(gid, cid, job, TOO_LITTLE)
@@ -453,9 +504,11 @@ class RecapWorker:
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         if why := unusable(raw):
+            self._annotate(gid, cid, job, "prose", checks=cl.kinds([why]))
             return await self._prose_failed(gid, cid, job, [why], inputs, sheet, length)
         prose = rd.parse_prose(raw.text)
         if prose is None:
+            self._annotate(gid, cid, job, "prose", checks=["shape"])
             return await self._prose_failed(
                 gid, cid, job, ["answer with the sections JSON asked for"], inputs, sheet, length
             )
@@ -479,6 +532,9 @@ class RecapWorker:
         )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
+        self._annotate(
+            gid, cid, job, "prose", words=lambda: len(words(narration_of(prose.summary)))
+        )
 
         def checked(last_try: bool) -> list[str]:
             return rd.check_prose(
@@ -506,6 +562,7 @@ class RecapWorker:
                     f"{round(rd.LAST_UP * 100)}% over or {round(rd.LAST_DOWN * 100)}% under the "
                     f"target {length.target}, and every other check passed."
                 )
+        self._annotate(gid, cid, job, "prose", checks=lambda: cl.kinds(problems))
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
@@ -517,13 +574,16 @@ class RecapWorker:
         weak = rd.weak(grade) if grade else []
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-            self._fallback[key] = (prose, grade)
+            self._fallback[key] = (prose, grade, self._last.get((*key, "prose")))
             await self._store.update(
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
             return await self._store.get(gid, cid, job.session_at)
         self._fallback.pop(key, None)
-        return await self._accept_prose(gid, cid, job, key, prose, grade, inputs, sheet, transcript)
+        return await self._accept_prose(
+            gid, cid, job, key, prose, grade, inputs, sheet, transcript,
+            self._last.get((*key, "prose")), cl.FINAL,
+        )  # fmt: skip
 
     async def _prose_failed(
         self,
@@ -543,7 +603,7 @@ class RecapWorker:
         key = (gid, cid, job.session_at)
         kept = self._fallback.pop(key, None)
         if kept is not None:
-            prose, grade = kept
+            prose, grade, kept_event = kept
             transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
             prose, refused = rd.respelled(
                 prose,
@@ -578,8 +638,9 @@ class RecapWorker:
                         f"every check, and the grader scored it below the bar ({weak})."
                     )
                 return await self._accept_prose(
-                    gid, cid, job, key, prose, grade, inputs, sheet, transcript
-                )
+                    gid, cid, job, key, prose, grade, inputs, sheet, transcript, kept_event,
+                    "kept after a failed revision",
+                )  # fmt: skip
         return await self._retry_or_fail(gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT)
 
     async def _accept_prose(
@@ -593,8 +654,13 @@ class RecapWorker:
         inputs: Inputs,
         sheet: Sequence[bt.Beat],
         transcript: str,
+        event: cl.CallEvent | None,
+        outcome: str,
     ) -> Job | None:
-        """The prose stage's draft is the recap's: store it and go on to the next stage."""
+        """The prose stage's draft is the recap's: store it and go on to the next stage.
+        `event`, `outcome`: which call made it and how it came to stand (the test report)."""
+        if event is not None:
+            event.outcome = outcome
         self._rejected_prose.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
@@ -636,14 +702,16 @@ class RecapWorker:
         )
         try:
             reply = await self._fast.complete(
-                rd.GRADE_SYSTEM, rd.grade_message(sheet, summary), max_tokens=200
+                rd.GRADE_SYSTEM, rd.grade_message(sheet, summary), max_tokens=GRADE_TOKENS
             )
         except AIOutOfFunds:
             raise  # the next stage would only hit it too
         except Exception as exc:
             log.warning("Recap: the grader failed (%s)", type(exc).__name__)
             return {}
-        return rd.parse_grade(reply.text) or {}
+        grade = rd.parse_grade(reply.text) or {}
+        self._announce(gid, cid, job, self._fast, GRADE_TOKENS, reply, stage="grade", grade=grade)
+        return grade
 
     # --- stage 3: the title and the housekeeping ---------------------------------------
 
@@ -670,9 +738,11 @@ class RecapWorker:
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         if why := unusable(raw):
+            self._annotate(gid, cid, job, "title", checks=cl.kinds([why]))
             return await self._retry_or_fail(gid, cid, job, [why])
         parsed = rd.parse_finish(raw.text)
         if parsed is None:
+            self._annotate(gid, cid, job, "title", checks=["shape"])
             return await self._retry_or_fail(
                 gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
@@ -701,6 +771,9 @@ class RecapWorker:
         )
         if finish is not None and any(r for _, r in fixed):
             finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
+        self._annotate(
+            gid, cid, job, "title", checks=lambda: cl.kinds(problems) if finish is None else []
+        )
         if finish is None:
             self._keep_rejected(key, parsed, inputs, [parsed[0], *parsed[1]])
             return await self._retry_or_fail(gid, cid, job, problems)
@@ -817,6 +890,8 @@ class RecapWorker:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
+        for stage in ("beats", "prose", "grade", "title"):
+            self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
         """A player whose lines were used stopped being recorded: begin again without them, a
