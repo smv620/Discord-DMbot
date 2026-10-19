@@ -3683,6 +3683,13 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   being recorded since, a secret name) and refuses with a plain reason. **The bot never posts
   a recap by itself**: the DM reads it first, may change the words (on the website) or try
   again (twice), and presses **Post to the table**, which puts it in the campaign's `dmb-chat`.
+  **How strict the beat check is** (Supervisor, 2026-10-19, #1997, after the owner's first real
+  Craig transcript failed it twice): the DM is not one of the "players who spoke a lot" who must
+  appear in a beat (the DM narrates), and a name in a beat counts as said when it was said
+  anywhere in the session, not only in that beat's own lines, because speech-to-text spells
+  names several ways and the lines often say "you" or "he". An invented name still fails, and
+  the secret, prose and post-time checks and the DM's review are unchanged. If tests show names
+  put on the wrong beat, the next step is a near-spelling match against the beat's own lines first.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
