@@ -3694,6 +3694,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   names several ways and the lines often say "you" or "he". An invented name still fails, and
   the secret, prose and post-time checks and the DM's review are unchanged. If tests show names
   put on the wrong beat, the next step is a near-spelling match against the beat's own lines first.
+  **How long a recap is** (owner, 2026-10-19, #2013, after the owner's real 652-line session came
+  out at nearly 900 words against a fixed 350 to 550): the length follows the session. The target is
+  **150 words plus 50 for every hour played**, rounded to the nearest 10, at most 500 (1 hour 200,
+  4 hours 350, 6 hours 450). A draft within 20% of the target passes; the last try may run up to 35%
+  over, since length is a quality target and not a grounding rule. Names, copying and secrets stay
+  strict on every try. The hours come from the session's first and last kept lines. A test file
+  with no times (Craig's plain text) estimates them from the words spoken, and `recap_run --hours`
+  sets them.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
