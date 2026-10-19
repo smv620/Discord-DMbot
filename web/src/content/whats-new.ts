@@ -25,6 +25,11 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-19",
+    title: "Campaign labels look like labels",
+    what: "On My Account, a campaign's Active and You run it marks are now plain words with a small picture, so they no longer look like buttons you can press.",
+  },
+  {
+    date: "2026-10-19",
     title: "A shorter campaigns list",
     what: "On My Account, Your campaigns shows the five you played most recently, with a button for the older ones. A paused campaign, or one with a hand-over waiting, always stays in view.",
   },
