@@ -319,6 +319,7 @@ function AudioPanel({
       {playable && links.mix && (
         <div>
           <p class="small">{panelWords.mix}</p>
+          <p class="muted small">{panelWords.mixNote}</p>
           <audio
             controls
             preload="none"

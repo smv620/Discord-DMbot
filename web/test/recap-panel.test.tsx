@@ -185,9 +185,9 @@ describe("the audio part of the recap page", () => {
     render(<Recaps api={api} path={path} />);
     await screen.findByText(panelWords.cuesHeading);
     const mood = document.querySelector(".cue.mood");
-    expect(mood?.textContent).toBe("《Tense》");
+    expect(mood?.textContent).toBe("Tense");
     expect(mood?.getAttribute("style")).toContain("--hue");
-    expect(document.querySelector(".cue.pace")?.textContent).toBe("((pause))");
+    expect(document.querySelector(".cue.pace")?.textContent).toBe("pause");
     // The posted text section has no tag and no cue characters.
     const posted = screen
       .getAllByText("The party crossed the ford. The door opened.")

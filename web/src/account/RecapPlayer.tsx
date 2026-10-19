@@ -141,6 +141,7 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
 
   return (
     <div class="recap-player">
+      <p class="muted small">{panelWords.lead}</p>
       {voice && (
         <audio
           ref={voiceEl}
@@ -173,6 +174,7 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
           min={0}
           max={end || 0}
           step={0.1}
+          disabled={!end}
           value={at}
           aria-label={panelWords.position}
           aria-valuetext={`${clock(at)} of ${clock(end)}`}
@@ -181,52 +183,72 @@ export default function RecapPlayer({ voice, music, onFail }: Props) {
           onInput={(e) => seek(parseFloat((e.currentTarget as HTMLInputElement).value))}
         />
         <span class="small" aria-hidden="true">
-          {clock(at)} / {clock(end)}
+          {end ? `${clock(at)} / ${clock(end)}` : clock(at)}
         </span>
       </div>
       <div class="mix-controls">
         {voice && (
           <div class="mix-line">
-            <label>
+            <label class="switch-label">
               <input
                 type="checkbox"
                 role="switch"
+                class="switch"
                 checked={voiceOn}
                 onChange={(e) => setVoiceOn((e.currentTarget as HTMLInputElement).checked)}
               />{" "}
-              {panelWords.voice}
+              {panelWords.voice}{" "}
+              <span class="small" aria-hidden="true">
+                {voiceOn ? panelWords.on : panelWords.off}
+              </span>
             </label>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={voiceVol}
-              aria-label={panelWords.voiceVolume}
-              onInput={(e) => setVoiceVol(parseFloat((e.currentTarget as HTMLInputElement).value))}
-            />
+            <label class="volume">
+              <span class="small" aria-hidden="true">
+                {panelWords.volume}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={voiceVol}
+                disabled={!voiceOn}
+                aria-label={panelWords.voiceVolume}
+                onInput={(e) => setVoiceVol(parseFloat((e.currentTarget as HTMLInputElement).value))}
+              />
+            </label>
           </div>
         )}
         {music && (
           <div class="mix-line">
-            <label>
+            <label class="switch-label">
               <input
                 type="checkbox"
                 role="switch"
+                class="switch"
                 checked={musicOn}
                 onChange={(e) => setMusicOn((e.currentTarget as HTMLInputElement).checked)}
               />{" "}
-              {panelWords.music}
+              {panelWords.music}{" "}
+              <span class="small" aria-hidden="true">
+                {musicOn ? panelWords.on : panelWords.off}
+              </span>
             </label>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={musicVol}
-              aria-label={panelWords.musicVolume}
-              onInput={(e) => setMusicVol(parseFloat((e.currentTarget as HTMLInputElement).value))}
-            />
+            <label class="volume">
+              <span class="small" aria-hidden="true">
+                {panelWords.volume}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={musicVol}
+                disabled={!musicOn}
+                aria-label={panelWords.musicVolume}
+                onInput={(e) => setMusicVol(parseFloat((e.currentTarget as HTMLInputElement).value))}
+              />
+            </label>
           </div>
         )}
       </div>

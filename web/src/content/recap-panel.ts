@@ -15,7 +15,12 @@ export const panelWords = {
   wontPlay: "The sound couldn't play. Try Play again, or use Both mixed below.",
   cuesHeading: "Where the music changes",
   cuesNote:
-    "The tags show where the voice or music changes. The players never see them.",
+    "Coloured tags are the mood the music changes to. Dashed grey tags are pauses or pace for the narrator. Only you see this; your players get the text without them.",
+  lead: "Voice and music play together. Switch one off to hear the other alone.",
+  mixNote: "One file with both, for downloads or other apps. It plays on its own.",
+  on: "On",
+  off: "Off",
+  volume: "Volume",
   off: "There is no audio for this recap.",
   queued: "The audio is being made. This page shows it when it is ready.",
   failed: "The audio couldn't be made. The text is fine.",

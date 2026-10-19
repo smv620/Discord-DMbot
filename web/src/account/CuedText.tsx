@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
 // A recap's text with its cues as tags, for the game master's page only (#2017): 《a mood》 is a
-// coloured tag and ((a pause or pace)) a grey one, so they can see where the music changes. The
+// coloured tag and ((a pause or pace)) a dashed grey one, shown without the brackets (they are the
+// machine's syntax, not words), so they can see where the music changes. The
 // words DMbot posts to the players have the cues taken out, so this never feeds the posted text.
 
 // The same shapes as core/src/dmbot/recaps/text.py.
@@ -30,14 +31,14 @@ function Line({ text }: { text: string }) {
               class="cue mood"
               style={{ "--hue": String(cueHue(part.slice(1, -1))) }}
             >
-              {part}
+              {part.slice(1, -1)}
             </span>
           );
         }
         if (part.startsWith("((") && part.endsWith("))")) {
           return (
             <span key={i} class="cue pace">
-              {part}
+              {part.slice(2, -2)}
             </span>
           );
         }
