@@ -147,9 +147,7 @@ class RecapWorker:
         # tried (in memory, like the rejected drafts): if the revision fails the checks, this draft
         # stands instead of the whole recap failing (#2008, test 7: a revision came back 173 words
         # and the third try was cut off, though the first draft had passed).
-        self._fallback: dict[
-            tuple[int, str, int], tuple[rd.Prose, dict[str, int], list[str], int | None]
-        ] = {}
+        self._fallback: dict[tuple[int, str, int], tuple[rd.Prose, dict[str, int]]] = {}
         self._store = store
         self._fast = fast
         self._careful = careful
