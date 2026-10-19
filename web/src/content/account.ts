@@ -188,6 +188,9 @@ export const text = {
   // Campaigns
   campaignsHeading: "Your campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
+  /** The button under a long list (#1991): the real count, one or many. */
+  showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
+  showFewer: "Show fewer",
   lastPlayed: (iso: string): string => `Last played ${shortDate(iso)}`,
   notPlayed: "Not played yet",
   active: "Active",
