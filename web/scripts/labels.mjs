@@ -122,5 +122,10 @@ export const hiddenBotLabels = [
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = ["Cleaned", "House rules", "Session transcripts", "Forgot your password"];
 
+/** Buttons the site names before the bot has them: a held Help step written ahead of the code that
+ * ships the button (#1958 for #1957). The test fails once core has the label, so the entry is
+ * removed in the same change that sees it, and a typo here can't hide a wrong name for long. */
+export const pendingBotLabels = [{ label: "What I looked at", issue: 1957 }];
+
 /** Discord's own controls, which the bot doesn't label. */
 export const discordControls = ["Save Changes", "Reset Token"];
