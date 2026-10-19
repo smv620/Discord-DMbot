@@ -200,6 +200,7 @@ class Working(Base):
         inputs: bool = True,
         names: Collection[str] = fx.NAMES,
         window_chars: int = 40_000,
+        hours: float = 4.0,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -219,6 +220,7 @@ class Working(Base):
                 previous="",
                 day=4,
                 window_chars=window_chars,
+                hours=hours,  # the canned recap is 353 words: a 4-hour session's (#2013)
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:
@@ -348,6 +350,33 @@ class Working(Base):
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
         self.assertEqual(job.summary, "")  # a failed draft is never kept
+
+    async def test_a_recap_a_little_long_is_accepted_only_on_the_third_try_and_says_so(
+        self,
+    ) -> None:
+        # A 1-hour session: about 200 words, 160 to 240, up to 270 on the last try.
+        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 250) + "\nMUSIC:\n1. Low strings.\n"
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(long, long),
+            hours=1.0,
+        )
+        notes: list[str] = []
+        self.worker._on_note = notes.append
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(
+            len(self.careful.sent), 2
+        )  # refused on the first two, accepted on the third
+        self.assertEqual(len(notes), 1)
+        self.assertIn("250 words", notes[0])
+        self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
+
+    async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
+        long = "SUMMARY:\n《Tense》 " + " ".join(["calm"] * 280) + "\nMUSIC:\n1. Low strings.\n"
+        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
 
     async def test_a_third_prose_try_happens_only_after_two_failures(self) -> None:
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")

@@ -29,7 +29,7 @@ from dmbot.memory.extractor import Client, Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import narration_of, words
+from dmbot.recaps.text import CUE, narration_of, words
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ class Inputs:
     day: int | None
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
     window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
+    hours: float | None = None  # hours played when known (recap_run); else from the lines' times
 
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
@@ -377,10 +378,13 @@ class RecapWorker:
         sheet = bt.from_json(job.beats)
         if len(sheet) < bt.MIN_BEATS:
             return await self._fail(gid, cid, job, TOO_LITTLE)
-        # The writer is shown at most PROSE_BEATS of a long sheet; the checks still use all of it,
-        # so a name from any beat is known (#2013).
+        # The recap's length follows the session's hours (#2013). The writer is shown at most
+        # `length.beats` of a long sheet; the checks still use all of it, so a name from any beat
+        # is known.
+        said = self._said(inputs, set(job.speakers))
+        length = rd.length_for(rd.session_hours(said, inputs.hours))
         message = rd.prose_message(
-            rd.pick_beats(sheet), inputs.previous, inputs.allowed_names, inputs.day
+            rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
         )
         if job.problems:
             message += (
@@ -393,9 +397,9 @@ class RecapWorker:
             cid,
             job,
             self._client(job),
-            rd.prose_system(inputs.setting),
+            rd.prose_system(inputs.setting, length),
             message,
-            rd.MAX_TOKENS,
+            length.max_tokens,
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
@@ -410,14 +414,20 @@ class RecapWorker:
                 ["answer in the form SUMMARY: (the narration), then MUSIC: (numbered prompts)"],
                 last_attempt=PROSE_LAST_ATTEMPT,
             )
-        fixed = rd.fix_prose(prose)  # the mechanical part of the form, in code (#2013)
+        fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
         if fixed != prose:
-            log.info("Recap: the draft's sections or music prompts were put right in code")
+            log.info(
+                "Recap: put right in code: %d to %d sections, %d to %d music prompts",
+                len(CUE.findall(prose.summary)),
+                len(CUE.findall(fixed.summary)),
+                len(prose.music),
+                len(fixed.music),
+            )
         prose = fixed
-        transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
+        transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
 
-        def checked(slack: float) -> list[str]:
+        def checked(last_try: bool) -> list[str]:
             return rd.check_prose(
                 prose,
                 beats=sheet,
@@ -426,19 +436,21 @@ class RecapWorker:
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
                 setting=inputs.setting,
-                slack=slack,
+                length=length,
+                last=last_try,
             )
 
-        problems = checked(0.0)
-        if problems and last and not checked(rd.LENGTH_SLACK):
+        problems = checked(False)
+        if problems and last and not checked(True):
             # Length is a quality target, not a grounding rule: on the last try a draft up to
-            # LENGTH_SLACK outside the range stands if everything else passes (owner, #2013).
+            # 35% over the target stands if everything else passes (owner, #2013).
             problems = []
             if self._on_note is not None:
                 self._on_note(
-                    f"Accepted at {len(words(narration_of(prose.summary)))} words: outside "
-                    f"{rd.MIN_WORDS} to {rd.MAX_WORDS}, within {round(rd.LENGTH_SLACK * 100)}%, "
-                    "and every other check passed."
+                    f"Accepted at {len(words(narration_of(prose.summary)))} words: over the "
+                    f"{length.low} to {length.high} for about {length.hours:g} hours, within "
+                    f"{round(rd.LAST_UP * 100)}% of the target {length.target}, and every other "
+                    "check passed."
                 )
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only

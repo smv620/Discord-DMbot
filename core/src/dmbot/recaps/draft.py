@@ -5,9 +5,9 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and runs 350 to 550 words (about 2½ to 4 minutes read aloud;
-  on the last try 15% over or under is accepted, since length is a quality target and not a
-  grounding rule, #2013);
+- it opens with an emotion cue `《…》` and its length follows the session's: about 150 words plus 50
+  for each hour played (`length_for`), at most 500, within 20% of that (35% over on the last try:
+  length is a quality target and not a grounding rule, owner decision on #2013);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -26,7 +26,7 @@ import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory.extractor import quoted
+from dmbot.memory.extractor import Said, quoted
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.text import (
     CUE,
@@ -37,22 +37,24 @@ from dmbot.recaps.text import (
     words,
 )
 
-MIN_WORDS = 350
-MAX_WORDS = 550
-AIM_WORDS = 450  # what the prompt asks for: the middle of the range, so a miss still lands in it
-PROSE_BEATS = 10  # most beats the writer is shown: a long session's recap stays one page (#2013)
-LENGTH_SLACK = 0.15  # on the last try a length this far outside the range is still accepted
-SUMMARY_MAX = 4600  # characters: 632 words (the range's top and the slack) with room to edit
+BASE_WORDS = 150  # the recap's length: this many words, and 50 more for each hour played
+WORDS_PER_HOUR = 50
+WORDS_CEILING = 500  # a 7-hour session or longer
+RANGE = 0.20  # a draft within this far of the target passes
+LAST_UP = 0.35  # on the last try a draft this far over the target still passes (never under)
+SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
+MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
+CHARS_PER_WORD = 9.5  # characters allowed for each target word: 6.3 an average word, 35% over
+SUMMARY_MAX = round(WORDS_CEILING * CHARS_PER_WORD)  # the longest summary at all (the web editor)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
 TITLE_MAX = 80
 TITLE_WORDS = 8
 MUSIC_MAX = 240  # characters of one music cue
-SECTIONS_MAX = 6  # emotion sections in one recap
+SECTIONS_MAX = 6  # emotion sections in one recap, at most (a short recap has fewer)
 COPY_HINT_WORDS = 3  # words of a copied run named in the retry, so the writer can find it
 COPY_WORDS = 6  # a run of this many words in a row from the table is a copy, quoted or not
 PREVIOUS_MAX = 1500
-MAX_TOKENS = 2200
 GRADE_BAR = 3  # every rubric number must reach this (1 to 5)
 RUBRIC = ("in_world", "no_quotes", "tension", "ending", "cues")
 
@@ -75,8 +77,8 @@ You are given a numbered BEAT SHEET. Write only from it. Use nothing else about 
 Write in this exact form, with these labels on their own lines:
 
 SUMMARY:
-<narration: aim for {aim} words ({low} to {high} is allowed), in 3 or 4 paragraphs, about 40 \
-words for each beat>
+<narration: this session ran about {hours} hours, so write about {aim} words (between {low} and \
+{high}), in about {paragraphs} paragraphs, about {per_beat} words for each beat>
 MUSIC:
 1. <one prompt for each 《…》 section of the summary, in order>
 
@@ -151,16 +153,76 @@ class Draft:
     problems: tuple[str, ...] = field(default=())
 
 
-def prose_system(setting: str | None) -> str:
+@dataclass(frozen=True, slots=True)
+class Length:
+    """What a session's recap must come to (#2013): one number from the hours played, and every
+    limit that used to be fixed, scaled from it."""
+
+    hours: float
+    target: int  # words, to the nearest 10
+    low: int
+    high: int
+    last_high: int  # the most the last try may run to
+    summary_max: int  # characters
+    beats: int  # most beats the writer is shown
+    sections: int  # most 《…》 sections
+    paragraphs: int
+    max_tokens: int
+
+
+def length_for(hours: float) -> Length:
+    """150 words and 50 for each hour played, to the nearest 10 and at most 500 (1 hour 200, 4
+    hours 350, 6 hours 450); within 20% of it, and up to 35% over on the last try. The other limits
+    follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6), a paragraph for
+    every 100 words (2 or more), 9.5 characters a word and a token budget for the words, the
+    music prompts and the form."""
+    target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
+    high = round(target * (1 + RANGE))
+    last_high = round(target * (1 + LAST_UP))
+    return Length(
+        hours=hours,
+        target=target,
+        low=round(target * (1 - RANGE)),
+        high=high,
+        last_high=last_high,
+        summary_max=round(target * CHARS_PER_WORD),
+        beats=min(10, max(3, round(3 * hours))),
+        sections=min(SECTIONS_MAX, max(1, target // 70)),
+        paragraphs=max(2, round(target / 100)),
+        max_tokens=800 + last_high * 2,
+    )
+
+
+def session_hours(said: Sequence[Said], given: float | None = None) -> float:
+    """Hours played: the one given (`recap_run --hours`), else the first to the last line's time,
+    else (a file with no times) an estimate from the words, 7,000 an hour, to the nearest quarter
+    hour and at least half an hour."""
+    if given:
+        return given
+    times = [s.started_ms for s in said]
+    if times and (max(times) - min(times)) / 1000 >= MIN_SPAN_S:
+        return (max(times) - min(times)) / 3_600_000
+    return estimated_hours(sum(len(s.text.split()) for s in said))
+
+
+def estimated_hours(spoken_words: int) -> float:
+    return max(0.5, round(spoken_words / SPOKEN_WORDS_PER_HOUR * 4) / 4)
+
+
+def prose_system(setting: str | None, length: Length | None = None) -> str:
     """The instructions, with the campaign's own setting filled in from data; none when it has
     none. Never a setting written into this text."""
+    length = length or length_for(2.0)
     line = f"The campaign is set in {setting}." if setting else ""
     return (
         PROSE_SYSTEM.replace("{setting_line}", line)
-        .replace("{aim}", str(AIM_WORDS))
-        .replace("{low}", str(MIN_WORDS))
-        .replace("{high}", str(MAX_WORDS))
-        .replace("{sections}", str(SECTIONS_MAX))
+        .replace("{hours}", f"{length.hours:g}")
+        .replace("{aim}", str(length.target))
+        .replace("{low}", str(length.low))
+        .replace("{high}", str(length.high))
+        .replace("{paragraphs}", str(length.paragraphs))
+        .replace("{per_beat}", str(max(20, round(length.target / max(1, length.beats)))))
+        .replace("{sections}", str(length.sections))
         .strip()
     )
 
@@ -189,7 +251,7 @@ def housekeeping_message(beats: Sequence[Beat], summary: str) -> str:
     return f"<beats>\n{sheet(beats)}\n</beats>\n<summary>\n{body}\n</summary>"
 
 
-def pick_beats(beats: Sequence[Beat], limit: int = PROSE_BEATS) -> list[Beat]:
+def pick_beats(beats: Sequence[Beat], limit: int = 10) -> list[Beat]:
     """At most `limit` beats for the writer, in the order they happened: the first (the opening)
     and the last (where the session stopped, which the recap must end on) always, and of the rest
     those with the most characters in them and the most lines behind them. A long session's sheet
@@ -206,7 +268,7 @@ def pick_beats(beats: Sequence[Beat], limit: int = PROSE_BEATS) -> list[Beat]:
     return [b for b in beats if b.number in keep]
 
 
-def fix_prose(prose: Prose) -> Prose:
+def fix_prose(prose: Prose, sections_max: int = SECTIONS_MAX) -> Prose:
     """What is only mechanical about the answer's form, put right in code and not by a retry
     (#2013). Too many `《…》` sections: the extra cues are taken out and their words stay in the
     section before. Too many music prompts: the first ones are kept. Too few: the last prompt is
@@ -214,11 +276,11 @@ def fix_prose(prose: Prose) -> Prose:
     story). A summary with no cue, or no music prompt at all, is left for the checks."""
     summary = prose.summary
     cues = list(CUE.finditer(summary))
-    if len(cues) > SECTIONS_MAX:
-        for match in reversed(cues[SECTIONS_MAX:]):
+    if len(cues) > sections_max:
+        for match in reversed(cues[sections_max:]):
             summary = summary[: match.start()] + summary[match.end() :]
         summary = re.sub(r"[ \t]{2,}", " ", summary)
-    sections = min(len(cues), SECTIONS_MAX)
+    sections = min(len(cues), sections_max)
     music = list(prose.music)
     if music and sections:
         music = music[:sections] + [music[-1]] * max(0, sections - len(music))
@@ -259,7 +321,9 @@ def _sections(raw: str, labels: Sequence[str]) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     label: str | None = None
     pattern = re.compile(
-        r"^[\s>#*_]*(" + "|".join(labels) + r")[\s*_]*"
+        r"^[\s>#*_•-]*(?:\d+[.)]\s*)?[\s*_]*("
+        + "|".join(labels)
+        + r")[\s*_]*(?:\([^)]{0,60}\)[\s*_]*)?"
         r"(?::|[—–]|\s-\s|(?=\s*$))[\s*_]*(.*)$",
         re.IGNORECASE,
     )
@@ -297,29 +361,31 @@ def check_prose(
     secret_names: Collection[str],
     previous: str = "",
     setting: str | None = None,
-    slack: float = 0.0,
+    length: Length | None = None,
+    last: bool = False,
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
-    catch a copy. `slack`: how far outside the length range is still accepted (the last try
-    passes `LENGTH_SLACK`): length is a quality target, names, copying and secrets are not."""
+    catch a copy. `length`: what the session's recap must come to; `last`: the last try, which may
+    run over it by 35% (length is a quality target; names, copying and secrets are not)."""
+    length = length or length_for(2.0)
     problems: list[str] = []
     summary = prose.summary
     if not CUE.match(summary.lstrip()):
         problems.append("it must open with an emotion cue like 《Tense》")
     narration = narration_of(summary)
     count = len(words(narration))
-    if not round(MIN_WORDS * (1 - slack)) <= count <= round(MAX_WORDS * (1 + slack)):
+    if not length.low <= count <= (length.last_high if last else length.high):
         problems.append(
-            f"Your draft was {count} words. Write between {MIN_WORDS} and {MAX_WORDS}: "
-            f"aim for {AIM_WORDS}"
+            f"Your draft was {count} words. This session ran about {length.hours:g} hours: "
+            f"write about {length.target} words, between {length.low} and {length.high}"
         )
-    if len(summary) > SUMMARY_MAX:
-        problems.append(f"the summary is over {SUMMARY_MAX} characters")
+    if len(summary) > length.summary_max:
+        problems.append(f"the summary is over {length.summary_max} characters")
     cues = CUE.findall(summary)
-    if len(cues) > SECTIONS_MAX:
-        problems.append(f"at most {SECTIONS_MAX} emotion sections")
+    if len(cues) > length.sections:
+        problems.append(f"at most {length.sections} emotion sections")
     if len(prose.music) != len(cues):
         problems.append(
             f"give exactly one music prompt for each 《…》 section: {len(cues)} sections, "
@@ -341,6 +407,9 @@ def check_prose(
             if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES
         }
     )
+    # A secret name is never written into a retry message, which is stored and printed; the
+    # secret check below says it without the name.
+    unknown = [n for n in unknown if not names_a_secret(n, secret_names, allowed_names)]
     if unknown:
         problems.append(
             f"names that are not allowed: {', '.join(unknown[:5])}. Use only the names listed, "
@@ -350,9 +419,12 @@ def check_prose(
         problems.append("it names something the DM keeps secret: leave it out")
     copied = copied_run(narration, transcript)
     if copied:
+        # The hint is the run's first words; a run that starts with a secret name gets none.
+        hint = (
+            "" if names_a_secret(copied, secret_names, allowed_names) else f' starting "{copied}"'
+        )
         problems.append(
-            f'it copies the table word for word, starting "{copied}": '
-            "tell that part in your own words"
+            f"it copies the table word for word{hint}: tell that part in your own words"
         )
     return problems
 
@@ -408,6 +480,7 @@ def check_finish(
             if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES and len(n) > 3
         }
     )
+    unknown = [n for n in unknown if not names_a_secret(n, secret_names, allowed_names)]
     if unknown:
         problems.append(f"names that are not in the beat sheet: {', '.join(unknown[:5])}")
     if names_a_secret(" ".join([title, *bullets]), secret_names, allowed_names):

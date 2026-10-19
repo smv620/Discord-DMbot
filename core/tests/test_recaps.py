@@ -8,7 +8,7 @@ import unittest
 from dataclasses import replace
 from typing import Any
 
-from dmbot.memory.extractor import readable
+from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import post
@@ -48,6 +48,7 @@ def prose_problems(summary: str = fx.SUMMARY, music: str = fx.MUSIC, **kw: Any) 
         "transcript": TRANSCRIPT,
         "allowed_names": fx.NAMES,
         "secret_names": [],
+        "length": rd.length_for(4.0),  # the canned recap is 353 words: a 4-hour session's
     }
     return rd.check_prose(prose, **{**args, **kw})
 
@@ -216,39 +217,110 @@ class TheProse(unittest.TestCase):
 
     def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
-        self.assertTrue(any("Write between 350 and 550" in p for p in short), short)
+        self.assertTrue(any("between 280 and 420" in p for p in short), short)
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
-        self.assertTrue(any("Write between 350 and 550" in p for p in long), long)
+        self.assertTrue(any("between 280 and 420" in p for p in long), long)
 
-    def test_a_length_retry_gives_the_real_count_and_the_range(self) -> None:
+    def test_the_target_is_150_words_and_50_an_hour_to_the_nearest_10_and_at_most_500(self) -> None:
+        for hours, target in (
+            (0.5, 180),
+            (1, 200),
+            (2, 250),
+            (4, 350),
+            (6, 450),
+            (8, 500),
+            (20, 500),
+        ):
+            self.assertEqual(rd.length_for(hours).target, target, hours)
+
+    def test_the_range_is_twenty_percent_and_the_last_try_goes_to_thirty_five_over(self) -> None:
+        one = rd.length_for(1)
+        self.assertEqual((one.low, one.high, one.last_high), (160, 240, 270))
+
+    def test_every_limit_scales_with_the_target(self) -> None:
+        for hours, beats, sections, paragraphs in (
+            (0.5, 3, 2, 2), (1, 3, 2, 2), (2, 6, 3, 2), (4, 10, 5, 4), (8, 10, 6, 5),
+        ):  # fmt: skip
+            length = rd.length_for(hours)
+            self.assertEqual(
+                (length.beats, length.sections, length.paragraphs),
+                (beats, sections, paragraphs),
+                hours,
+            )
+            self.assertEqual(length.summary_max, round(length.target * 9.5))
+            self.assertGreater(length.max_tokens, length.last_high)
+        self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max)  # the editor's cap
+
+    def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
+        def lines(*times_ms: int, words: int = 3) -> list[Said]:
+            return [Said(n, 1, " ".join(["w"] * words), t) for n, t in enumerate(times_ms, 1)]
+
+        self.assertEqual(rd.session_hours(lines(0, 1000), 3.5), 3.5)  # --hours wins
+        self.assertEqual(rd.session_hours(lines(0, 7_200_000)), 2.0)  # the first to the last line
+        # no real times (a plain file): 7,000 words an hour, to the quarter hour, at least half
+        self.assertEqual(rd.session_hours(lines(0, 1000, words=7000)), 2.0)
+        self.assertEqual(rd.estimated_hours(100), 0.5)
+        self.assertEqual(rd.estimated_hours(25_000), 3.5)
+        self.assertEqual(rd.estimated_hours(24_000), 3.5)
+
+    def test_a_length_retry_gives_the_hours_the_target_and_the_range(self) -> None:
         text = "《Tense》 " + " ".join(["calm"] * 889)
         (problem,) = [p for p in prose_problems(text, "1. Strings.") if "words" in p]
-        self.assertIn("Your draft was 889 words. Write between 350 and 550: aim for 450", problem)
+        self.assertIn(
+            "Your draft was 889 words. This session ran about 4 hours: write about 350 words, "
+            "between 280 and 420",
+            problem,
+        )
 
-    def test_an_overshoot_within_fifteen_percent_is_accepted_on_the_last_try_and_twenty_is_not(
-        self,
-    ) -> None:
-        def problems(n: int) -> list[str]:
+    def test_a_recap_a_little_long_is_refused_at_first_and_accepted_on_the_last_try(self) -> None:
+        one = rd.length_for(1)  # 200 words: 160 to 240, up to 270 on the last try
+
+        def problems(n: int, last: bool) -> list[str]:
             return prose_problems(
-                "《Tense》 " + " ".join(["calm"] * n), "1. Strings.", slack=rd.LENGTH_SLACK
+                "《Tense》 " + " ".join(["calm"] * n), "1. Strings.", length=one, last=last
             )
 
-        self.assertEqual(problems(620), [])  # 12.7% over the top
-        self.assertEqual(problems(300), [])  # 14% under the bottom
-        self.assertTrue(any("words" in p for p in problems(660)))  # 20% over
-        self.assertTrue(any("words" in p for p in problems(250)))
-        self.assertTrue(prose_problems("《Tense》 " + " ".join(["calm"] * 620), "1. Strings."))
+        self.assertEqual(problems(200, False), [])
+        self.assertTrue(any("words" in p for p in problems(250, False)))  # refused first
+        self.assertEqual(problems(250, True), [])  # accepted on the last try
+        self.assertTrue(any("words" in p for p in problems(280, True)))  # still too long
+        self.assertTrue(any("words" in p for p in problems(150, True)))  # under always fails
 
-    def test_a_name_not_allowed_and_a_copied_run_fail_even_with_the_slack(self) -> None:
-        body = " ".join(["calm"] * 400)
-        unknown = prose_problems(f"《Tense》 Lord Varkus {body}", "1. Strings.", slack=0.15)
+    def test_a_name_not_allowed_and_a_copied_run_fail_even_on_the_last_try(self) -> None:
+        body = " ".join(["calm"] * 300)
+        unknown = prose_problems(f"《Tense》 Lord Varkus {body}", "1. Strings.", last=True)
         self.assertTrue(any("not allowed" in p and "Varkus" in p for p in unknown), unknown)
         run = " ".join(TRANSCRIPT.split()[:8])
-        copied = prose_problems(f"《Tense》 {body} {run}", "1. Strings.", slack=0.15)
+        copied = prose_problems(f"《Tense》 {body} {run}", "1. Strings.", last=True)
         (hint,) = [p for p in copied if "copies the table" in p]
         self.assertIn('starting "', hint)  # the first three words of the run, to find it
-        first3 = " ".join(words(run)[:3])
-        self.assertIn(first3, hint)
+        self.assertIn(" ".join(words(run)[:3]), hint)
+
+    def test_a_secret_name_is_never_written_into_a_retry_message(self) -> None:
+        body = " ".join(["calm"] * 300)
+        found = prose_problems(
+            f"《Tense》 Zarathul and Varkus met. {body}", "1. Strings.", secret_names=["Zarathul"]
+        )
+        text = " ".join(found)
+        self.assertNotIn("Zarathul", text)  # not in the names list, and the secret line is plain
+        self.assertIn("Varkus", text)
+        self.assertTrue(any("keeps secret" in p for p in found))
+        # a copied run that starts with a secret name gets no hint
+        transcript = "Zarathul stood at the broken gate and wept."
+        prose = rd.parse_prose(
+            f"SUMMARY:\n《Tense》 {body} Zarathul stood at the broken gate.\nMUSIC:\n1. S.\n"
+        )
+        assert prose is not None
+        found = rd.check_prose(
+            prose,
+            beats=beats(),
+            transcript=transcript,
+            allowed_names=fx.NAMES,
+            secret_names=["Zarathul"],
+            length=rd.length_for(4.0),
+        )
+        copy = [p for p in found if "copies the table" in p]
+        self.assertTrue(copy and all("Zarathul" not in p and "starting" not in p for p in copy))
 
     def test_the_label_is_read_in_the_ways_models_write_it(self) -> None:
         for summary_label, music_label in (
@@ -266,6 +338,17 @@ class TheProse(unittest.TestCase):
             assert prose is not None
             self.assertEqual(prose.summary, "《Tense》 The gate stood open.", summary_label)
             self.assertEqual(prose.music, ("Strings.",), summary_label)
+
+    def test_a_numbered_or_bulleted_label_or_one_with_a_note_is_read(self) -> None:
+        for summary_label, music_label in (
+            ("1. SUMMARY:", "2. MUSIC:"),
+            ("- Summary:", "- Music:"),
+            ("SUMMARY (the narration):", "MUSIC (one for each section):"),
+        ):
+            prose = rd.parse_prose(
+                f"{summary_label}\n《Tense》 Gate.\n{music_label}\n1. Strings.\n"
+            )
+            self.assertIsNotNone(prose, summary_label)
 
     def test_a_sentence_that_starts_with_the_word_is_not_a_label(self) -> None:
         raw = "SUMMARY:\n《Tense》 Music drifted down the hall.\nSummary of events were grim.\n"
@@ -286,7 +369,7 @@ class TheProse(unittest.TestCase):
 
     def test_extra_sections_are_merged_and_no_words_are_lost(self) -> None:
         cues = [f"《C{n}》 Words {n} here." for n in range(8)]
-        fixed = rd.fix_prose(rd.Prose(" ".join(cues), tuple(f"m{n}" for n in range(8))))
+        fixed = rd.fix_prose(rd.Prose(" ".join(cues), tuple(f"m{n}" for n in range(8))), 6)
         self.assertEqual(len(CUE.findall(fixed.summary)), rd.SECTIONS_MAX)
         self.assertTrue(fixed.summary.startswith("《C0》"))  # the first cues, in order
         for n in range(8):
@@ -296,15 +379,15 @@ class TheProse(unittest.TestCase):
     def test_the_writer_is_given_at_most_ten_beats_with_the_ends_and_the_numbers_kept(self) -> None:
         many = [bt.Beat(n, f"B{n}.", ("Mira",) * (n % 3), (n,), "event") for n in range(1, 21)]
         shown = rd.pick_beats(many)
-        self.assertEqual(len(shown), rd.PROSE_BEATS)
+        self.assertEqual(len(shown), 10)
         self.assertEqual((shown[0].number, shown[-1].number), (1, 20))
         self.assertEqual([b.number for b in shown], sorted(b.number for b in shown))
         self.assertEqual(rd.pick_beats(many[:6]), many[:6])  # a short sheet whole
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
-        system = rd.prose_system(None)
-        self.assertIn("aim for 450 words", system)
-        self.assertIn("3 or 4 paragraphs", system)
+        system = rd.prose_system(None, rd.length_for(4.0))
+        self.assertIn("about 4 hours, so write about 350 words (between 280 and 420)", system)
+        self.assertIn("about 4 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
         self.assertIn("Alder", message)  # the campaign's names

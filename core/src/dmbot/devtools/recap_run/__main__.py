@@ -214,6 +214,7 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
     prose = rd.Prose(job.summary, tuple(job.music))
     transcript = "\n".join(s.text for s in mine)
+    length = rd.length_for(rd.session_hours(mine, inputs.hours))
     issues = rd.check_prose(
         prose,
         beats=sheet,
@@ -222,23 +223,17 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         secret_names=inputs.secret_names,
         previous=inputs.previous,
         setting=inputs.setting,
-        slack=rd.LENGTH_SLACK,  # the last try may stand 15% outside the range (#2013)
+        length=length,
+        last=True,  # the last try may stand up to 35% over the target (#2013)
     )
     out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
     words = len(narration_of(job.summary).split())
-    in_range = rd.MIN_WORDS <= words <= rd.MAX_WORDS
-    near = (
-        round(rd.MIN_WORDS * (1 - rd.LENGTH_SLACK))
-        <= words
-        <= round(rd.MAX_WORDS * (1 + rd.LENGTH_SLACK))
-    )
     out.append(
         (
-            f"{words} words",
-            near,
-            ""
-            if in_range
-            else f"outside {rd.MIN_WORDS} to {rd.MAX_WORDS}, accepted on the last try",
+            f"{words} words (about {length.hours:g} hours: target {length.target}, "
+            f"{length.low} to {length.high})",
+            length.low <= words <= length.last_high,
+            "" if words <= length.high else "over the range, accepted on the last try",
         )
     )
     out.append((f"{len(kept)} beats kept", len(kept) >= bt.MIN_BEATS, ""))
@@ -489,6 +484,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="rebuild review.html from a folder a test run made (no paid call, no --yes)",
     )  # fmt: skip
     parser.add_argument(
+        "--hours", type=float, metavar="H",
+        help="how long the session ran, in hours: the recap's length follows it (default: from "
+        "the file's times, or for a file with none, estimated from the words)",
+    )  # fmt: skip
+    parser.add_argument(
         "--out", metavar="DIR",
         help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
         "--audio the mp3s",
@@ -514,6 +514,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--dm and --names go with --transcript")
     if args.out and not args.transcript:
         parser.error("--out goes with --transcript")
+    if args.hours is not None and not 0.25 <= args.hours <= 24:
+        parser.error("--hours is the session's length in hours, from 0.25 to 24")
+    if args.hours is not None and args.golden:
+        parser.error("--golden takes no --hours")
     if args.review and (args.audio or args.keep or args.price or args.yes):
         parser.error(
             "--review only rebuilds the page: it takes no --audio, --keep, --price or --yes"
@@ -781,6 +785,9 @@ def read_transcript_inputs(
     allowed = [n.text for n in names if not n.secret] + list(transcript.characters)
     secret = [n.text for n in names if n.secret]
     secret_keys = {s.casefold() for s in secret}
+    hours = args.hours
+    if hours is None and not transcript.timed:  # a Craig file: no times, so from the words
+        hours = rd.estimated_hours(sum(len(u.text.split()) for u in transcript.utterances))
     inputs = pl.Inputs(
         lines=tf.lines_of(transcript),
         dm_ids={dm},
@@ -788,6 +795,7 @@ def read_transcript_inputs(
         secret_names=secret,
         previous="",
         day=None,
+        hours=hours,
     )
     return inputs, transcript, names
 
@@ -809,6 +817,7 @@ async def _transcript(
         return 2
     calls, tokens = estimate(inputs)
     price = prices.get(models[0])
+    print(_length_line(args, transcript, inputs))
     print(
         f"{transcript.format} file: {len(inputs.lines)} lines from {len(transcript.speakers)} "
         f"speakers{_tolerated(transcript)}; up to {calls} AI calls; about {tokens} input tokens on "
@@ -855,6 +864,24 @@ async def _transcript(
         save_text(folder, out, printed, names_given=bool(names))
         print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
     return 0 if out.job.state == "ready" else 1
+
+
+def _length_line(args: argparse.Namespace, transcript: tf.Transcript, inputs: pl.Inputs) -> str:
+    """How long the session was and so how long the recap will be (#2013)."""
+    said = readable(inputs.lines)
+    hours = rd.session_hours(said, inputs.hours)
+    length = rd.length_for(hours)
+    how = (
+        "from --hours"
+        if args.hours is not None
+        else "estimated from the words; give --hours to set it"
+        if not transcript.timed
+        else "from the file's times"
+    )
+    return (
+        f"length: about {hours:g} hours ({how}); the recap will be about {length.target} words "
+        f"(between {length.low} and {length.high})."
+    )
 
 
 def _tolerated(transcript: tf.Transcript) -> str:

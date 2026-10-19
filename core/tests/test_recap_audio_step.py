@@ -793,7 +793,7 @@ class WhenTheTextIsReady(DatabaseTest):
         async def load(gid: int, cid: str, job: Any) -> pl.Inputs:
             return pl.Inputs(
                 lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
-                previous="", day=4,
+                previous="", day=4, hours=4.0,
             )  # fmt: skip
 
         async def ok(gid: int, cid: str, job: Any) -> bool:
