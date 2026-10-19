@@ -14,6 +14,10 @@
 // known today, so not guessed here), and a What's new entry. It can only be true with RECAPS_LIVE.
 export const RECAPS_LIVE = false;
 export const RECAP_AUDIO_LIVE = false;
+// RECAP_NAMES_LIVE is the names-to-check part of a recap (#2027, #2030): held until dev1 deploys
+// #2030, because until then no recap has the "Facts to be confirmed" list or the private message. It
+// can only be true with RECAPS_LIVE. It moves with the What's new entry "New names from your recap".
+export const RECAP_NAMES_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
@@ -45,6 +49,17 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   {
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
+  ...(RECAP_NAMES_LIVE
+    ? [
+        {
+          // The narration is named only while narration is on: nothing here may promise it before.
+          text: `If a recap uses a name DMbot doesn't know yet, it keeps the name only when someone said it at the table, and puts right a name it misheard. Your copy of the recap ends with Facts to be confirmed, which lists the new names. ${
+            RECAP_AUDIO_LIVE ? "The narration never reads it, and your" : "Your"
+          } players never see it. DMbot also asks you to check them on the DM screen and in a private message: press 📝 Check new names there. Nothing is added to your game until you say so.`,
+          names: [{ name: "📝 Check new names", file: "ui/names.py" }],
+        },
+      ]
+    : []),
   {
     text: "DMbot tells you on the DM screen when a recap is ready, or when it couldn't write one and why. It also emails you, unless you turn that off. The email has the title (or the reason) and a link to your account page, never the recap itself.",
   },

@@ -11,6 +11,7 @@ import { aiTrainingSentence } from "../src/content/legal";
 import { emailSteps } from "../src/content/help";
 import {
   RECAP_AUDIO_LIVE,
+  RECAP_NAMES_LIVE,
   RECAPS_LIVE,
   emailsIntroTail,
   recapEmailStep,
@@ -112,6 +113,7 @@ describe("the switches and What's new agree", () => {
   it.each([
     ["Choose what recaps do", RECAPS_LIVE],
     ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
+    ["New names from your recap", RECAP_NAMES_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {
@@ -126,5 +128,11 @@ describe("the switches and What's new agree", () => {
 
   it("never has audio live without recaps", () => {
     expect(!RECAP_AUDIO_LIVE || RECAPS_LIVE).toBe(true);
+  });
+
+  it("never has the names to check live without recaps, and says them only while live (#2031)", () => {
+    expect(!RECAP_NAMES_LIVE || RECAPS_LIVE).toBe(true);
+    const step = recapSteps.find((s) => s.text.includes("Facts to be confirmed"));
+    expect(step !== undefined).toBe(RECAP_NAMES_LIVE);
   });
 });
