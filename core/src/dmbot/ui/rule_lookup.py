@@ -566,6 +566,9 @@ async def _is_a_dm(interaction: discord.Interaction) -> bool:
     return any(may_look_up(c, interaction.user.id) for c in everyone)
 
 
+choice_value = _choice_value  # (for the sidebar's "What I looked at", #1957)
+
+
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:
     """The ruleset order for the list of names: the playing campaign's (nothing secret).
     Discord waits 3 seconds for the list, so the database gets one: slower, or broken,
