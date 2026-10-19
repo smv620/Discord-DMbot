@@ -84,6 +84,14 @@ REFUSED = (
 )
 
 
+# The audio file store checks the ids it is given (a positive server number and a plain campaign
+# id) because it guards the live bot's folders. A test run has no real campaign, so it uses these
+# fixed placeholders, which are only ever used inside its temporary cache folder (#2062).
+PLACEHOLDER_GUILD = 1
+PLACEHOLDER_CAMPAIGN = "0" * 32
+MESSAGE_MAX = 100  # characters of a ValueError's message in the report
+
+
 @dataclass(slots=True)
 class Counting:
     """Wraps a client to count the calls and tokens it spends (the worker only counts calls)."""
@@ -189,7 +197,7 @@ async def run_text(
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
         before = store.job
-        await worker.run(0, "test-run", session_at)
+        await worker.run(PLACEHOLDER_GUILD, PLACEHOLDER_CAMPAIGN, session_at)
         job = store.job
         if job.finished:
             break
@@ -419,8 +427,8 @@ async def run_audio(
     provider: object,
     files: object,
     *,
-    guild_id: int = 0,
-    campaign_id: str = "test-run",
+    guild_id: int = PLACEHOLDER_GUILD,
+    campaign_id: str = PLACEHOLDER_CAMPAIGN,
     runner: Runner | None = None,
     voice_tags: bool = True,
     names: Sequence[SpokenName] = (),
@@ -696,12 +704,17 @@ def save_text(folder: Path, out: Outcome, printed: Sequence[str], *, names_given
 
 def audio_failure(exc: Exception) -> list[str]:
     """The lines for an audio step that failed (#2042). A voice-company failure says its kind,
-    the HTTP status and which call, then what to check; anything else only its type. Never the
-    message, which could hold text that was sent."""
+    the HTTP status and which call, then what to check. A `ValueError` also says its message:
+    the audio file store's are DMbot's own fixed words ("not a campaign"; #2062). Anything else
+    only its type, never its message, which could hold text that was sent."""
     if isinstance(exc, ProviderError):
         return [
             f"audio: failed ({exc.describe()}); the text above is unchanged",
             f"  to check: {check_line(exc)}",
+        ]
+    if isinstance(exc, ValueError):
+        return [
+            f"audio: failed (ValueError: {str(exc)[:MESSAGE_MAX]}); the text above is unchanged"
         ]
     return [f"audio: failed ({type(exc).__name__}); the text above is unchanged"]
 
