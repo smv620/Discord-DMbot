@@ -57,6 +57,7 @@ KIND_WORDS = {
     "poison": "poison",
     "trap": "trap",
     "curse": "curse",
+    "disease": "disease",
 }
 
 

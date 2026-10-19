@@ -57,8 +57,17 @@ describe("the recap pages", () => {
   });
 
   it("the review page, with the audio and the names part open, has nothing serious or critical", async () => {
-    render(<Recaps api={mockApi("table")} path={`/account/recaps/${REF}`} />);
+    const api = mockApi("table");
+    const read = api.recap!.bind(api);
+    api.recap = async (ref) => ({
+      ...(await read(ref)),
+      summary: "《Tense》 The ferry crossed. ((pause)) Nobody spoke.",
+      audio: { state: "ready", error: "", current: true, canAskAgain: true },
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
     await screen.findByText(nameWords.heading);
+    // The voice and music player (#2017) is part of what axe reads here.
+    await screen.findByRole("switch", { name: "Voice" });
     const details = document.querySelector("details.names") as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));

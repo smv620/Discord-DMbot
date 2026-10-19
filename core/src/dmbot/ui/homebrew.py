@@ -162,9 +162,17 @@ PICK_A_KIND = (
 )
 
 
+UNDO_PREFIX = "↩️ Put back "
+# A button on a phone shows about PHONE_LABEL_MAX (25) characters; this one may be about 25%
+# wider, NAME_LABEL_MAX (32), so "Amulet of Tenacity" is whole where the old 12-character cut left
+# "Amulet of T…" (#1965). Discord's own limit (80) is far above it. A longer name is cut with an
+# ellipsis: the shortest form that still says which entry.
+UNDO_NAME_MAX = logic.NAME_LABEL_MAX - len(UNDO_PREFIX)
+
+
 def _undo_label(gone: Homebrew) -> str:
     """Says which entry Undo puts back, since the note naming it goes with the next redraw."""
-    return "↩️ Put back " + logic.shorten(gone.name, 12)
+    return UNDO_PREFIX + logic.shorten(gone.name, UNDO_NAME_MAX)
 
 
 def _md(text: str) -> str:

@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps, ruleKindDmSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -56,7 +56,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -250,6 +250,20 @@ describe("Help: the website's read-only pages (#1588)", () => {
     }
   });
 
+  it("holds the 📇 Names button step with its held What's new entry, and flips them together (#2002)", () => {
+    expect(held.map((h) => h.title).includes("A 📇 Names button")).toBe(!NAMES_BUTTON_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("📇 Names")).toBe(NAMES_BUTTON_LIVE);
+    const words = namesButtonSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("search the names and fix one");
+    expect(words).toContain("Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there.");
+    expect(words).toContain("/dmbot names");
+    expect(words).not.toMatch(/entit|knowledge graph/i);
+    // The place named matches the channel's own switch: never "the DMbot channel" before it is live.
+    expect(words.includes("DMbot channel")).toBe(DM_BOT_CHANNEL_LIVE);
+    for (const step of namesButtonSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+  });
+
   it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {
     const heldTitles = held.map((h) => h.title);
     for (const title of ["Story threads you keep", "Keep track of promises made at the table"]) {
@@ -364,6 +378,17 @@ describe("Help: the website's read-only pages (#1588)", () => {
     for (const step of [...initiativeStyleSteps, ...initiativeStyleDmSteps]) {
       expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
     }
+  });
+
+  it("holds the sidebar sources step with its held What's new entry (#1958)", () => {
+    expect(held.map((h) => h.title).includes("See what DMbot looked at")).toBe(!SIDEBAR_SOURCES_LIVE);
+    const shown = quickAnswers.map((x) => x.text).join(" ");
+    expect(shown.includes("Where did that come from?")).toBe(SIDEBAR_SOURCES_LIVE);
+    for (const step of sidebarSourceSteps) {
+      expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+      expect(step.text).toContain("📖 What I looked at");
+    }
+    expect(held.find((h) => h.title === "See what DMbot looked at")?.reason).toContain("#1957");
   });
 
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
