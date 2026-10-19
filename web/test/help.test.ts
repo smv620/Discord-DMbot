@@ -256,12 +256,12 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("📇 Names")).toBe(NAMES_BUTTON_LIVE);
     const words = namesButtonSteps.map((x) => x.text).join(" ");
     expect(words).toContain("search the names and fix one");
-    expect(words).toContain("If you missed a check after a session, it waits there.");
+    expect(words).toContain("Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there.");
     expect(words).toContain("/dmbot names");
     expect(words).not.toMatch(/entit|knowledge graph/i);
     // The place named matches the channel's own switch: never "the DMbot channel" before it is live.
     expect(words.includes("DMbot channel")).toBe(DM_BOT_CHANNEL_LIVE);
-    for (const step of namesButtonSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(4);
+    for (const step of namesButtonSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
   });
 
   it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {

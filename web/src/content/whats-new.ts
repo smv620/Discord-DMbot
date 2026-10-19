@@ -192,7 +192,7 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "A 📇 Names button",
-    what: "Press 📇 Names to see, search and fix the names DMbot remembers, and to catch up on any check you missed. Only game masters see it.",
+    what: "Press 📇 Names to see, search and fix the names DMbot remembers. Any after-session check you haven't done yet waits there too. Only game masters see it.",
     reason: "Merged (#1987); held until dev1 deploys it.",
   },
   {
