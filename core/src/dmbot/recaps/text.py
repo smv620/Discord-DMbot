@@ -83,27 +83,38 @@ def is_known_name(name: str, allowed_names: Collection[str]) -> bool:
     return bool(mine) and any(mine <= set(words(a)) for a in allowed_names)
 
 
-def names_a_secret(
-    text: str, secret_names: Collection[str], allowed_names: Collection[str]
-) -> bool:
-    """Whether the text names anything the DM keeps secret, in any form: the whole name, its
-    possessive or plural ("Vex's", "the Vexes"), a word of it longer than three letters (except
-    one the confirmed names also use), a spelling with hyphens, and a name no word pattern can
-    read (a name in symbols), which is looked for as written. Used on the draft, on the DM's
-    edit, and again when the DM posts, with the secret names read fresh each time."""
+WHOLE_NAME, WORD = "whole-name", "word"  # which rule found a secret name (never the name itself)
+
+
+def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collection[str]) -> str:
+    """Which rule finds a secret name in the text, or "" for none: `whole-name` (the name, its
+    possessive or plural: "Vex's", "the Vexes"; or a name no word pattern can read, in symbols,
+    looked for as written) or `word` (one word of it, three letters or more, except one the
+    confirmed names also use). Hyphen spellings read as the words they join. The rule is a fixed
+    word so a test tool can say which one fired without saying what was matched."""
     padded = f" {' '.join(words(text))} "
     folded = text.casefold()
     open_words = {w for n in allowed_names for w in words(n)}
+    found = ""
     for secret in secret_names:
         tokens = words(secret)
         if not tokens:  # nothing a word regex can read: look for it as written
             if secret.strip() and secret.strip().casefold() in folded:
-                return True
+                return WHOLE_NAME
             continue
         plain = " ".join(tokens)
         if any(f" {plain}{end} " in padded for end in ("", "s", "es")):
-            return True
+            return WHOLE_NAME
         for token in tokens:
             if len(token) >= 3 and token not in open_words | SMALL_WORDS and f" {token} " in padded:
-                return True
-    return False
+                found = WORD
+    return found
+
+
+def names_a_secret(
+    text: str, secret_names: Collection[str], allowed_names: Collection[str]
+) -> bool:
+    """Whether the text names anything the DM keeps secret, in any form (`secret_rule`). Used on
+    the draft, on the DM's edit, and again when the DM posts, with the secret names read fresh
+    each time."""
+    return bool(secret_rule(text, secret_names, allowed_names))

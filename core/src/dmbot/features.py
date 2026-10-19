@@ -138,6 +138,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",
     "log_format": "how logs look",
+    "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
