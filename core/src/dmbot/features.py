@@ -46,7 +46,7 @@ FEATURES: tuple[Feature, ...] = (
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
         lambda s: s.recap_audio_on,
-        ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id"),
+        ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id", "recap_voice_tags"),
     ),
     Feature(
         "sidebar",
