@@ -3719,11 +3719,13 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
 
   The DM's copy of the recap ends with a **Facts to be confirmed** footer listing them. The narration
   stops at the end of the story: it never reads the housekeeping or the footer. The footer is
-  DM-screen content, so it is never posted to the table. The same list goes to the DM screen at once
-  as "📝 N names from the recap to check", with the check's button. A DM who isn't online sees it
-  there when they next open Discord, and again when the next session starts if it is still
-  unanswered. DMbot doesn't watch who is online: that would need Discord's presence permission, and
-  the DM-screen channel already waits for them.
+  DM-screen content, so it is never posted to the table. As soon as the recap is ready, the same list
+  goes to the DM in two places: the DM screen, as "📝 N names from the recap to check" with the
+  check's button, and a private Discord message to the DM with the same button (owner, 2026-10-19).
+  A DM who isn't online sees both the next time they open Discord. If the DM's private messages are
+  closed, the DM-screen note is enough and nothing fails. If the list is still unanswered when the
+  next session starts, the DM screen reminds them once. DMbot doesn't watch who is online, so it
+  needs no presence permission.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
