@@ -212,6 +212,9 @@ class Reply:
     model: str = ""  # the model that answered (after any fallback)
     cache_read_tokens: int = 0  # input tokens read from the cache
     cache_write_tokens: int = 0  # input tokens written to the cache (charged a little extra)
+    refused: bool = (
+        False  # the service declined (stop reason "refusal"): the text is not the answer
+    )
 
 
 def _model_unavailable(status: int, body_text: str) -> bool:
@@ -516,6 +519,7 @@ class AnthropicClient:
             model=model,
             cache_read_tokens=count("cache_read_input_tokens"),
             cache_write_tokens=count("cache_creation_input_tokens"),
+            refused=data.get("stop_reason") == "refusal",
         )
         if self._watch is not None:
             # `input_tokens` leaves out what the cache wrote or read. Count a write in full and

@@ -81,6 +81,25 @@ class Inputs:
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
 
 
+FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
+
+
+def more_room(tokens: int, attempt: int) -> int:
+    """A retry gets half as much room again for each try, so a draft that was cut off at the limit
+    (structured outputs cannot promise the shape of a cut answer) has room to finish (#2039)."""
+    return tokens + tokens * attempt // 2
+
+
+def unusable(reply: Reply) -> str:
+    """Why a structured answer cannot be read at all, in the words of the retry; "" if it can.
+    The shape holds only for an answer that finished and was not declined."""
+    if reply.refused:
+        return "the answer was declined: write it again from the beats"
+    if reply.cut:
+        return "the answer was cut off: write it again, shorter"
+    return ""
+
+
 class Client(Protocol):
     """The AI client a recap job uses: like the extractor's, plus `schema` for structured
     outputs (#2039): the answer text is then JSON of that shape."""
@@ -261,7 +280,7 @@ class RecapWorker:
         text: str,
         max_tokens: int,
         schema: dict[str, Any] | None = None,
-    ) -> str | None:
+    ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
         await self._store.update(gid, cid, job.session_at, calls=job.calls + 1, spent=job.spent + 1)
@@ -285,7 +304,7 @@ class RecapWorker:
                 error=type(exc).__name__,
             )
             return None
-        return reply.text
+        return reply
 
     def _client(self, job: Job) -> Client:
         return self._fast if job.attempt == 0 else self._careful
@@ -322,7 +341,7 @@ class RecapWorker:
         sent = {s.user_id for s in said}
         if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
-        parsed = bt.parse(raw)
+        parsed = bt.parse(raw.text)
         if parsed is None:
             return await self._retry_or_fail(gid, cid, job, ["answer in the JSON form asked for"])
         beats = [*(job.beats or []), *parsed]
@@ -421,14 +440,16 @@ class RecapWorker:
             self._client(job),
             rd.prose_system(inputs.setting, length),
             message,
-            length.max_tokens,
+            more_room(length.max_tokens, job.attempt),
             schema=rd.prose_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        prose = rd.parse_prose(raw)
+        if why := unusable(raw):
+            return await self._retry_or_fail(gid, cid, job, [why], last_attempt=PROSE_LAST_ATTEMPT)
+        prose = rd.parse_prose(raw.text)
         if prose is None:
             return await self._retry_or_fail(
                 gid,
@@ -568,14 +589,16 @@ class RecapWorker:
             self._client(job),
             rd.housekeeping_system(),
             message,
-            900,
+            more_room(FINISH_TOKENS, job.attempt),
             schema=rd.finish_schema(),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        parsed = rd.parse_finish(raw)
+        if why := unusable(raw):
+            return await self._retry_or_fail(gid, cid, job, [why])
+        parsed = rd.parse_finish(raw.text)
         if parsed is None:
             return await self._retry_or_fail(
                 gid, cid, job, ["answer with the title and housekeeping JSON asked for"]

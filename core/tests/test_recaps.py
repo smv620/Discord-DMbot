@@ -217,7 +217,41 @@ class TheProse(unittest.TestCase):
         self.assertTrue(prose.summary.startswith("《Tense》"))
         self.assertEqual(len(prose.music), 2)
         self.assertEqual(len(CUE.findall(prose.summary)), 2)  # a cue for each section
-        self.assertIn("《Uneasy》", prose.summary)  # the mood word, written as a cue
+        self.assertIn("《Ominous》", prose.summary)  # the mood word, written as a cue
+
+    def test_a_stray_cue_in_the_text_is_no_section_and_an_odd_mood_is_refused(self) -> None:
+        raw = '{"sections": [{"mood": "Tense", "text": "A 《calm》 night.", "music": "m"}]}'
+        prose = rd.parse_prose(raw)
+        assert prose is not None
+        self.assertEqual(prose.summary, "《Tense》 A calm night.")
+        self.assertEqual(len(CUE.findall(prose.summary)), len(prose.music))
+        odd = '{"sections": [{"mood": "tense, then calm", "text": "x", "music": "m"}]}'
+        self.assertIsNone(rd.parse_prose(odd))
+
+    def test_every_mood_the_voice_knows_is_a_mood_the_answer_may_use(self) -> None:
+        from dmbot.recaps.audio import script
+        from dmbot.recaps.audio.script import EMOTION_VOICE
+
+        for mood in EMOTION_VOICE:
+            raw = json.dumps({"sections": [{"mood": mood, "text": "The gate.", "music": "m"}]})
+            prose = rd.parse_prose(raw)
+            assert prose is not None, mood
+            built = script.build("T", None, prose.summary)
+            self.assertEqual(built.emotions[0].tag, EMOTION_VOICE[mood], mood)
+
+    def test_an_empty_draft_shows_no_sections_and_extra_sections_are_merged(self) -> None:
+        self.assertEqual(rd.prose_json(rd.Prose("no cue", ())), '{"sections": []}')
+        many = {
+            "sections": [{"mood": "tense", "text": f"Part {n}.", "music": ""} for n in range(8)]
+        }
+        prose = rd.parse_prose(json.dumps(many))
+        assert prose is not None
+        fixed = rd.fix_prose(prose, 5)
+        self.assertEqual(len(CUE.findall(fixed.summary)), 5)
+        self.assertEqual(len(fixed.music), 5)
+        self.assertTrue(all("tense" in m for m in fixed.music))  # empty prompts made from the mood
+        for n in range(8):
+            self.assertIn(f"Part {n}.", fixed.summary)
 
     def test_an_answer_that_is_not_the_asked_for_json_is_none(self) -> None:
         for bad in (

@@ -213,6 +213,8 @@ def estimated_hours(spoken_words: int) -> float:
 
 
 def _moods() -> list[str]:
+    # Imported here: the audio package reads this module's text helpers, so a top-level import
+    # would be a cycle.
     from dmbot.recaps.audio.script import EMOTION_VOICE
 
     return list(EMOTION_VOICE)
@@ -348,7 +350,7 @@ def finish_retry(problems: Sequence[str], rejected: tuple[str, list[str]] | None
     title, bullets = rejected
     items = []
     for bullet in bullets:
-        match = re.match(r"^\[(\d{1,3})\]\s*(.*)$", bullet)
+        match = re.match(r"^\[(\d{1,3})\]\s*(.*)$", bullet)  # (parse_finish always writes it so)
         items.append(
             {"beat": int(match.group(1)), "text": match.group(2)}
             if match
@@ -405,7 +407,7 @@ def fix_prose(prose: Prose, sections_max: int = SECTIONS_MAX) -> Prose:
             summary = summary[: match.start()] + summary[match.end() :]
         summary = re.sub(r"[ \t]{2,}", " ", summary)
     sections = min(len(cues), sections_max)
-    music = [m for m in prose.music]
+    music = list(prose.music)
     if not music and sections:
         # No music prompts at all (recap test 4): one for each section from its mood word. A
         # prompt only describes a sound, so this invents no story.
@@ -446,7 +448,13 @@ def parse_prose(raw: str) -> Prose | None:
             or not item["text"].strip()
         ):
             return None
-        parts.append(f"《{item['mood'].strip().capitalize()}》 {item['text'].strip()}")
+        mood = item["mood"].strip().lower()
+        if mood not in _moods():  # the schema promises this; a cut or odd answer might not
+            return None
+        text = item["text"].replace("《", "").replace("》", "").strip()  # a stray cue is no section
+        if not text:
+            return None
+        parts.append(f"《{mood.capitalize()}》 {text}")
         music.append(" ".join(item["music"].split()))
     return Prose("\n\n".join(parts), tuple(music))
 

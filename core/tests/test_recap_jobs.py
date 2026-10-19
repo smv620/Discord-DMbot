@@ -409,6 +409,37 @@ class Working(Base):
         self.assertEqual(job.title, "The Silver Lock")
         self.assertEqual(job.housekeeping, ("Mira drew her blade.",))
 
+    async def test_a_cut_off_answer_is_retried_with_more_room(self) -> None:
+        """#2039: a structured answer that hit the limit is not valid JSON; the retry says so and
+        has half as much room again."""
+        from dmbot.ai import Reply
+
+        cut = Reply(fx.PROSE_ANSWER[:200], True, 10, 10, "m")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, cut, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("cut off", self.careful.sent[0])
+        self.assertGreater(self.careful.tokens[0], self.fast.tokens[1])
+        self.assertEqual(self.careful.tokens[0], self.fast.tokens[1] * 3 // 2)
+
+    async def test_a_declined_answer_is_asked_for_again_and_the_title_too(self) -> None:
+        from dmbot.ai import Reply
+
+        declined = Reply("", False, 10, 10, "m", refused=True)
+        cut_title = Reply(fx.FINISH_ANSWER[:30], True, 10, 10, "m")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, declined, fx.GRADE_ANSWER, cut_title),
+            fx.Canned(fx.PROSE_ANSWER, fx.FINISH_ANSWER),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("declined", self.careful.sent[0])
+        self.assertIn("cut off", self.careful.sent[1])
+        self.assertEqual(self.careful.tokens[1], 900 * 3 // 2)
+
     async def test_an_answer_that_is_not_the_json_is_retried_with_the_form(self) -> None:
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, "Sorry, I cannot.", fx.GRADE_ANSWER, fx.FINISH_ANSWER),

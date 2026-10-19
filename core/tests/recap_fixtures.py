@@ -76,7 +76,7 @@ _PARAS = [
     "above, a loose shutter knocked against its frame, and each knock made the two of them "
     "stop and listen before going on. Nothing answered. No voice called out. The silence "
     "seemed to be waiting for them to make a mistake.",
-    "《Uneasy》 At the far end they found a heavy door bound with a silver lock, bright and "
+    "《Ominous》 At the far end they found a heavy door bound with a silver lock, bright and "
     "clean in a place where everything else had gone grey. Mira studied it for a long moment, "
     "certain that it did not belong there, and said nothing of her doubts. Oskar knelt, set "
     "his torch against the wall and worked at the lock with patient fingers while the others "
@@ -125,8 +125,9 @@ WEAK_GRADE = '{"in_world":5,"no_quotes":5,"tension":2,"ending":4,"cues":4}'
 class Canned:
     """An AI that returns the answers it was given, in order, and records what it was sent."""
 
-    def __init__(self, *answers: str | Exception) -> None:
+    def __init__(self, *answers: str | Exception | Reply) -> None:
         self.answers = list(answers)
+        self.tokens: list[int] = []  # the room each call was given
         self.sent: list[str] = []
         self.systems: list[str] = []
         self.schemas: list[
@@ -144,9 +145,12 @@ class Canned:
         self.sent.append(text)
         self.systems.append(system)
         self.schemas.append(schema)
+        self.tokens.append(max_tokens)
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
+        if isinstance(answer, Reply):
+            return answer
         return Reply(answer, False, 10, 10, "m")
 
 
