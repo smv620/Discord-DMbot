@@ -25,6 +25,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import { foldCampaigns } from "./campaign-fold";
 import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
 import { MyQuestions } from "./MyQuestions";
@@ -302,15 +303,26 @@ export default function Account({
 function SignedOut({ notice }: { notice: string | null }) {
   const { api } = useShared();
   const signIn = api.signInUrl();
+  // Sign-in comes first (#2003): on a phone this page used to open on the plans, and the plain
+  // Sign in button sat below all of them, so a returning DM thought they could only buy.
   return (
     <div class="stack">
-      {notice && (
-        <p class="warn" role="alert">
-          {notice}
-        </p>
-      )}
-      <p class="lead">{text.signInLead}</p>
-      <div class="panel">
+      <section class="panel" aria-labelledby="signed-out-heading">
+        {notice && (
+          <p class="warn" role="alert">
+            {notice}
+          </p>
+        )}
+        <h2 id="signed-out-heading">{text.signedOutHeading}</h2>
+        <p>{text.signedOutLead}</p>
+        <a class="button" href={signIn}>
+          {text.signIn}
+        </a>
+        <p class="muted small">{text.signInNote}</p>
+        <EmailSignIn />
+      </section>
+      <section class="panel" aria-labelledby="new-heading">
+        <h2 id="new-heading">{text.newHeading}</h2>
         <a class="button" href={signIn}>
           {text.startTryItFree}
         </a>
@@ -322,15 +334,7 @@ function SignedOut({ notice }: { notice: string | null }) {
             </a>
           )}
         />
-      </div>
-      <div class="panel">
-        <p>{text.haveAccount}</p>
-        <a class="button secondary" href={signIn}>
-          {text.signIn}
-        </a>
-        <p class="muted small">{text.signInNote}</p>
-      </div>
-      <EmailSignIn />
+      </section>
     </div>
   );
 }
@@ -365,8 +369,8 @@ function EmailSignIn() {
     }
   };
   return (
-    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
-      <h2 id="email-heading">{text.emailHeading}</h2>
+    <form class="email-sign-in" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+      <h3 id="email-heading">{text.emailHeading}</h3>
       <label for="email-address">{text.emailLabel}</label>
       <input
         id="email-address"
@@ -836,9 +840,27 @@ function OfferRow({
 function CampaignsSection({ me }: { me: Me }) {
   const { refresh } = useShared();
   const [done, setDone] = useState<string | null>(null);
+  // Long lists fold (#1991): the newest few, and the rest behind one button. Not an inner scroll bar,
+  // which is hard on phones and for keyboard and screen-reader users.
+  const [all, setAll] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const offeredIds = new Set(me.offers.outgoing.map((o) => o.campaignId));
+  const { first, older } = foldCampaigns(me.campaigns, offeredIds);
+  // After a hand-over the older ones can all be gone while the list is open: the button goes with
+  // them, so the list closes too (and a later fold starts closed).
+  const open = all && older.length > 0;
+  useEffect(() => {
+    if (all && older.length === 0) {
+      setAll(false);
+      heading.current?.focus();
+    }
+  }, [all, older.length]);
+  const shown = open ? [...first, ...older] : first;
   return (
     <section aria-labelledby="campaigns-heading" class="panel" id="campaigns">
-      <h2 id="campaigns-heading">{text.campaignsHeading}</h2>
+      <h2 id="campaigns-heading" ref={heading} tabIndex={-1}>
+        {text.campaignsHeading}
+      </h2>
       {done && (
         <p class="ok" role="status">
           {done}
@@ -847,8 +869,8 @@ function CampaignsSection({ me }: { me: Me }) {
       {me.campaigns.length === 0 ? (
         <p>{text.noCampaigns}</p>
       ) : (
-        <ul class="campaigns">
-          {me.campaigns.map((c) => (
+        <ul class="campaigns" id="campaigns-list">
+          {shown.map((c) => (
             <CampaignRow
               key={c.id}
               campaign={c}
@@ -864,6 +886,21 @@ function CampaignsSection({ me }: { me: Me }) {
             />
           ))}
         </ul>
+      )}
+      {older.length > 0 && (
+        <button
+          type="button"
+          class="button secondary"
+          aria-expanded={open}
+          aria-controls="campaigns-list"
+          onClick={() => {
+            setAll(!all);
+            // Folding the list away would leave focus on a button that has moved: go back to the heading.
+            if (all) heading.current?.focus();
+          }}
+        >
+          {open ? text.showFewer : text.showOlder(older.length)}
+        </button>
       )}
       {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
     </section>
