@@ -24,6 +24,7 @@ from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -105,6 +106,60 @@ class TheDmsPage(Base):
         self.assertIn("《Tense》", one["summary"])  # and kept for the edit box
         self.assertTrue(one["canPost"] and one["canEdit"] and one["canTryAgain"])
         self.assertEqual(one["triesLeft"], 2)
+
+    async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
+        """(#2022) The recap stays; its page says the transcript went, and when, and how long the
+        table keeps them. Read through the transcripts page's own door, scoped to the recap's
+        server and its own campaign: a second campaign Alice also DMs, with a session at the same
+        time, is not marked by the first one's deletion."""
+        transcripts = TranscriptStore(self.db)
+        three = await self.campaigns.create(THURSDAY.id, "Three", ALICE.id)
+        await self.store.enqueue(THURSDAY.id, three.id, 100, dm_user_id=ALICE.id)
+        await self.store.update(
+            THURSDAY.id, three.id, 100, state="ready", title="The Quiet Door",
+            summary=fx.SUMMARY, original=fx.SUMMARY, housekeeping=[], music=["m"],
+            speakers=[fx.ALICE],
+        )  # fmt: skip
+        # Each campaign's session started at 100, the time its recap carries; "Two" has one too.
+        sessions_of = {}
+        for campaign in (self.one, self.two, three):
+            sid = await transcripts.open_session(THURSDAY.id, campaign.id, 100)
+            await transcripts.end_session(THURSDAY.id, sid, 200)
+            sessions_of[campaign.id] = sid
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET transcript_keep_days = 90 WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
+
+        def marks(listed: list[dict[str, Any]]) -> dict[str, Any]:
+            return {r["campaign"]: (r["transcriptsDeletedAt"], r["keepDays"]) for r in listed}
+
+        # Nothing deleted: every recap says null, with no limit (the limit is only given with a
+        # deletion), though the table keeps transcripts for 90 days.
+        self.assertEqual(
+            marks(await list_recaps(self.web, self.session)),
+            {"One": (None, None), "Three": (None, None)},
+        )
+        # Another DM's campaign going first changes nothing here, and a deletion in "One" does
+        # not mark "Three", which has a session at the same time.
+        await transcripts.delete_session_transcript(
+            THURSDAY.id, self.two.id, sessions_of[self.two.id], 10**6, 400
+        )
+        await transcripts.delete_session_transcript(
+            THURSDAY.id, self.one.id, sessions_of[self.one.id], 10**6, 300
+        )
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(marks(listed), {"One": (300, 90), "Three": (None, None)})
+        read = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual((read["transcriptsDeletedAt"], read["keepDays"]), (300, 90))
+        self.assertEqual(read["title"], "The Silver Lock")  # the recap itself stays
+        # A recap with no session at its time (none was ever saved) is not marked.
+        await self.store.enqueue(THURSDAY.id, self.one.id, 500, dm_user_id=ALICE.id)
+        loose = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
+        )
+        self.assertIsNone(loose["transcriptsDeletedAt"])
 
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")

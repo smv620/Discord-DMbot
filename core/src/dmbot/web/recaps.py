@@ -86,11 +86,46 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
         "audio": _audio_view(row, ready=status in ("draft", "posting") and state == "ready"),
+        # When the session's transcript was deleted by the campaign's "Keep transcripts for"
+        # setting (Unix seconds, as the transcripts page says it), else null; the recap stays. And
+        # how many days the table keeps transcripts, for the page's words (#2022).
+        "transcriptsDeletedAt": row.get("transcripts_deleted_at"),
+        "keepDays": row.get("keep_days"),
     }
 
 
 async def _scoped(conn: Conn, guild_id: int) -> None:
     await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild_id),))
+
+
+async def _with_transcript_marks(
+    conn: Conn, guild_id: int, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The rows, each with whether its session's transcript was deleted (#2022). The website's
+    role has no grant on the transcript tables, so this asks the transcripts page's own door
+    (`dmbot_web_transcript_sessions`), once for each campaign, in the server the caller has already
+    set for the transaction. A recap is matched to its session by its start time, as the bot does
+    (`recaps/inputs.py`). A campaign the door does not know adds nothing."""
+    marks: dict[str, tuple[dict[int, int], int | None]] = {}
+    for campaign_id in {r["campaign_id"] for r in rows}:
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
+        )
+        found = (await cur.fetchone() or {}).get("found") or {}
+        # Keyed by start time: unique for a campaign (transcript_sessions' own key).
+        deleted = {
+            int(s["startedAt"]): int(s["transcriptsDeletedAt"])
+            for s in found.get("sessions", [])
+            if s.get("transcriptsDeletedAt") is not None
+        }
+        days = found.get("keepDays")
+        marks[campaign_id] = (deleted, None if days is None else int(days))
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        deleted, days = marks[r["campaign_id"]]
+        at = deleted.get(int(r["session_at"]))
+        out.append({**r, "transcripts_deleted_at": at, "keep_days": days if at else None})
+    return out
 
 
 def _guild_of(session: Session, guild_id: int) -> int:
@@ -110,7 +145,8 @@ async def list_recaps(db: Database, session: Session) -> list[dict[str, Any]]:
                 " ORDER BY r.session_at DESC LIMIT %s",
                 (int(guild.id), LIST_LIMIT),
             )
-            out += [{**_view(r), "serverName": guild.name} for r in await cur.fetchall()]
+            rows = await _with_transcript_marks(conn, int(guild.id), await cur.fetchall())
+            out += [{**_view(r), "serverName": guild.name} for r in rows]
     out.sort(key=lambda v: v["sessionAt"], reverse=True)
     return out[:LIST_LIMIT]
 
@@ -150,7 +186,11 @@ async def month_usage(
     return out
 
 
-async def _one(conn: Conn, ref: str, session: Session) -> tuple[int, str, int, dict[str, Any]]:
+async def _one(
+    conn: Conn, ref: str, session: Session, *, marks: bool = True
+) -> tuple[int, str, int, dict[str, Any]]:
+    """The recap's row, with its session's transcript marks unless `marks` is off: the checks that
+    only need its state before a write skip the extra door call (#2022)."""
     parsed = parse_ref(ref)
     if parsed is None:
         raise RecapError("not_found")
@@ -165,6 +205,8 @@ async def _one(conn: Conn, ref: str, session: Session) -> tuple[int, str, int, d
     row = await cur.fetchone()
     if row is None:
         raise RecapError("not_found")
+    if marks:
+        [row] = await _with_transcript_marks(conn, guild_id, [row])
     return guild_id, campaign_id, session_at, row
 
 
@@ -186,7 +228,7 @@ async def edit_recap(
     if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         cur = await conn.execute(
             "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",
@@ -201,7 +243,7 @@ async def edit_recap(
 async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
     """`post` (the bot sends it), `drop` (Don't post) or `again` (Try again, at most twice)."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
         args: tuple[Any, ...] = (gid, cid, at)
         if action == "post":
@@ -236,7 +278,7 @@ async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any
     """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
     the campaign, a recap that is ready and not yet decided, and once every 10 minutes."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session)
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         cur = await conn.execute("SELECT dmbot_recap_audio_again(%s, %s, %s) AS r", (gid, cid, at))
         found = await cur.fetchone()
         outcome = found["r"] if found else "not_allowed"
