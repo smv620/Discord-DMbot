@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable, Sequence
@@ -35,6 +36,7 @@ from dmbot.devtools.story_measure import __main__ as story_measure
 from dmbot.devtools.story_measure.golden import GoldenError as StoryGoldenError
 from dmbot.devtools.story_measure.golden import load_golden as load_story
 
+PAUSE_S = 20.0  # between runs
 MAX_USD = 5.0  # the whole comparison, every tool and both models
 TOOLS = ("story", "recap", "sidebar")
 
@@ -119,6 +121,7 @@ async def run_sidebar(client: Metered, model: str, budget: float = MAX_USD) -> R
         quality=f"{done.total - done.failed} of {done.total} questions kept to the rules",
         passed=done.total - done.failed,
         failed=done.failed,
+        note="; ".join(f"AI error: {e}" for e in done.errors),  # the service's own plain words
     )
 
 
@@ -135,10 +138,14 @@ async def compare(
     make_client: MakeClient,
     *,
     max_usd: float = MAX_USD,
+    pause: float = 0.0,
 ) -> list[Table]:
-    """Each tool on each model, in order. Stops starting new runs once `max_usd` is spent."""
+    """Each tool on each model, in order. Stops starting new runs once `max_usd` is spent.
+    `pause`: seconds to wait between runs, so the service's per-minute limits are not what is
+    measured (a run right after another may be told to wait)."""
     tables: list[Table] = []
     spent = 0.0
+    first = True
     for tool in tools:
         table = Table(tool)
         tables.append(table)
@@ -146,12 +153,18 @@ async def compare(
             if spent >= max_usd:
                 table.rows.append(Row(model, note=f"not run: the ${max_usd:g} cap was reached"))
                 continue
+            if pause and not first:
+                await asyncio.sleep(pause)
+            first = False
             raw, close = await make_client(model)
             metered = Metered(raw)
             try:
                 row = await RUNNERS[tool](metered, model, max_usd - spent)
             except CAUGHT as exc:
-                row = Row(model, note=f"stopped: {type(exc).__name__}")
+                # (an AI error is written in plain words for people and holds no key; the others
+                # are named by type only, as a file path could be in their text)
+                said = f": {exc}" if isinstance(exc, AIError) else ""
+                row = Row(model, note=f"stopped: {type(exc).__name__}{said}")
             finally:
                 await close()
             row.tokens_in, row.tokens_out = metered.input_tokens, metered.output_tokens
@@ -189,6 +202,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--yes", action="store_true", help="make the paid calls")
     parser.add_argument(
+        "--pause",
+        type=float,
+        default=PAUSE_S,
+        help=f"seconds to wait between runs (default {PAUSE_S:g}), against the per-minute limits",
+    )
+    parser.add_argument(
         "--max-usd",
         type=float,
         default=MAX_USD,
@@ -199,6 +218,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    # The client logs why a call failed (the status and the service's reason; never the key), so
+    # a run that stops says why. Warnings and errors only.
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     try:
         base = parse_ai_models(lambda name: os.environ.get(name, ""))[0]
     except ConfigError as exc:
@@ -226,7 +248,7 @@ async def main_async(args: argparse.Namespace) -> int:
         ai = AnthropicClient(key, AIModels.same(model))  # one model: no quiet fall back
         return ai.tier(AIModelTier.FAST), ai.close
 
-    tables = await compare(models, tools, make_client, max_usd=args.max_usd)
+    tables = await compare(models, tools, make_client, max_usd=args.max_usd, pause=args.pause)
     print("\n".join(render(tables)))
     return 0
 

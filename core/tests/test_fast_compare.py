@@ -189,6 +189,43 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}, clear=False):
             self.assertEqual(await fast_compare.main_async(args), 2)
 
+    async def test_an_ai_error_in_the_sidebar_is_named_in_its_own_words(self) -> None:
+        from dmbot.ai import AIError
+
+        class Refusing(FakeClient):
+            async def complete(self, system: str, text: str, **kwargs: Any) -> Reply:
+                raise AIError("The AI service is busy. Try again.")
+
+        async def make_client(model: str) -> tuple[Any, Any]:
+            async def close() -> None:
+                return None
+
+            return Refusing(model), close
+
+        (table,) = await fast_compare.compare(
+            ["claude-haiku-4-5-20251001"], ["sidebar"], make_client
+        )
+        (row,) = table.rows
+        self.assertIn("AI error: The AI service is busy", row.note)
+        self.assertGreaterEqual(row.failed, 1)  # the case failed; the run did not crash
+        self.assertEqual(row.tokens_in, 0)
+
+    async def test_a_pause_is_taken_between_runs_not_before_the_first(self) -> None:
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        async def make_client(model: str) -> tuple[Any, Any]:
+            async def close() -> None:
+                return None
+
+            return FakeClient(model), close
+
+        with patch.object(fast_compare.asyncio, "sleep", fake_sleep):
+            await fast_compare.compare(["a-model", NEW], ["recap"], make_client, pause=7.0)
+        self.assertEqual(sleeps, [7.0])  # two runs: one wait
+
     async def test_without_yes_nothing_is_called(self) -> None:
         args = fast_compare.parse_args([])
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}, clear=False):
