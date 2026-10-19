@@ -525,7 +525,7 @@ export const ruleExamples: RuleExample[] = [
 // What the rules index gained on 2026-10-19: how hard a fight is (the SRD's Combat Encounters section,
 // for the game master only, #2000) and the Magic Items section (attunement, charges, rarity, value,
 // #2001), found by /dmbot rule and the DM sidebar (core rules/index.py, sidebar/context.py). Held with
-// the What's new entry "Ask how hard a fight is" until dev1 deploys it (#2004, #2006). Set this to true
+// the What's new entry "Look up fight difficulty rules" until dev1 deploys it (#2004, #2006). Set this to true
 // in the same change that moves that entry out of `held`; a test keeps the two in step.
 export const FIGHT_AND_ITEM_RULES_LIVE = false;
 
@@ -534,14 +534,14 @@ export const FIGHT_AND_ITEM_RULES_LIVE = false;
 // ENCOUNTER_NOTE), so the words promise neither.
 export const fightRuleSteps: Step[] = [
   {
-    text: "Ask how hard a fight is, or for the XP budget for your party's level. Type /dmbot rule and \"xp budget\", or ask by voice or chat, like \"Hey DMbot, is 4 ogres deadly for a level 3 party?\". DMbot reads you the rule for the levels you name, with its source. It does not work out the difficulty: that is your call. If a player asks, DMbot says \"That's one for your DM.\"",
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly. That's your call. /dmbot rule answers only you. If a player asks, DMbot says \"That's one for your DM.\"",
   },
 ];
 
 // For everyone: the Magic Items section is open rules, not the DM's chapter.
 export const magicItemRuleSteps: Step[] = [
   {
-    text: "You can also ask about the rules for magic items: \"attunement\", \"charges\", what rarity means and what an item is worth.",
+    text: "You can look up the rules for magic items the same way: type /dmbot rule, then \"attunement\" or \"charges\". You can also ask what rarity means and what an item is worth by rarity.",
   },
 ];
 

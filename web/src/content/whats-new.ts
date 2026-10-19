@@ -225,8 +225,8 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-19",
-    title: "Ask how hard a fight is",
-    what: "Game masters can ask DMbot how hard a fight will be, or the XP budget for their party's level, and read the rules on magic items like attunement and charges.",
+    title: "Look up fight difficulty rules",
+    what: "Game masters can ask DMbot for the rules on how hard a fight is, such as the XP budget for the party's level. DMbot shows the rule and its source, and you decide how hard the fight is. Everyone can now also look up magic item rules, like attunement and charges.",
     reason: "Merged (#2004, #2006); held until dev1 deploys it.",
   },
   {

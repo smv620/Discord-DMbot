@@ -92,7 +92,7 @@ describe("rule examples in Help", () => {
   it("names every example in the Help step or the held entry, so the list cannot drift from the words", () => {
     const words = [
       ...[...ruleKindSteps, ...fightRuleSteps, ...magicItemRuleSteps].map((s) => s.text),
-      ...["Look up any rule", "Ask how hard a fight is"].map((t) => held.find((h) => h.title === t)?.what ?? ""),
+      ...["Look up any rule", "Look up fight difficulty rules"].map((t) => held.find((h) => h.title === t)?.what ?? ""),
     ].join(" ");
     for (const example of ruleExamples) {
       expect(words, `${example.text} is in the words`).toContain(example.text);
