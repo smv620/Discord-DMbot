@@ -667,12 +667,14 @@ async def _transcript(
 
 def _tolerated(transcript: tf.Transcript) -> str:
     """What the plain reader let through, as counts only: " (skipped 2 header lines, joined 5
-    wrapped lines)". Never the text."""
+    wrapped lines, skipped 80 cut-out lines)". Never the text."""
     notes = []
     if transcript.skipped:
         notes.append(f"skipped {transcript.skipped} header lines")
     if transcript.joined:
         notes.append(f"joined {transcript.joined} wrapped lines")
+    if transcript.cut_out:
+        notes.append(f"skipped {transcript.cut_out} cut-out lines")
     return f" ({', '.join(notes)})" if notes else ""
 
 
