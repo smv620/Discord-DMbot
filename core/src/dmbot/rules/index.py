@@ -73,15 +73,17 @@ TOOL = "tool"  # a tool ("Thieves' Tools")
 POISON = "poison"  # a sample poison of the Gameplay Toolbox ("Purple Worm Poison")
 TRAP = "trap"  # a sample trap of the Gameplay Toolbox ("Hidden Pit")
 CURSE = "curse"  # a named curse of the Gameplay Toolbox ("Demonic Possession")
+DISEASE = "disease"  # a disease of the SRD 5.1's game master chapters ("Sight Rot")
 # All thirteen are found only when asked for: their names are everyday words ("Action", "Damage",
 # "Rope of Climbing", "Alert", "Sage", "Club", "Malice", "Torpor"), so the name pool the live
 # cards, the list and "did you mean" read from leaves them out.
 ASKED_FOR = frozenset(
-    {RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL, POISON, TRAP, CURSE}
+    {RULE, FEATURE, ITEM, FEAT, SPECIES, BACKGROUND, WEAPON, ARMOR, GEAR, TOOL}
+    | {POISON, TRAP, CURSE, DISEASE}
 )
 ORIGIN_KINDS = (FEAT, SPECIES, BACKGROUND)  # looked up after the features and the items
 EQUIPMENT_KINDS = (WEAPON, ARMOR, GEAR, TOOL)  # and then these (#1919, #1927)
-HAZARD_KINDS = (POISON, TRAP, CURSE)  # and the Gameplay Toolbox's own kinds (#1935)
+HAZARD_KINDS = (POISON, TRAP, CURSE, DISEASE)  # and the Gameplay Toolbox's own kinds (#1935)
 # The kinds a list entry says in brackets when its name is also another's: "Shield (armor)"
 NAMED_KINDS = (RULE, ITEM, *ORIGIN_KINDS, *EQUIPMENT_KINDS, *HAZARD_KINDS)
 # The Gameplay Toolbox is the DM's chapter (poisons, traps, curses, hazards and travel): what a
@@ -278,6 +280,8 @@ class Index:
         entries: Iterable[Entry],
         alias_pairs: Sequence[tuple[str, str]] = (),
         alias_edition: str = aliases.EDITION,
+        soft_alias_pairs: Sequence[tuple[str, str]] = (),
+        spelling_pairs: Sequence[tuple[str, str]] = (),
     ) -> None:
         self.entries: tuple[Entry, ...] = tuple(entries)
         self._by_edition: dict[str, dict[str, list[Entry]]] = {}
@@ -310,6 +314,21 @@ class Index:
             self._alias_keys.add((alias_edition, normalize(older)))
             for entry in list(found):
                 self._add(alias_edition, normalize(older), entry)
+        # The 5.1's rule titles that the 5.2.1's glossary spells another way (#1943): renames, which
+        # the card says so about, and plain spellings (plurals). Skipped where the file they point
+        # into is missing, and found the other way round too: the 5.2.1's word finds the 5.1 rule
+        # in a 2014 campaign.
+        for pairs, renamed in ((soft_alias_pairs, True), (spelling_pairs, False)):
+            for older, current in pairs:
+                for entry in list(
+                    self._by_edition.get(alias_edition, {}).get(normalize(current), [])
+                ):
+                    if renamed:
+                        self._alias_keys.add((alias_edition, normalize(older)))
+                    self._add(alias_edition, normalize(older), entry)
+                for entry in list(self._by_edition.get(LEGACY, {}).get(normalize(older), [])):
+                    if entry.kind in (RULE, TRAP):
+                        self._add(LEGACY, normalize(current), entry)
 
     def _add(self, edition: str, key: str, entry: Entry) -> None:
         bucket = self._by_edition.setdefault(edition, {}).setdefault(key, [])
@@ -450,6 +469,12 @@ class Index:
             wanted = [h for h in hits if _class_of(h.entry) == normalize(prefer)]
             hits = wanted or hits
         return hits
+
+    def has_asked_for(self, name: str, edition: str, *, rules: bool = False) -> bool:
+        """Does this edition have an entry of a kind found only when asked for, other than a
+        glossary rule (unless `rules`), under this name (the 2024 feat "Two-Weapon Fighting")?"""
+        found = self._by_edition.get(edition, {}).get(normalize(name), [])
+        return any(e.kind in ASKED_FOR and (rules or e.kind != RULE) for e in found)
 
     def _newer_and_names(
         self, target: str, fallback: str, kinds: tuple[str, ...]
@@ -602,7 +627,13 @@ def srd() -> Index:
         (POISON, "poisons"),
         (TRAP, "traps"),
         (CURSE, "curses"),
+        (DISEASE, "diseases"),
     ):
         if not any(e.kind == kind for e in entries):  # an older build of the data: carry on
             log.warning("The %s are not in the data; the DM sidebar will not cite them", what)
-    return Index(entries, aliases.ALL)
+    return Index(
+        entries,
+        aliases.ALL,
+        soft_alias_pairs=aliases.RULE_RENAMES,
+        spelling_pairs=aliases.RULE_SPELLINGS,
+    )

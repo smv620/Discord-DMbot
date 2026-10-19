@@ -252,6 +252,7 @@ def mentioned_rules(
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
     klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
     cued = any(w.lower() in ORIGIN_CUES for w in words)
+    species = any(w.lower() in SPECIES_CUES for w in words)
     gear = any(w.lower() in EQUIPMENT_CUES for w in words)
     props = any(w.lower() in PROPERTY_CUES for w in words)
     shop = any(w.lower() in GEAR_CUES for w in words)
@@ -277,12 +278,22 @@ def mentioned_rules(
                     and is_everyday_property(glossary.entry)
                 ):
                     glossary = None  # "Light", "Slow": a property only when weapons are meant
+                # A 2014 rule found because the target has none of that name (#1943): not for an
+                # everyday word ("Time", "Water", "Wisdom", "Food"), and not when the target has
+                # another kind of entry by the name (the 2024 feat "Two-Weapon Fighting" beats the
+                # 2014 rule).
+                if (
+                    glossary is not None
+                    and glossary.from_fallback
+                    and ((size == 1 and not props) or index.has_asked_for(name, target))
+                ):
+                    glossary = None
                 hits = [glossary] if glossary is not None else []
             if not hits:
                 item = index.lookup(name, target, fallback, kind=ITEM)
                 hits = [item] if item is not None else []
             if not hits and size <= WINDOW:
-                hits = origin_hits(index, name, target, fallback, cued=cued)
+                hits = origin_hits(index, name, target, fallback, cued=cued, species=species)
             if not hits and size <= WINDOW:
                 hits = equipment_hits(index, name, target, fallback, cued=gear, shop=shop)
             if not hits and size <= WINDOW:
@@ -297,6 +308,7 @@ def mentioned_rules(
         for start, hits in asked:
             if depth < len(hits) and len(found) < ENTRIES_MAX:
                 found.append((start, hits[depth]))
+    found = _widened_origins(found, words, index, target, fallback)  # (before a cue picks "Orc")
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
     if (gear or props or shop) and found:  # "the AC of a shield": the spell gives way (#1919)
@@ -313,7 +325,6 @@ def mentioned_rules(
             for start, h in found
             if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
         ]
-    found = _widened_origins(found, words, index, target, fallback)
     found.sort(key=lambda pair: pair[0])
     unique: list[Hit] = []
     for _, hit in found:
@@ -324,12 +335,17 @@ def mentioned_rules(
     unique = unique[:ENTRIES_MAX]
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
+        if table:  # the other edition's DM chapter is no more the table's than this one's
+            extra = [h for h in extra if not h.entry.dm_side]
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
         unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique
 
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
+# "dwarf traits" asks for the species, but "the sage has odd traits" does not ask for the Sage
+# background and the feat it comes with, so this cue opens species only.
+SPECIES_CUES = frozenset({"trait", "traits"})
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
 
 
@@ -427,6 +443,7 @@ def equipment_hits(
 # everyday words, "Purple Worm Poison" and "Hidden Pit" are not.
 HAZARD_CUES = frozenset(
     {"poison", "poisons", "trap", "traps", "curse", "curses", "hazard", "hazards", "dc"}
+    | {"disease", "diseases", "plague"}
 )
 
 
@@ -438,6 +455,8 @@ def hazard_hits(index: Index, name: str, target: str, fallback: str, *, cued: bo
         return []
     for kind in HAZARD_KINDS:
         hits = index.lookup_all(name, target, fallback, kind=kind)
+        if hits and hits[0].from_fallback and index.has_asked_for(name, target, rules=True):
+            continue  # the target has its own entry of the name (the 2024 contagion Cackle Fever)
         if hits:
             return hits if kind == TRAP else hits[:1]
     return []
@@ -519,7 +538,9 @@ def _more_gear(
     return out
 
 
-def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
+def origin_hits(
+    index: Index, name: str, target: str, fallback: str, *, cued: bool, species: bool = False
+) -> list[Hit]:
     """The feat, species or background with this name (#1913). A one-word feat or background is
     an everyday word ("Alert", "Sage"), and so are most species ("Dwarf", "Elf", "Human"): they
     count only when the question also says "feat", "species", "race" or "background". Only
@@ -531,7 +552,7 @@ def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bo
         if hit is None:
             continue
         everyday = kind != SPECIES or normalize(hit.entry.name) not in SPECIES_NOT_EVERYDAY
-        if single and everyday and not cued:
+        if single and everyday and not (cued or (species and kind == SPECIES)):
             return []
         if kind != BACKGROUND:
             return [hit]

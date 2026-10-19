@@ -321,6 +321,50 @@ class TheNamesFile(unittest.TestCase):
             tf.parse_names("= Kah-zeth\n")
 
 
+class TheLength(unittest.TestCase):
+    """The recap's length follows the session's hours (#2013)."""
+
+    def read(self, text: str, *extra: str) -> tuple[str, pl.Inputs]:
+        with tempfile.TemporaryDirectory() as tmp:
+            story = Path(tmp) / "story.txt"
+            story.write_text(text, encoding="utf-8")
+            args = run.parse_args(["--transcript", str(story), "--dm", "Sam", *extra])
+            inputs, transcript, _ = run.read_transcript_inputs(args)
+        return run._length_line(args, transcript, inputs), inputs
+
+    def test_a_file_with_no_times_is_estimated_from_its_words(self) -> None:
+        line, inputs = self.read("Sam: " + " ".join(["word"] * 14_000) + "\nMia: hi.\n")
+        self.assertEqual(inputs.hours, 2.0)
+        self.assertIn("about 2 hours (estimated from the words; give --hours to set it)", line)
+        self.assertIn("about 300 words (between 240 and 360)", line)
+
+    def test_a_tiny_file_is_half_an_hour_at_least(self) -> None:
+        _, inputs = self.read("Sam: hello there.\nMia: hi.\n")
+        self.assertEqual(inputs.hours, 0.5)
+
+    def test_hours_overrides_the_estimate(self) -> None:
+        line, inputs = self.read("Sam: hello.\nMia: hi.\n", "--hours", "6")
+        self.assertEqual(inputs.hours, 6)
+        self.assertIn("about 6 hours (from --hours)", line)
+        self.assertIn("about 700 words", line)
+
+    def test_a_file_with_times_uses_them(self) -> None:
+        text = "[00:00:01] Sam: hello.\n[01:00:00] Mia: hi.\n[02:00:01] Sam: bye.\n"
+        line, inputs = self.read(text)
+        self.assertIsNone(inputs.hours)  # the lines' own times are used
+        self.assertIn("from the file's times", line)
+        self.assertIn("about 2 hours", line)
+
+    def test_the_hours_flag_is_checked(self) -> None:
+        for bad in ("0", "0.1", "30", "-2"):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--hours", bad])
+            self.assertIn("--hours", err.getvalue(), bad)
+        args = run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--hours", "3.5"])
+        self.assertEqual(args.hours, 3.5)
+
+
 class TheCueMap(unittest.TestCase):
     def test_every_cue_is_listed_with_its_voice_tag_or_music_only(self) -> None:
         summary = (
@@ -409,7 +453,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             asked.append(question)
             return ask
 
-        args = run.parse_args(list(argv))
+        # The canned recap is a 2.5-hour session's length (#2013): a file this small is not.
+        args = run.parse_args([*argv, *([] if "--hours" in argv else ["--hours", "2.5"])])
         fast = fx.Canned(*(answers or []))
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
