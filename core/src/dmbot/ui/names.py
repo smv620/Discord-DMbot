@@ -1232,16 +1232,17 @@ def recap_names_text(count: int) -> str:
     """For the DM screen when a recap used names DMbot didn't know yet (#2027): the names are
     listed on the DM's recap page, not here, so nothing is spoiled for players who peek."""
     return (
-        f"📝 **{_plural(count, 'name')} from the recap to check.** They were said at the table "
-        "and DMbot didn't know them yet. Say which are in your game: the check opens privately "
-        "for the DM."
+        f"📝 **{_plural(count, 'new name')} in the recap.** Said at your table, and DMbot "
+        "doesn't know them yet. Tap **Check new names** to say which are in your game. "
+        "Only you will see them."
     )
 
 
 def recap_names_reminder(count: int) -> str:
     return (
-        f"📝 **{_plural(count, 'name')} from the last recap** still waiting to be checked. "
-        "The check opens privately for the DM."
+        f"📝 **{_plural(count, 'new name')}** from the last recap "
+        f"{'is' if count == 1 else 'are'} still unchecked. Tap **Check new names** when you "
+        "have a moment."
     )
 
 

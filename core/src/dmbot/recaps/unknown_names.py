@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from dmbot.recaps.text import narration_of, words
 
 MIN_LETTERS = 5  # shorter names are too easy to confuse with each other or with a word
-MAX_DISTANCE = 2  # letters apart, ignoring spaces, hyphens and case
-MIN_RATIO = 0.85
+MAX_DISTANCE = 2  # letters apart for a long name, ignoring spaces, hyphens and case
+SHORT_NAME = 8  # letters
 MAX_TO_CONFIRM = 10  # the list holds at most this many names
 
 _RUN = re.compile(r"[A-ZÀ-Þ][\w'’-]*(?:[ ]+[A-ZÀ-Þ][\w'’-]*)*")
@@ -52,10 +52,11 @@ def _distance(a: str, b: str) -> int:
 
 
 def _close(a: str, b: str) -> bool:
+    """Names of eight letters or fewer may differ by one letter, longer ones by two: with two,
+    a short name matches too many ordinary words ("Brave" for "Brand")."""
     if a == b or len(a) < MIN_LETTERS or len(b) < MIN_LETTERS or a[0] != b[0]:
         return False
-    distance = _distance(a, b)
-    return distance <= MAX_DISTANCE or 1 - distance / max(len(a), len(b)) >= MIN_RATIO
+    return _distance(a, b) <= (1 if max(len(a), len(b)) <= SHORT_NAME else MAX_DISTANCE)
 
 
 def respell(
@@ -64,12 +65,14 @@ def respell(
     names: Collection[str],
     secret_names: Collection[str],
     known_words: Collection[str],
+    ordinary_words: Collection[str] = (),
 ) -> Respelled:
     """Near misses put right. `names`: the spellings to put in (the campaign's confirmed names
     and the beats' names). `known_words`: every word of those lists and the earlier recap, lower
     case: a stretch made only of these is already right. A stretch has as many words as the name
     it is compared with, begins with a capital, and shares the name's first letter."""
     known = set(known_words)
+    ordinary = set(ordinary_words)  # a stretch of only these is plain English, never a name
     targets = {_letters(n): n for n in names if len(_letters(n)) >= MIN_LETTERS}
     counts = {len(words(n)) for n in targets.values()}
     secrets = [_letters(n) for n in secret_names if _letters(n)]
@@ -82,7 +85,7 @@ def respell(
                 found = run.group()[tokens[i][0] : tokens[i + size - 1][1]]
                 bare = _POSSESSIVE.sub("", found).strip(".,;:!?")
                 mine = words(bare)
-                if len(mine) != size or set(mine) <= known:
+                if len(mine) != size or set(mine) <= known | ordinary:
                     continue
                 joined = _letters(bare)
                 near = [(_distance(joined, s), s) for s in secrets if _close(joined, s)]
@@ -95,7 +98,9 @@ def respell(
                     refused.append(joined)  # the closest name is secret: say nothing about it
                 elif best:
                     spelled = min(best)[1]
-                    out = re.sub(rf"(?<![\w'’-]){re.escape(bare)}(?![\w-])", spelled, out)
+                    out = re.sub(
+                        rf"(?<![\w'’-]){re.escape(bare)}(?![\w-])", lambda _m, s=spelled: s, out
+                    )
     return Respelled(out, tuple(refused))
 
 

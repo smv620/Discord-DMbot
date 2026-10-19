@@ -7402,9 +7402,13 @@ class DMBot(commands.AutoShardedBot):
             if not await self.recaps.set_names_state(gid, cid, job.session_at, 1, only_from=0):
                 return
             known = set(await self.memory.known_keys(gid, cid))
+            # Read fresh: a name may have been made secret since the recap was written.
+            secret = await self.recap_secret_names(campaign)
+            if secret is None:
+                return  # a secret name couldn't be kept out: queue nothing
             added = 0
             for name in job.to_confirm:
-                if name_key(name) in known:
+                if name_key(name) in known or names_a_secret(name, secret, []):
                     continue  # the list has it (or the DM said it is not a name) since
                 try:
                     await self.memory.add_entity(
@@ -7446,16 +7450,14 @@ class DMBot(commands.AutoShardedBot):
                     name_key(e.name)
                     for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
                 }
+                left = 0
                 for session_at, names in waiting:
-                    if not await self.recaps.set_names_state(gid, cid, session_at, 2, only_from=1):
-                        continue
-                    left = sum(1 for n in names if name_key(n) in proposed)
-                    if left and self.tables.get(gid) is table:
-                        await self.post(
-                            table.screen_channel_id,
-                            recap_names_reminder(left),
-                            view=review_view(cid),
-                        )
+                    if await self.recaps.set_names_state(gid, cid, session_at, 2, only_from=1):
+                        left += sum(1 for n in names if name_key(n) in proposed)
+                if left and self.tables.get(gid) is table and table.screen_channel_id is not None:
+                    await self.post(
+                        table.screen_channel_id, recap_names_reminder(left), view=review_view(cid)
+                    )
             except Exception:
                 log.exception("The waiting-names reminder failed")
 

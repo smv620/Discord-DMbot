@@ -77,7 +77,7 @@ export const text = {
   housekeepingNone: "Nothing to sort out.",
   toConfirmHeading: "Facts to be confirmed",
   toConfirmNote:
-    "Names the recap used that DMbot doesn't know yet. They were said in your session. Only you see this list; it is never posted.",
+    "These names were said at your table, and DMbot doesn't know them yet. Say which are in your game with Check new names on your DM screen in Discord. Only you can see this list. DMbot never posts it.",
   edit: "Edit",
   editLabel: "Recap",
   housekeepingLabel: "Housekeeping (one line for each)",

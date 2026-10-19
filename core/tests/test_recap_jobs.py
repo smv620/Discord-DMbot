@@ -413,6 +413,11 @@ class Working(Base):
         self.assertIn("Caer-Dineval waited", job.summary)
         self.assertNotIn("Care Dinval", job.summary)
         self.assertEqual(job.to_confirm, ("Descending Stair",))
+        # Try again starts the notice over, so the new recap's names are queued too
+        await self.store.set_names_state(1, self.one.id, 100, 1, only_from=0)
+        await self.store.update(1, self.one.id, 100, state="queued", emailed_at=1)
+        job = await self.go()  # the restart: a fresh recap, with the notice started over
+        self.assertEqual((job.state, job.to_confirm, job.names_state), ("queued", (), 0))
         self.assertEqual(len(self.careful.sent), 0)  # no retry
 
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:

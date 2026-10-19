@@ -199,7 +199,7 @@ class RecapWorker:
                 gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
                 title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
                 attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
-                window_done=0, window_count=0,
+                window_done=0, window_count=0, to_confirm=[], names_state=0,
             )  # fmt: skip
             await self._store.reset_audio(gid, cid, job.session_at)  # a new recap, new audio
             return await self._store.get(gid, cid, job.session_at)
@@ -433,6 +433,7 @@ class RecapWorker:
             secret_names=inputs.secret_names,
             previous=inputs.previous,
             setting=inputs.setting,
+            transcript="\n".join(s.text for s in said),
         )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
@@ -561,6 +562,7 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names,
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
+                transcript=transcript,
             )
             for text in (parsed[0], *parsed[1])
         ]

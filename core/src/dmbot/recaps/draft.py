@@ -439,6 +439,7 @@ def respelled(
     secret_names: Collection[str],
     previous: str = "",
     setting: str | None = None,
+    transcript: str = "",
 ) -> tuple[Prose, tuple[str, ...]]:
     """The prose with near-miss names put right (#2027), and what is too close to a secret name.
     The spellings to put in are the confirmed names and the beats' own names."""
@@ -450,6 +451,7 @@ def respelled(
         names=sorted(names),
         secret_names=secret_names,
         known_words=_known(beats, allowed_names, previous, setting),
+        ordinary_words=_english() | set(_LOWER_WORD.findall(transcript)),
     )
     return Prose(done.text, prose.music), done.refused
 

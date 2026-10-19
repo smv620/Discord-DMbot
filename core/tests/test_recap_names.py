@@ -47,6 +47,22 @@ class TheNearMiss(unittest.TestCase):
         )
         self.assertEqual(got.refused, ())
 
+    def test_ordinary_words_are_not_turned_into_names(self) -> None:
+        text = "Brave men fought. Stone fell. The Guard waited. Marsh was cold. Which way?"
+        got = respelled(
+            text,
+            names=["Brand", "Stoned", "Guardo", "Marshal", "Whitch"],
+            known_words=set(),
+            ordinary_words={"brave", "men", "stone", "guard", "marsh", "which", "way"},
+        )
+        self.assertEqual(got.text, text)
+        # a short name only matches one letter away
+        self.assertEqual(respelled("Mirra spoke.", names=["Mirael"]).text, "Mirra spoke.")
+
+    def test_a_backslash_in_a_name_is_just_a_letter(self) -> None:
+        got = respelled("They reached Care Dinval.", names=["Caer-Dineval\\"])
+        self.assertEqual(got.text, "They reached Caer-Dineval\\.")
+
     def test_a_name_that_is_not_close_is_left_alone(self) -> None:
         for text in ("They reached Harrowmoor.", "They reached Care Dunmore.", "Dinval Care came."):
             self.assertEqual(respelled(text).text, text, text)
@@ -218,6 +234,7 @@ def bot_with(**kw: Any) -> Any:
         lookup=None,
         tables={},
         post=AsyncMock(return_value=True),
+        recap_secret_names=AsyncMock(return_value=[]),
         **kw,
     )
 
@@ -237,13 +254,25 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((call.kwargs["type"], call.kwargs["source"]), ("concept", "scan"))
         (call,) = bot.post.await_args_list
         self.assertEqual(call.args[0], 77)
-        self.assertIn("2 names from the recap to check", call.args[1])
+        self.assertIn("2 new names in the recap", call.args[1])
         self.assertNotIn("Zarathon", call.args[1])  # the names stay on the DM's page
         # asked again (a second round, a retry): nothing more happens
         bot.recaps.set_names_state.return_value = False
         bot.post.reset_mock()
         await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
         bot.post.assert_not_awaited()
+
+    async def test_a_name_made_secret_since_is_never_queued(self) -> None:
+        bot = bot_with()
+        bot.recap_secret_names.return_value = ["Yrsa"]
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
+        added = [c.kwargs["name"] for c in bot.memory.add_entity.await_args_list]
+        self.assertEqual(added, ["Zarathon Keep"])
+        bot.recap_secret_names.return_value = None  # secrets unreadable: nothing is queued
+        bot.memory.add_entity.reset_mock()
+        bot.recaps.set_names_state.return_value = True
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
+        bot.memory.add_entity.assert_not_awaited()
 
     async def test_a_refused_name_is_skipped_and_nothing_is_said_when_none_were_added(self) -> None:
         bot = bot_with()
@@ -267,7 +296,7 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         await DMBot._waiting_recap_names(cast(Any, bot), table)
         (call,) = bot.post.await_args_list
         self.assertEqual(call.args[0], 66)
-        self.assertIn("1 name from the last recap", call.args[1])
+        self.assertIn("1 new name** from the last recap is still unchecked", call.args[1])
         # a resumed session says nothing
         bot.post.reset_mock()
         table.resumed = True
