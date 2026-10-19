@@ -332,7 +332,7 @@ class TheCueMap(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                "  《Tense》 -> music only",
+                "  《Tense》 -> [urgently]",
                 "  ((pause)) -> [short pause]",
                 "  《whisper》 -> [whispers]",
                 "  ((slow)) -> music only",
@@ -432,7 +432,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asked, [tf.CONSENT_QUESTION])  # once
         self.assertIn("The Silver Lock", text)
         self.assertIn("Cues (3):", text)
-        self.assertIn("《Tense》 -> music only", text)
+        self.assertIn("《Tense》 -> [urgently]", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)  # the report never holds the transcript itself
 
