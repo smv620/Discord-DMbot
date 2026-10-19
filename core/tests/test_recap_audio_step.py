@@ -204,6 +204,74 @@ class TheCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.kind, "reply")
 
 
+class TheNamedFailure(unittest.IsolatedAsyncioTestCase):
+    """#2042: a failed call says its kind, its HTTP status and which call it was, in fixed words
+    and a number: never the text that was sent or anything the company answered."""
+
+    async def asyncSetUp(self) -> None:
+        self.fake = Fake()
+        self.eleven = ElevenLabs(self.fake, voice_id="v", speech_model="eleven_multilingual_v2")
+
+    async def failing(self, word: str, status: int, call: Any) -> ProviderError:
+        self.fake.fail = {word: status}
+        with self.assertRaises(ProviderError) as caught:
+            await call()
+        return caught.exception
+
+    async def test_each_call_names_itself_with_its_kind_and_status(self) -> None:
+        text = f"A line that names {SECRET_NAME}."
+        cases = [
+            ("text-to-speech", 401, "auth", "speech", lambda: self.eleven.speech(text, seed=1)),
+            ("/v1/music", 402, "plan", "music",
+             lambda: self.eleven.music({"prompt": text}, seconds=5)),
+            ("sound-generation", 422, "refused", "ambience",
+             lambda: self.eleven.ambience({"text": text})),
+            ("pronunciation-dictionaries", 403, "auth", "pronunciation dictionary",
+             lambda: self.eleven.dictionary("n", [])),
+        ]  # fmt: skip
+        for word, status, kind, step, call in cases:
+            error = await self.failing(word, status, call)
+            self.assertEqual((error.kind, error.status, error.step), (kind, status, step))
+            self.assertEqual(error.describe(), f"{kind}, HTTP {status}, during {step}")
+            self.assertNotIn(SECRET_NAME, error.describe() + str(error))
+
+    async def test_a_network_failure_has_no_status_but_still_a_step(self) -> None:
+        async def down(*_: Any) -> tuple[int, bytes]:
+            raise ProviderError("network")
+
+        with self.assertRaises(ProviderError) as caught:
+            await ElevenLabs(down, voice_id="v").music({"prompt": "x"}, seconds=5)
+        self.assertEqual(caught.exception.describe(), "network, no HTTP reply, during music")
+
+    async def test_an_error_that_already_has_a_step_keeps_it(self) -> None:
+        error = ProviderError("auth", 401, "speech")
+        self.assertEqual(error.describe(), "auth, HTTP 401, during speech")
+        self.assertEqual(
+            ProviderError("reply").describe(), "reply, no HTTP reply, during an unnamed call"
+        )
+
+    async def test_every_kind_has_a_line_saying_what_to_check(self) -> None:
+        from dmbot.devtools.recap_run.__main__ import audio_failure
+        from dmbot.recaps.audio.eleven import CHECKS
+
+        for kind in ("auth", "plan", "refused", "busy", "network", "reply"):
+            self.assertIn(kind, CHECKS)
+        auth = audio_failure(ProviderError("auth", 401, "speech"))
+        self.assertEqual(
+            auth[0], "audio: failed (auth, HTTP 401, during speech); the text above is unchanged"
+        )
+        self.assertIn("ELEVENLABS_API_KEY", auth[1])
+        self.assertIn("paid plan", audio_failure(ProviderError("plan", 402, "music"))[1])
+        self.assertIn("voice id", audio_failure(ProviderError("refused", 422, "speech"))[1])
+        self.assertNotIn("voice id", audio_failure(ProviderError("refused", 422, "music"))[1])
+        self.assertNotIn(
+            "voice id", audio_failure(ProviderError("refused", 400, "pronunciation dictionary"))[1]
+        )
+        # anything else: only its type, never its message
+        other = audio_failure(RuntimeError(f"secret {SECRET_NAME}"))
+        self.assertEqual(other, ["audio: failed (RuntimeError); the text above is unchanged"])
+
+
 class TheRealTransport(unittest.IsolatedAsyncioTestCase):
     """`HttpTransport` against a small local server that answers in pieces, as the real one does."""
 
@@ -639,6 +707,17 @@ class Working(Base):
         assert job is not None
         self.assertEqual((job.audio, job.audio_error), ("failed", NO_MIXER))
         self.assertEqual(self.fake.calls, [])
+
+    async def test_a_failed_provider_call_is_logged_with_its_kind_status_and_step(self) -> None:
+        self.fake.fail = {"text-to-speech": 401}
+        worker = self.worker()
+        with self.assertLogs("dmbot.recaps.audio.worker", level="WARNING") as logged:
+            job = await worker.run(1, self.one.id, 100)
+        assert job is not None
+        text = "\n".join(logged.output)
+        self.assertIn("auth, HTTP 401, during speech", text)
+        self.assertNotIn(SECRET_NAME, text)
+        self.assertNotIn("xi-api-key", text)
 
     async def test_a_hung_provider_cannot_hold_the_job_past_its_lease(self) -> None:
         async def slow(*_: Any) -> tuple[int, bytes]:

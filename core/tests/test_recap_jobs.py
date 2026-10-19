@@ -357,7 +357,9 @@ class Working(Base):
         self,
     ) -> None:
         # A 1-hour session: about 200 words, 160 to 240, up to 270 on the last try.
-        long = fx.prose_answer("《Tense》 " + " ".join(["calm"] * 250), "1. Low strings.")
+        long = fx.prose_answer(
+            "《Tense》 " + " ".join(["calm"] * 249) + " Oskar", "1. Low strings."
+        )
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
             fx.Canned(long, long),
@@ -375,7 +377,9 @@ class Working(Base):
         self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
 
     async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
-        long = fx.prose_answer("《Tense》 " + " ".join(["calm"] * 280), "1. Low strings.")
+        long = fx.prose_answer(
+            "《Tense》 " + " ".join(["calm"] * 279) + " Oskar", "1. Low strings."
+        )
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
         job = await self.go()
         self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
