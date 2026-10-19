@@ -288,6 +288,7 @@ def mentioned_rules(
     # question ("rogue evasion") picks that class's feature; otherwise every class that has it.
     klass = next((w for w in words if w.lower() in CLASS_WORDS), "")
     cued = any(w.lower() in ORIGIN_CUES for w in words)
+    species = any(w.lower() in SPECIES_CUES for w in words)
     gear = any(w.lower() in EQUIPMENT_CUES for w in words)
     props = any(w.lower() in PROPERTY_CUES for w in words)
     shop = any(w.lower() in GEAR_CUES for w in words)
@@ -328,7 +329,7 @@ def mentioned_rules(
                 item = index.lookup(name, target, fallback, kind=ITEM)
                 hits = [item] if item is not None else []
             if not hits and size <= WINDOW:
-                hits = origin_hits(index, name, target, fallback, cued=cued)
+                hits = origin_hits(index, name, target, fallback, cued=cued, species=species)
             if not hits and size <= WINDOW:
                 hits = equipment_hits(index, name, target, fallback, cued=gear, shop=shop)
             if not hits and size <= WINDOW:
@@ -343,6 +344,7 @@ def mentioned_rules(
         for start, hits in asked:
             if depth < len(hits) and len(found) < ENTRIES_MAX:
                 found.append((start, hits[depth]))
+    found = _widened_origins(found, words, index, target, fallback)  # (before a cue picks "Orc")
     if cued and found:  # "the acolyte background": the creature of that name gives way (#1913)
         found = _cued_origins(found, words, index, target, fallback)
     if (gear or props or shop) and found:  # "the AC of a shield": the spell gives way (#1919)
@@ -359,7 +361,6 @@ def mentioned_rules(
             for start, h in found
             if not (h.entry.kind == RULE and normalize(h.entry.name) in EQUIPMENT_CUES)
         ]
-    found = _widened_origins(found, words, index, target, fallback)
     if asks_about_encounters(words):  # "how hard is this fight": the XP budget, first (#2000)
         budget = index.lookup(ENCOUNTER_BUDGET, target, fallback, kind=RULE)
         if budget is not None and all(budget.entry is not h.entry for _, h in found):
@@ -409,6 +410,9 @@ def asks_about_encounters(words: list[str]) -> bool:
 
 
 ORIGIN_CUES = frozenset({"feat", "feats", "species", "race", "races", "background", "backgrounds"})
+# "dwarf traits" asks for the species, but "the sage has odd traits" does not ask for the Sage
+# background and the feat it comes with, so this cue opens species only.
+SPECIES_CUES = frozenset({"trait", "traits"})
 SPECIES_NOT_EVERYDAY = frozenset({"dragonborn", "goliath"})  # "dwarf", "elf" and "human" are not
 
 
@@ -601,7 +605,9 @@ def _more_gear(
     return out
 
 
-def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bool) -> list[Hit]:
+def origin_hits(
+    index: Index, name: str, target: str, fallback: str, *, cued: bool, species: bool = False
+) -> list[Hit]:
     """The feat, species or background with this name (#1913). A one-word feat or background is
     an everyday word ("Alert", "Sage"), and so are most species ("Dwarf", "Elf", "Human"): they
     count only when the question also says "feat", "species", "race" or "background". Only
@@ -613,7 +619,7 @@ def origin_hits(index: Index, name: str, target: str, fallback: str, *, cued: bo
         if hit is None:
             continue
         everyday = kind != SPECIES or normalize(hit.entry.name) not in SPECIES_NOT_EVERYDAY
-        if single and everyday and not cued:
+        if single and everyday and not (cued or (species and kind == SPECIES)):
             return []
         if kind != BACKGROUND:
             return [hit]
