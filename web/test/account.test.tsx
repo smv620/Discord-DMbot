@@ -42,6 +42,43 @@ describe("states", () => {
     );
   });
 
+  it("signed out: says so first, then Discord, then the email link, and the plans last (#2003)", async () => {
+    show("signed-out");
+    await screen.findByRole("heading", { name: text.signedOutHeading });
+    const order = [
+      document.getElementById("signed-out-heading"),
+      screen.getByRole("link", { name: text.signIn }),
+      document.getElementById("email-heading"),
+      screen.getByLabelText(text.emailLabel),
+      screen.getByRole("button", { name: text.emailButton }),
+      document.getElementById("new-heading"),
+      screen.getByRole("link", { name: text.startTryItFree }),
+      screen.getByRole("link", { name: "Choose Table" }),
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `step ${i}`,
+      ).toBeTruthy();
+    }
+    expect(screen.getByRole("heading", { name: text.newHeading })).toBeTruthy();
+    expect(screen.queryByText("Already have a plan?")).toBeNull();
+    // Every way in goes through the same Discord sign-in, and there is one sign-in button before the plans.
+    expect(screen.getAllByRole("link", { name: text.signIn })).toHaveLength(1);
+  });
+
+  it("signed out: a notice shows inside the sign-in panel, above the heading (#2003)", async () => {
+    show("signed-out", "?signin=failed");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(text.signInFailed);
+    const panel = document.querySelector("[aria-labelledby='signed-out-heading']")!;
+    expect(panel.contains(alert)).toBe(true);
+    expect(
+      alert.compareDocumentPosition(document.getElementById("signed-out-heading")!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("signed out after a failed sign-in: says so and what to do", async () => {
     show("signed-out", "?signin=failed");
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInFailed);
