@@ -131,9 +131,9 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
+    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get 🗂️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
     names: [
-      { name: "⚙️ Menu", file: "consent_dm.py" },
+      { name: "🗂️ Menu", file: "consent_dm.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
@@ -728,6 +728,17 @@ export const dmSteps: Step[] = [
   },
 ];
 
+// The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
+// entry is held and this Help step follows. Set this to true in the same change that moves that
+// entry out of `held`; a test ties the two.
+export const SIDEBAR_SOURCES_LIVE = false;
+
+export const sidebarSourceSteps: Step[] = [
+  {
+    text: "Where did that come from? Under a rules answer, press 📖 What I looked at. You get the source of each rule it used, with the book and page number. Press a rule to open it. Only you see it.",
+  },
+];
+
 /**
  * What a quick question to DMbot can use (#1379), under the game master's steps. Each sentence is
  * what the code does after #1377 and #1380: sidebar/context.py (the material a question is given:
@@ -756,6 +767,7 @@ export const quickAnswers: Step[] = [
   {
     text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
   },
+  ...(SIDEBAR_SOURCES_LIVE ? sidebarSourceSteps : []),
 ];
 
 /** The recaps steps, with the narration add-on's price from its one constant while narration is on
@@ -786,7 +798,7 @@ export const noThanksStep: Step = {
 };
 
 export const stopStep: Step = {
-  text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
+  text: "To stop at any time, press 🗂️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
   names: [
     { name: "Menu", file: "consent_dm.py" },
     { name: "Stop recording me", file: "consent_dm.py" },
@@ -854,7 +866,7 @@ export const playerSteps: Step[] = [
   },
   ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
   {
-    text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
+    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {

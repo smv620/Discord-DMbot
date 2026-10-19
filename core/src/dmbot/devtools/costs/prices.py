@@ -38,6 +38,12 @@ ANTHROPIC_PER_MILLION: dict[str, tuple[Price, Price]] = {
         Price(1.0, "per million input tokens", _ANTHROPIC, "2026-10-09"),
         Price(5.0, "per million output tokens", _ANTHROPIC, "2026-10-09"),
     ),
+    # The careful tier, which a recap's retry and the recap_run test run use. The same figures as
+    # `dmbot.ai.PRICE_PER_MILLION`, read from that page on the date given there.
+    "claude-sonnet-5-5": (
+        Price(2.0, "per million input tokens", _ANTHROPIC, "2026-10-15"),
+        Price(10.0, "per million output tokens", _ANTHROPIC, "2026-10-15"),
+    ),
 }
 
 

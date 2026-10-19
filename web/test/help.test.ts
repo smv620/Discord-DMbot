@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps, SIDEBAR_SOURCES_LIVE, sidebarSourceSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -236,7 +236,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("👤 My buttons");
     expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
     expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
-    expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
+    expect(words).toContain("you get 🗂️ Menu, where you can stop being recorded.");
     expect(words).toContain("Players also get 📜 My character sheet.");
     expect(words).toContain("Game masters get ⚙️ Settings too.");
     expect(words).toContain("/dmbot settings");
@@ -364,6 +364,17 @@ describe("Help: the website's read-only pages (#1588)", () => {
     for (const step of [...initiativeStyleSteps, ...initiativeStyleDmSteps]) {
       expect(step.text.split(" ").length).toBeLessThanOrEqual(40);
     }
+  });
+
+  it("holds the sidebar sources step with its held What's new entry (#1958)", () => {
+    expect(held.map((h) => h.title).includes("See what DMbot looked at")).toBe(!SIDEBAR_SOURCES_LIVE);
+    const shown = quickAnswers.map((x) => x.text).join(" ");
+    expect(shown.includes("Where did that come from?")).toBe(SIDEBAR_SOURCES_LIVE);
+    for (const step of sidebarSourceSteps) {
+      expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+      expect(step.text).toContain("📖 What I looked at");
+    }
+    expect(held.find((h) => h.title === "See what DMbot looked at")?.reason).toContain("#1957");
   });
 
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
