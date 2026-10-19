@@ -25,6 +25,7 @@ from dmbot import consent_dm
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
+from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.mentions import NO_PINGS
 
@@ -106,6 +107,8 @@ def role_view(
             view.add_item(consent_dm.sheet_button(campaign.guild_id, campaign.id))
         elif button is Button.SETTINGS:
             view.add_item(SettingsButton(campaign.id))
+        elif button is Button.NAMES:
+            view.add_item(NamesButton(campaign.id))
     return view
 
 
@@ -149,16 +152,19 @@ class OpenButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer first: reading the campaign and the person's standing takes database time, and
+        # Discord drops a button that isn't answered in 3 seconds (#1964).
+        await interaction.response.defer(ephemeral=True)
         campaign = await _campaign_here(interaction, self.campaign_id)
         if campaign is None:
-            await interaction.response.send_message(GONE, ephemeral=True)
+            await interaction.followup.send(GONE, ephemeral=True)
             return
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
         sheets = getattr(interaction.client, "sheets", None) is not None
         settings = getattr(interaction.client, "settings", None)  # (a client without one: no link)
         site = str(getattr(settings, "site_url", "") or "")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             CARD_TEXT[role],
             view=role_view(role, campaign, sheets=sheets, site_url=site),
             ephemeral=True,
@@ -191,13 +197,12 @@ class HelpButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.ui import logic  # (ui imports the dm_screen package: import it late)
 
+        await interaction.response.defer(ephemeral=True)  # (the campaign read can be slow: #1964)
         campaign = await _campaign_here(interaction, self.campaign_id)
         if campaign is None:
-            await interaction.response.send_message(GONE, ephemeral=True)
+            await interaction.followup.send(GONE, ephemeral=True)
             return
-        await interaction.response.send_message(
-            logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS
-        )
+        await interaction.followup.send(logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS)
 
 
 class RuleButton(

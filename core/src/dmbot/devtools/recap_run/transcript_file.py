@@ -87,6 +87,9 @@ class Transcript:
     skipped: int = 0  # plain format: header lines before the first utterance (a count only)
     joined: int = 0  # plain format: wrapped lines joined to the utterance before them
     cut_out: int = 0  # plain format: lines that were only a cut-out placeholder, dropped
+    timed: bool = (
+        True  # the file has times; a plain file with none is kept in order by line (#2013)
+    )
 
     @property
     def speakers(self) -> list[str]:
@@ -178,7 +181,10 @@ def _plain(text: str) -> Transcript:
         said = _CUT_OUT_LEAD.sub("", found["text"].strip())
         out.append(Utterance(found["who"].strip(), at, said))
     kept = tuple(Utterance(u.speaker, u.at_ms, u.text.strip()) for u in out if u.text.strip())
-    return Transcript(PLAIN, kept, skipped=header, joined=len(wrapped), cut_out=cut_out)
+    timed = any(found["at"] for found, _ in rows if found is not None)
+    return Transcript(
+        PLAIN, kept, skipped=header, joined=len(wrapped), cut_out=cut_out, timed=timed
+    )
 
 
 def _cues(text: str, kind: str) -> Transcript:

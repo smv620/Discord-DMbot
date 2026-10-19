@@ -309,6 +309,9 @@ class CutWordsOfEither(unittest.TestCase):
                 ("are", "a"),
                 # "Their properties are as follows:" (the Figurine of Wondrous Power, 2014 items)
                 ("are", "as"),
+                # "a round represents about 6 seconds" (the 2014 Combat chapter): "around" is also
+                # a word
+                ("a", "round"),
             },
         )  # fmt: skip
 

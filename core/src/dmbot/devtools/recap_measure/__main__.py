@@ -119,11 +119,12 @@ async def run_one(fast: Client, session: Session) -> Score:
         secret_names=session.secret,
     )
     prose: rd.Prose | None = None
+    length = rd.length_for(rd.session_hours(readable(session.lines), None))
     if len(kept) >= bt.MIN_BEATS:
         written = await fast.complete(
-            rd.prose_system(None),
-            rd.prose_message(kept, "", session.names, None),
-            max_tokens=rd.MAX_TOKENS,
+            rd.prose_system(None, length),
+            rd.prose_message(rd.pick_beats(kept, length.beats), "", session.names, None),
+            max_tokens=length.max_tokens,
         )
         prose = rd.parse_prose(written.text)
     return score_session(session, raw, prose, session.title)
