@@ -1157,6 +1157,10 @@ sidebar, the clock, cards and the after-session notes for the DM.
   panel; it only appears in a game master's private answer.
 - **The DM screen** loses the Settings card and the option buttons; a one-line pointer ("Settings and
   options are in #dmb-dm-bot-…") replaces them. `/dmbot settings` still works and answers privately.
+- **📇 Names (owner, 2026-10-18, #1986):** a game master's card and ⚙️ Settings each have a 📇 Names
+  button that opens the same private names home as `/dmbot names` (list, search, fix, add). The home
+  also shows, only while something waits, one line and a button for each review the after-session posts
+  open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
 **Channel structure (decided 2026-10-04, #85).** Every channel DMbot creates starts with
@@ -3683,6 +3687,13 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   being recorded since, a secret name) and refuses with a plain reason. **The bot never posts
   a recap by itself**: the DM reads it first, may change the words (on the website) or try
   again (twice), and presses **Post to the table**, which puts it in the campaign's `dmb-chat`.
+  **How strict the beat check is** (Supervisor, 2026-10-19, #1997, after the owner's first real
+  Craig transcript failed it twice): the DM is not one of the "players who spoke a lot" who must
+  appear in a beat (the DM narrates), and a name in a beat counts as said when it was said
+  anywhere in the session, not only in that beat's own lines, because speech-to-text spells
+  names several ways and the lines often say "you" or "he". An invented name still fails, and
+  the secret, prose and post-time checks and the DM's review are unchanged. If tests show names
+  put on the wrong beat, the next step is a near-spelling match against the beat's own lines first.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
