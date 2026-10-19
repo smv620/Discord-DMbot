@@ -1563,3 +1563,43 @@ class TheLegacyData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuleSingulars(unittest.TestCase):
+    """The singular of a plural rule title is another name for it (#1956)."""
+
+    def test_a_plural_last_word_gives_the_singular_only_for_two_words_or_more(self) -> None:
+        self.assertEqual(index.rule_keys("Opportunity Attacks"), ["opportunity attack"])
+        self.assertEqual(index.rule_keys("Temporary Hit Points"), ["temporary hit point"])
+        for name in ("Attacks", "Darkness", "Fire Bolt", "Difficult Terrain", "Bonus Actions Us"):
+            self.assertEqual(index.rule_keys(name), [], name)
+
+    def test_the_index_finds_the_rule_by_the_singular_in_both_editions(self) -> None:
+        for target, fallback in (("2024", "2014"), ("2014", "2024")):
+            hit = index.srd().lookup("opportunity attack", target, fallback, kind="rule")
+            assert hit is not None
+            self.assertEqual((hit.entry.name, hit.entry.edition), ("Opportunity Attacks", target))
+
+    def test_a_singular_never_takes_the_name_another_entry_has(self) -> None:
+        # "Bonus Actions" (the combat rule) must not be found as "bonus action": that is the
+        # spellcasting rule's own name in the 2014 rules.
+        spell = index.srd().lookup("Bonus Action", "2014", "2024", kind="rule")
+        assert spell is not None
+        self.assertEqual(
+            (spell.entry.name, spell.entry.section), ("Bonus Action", spell.entry.section)
+        )
+        combat = index.srd().lookup("bonus actions", "2014", "2024", kind="rule")
+        assert combat is not None
+        self.assertEqual(combat.entry.name, "Bonus Actions")
+
+    def test_no_rule_key_is_the_own_name_of_another_entry(self) -> None:
+        # The entry that owns a name is the first one found by it, in both editions.
+        own = {(e.edition, index.normalize(e.name)): e for e in index.srd().entries}
+        for entry in index.srd().entries:
+            if entry.kind != index.RULE:
+                continue
+            for key in index.rule_keys(entry.name):
+                holder = own.get((entry.edition, key))
+                if holder is not None:
+                    found = index.srd()._by_edition[entry.edition][key]
+                    self.assertIs(found[0], holder, f"{entry.name} took {key}")
