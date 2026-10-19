@@ -15,7 +15,7 @@ from typing import Any
 import discord
 
 from dmbot.dm_screen.buttons import may_change_screen
-from dmbot.idle_stop import EMPTY, WARN_S
+from dmbot.idle_stop import EMPTY, EMPTY_S, WARN_S
 from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
@@ -23,9 +23,9 @@ log = logging.getLogger(__name__)
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 _WARN_MINUTES = WARN_S // 60
 KEPT = "👍 Still listening."
-CANCELLED = "👍 Someone is here again, so I'm still listening."
+CANCELLED = "👍 I heard someone, so I'm still listening."
 ONLY_DM = "Only this campaign's DM can keep DMbot listening."
-STALE = "That session has already ended."
+STALE = "That session has already ended. Start a new one when you're ready."
 
 
 def quiet_label(minutes: int) -> str:
@@ -35,30 +35,36 @@ def quiet_label(minutes: int) -> str:
 
 
 def idle_warning_text(reason: str, quiet_minutes: int) -> str:
-    why = "Nobody's here." if reason == EMPTY else f"Nobody has spoken for {quiet_minutes} minutes."
+    why = (
+        "nobody is in the voice channel"
+        if reason == EMPTY
+        else f"nobody has spoken for {quiet_minutes} minutes"
+    )
     return (
-        f"⏸️ {why} I'll stop listening in {_WARN_MINUTES} minutes. "
+        f"⏸️ I'll stop listening in {_WARN_MINUTES} minutes: {why}. "
         "Tap **Keep listening** if you're still playing."
     )
 
 
 def stopped_text(reason: str, quiet_minutes: int) -> str:
-    if reason == EMPTY:
-        return "⏹ Stopped: nobody was here for 5 minutes."
-    return f"⏹ Stopped: nobody spoke for {quiet_minutes} minutes."
+    why = (
+        f"nobody was in the voice channel for {EMPTY_S // 60} minutes"
+        if reason == EMPTY
+        else f"nobody spoke for {quiet_minutes} minutes"
+    )
+    return f"⏹ I stopped listening: {why}. To start again, use `/dmbot start`."
 
 
 def line(minutes: int) -> str:
     """The settings card's line."""
     if minutes == 0:
         return (
-            "• **Stop when quiet:** Off. DMbot still stops by itself when nobody is in the "
-            "voice channel for 5 minutes. Tap **Stop when quiet** to change it."
+            f"• **Stop when quiet:** Off. I still stop after {EMPTY_S // 60} minutes with nobody "
+            "in the voice channel."
         )
     return (
-        f"• **Stop when quiet:** after {minutes} minutes with nobody speaking, and after 5 "
-        "minutes with nobody in the voice channel. DMbot warns you first. Tap **Stop when "
-        "quiet** to change it."
+        f"• **Stop when quiet:** after {minutes} minutes of silence, or {EMPTY_S // 60} minutes "
+        "with nobody in the voice channel. I warn you first, and you can tap **Keep listening**."
     )
 
 

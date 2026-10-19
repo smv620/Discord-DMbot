@@ -32,6 +32,7 @@ def fake_bot(*, people: list[int], minutes: int = 30, now: float = 0.0) -> Any:
         campaign_id=CAMPAIGN,
         listening=True,
         screen_channel_id=66,
+        voice_channel_id=55,
         dm_user_id=DM,
         segmenter=SimpleNamespace(session=SESSION),
         totals=SimpleNamespace(speakers={}),
@@ -51,6 +52,7 @@ def fake_bot(*, people: list[int], minutes: int = 30, now: float = 0.0) -> Any:
         stop_session=AsyncMock(return_value="Stopped listening."),
         sent=sent,
     )
+    bot.get_channel = lambda _id: MagicMock(spec=discord.VoiceChannel)
     bot._quiet_minutes = DMBot._quiet_minutes.__get__(bot)
     bot._remove_idle_warning = DMBot._remove_idle_warning
     bot._idle_check = DMBot._idle_check.__get__(bot)
@@ -77,7 +79,7 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         await self.check(bot, EMPTY_S)
         (call,) = bot.post_message.await_args_list
         self.assertEqual(call.args[0], 66)
-        self.assertIn("Nobody's here", call.args[1])
+        self.assertIn("nobody is in the voice channel", call.args[1])
         self.assertIn("5 minutes", call.args[1])
         (button,) = call.args[2].children
         self.assertEqual(button.custom_id, f"dmbot:keepon:{CAMPAIGN}:{SESSION}")
@@ -88,7 +90,8 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["auto"], "empty")
         self.assertEqual((kwargs["campaign_id"], kwargs["session"]), (CAMPAIGN, SESSION))
         (told,) = bot.post.await_args_list
-        self.assertEqual(told.args[1], "⏹ Stopped: nobody was here for 5 minutes.")
+        self.assertIn("nobody was in the voice channel for 5 minutes", told.args[1])
+        self.assertIn("/dmbot start", told.args[1])
 
     async def test_a_quiet_table_says_how_long_and_a_bot_only_channel_is_empty(self) -> None:
         bot = fake_bot(people=[1, 2], minutes=60)
@@ -96,10 +99,10 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         await self.check(bot, 3599)
         bot.post_message.assert_not_awaited()
         await self.check(bot, 3600)
-        self.assertIn("Nobody has spoken for 60 minutes", bot.post_message.await_args.args[1])
+        self.assertIn("nobody has spoken for 60 minutes", bot.post_message.await_args.args[1])
         await self.check(bot, 3600 + WARN_S)
         self.assertEqual(bot.stop_session.await_args.kwargs["auto"], "quiet")
-        self.assertEqual(bot.post.await_args.args[1], "⏹ Stopped: nobody spoke for 60 minutes.")
+        self.assertIn("nobody spoke for 60 minutes", bot.post.await_args.args[1])
 
     async def test_off_never_stops_a_table_with_people_but_still_stops_an_empty_one(self) -> None:
         bot = fake_bot(people=[1], minutes=0)
@@ -135,6 +138,56 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         await self.check(bot, EMPTY_S + WARN_S)  # would have stopped; now it starts again
         bot.stop_session.assert_not_awaited()
 
+    async def test_a_warning_that_could_not_be_posted_never_leads_to_a_stop(self) -> None:
+        bot = fake_bot(people=[])
+        self.table = bot.tables[GUILD]
+        bot.post_message.side_effect = discord.HTTPException(
+            SimpleNamespace(status=403, reason=""), "no"
+        )
+        await self.check(bot, EMPTY_S)
+        await self.check(bot, EMPTY_S + WARN_S)  # would have stopped; it was never warned
+        bot.stop_session.assert_not_awaited()
+        bot.post_message.side_effect = None
+        await self.check(bot, EMPTY_S + WARN_S + 60)  # the next look warns again
+        self.assertEqual(bot.post_message.await_count, 3)
+
+    async def test_a_stop_that_lost_a_race_is_not_announced(self) -> None:
+        for answer in ("DMbot isn't listening right now.", "That session already ended."):
+            bot = fake_bot(people=[])
+            self.table = bot.tables[GUILD]
+            await self.check(bot, EMPTY_S)
+            bot.stop_session.side_effect = None
+            bot.stop_session.return_value = answer
+            await self.check(bot, EMPTY_S + WARN_S)
+            bot.post.assert_not_awaited()
+
+    async def test_the_stop_says_what_the_warning_said(self) -> None:
+        bot = fake_bot(people=[1], minutes=30)
+        self.table = bot.tables[GUILD]
+        await self.check(bot, 30 * 60)  # warned for silence
+        bot.people = []  # then everyone leaves
+        await self.check(bot, 30 * 60 + WARN_S)
+        self.assertEqual(bot.stop_session.await_args.kwargs["auto"], "quiet")
+
+    async def test_an_unknown_voice_channel_is_not_an_empty_one(self) -> None:
+        bot = fake_bot(people=[])
+        self.table = bot.tables[GUILD]
+        bot.get_channel = lambda _id: None  # a gateway reconnect
+        await self.check(bot, 10 * EMPTY_S)
+        bot.post_message.assert_not_awaited()
+
+    async def test_a_session_replaced_while_the_setting_is_read_is_left_alone(self) -> None:
+        bot = fake_bot(people=[])
+        self.table = bot.tables[GUILD]
+
+        async def replaced(*args: Any) -> Any:
+            bot.tables[GUILD] = SimpleNamespace()  # a new session took its place
+            return SimpleNamespace(quiet_stop_minutes=30)
+
+        bot.campaigns.get.side_effect = replaced
+        await bot._idle_check(self.table)
+        bot.post_message.assert_not_awaited()
+
     async def test_a_session_that_is_not_listening_yet_is_left_alone(self) -> None:
         bot = fake_bot(people=[])
         bot.tables[GUILD].listening = False
@@ -146,7 +199,7 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         bot = fake_bot(people=[1], minutes=90)
         self.assertEqual(await bot._quiet_minutes(bot.tables[GUILD]), 90)
         bot.campaigns.get.side_effect = RuntimeError("down")
-        self.assertEqual(await bot._quiet_minutes(bot.tables[GUILD]), 30)
+        self.assertIsNone(await bot._quiet_minutes(bot.tables[GUILD]))  # skipped, not guessed
 
 
 class TheKeepListeningButton(unittest.IsolatedAsyncioTestCase):

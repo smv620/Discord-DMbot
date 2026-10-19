@@ -3263,7 +3263,7 @@ class DMBot(commands.AutoShardedBot):
                 return screen_messages.ONLY_DM_STOPS
             # Forget the saved session first: if that fails, keep listening rather than
             # stop now and come back by surprise after the next restart.
-            who = f"by itself, nobody here ({auto})" if auto else f"by user {user_id}"
+            who = f"by itself ({auto})" if auto else f"by user {user_id}"
             try:
                 was_saved = await self.sessions.clear(guild_id, f"/dmbot stop {who}")
             except Exception:
@@ -8072,41 +8072,53 @@ class DMBot(commands.AutoShardedBot):
         table.idle_message = None
         return True
 
-    async def _quiet_minutes(self, table: Table) -> int:
-        """The campaign's quiet limit, read fresh so a change applies at once; the default if
-        it can't be read (a missed read must not turn the stop off, or stop it early)."""
+    async def _quiet_minutes(self, table: Table) -> int | None:
+        """The campaign's quiet limit, read fresh so a change applies at once; None if it can't
+        be read: that minute's check is skipped, rather than guessing a limit the DM may have
+        changed (a campaign set to Off must not be warned by a database blip)."""
         if table.campaign_id is None:
-            return 30
+            return None
         try:
             campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
         except Exception:
             log.exception("Couldn't read the quiet-stop setting")
-            return 30
-        return campaign.quiet_stop_minutes if campaign is not None else 30
+            return None
+        return campaign.quiet_stop_minutes if campaign is not None else None
 
     async def _idle_check(self, table: Table) -> None:
         if not table.listening or table.campaign_id is None:
             return
         if self.tables.get(table.guild_id) is not table:
             return
+        voice = self.get_channel(table.voice_channel_id)
+        if not isinstance(voice, discord.VoiceChannel | discord.StageChannel):
+            return  # the channel isn't known right now (a reconnect): not the same as empty
+        minutes = await self._quiet_minutes(table)
+        if minutes is None or self.tables.get(table.guild_id) is not table:
+            return  # unreadable, or the session ended or was replaced while we looked
         now = time.monotonic()
         table.idle.saw_speech(now, sum(t.seconds for t in table.totals.speakers.values()))
-        minutes = await self._quiet_minutes(table)
         verdict = table.idle.poll(
             now, people=bool(self._people_in_voice(table)), quiet_minutes=minutes
         )
         with log_context(guild_id=table.guild_id, campaign_id=table.campaign_id):
             if verdict.action == "warn" and verdict.reason is not None:
                 log.info("Idle: warning that the session will stop (%s)", verdict.reason)
-                table.idle_message = await self.post_message(
-                    table.screen_channel_id,
-                    idle_warning_text(verdict.reason, minutes),
-                    keep_view(table.campaign_id, table.segmenter.session),
-                )
+                try:
+                    table.idle_message = await self.post_message(
+                        table.screen_channel_id,
+                        idle_warning_text(verdict.reason, minutes),
+                        keep_view(table.campaign_id, table.segmenter.session),
+                    )
+                except Exception:
+                    log.exception("Couldn't post the idle warning")
+                    table.idle_message = None
+                if table.idle_message is None:
+                    table.idle.unwarn()  # never stop someone who was not warned
             elif verdict.action == "stop" and verdict.reason is not None:
                 log.info("Idle: stopping the session (%s)", verdict.reason)
                 await self._remove_idle_warning(table)
-                await self.stop_session(
+                result = await self.stop_session(
                     table.guild_id,
                     table.dm_user_id,
                     True,
@@ -8114,7 +8126,9 @@ class DMBot(commands.AutoShardedBot):
                     session=table.segmenter.session,
                     auto=verdict.reason,
                 )
-                if self.tables.get(table.guild_id) is not table:  # it did stop
+                # Only this call's own stop is announced: a Stop pressed first, or a newer
+                # session, answers with something else and nothing is said about it.
+                if result.startswith("Stopped listening"):
                     await self.post(table.screen_channel_id, stopped_text(verdict.reason, minutes))
             elif table.idle_message is not None and table.idle.warned_at is None:
                 await self._remove_idle_warning(table, CANCELLED)  # people are back, or spoke

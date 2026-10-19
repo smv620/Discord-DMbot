@@ -50,6 +50,12 @@ class IdleWatch:
         self.warned_at = None
         self.warned_for = None
 
+    def unwarn(self) -> None:
+        """The warning could not be shown: it does not count, so the next check tries again.
+        Nobody is stopped without having had the chance to press Keep listening."""
+        self.warned_at = None
+        self.warned_for = None
+
     def saw_speech(self, now: float, total_seconds: float) -> None:
         """Speech totals for the session: more than last time means someone spoke."""
         if total_seconds > self.spoken_seconds:
@@ -74,5 +80,5 @@ class IdleWatch:
             self.warned_at, self.warned_for = now, reason
             return Verdict("warn", reason)
         if now - self.warned_at >= WARN_S:
-            return Verdict("stop", reason)
+            return Verdict("stop", self.warned_for or reason)  # what the warning said
         return NOTHING

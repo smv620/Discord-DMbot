@@ -97,6 +97,18 @@ class TheQuietTable(unittest.TestCase):
             resumed.poll(3 * 60 * MIN + 60, people=True, quiet_minutes=30).action, "none"
         )
 
+    def test_a_warning_that_could_not_be_shown_does_not_count(self) -> None:
+        watch = IdleWatch(0)
+        self.assertEqual(watch.poll(30 * MIN, people=True, quiet_minutes=30).action, "warn")
+        watch.unwarn()
+        self.assertEqual(watch.poll(31 * MIN, people=True, quiet_minutes=30).action, "warn")
+
+    def test_the_stop_names_what_the_warning_named(self) -> None:
+        watch = IdleWatch(0)
+        watch.poll(30 * MIN, people=True, quiet_minutes=30)  # warned for silence
+        stop = watch.poll(30 * MIN + WARN_S, people=False, quiet_minutes=30)
+        self.assertEqual(stop, Verdict("stop", QUIET))
+
     def test_an_empty_channel_wins_over_a_quiet_one(self) -> None:
         watch = IdleWatch(0)
         self.assertEqual(watch.poll(40 * MIN, people=False, quiet_minutes=30).reason, "empty")
