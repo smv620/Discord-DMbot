@@ -66,6 +66,12 @@ ALLOWED: list[tuple[str, str, str]] = [
         "each section'): words for the model, not for a person",
     ),
     (
+        "recaps/calls.py",
+        "prompt",
+        "a phrase to find in a problem the checks wrote ('exactly one music prompt'), to sort it "
+        "under a fixed word in a test report: matched, never shown",
+    ),
+    (
         "recaps/pipeline.py",
         "json",
         "a problem listed back to the AI so it can answer again: for the model, not a person",

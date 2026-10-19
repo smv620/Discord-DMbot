@@ -63,6 +63,7 @@ from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
 from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
+from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.eleven import ProviderError, check_line
@@ -122,6 +123,7 @@ class Outcome:
     sheets: list[list[dict[str, Any]]] = field(default_factory=list)  # each beat sheet tried
     # (stage, try, the check's problems) for each prose or finish check that failed (#1969)
     failures: list[tuple[str, int, list[str]]] = field(default_factory=list)
+    calls: list[cl.CallEvent] = field(default_factory=list)  # each AI call, in order (#2053)
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -154,6 +156,7 @@ async def run_text(
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
     failures: list[tuple[str, int, list[str]]] = []
+    calls: list[cl.CallEvent] = []
     notes: list[str] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
@@ -181,6 +184,7 @@ async def run_text(
             (stage, attempt + 1, list(problems))
         ),
         on_note=notes.append,
+        on_call=calls.append,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -204,6 +208,7 @@ async def run_text(
         notes=notes,
         sheets=store.sheets,
         failures=failures,
+        calls=calls,
     )
 
 
@@ -368,6 +373,7 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         lines += ["", *explain_sheets(out)]
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
+    lines += cl.section(out.calls)  # counts and fixed words only (#2053)
     if out.notes:
         lines += ["", *(f"Note: {n}" for n in out.notes)]
     if job.grade:
