@@ -42,7 +42,8 @@ BASE_WORDS = 100  # the recap's length: this many words, and 100 more for each h
 WORDS_PER_HOUR = 100
 WORDS_CEILING = 700  # a 6-hour session or longer
 RANGE = 0.20  # a draft within this far of the target passes
-LAST_UP = 0.35  # on the last try a draft this far over the target still passes (never under)
+LAST_UP = 0.35  # on the last try a draft this far over the target still passes
+LAST_DOWN = 0.40  # and this far under it (recap test 4: a writer that keeps cutting; #2036)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
@@ -166,6 +167,7 @@ class Length:
     low: int
     high: int
     last_high: int  # the most the last try may run to
+    last_low: int  # the least the last try may come to
     summary_max: int  # characters
     beats: int  # most beats the writer is shown
     sections: int  # most 《…》 sections
@@ -189,6 +191,7 @@ def length_for(hours: float) -> Length:
         low=round(target * (1 - RANGE)),
         high=high,
         last_high=last_high,
+        last_low=round(target * (1 - LAST_DOWN)),
         summary_max=round(last_high * CHARS_PER_WORD),
         beats=min(10, max(3, round(3 * hours))),
         sections=min(SECTIONS_MAX, max(1, target // 70)),
@@ -255,6 +258,11 @@ def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length)
         f"{length.high}) then MUSIC: 1. … one prompt for each 《…》 section."
     )
     head = "\nYour last draft was rejected: " + _data("; ".join(problems)) + ". "
+    if any("words" in p for p in problems):  # the revision must not shrink or balloon (test 4)
+        head += (
+            f"Keep it between {length.low} and {length.high} words: do not cut it down to fix "
+            "the other problems, and add detail from the beats if it is short. "
+        )
     if rejected is None:
         return head + "Write the whole recap again, fixing exactly that. " + form
     music = "\n".join(f"{i}. {m}" for i, m in enumerate(rejected.music, start=1))
@@ -324,9 +332,21 @@ def fix_prose(prose: Prose, sections_max: int = SECTIONS_MAX) -> Prose:
         summary = re.sub(r"[ \t]{2,}", " ", summary)
     sections = min(len(cues), sections_max)
     music = list(prose.music)
+    if not music and sections:
+        # No music prompts at all (recap test 4): one for each section from its mood word. A
+        # prompt only describes a sound, so this invents no story.
+        music = [_mood_prompt(c.group()) for c in cues[:sections_max]]
     if music and sections:
         music = music[:sections] + [music[-1]] * max(0, sections - len(music))
     return Prose(summary, tuple(music))
+
+
+def _mood_prompt(cue: str) -> str:
+    mood = cue.strip("《》 ").lower() or "calm"
+    return (
+        f"Soft strings and low ambience, {mood} in mood, slow and sparse, "
+        "quiet under a spoken voice."
+    )
 
 
 def parse_prose(raw: str, length: Length | None = None) -> Prose | None:
@@ -526,7 +546,11 @@ def check_prose(
         problems.append("it must open with an emotion cue like 《Tense》")
     narration = narration_of(summary)
     count = len(words(narration))
-    if not length.low <= count <= (length.last_high if last else length.high):
+    if (
+        not (length.last_low if last else length.low)
+        <= count
+        <= (length.last_high if last else length.high)
+    ):
         problems.append(
             f"Your draft was {count} words. This session ran about {length.hours:g} hours: "
             f"write about {length.target} words, between {length.low} and {length.high}"
