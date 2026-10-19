@@ -159,8 +159,8 @@ def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> inde
     ("barbarian improved brutal strike 17") picks the one of that level: which is how the name
     list words them."""
     hit = srd.lookup(typed, target, fallback, kind=index.RULE)
-    if hit is not None:
-        return hit
+    if hit is not None and not (hit.from_fallback and srd.has_asked_for(typed, target)):
+        return hit  # (a 2014 rule gives way to the target's own feat, item ... of the name: #1943)
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]

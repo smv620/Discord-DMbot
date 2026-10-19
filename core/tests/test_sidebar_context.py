@@ -644,6 +644,37 @@ class MagicItems(unittest.TestCase):
         self.assertIn("ABOUT DMBOT", prompt)
 
 
+class TheCoreRules(unittest.TestCase):
+    """The SRD 5.1's core rules in the sidebar (#1943)."""
+
+    def names(self, question: str, target: str = "2024", fallback: str = "2014") -> list[str]:
+        hits = context.mentioned_rules(question, INDEX, target, fallback)
+        return [f"{h.entry.name} {h.entry.edition}" for h in hits]
+
+    def test_an_everyday_5_1_title_adds_nothing_in_a_2024_campaign(self) -> None:
+        for question in (
+            "how much time does the party have",
+            "can I use the water to put out the fire",
+            "what is my wisdom bonus",
+            "how much food do we need",
+            "what about space and movement",
+        ):
+            self.assertEqual(self.names(question), [], question)
+
+    def test_a_longer_5_1_rule_is_found_tagged_in_2024_and_plain_in_2014(self) -> None:
+        self.assertEqual(self.names("how does underwater combat work"), ["Underwater Combat 2014"])
+        self.assertEqual(self.names("how does grappling work", "2014", "2024"), ["Grappling 2014"])
+        self.assertEqual(self.names("how does grappling work"), ["Grappling 2024"])
+
+    def test_the_2024_feat_beats_the_2014_rule_of_the_same_name(self) -> None:
+        self.assertEqual(
+            self.names("how do I do two-weapon fighting"), ["Two-Weapon Fighting 2024"]
+        )
+
+    def test_a_single_word_is_found_in_a_2014_campaign(self) -> None:
+        self.assertIn("Time 2014", self.names("how much time does the party have", "2014", "2024"))
+
+
 class GameplayToolbox(unittest.TestCase):
     """The DM's chapter (#1935): poisons, traps, curses and the hazard and travel rules."""
 

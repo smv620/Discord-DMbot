@@ -39,6 +39,7 @@ from dmbot.devtools.srd import (
     origins51,
     parse,
     parse51,
+    rules51,
     toolbox,
 )
 from dmbot.devtools.srd.pdf import Line, read_pages
@@ -528,6 +529,10 @@ def item_lines_51(lines: Sequence[Line]) -> list[Line]:
     raise parse.SrdError(f"Can't find the heading {SENTIENT_HEADING_51!r} after the items.")
 
 
+RULES_HEADING_51 = "Using Ability"  # (the chapter's title wraps; its first line starts the page)
+AFTER_RULES_HEADING_51 = "Spell Lists"
+
+
 def title_position(lines: Sequence[Line], title: str, start: int = 0) -> int:
     """The index of the first title line with exactly these words, at or after `start`."""
     for i in range(start, len(lines)):
@@ -577,6 +582,26 @@ def origin_files_51(
             **header("feat", "Feats"),
             "entries": [{"category": "", **asdict(feat)}],
         },
+    }
+
+
+def rules_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's core rules chapters (Using Ability Scores, Adventuring, Combat and Spellcasting up
+    to the spell lists) as `rules.json`, in the shape of the 5.2.1's glossary (#1943)."""
+    first = first_page_of(pages, RULES_HEADING_51, after=CONTENTS_PAGES)
+    last = first_page_of(pages, AFTER_RULES_HEADING_51, after=first)
+    lines = lines_between(pages, first, last)
+    found = rules51.parse_rules(lines, vocab)
+    dropped = rules51.left_out(lines)
+    if dropped != rules51.EXPECTED_LEFT_OUT:
+        raise parse.SrdError(f"The 5.1's rules chapters leave out something new: {dropped}")
+    return {
+        "rules.json": {
+            **header("rule", rules51.SECTION),
+            "entries": [asdict(r) | {"see_also": []} for r in found],
+        }
     }
 
 
@@ -669,10 +694,12 @@ def build_files_51(
     classes: bool = True,
     items_pages: bool = True,
     origins_pages: bool = True,
+    rules_pages: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """The 2014 SRD 5.1's files from pages already read. `classes=False`, `items_pages=False` and
-    `origins_pages=False` leave out the class features, the magic items and the races, background
-    and feat, for tests whose pages hold no such chapter."""
+    `origins_pages=False` and `rules_pages=False` leave out the class features, the magic items,
+    the races, background and feat, and the core rules, for tests whose pages hold no such
+    chapter."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
     traps_at = first_page_of(pages, AFTER_SPELLS_HEADING_51, after=spells_at)
     conditions_at = first_page_of(pages, CONDITIONS_HEADING_51, after=traps_at)
@@ -725,6 +752,8 @@ def build_files_51(
     if origins_pages:
         files.update(origin_files_51(pages, header, vocab))
         files.update(equipment_files_51(pages, header, vocab))
+    if rules_pages:
+        files.update(rules_files_51(pages, header, vocab))
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]
