@@ -64,6 +64,7 @@ describe("What's new", () => {
       "A 📇 Names button", // until dev1 deploys it (#1987, #2002)
       "See what DMbot looked at", // until #1957 deploys (#1958)
       "Look up any rule", // until dev1 deploys it (#1890, #1891)
+      "Look up fight difficulty rules", // until dev1 deploys it (#2004, #2006, #2023)
       "See what's switched on", // until dev1 deploys it and the owner's live check (#1831)
       "Find Settings more easily", // until the owner's live check (#1619)
       "Split the party", // until the owner's live check (#1607)

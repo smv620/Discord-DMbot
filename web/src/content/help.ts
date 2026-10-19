@@ -517,6 +517,32 @@ export const ruleExamples: RuleExample[] = [
   { text: "Goliath", kind: "species" },
   { text: "Sage", kind: "background" },
   { text: "Orc (creature)", kind: "monster", name: "Orc" },
+  { text: "xp budget", kind: "rule", name: "Step 2: Determine Your XP Budget" },
+  { text: "attunement", kind: "rule", name: "Attunement" },
+  { text: "charges", kind: "rule", name: "Magic Item Charges" },
+];
+
+// What the rules index gained on 2026-10-19: how hard a fight is (the SRD's Combat Encounters section,
+// for the game master only, #2000) and the Magic Items section (attunement, charges, rarity, value,
+// #2001), found by /dmbot rule and the DM sidebar (core rules/index.py, sidebar/context.py). Held with
+// the What's new entry "Look up fight difficulty rules" until dev1 deploys it (#2004, #2006). Set this to true
+// in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const FIGHT_AND_ITEM_RULES_LIVE = false;
+
+// The game master's step: the XP budget is the DM's chapter (`dm_side`), so players get "That's one for
+// your DM." DMbot reads the lines for the levels named and does no sum and no ruling (sidebar/context.py
+// ENCOUNTER_NOTE), so the words promise neither.
+export const fightRuleSteps: Step[] = [
+  {
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// For everyone: the Magic Items section is open rules, not the DM's chapter.
+export const magicItemRuleSteps: Step[] = [
+  {
+    text: "You can look up the rules for magic items the same way: type /dmbot rule, then \"attunement\" or \"charges\". You can also ask what rarity means and what an item is worth by rarity.",
+  },
 ];
 
 // The game master sees what players do not (core ui/rule_lookup.py: DM_ONLY, the player branch and the
@@ -749,6 +775,7 @@ export const dmSteps: Step[] = [
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
@@ -929,6 +956,7 @@ export const playerSteps: Step[] = [
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? magicItemRuleSteps : []),
   {
     text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
