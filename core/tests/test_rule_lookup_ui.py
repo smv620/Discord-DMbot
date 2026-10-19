@@ -826,7 +826,13 @@ class FeatureLookup(LookupTest):
             await self.a_player_asks()
 
     async def a_player_asks(self) -> None:
-        for name in ("hidden pit", "purple worm poison", "demonic possession", "extreme cold"):
+        for name in (
+            "hidden pit",
+            "purple worm poison",
+            "demonic possession",
+            "extreme cold",
+            "xp budget",
+        ):
             text = self.sent(await self.command(name, PLAYER))[0]
             self.assertEqual(text, ui.DM_ONLY, name)
         self.assertIn("📖 **Cover**", self.sent(await self.command("cover", PLAYER))[0])
