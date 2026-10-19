@@ -76,7 +76,7 @@ def test_names_from_discord_cannot_fake_formatting_or_ping() -> None:
 def test_reminder_is_short_and_shows_the_date() -> None:
     text = c.reminder_text("Dragon Club", "table", 1_760_000_000)
     assert "<t:1760000000:D>" in text  # each reader sees their own time zone
-    assert "To stop being recorded, press ⚙️ Menu below." in text and text.count("\n") == 0
+    assert "To stop being recorded, press 🗂️ Menu below." in text and text.count("\n") == 0
     assert "🛑" not in text
     # Also reaches people who said yes before the whole server could read it (#35).
     assert "Anyone in this server can read the text" in text
@@ -154,6 +154,20 @@ def test_buttons_carry_the_server() -> None:
     ]
 
 
+def test_menu_and_settings_do_not_share_an_icon() -> None:
+    """The Test K finding (#1966): Menu was a gear like Settings. Menu is the card index, and
+    every text that names the Menu button uses it."""
+    from dmbot.dm_screen.settings import SettingsButton
+
+    menu = c.MenuButton(1, None).item
+    settings = SettingsButton("0" * 32).item
+    assert isinstance(menu, discord.ui.Button) and isinstance(settings, discord.ui.Button)
+    assert str(menu.emoji) == "🗂️"
+    assert str(settings.emoji) == "⚙️"
+    assert "⚙️ Menu" not in c.MENU_HINT
+    assert "🗂️ Menu" in c.MENU_HINT
+
+
 def test_the_menu_shows_only_what_applies() -> None:
     def ids(*, recording: bool, sheets: bool, test_voice: str | None = None) -> list[str]:
         return custom_ids(
@@ -214,7 +228,7 @@ def test_the_warning_is_plain_and_names_the_server() -> None:
     assert "/consent revoke" in kept  # how to stop later, with no menu left on it
     for text in (c.no_longer_recorded_text("X"), c.nothing_to_stop_text("X")):
         assert "/consent give" in text and "Menu" not in text  # nothing to press there
-    assert "⚙️ Menu below" in c.not_recorded_menu_text("X")
+    assert "🗂️ Menu below" in c.not_recorded_menu_text("X")
 
 
 def test_no_message_carries_a_stop_directly() -> None:
@@ -760,7 +774,7 @@ class ConsentDMTests(DatabaseTest):
         assert edit["content"] == c.stopped_text(self.guild.name)
         assert custom_ids(edit["view"]) == [
             f"dmbot:consent:yes:1:v{TERMS_VERSION}",
-            "dmbot:consent:menu:1:-",  # the ⚙️ Menu the message points at, for 🗑 Delete
+            "dmbot:consent:menu:1:-",  # the 🗂️ Menu the message points at, for 🗑 Delete
         ]
 
     async def test_on_the_reminder_keep_and_close_give_it_back_unchanged(self) -> None:
@@ -1241,3 +1255,19 @@ class ConsentDMTests(DatabaseTest):
         args = call.followup.send.await_args
         assert "You said yes on <t:" in args.args[0]
         assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:menu:1:-"]
+
+
+def test_no_text_in_the_bot_or_the_website_still_calls_the_menu_a_gear() -> None:
+    """A revert guard for #1966: the Menu is 🗂️, and ⚙️ belongs to Settings."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    found = [
+        str(path.relative_to(root))
+        for folder in ("core/src", "web/src")
+        for path in (root / folder).rglob("*")
+        if path.is_file()
+        and path.suffix in {".py", ".ts", ".astro", ".md"}
+        and "⚙️ Menu" in path.read_text(encoding="utf-8")
+    ]
+    assert found == []

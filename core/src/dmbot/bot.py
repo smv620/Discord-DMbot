@@ -443,7 +443,7 @@ CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is k
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
 COMBAT_PHRASE_GAP_S = 15  # the same combat words twice (voice and chat) within this: once (#1127)
 METER_CALL_TIMEOUT_S = 8  # one write of minutes; a stuck database must not hold the loop
-RECORDED_CHECK_S = 2.0  # the ⚙️ Menu's database check: well inside Discord's 3 s
+RECORDED_CHECK_S = 2.0  # the 🗂️ Menu's database check: well inside Discord's 3 s
 TEST_RECORDINGS_MIN_FREE = 1 << 30  # a test session isn't started with less than 1 GB free
 TEST_SAVES_AT_ONCE = 8  # more than this waiting to be saved are dropped, and the gap noted
 AUDIO_FRAME_MS = 20  # the segmenter's end is the last frame's start; it runs a frame longer
@@ -1437,7 +1437,7 @@ class DMBot(commands.AutoShardedBot):
             log.warning("Could not keep a Discord name on an account", exc_info=True)
 
     async def recorded(self, guild_id: int, user_id: int) -> bool:
-        """Whether they may be recorded in this server now, for the ⚙️ Menu (Stop or I
+        """Whether they may be recorded in this server now, for the 🗂️ Menu (Stop or I
         consent), Keep recording and /consent revoke. Quick, so Discord's 3 seconds hold:
         the cache first (exactly who is captured now); the database only when the cache
         says no (a fresh process may not have loaded this server), and only briefly. Unsure
@@ -9016,7 +9016,7 @@ async def consent_give(interaction: discord.Interaction) -> None:
     name="revoke", description="Stop DMbot from recording your voice in this server"
 )
 async def consent_revoke(interaction: discord.Interaction) -> None:
-    # One warning first, as from the ⚙️ Menu (#807): nothing stops until Yes, which stops
+    # One warning first, as from the 🗂️ Menu (#807): nothing stops until Yes, which stops
     # at once and everywhere (consent_dm.StopYesButton).
     bot = _bot(interaction)
     guild = interaction.guild

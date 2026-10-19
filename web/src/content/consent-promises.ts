@@ -41,7 +41,7 @@ export const consentPromises: ConsentPromise[] = [
   },
   {
     id: "stop",
-    text: "You can stop at any time: press ⚙️ Menu in the private message, then Stop recording me, then Yes, stop recording me.",
+    text: "You can stop at any time: press 🗂️ Menu in the private message, then Stop recording me, then Yes, stop recording me.",
   },
   {
     id: "dm-screen",

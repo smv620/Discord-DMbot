@@ -4,7 +4,7 @@ channel").
 One shared message holds two buttons everyone may press: 👤 My buttons and ❓ Help. 👤 answers
 privately with the buttons that person's role gets (`dm_bot_panel.buttons_for`), re-checked from
 the campaign as it is now on every press, and those buttons are the menus DMbot already has
-(the ⚙️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
+(the 🗂️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
 answer is private; nothing from the DM screen is ever posted here.
 
 The panel message is kept by DMbot: edited in place when it exists, posted again when it was
@@ -38,13 +38,13 @@ WENT_WRONG = "Something went wrong. Please press it again."
 _TAIL = " Press Look up a rule to check a rule, or Transcripts to read what was said."
 CARD_TEXT = {
     Role.GAME_MASTER: (
-        "You are a DM here. ⚙️ Menu is about you (stop recording, delete your transcripts). "
+        "You are a DM here. 🗂️ Menu is about you (stop recording, delete your transcripts). "
         "⚙️ Settings is for the whole game." + _TAIL
     ),
     Role.PLAYER: (
-        "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts." + _TAIL
+        "You play here. Press 🗂️ Menu to stop being recorded or delete your transcripts." + _TAIL
     ),
-    Role.MEMBER: ("You agreed to be recorded in this server. Press ⚙️ Menu to stop." + _TAIL),
+    Role.MEMBER: ("You agreed to be recorded in this server. Press 🗂️ Menu to stop." + _TAIL),
     Role.GUEST: (
         "DMbot is not recording you. To play, join the voice channel and DMbot will message "
         "you to ask. Help explains DMbot." + _TAIL
@@ -55,7 +55,7 @@ CARD_TEXT = {
 async def standing_of(client: Any, campaign: Campaign, user_id: int) -> Standing:
     """What the role depends on, read now (both reads at once, for Discord's 3 seconds). A failed
     read counts as nothing, so a hiccup hides buttons and never adds one. (`recorded` itself
-    answers "yes" when unsure, so the ⚙️ Menu, whose Stop button must never be hidden, can show.)"""
+    answers "yes" when unsure, so the 🗂️ Menu, whose Stop button must never be hidden, can show.)"""
 
     async def tied() -> bool:
         memory = getattr(client, "memory", None)
