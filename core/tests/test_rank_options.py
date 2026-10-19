@@ -7,7 +7,7 @@ import asyncio
 import dataclasses
 import json
 import unittest
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import tests.test_consent_refusals as cr
@@ -113,10 +113,10 @@ class TheQuestionBook(unittest.TestCase):
         book, asked = self.asked()
         ranked = book.rank(asked.id, "Marron")
         assert ranked is not None
-        labels = [item.item.label for item in question_view(GUILD, ranked).children]
+        labels = [cast(Any, item).item.label for item in question_view(GUILD, ranked).children]
         self.assertEqual(labels[:2], ["Marron (likely)", "Maren"])
         self.assertEqual(ranked.options[0][1], "Marron")  # button 0 is the likely name
-        plain = [item.item.label for item in question_view(GUILD, asked).children]
+        plain = [cast(Any, item).item.label for item in question_view(GUILD, asked).children]
         self.assertEqual(plain[:2], ["Maren", "Marron"])  # unranked: as before
 
     def test_a_long_name_still_fits_the_button_with_the_word_likely(self) -> None:
@@ -143,6 +143,12 @@ class TheBotsCall(cr.Refusals):
         ai = FakeRanker(*replies)
         self.bot.topic_ai = ai  # type: ignore[assignment]
         return table, asked, ai
+
+    def posted(self) -> Any:
+        return self.bot.post_message  # (a mock, from the harness)
+
+    def saved(self) -> Any:
+        return cast(Any, self.bot.memory).add_correction
 
     def names(self, asked: Any) -> list[str]:
         return [n for _, n in asked.options]
@@ -251,7 +257,7 @@ class TheBotsCall(cr.Refusals):
         table.questions.close(nq.EXPIRED, 0.0)
         table.questions.closed_at = None
         table.questions.open = asked
-        self.bot.post_message.reset_mock()
+        self.posted().reset_mock()
         real = ai.complete
 
         async def close_then_answer(*a: Any, **k: Any) -> Reply:
@@ -260,14 +266,14 @@ class TheBotsCall(cr.Refusals):
 
         ai.complete = close_then_answer  # type: ignore[method-assign]
         await self.bot._ask_dm(table, asked)
-        self.bot.post_message.assert_not_awaited()
+        self.posted().assert_not_awaited()
 
     async def test_consent_withdrawn_during_the_call_posts_nothing(self) -> None:
         table, asked, ai = await self.question(answer("Marron"))
         table.questions.close(nq.EXPIRED, 0.0)
         table.questions.closed_at = None
         table.questions.open = asked
-        self.bot.post_message.reset_mock()
+        self.posted().reset_mock()
         real = ai.complete
 
         async def stop_then_answer(*a: Any, **k: Any) -> Reply:
@@ -276,7 +282,7 @@ class TheBotsCall(cr.Refusals):
 
         ai.complete = stop_then_answer  # type: ignore[method-assign]
         await self.bot._ask_dm(table, asked)
-        self.bot.post_message.assert_not_awaited()
+        self.posted().assert_not_awaited()
         self.assertIsNone(table.questions.open)
 
     async def test_a_stopped_speakers_lines_are_not_in_the_scene(self) -> None:
@@ -293,16 +299,16 @@ class TheBotsCall(cr.Refusals):
         table.questions.close(nq.EXPIRED, 0.0)
         table.questions.closed_at = None
         table.questions.open = asked
-        self.bot.post_message.reset_mock()
+        self.posted().reset_mock()
         await self.bot._ask_dm(table, asked)
-        _, _, view = self.bot.post_message.await_args.args
-        self.assertEqual(view.children[0].item.label, "Marron (likely)")
+        _, _, view = self.posted().await_args.args
+        self.assertEqual(cast(Any, view.children[0]).item.label, "Marron (likely)")
         self.assertEqual(table.questions.open.options[0][1], "Marron")
         _, done, _ = await self.bot.answer_name_question(GUILD, asked.id, "0", DM)
         self.assertTrue(done)
         self.assertEqual((table.rank_answered, table.rank_picked), (1, 1))
-        self.bot.memory.add_correction.assert_awaited()
-        self.assertEqual(self.bot.memory.add_correction.await_args.kwargs["entity_id"], "b" * 32)
+        self.saved().assert_awaited()
+        self.assertEqual(self.saved().await_args.kwargs["entity_id"], "b" * 32)
 
     async def test_picking_another_name_counts_as_answered_not_as_picked(self) -> None:
         table, asked, _ = await self.question(answer("Marron"))
