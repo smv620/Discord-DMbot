@@ -74,14 +74,14 @@ describe("button labels on the site", () => {
   });
 
   it("names the page, the phrase and the closest real label for the old 'then Yes' wording", () => {
-    const old = "press ⚙️ Menu in the private message, then Stop recording me, then Yes.";
+    const old = "press 🗂️ Menu in the private message, then Stop recording me, then Yes.";
     const problems = labelProblems(buttonPhrases(old), labels, allowed);
     expect(problems.map((p) => p.phrase)).toEqual(["Yes"]);
     expect(problems[0]?.closest).toBe("Yes, stop recording me");
     // A real label with more words after it is not that label.
     expect(labelProblems(buttonPhrases("press Menu button."), labels, allowed).map((p) => p.phrase)).toEqual(["Menu button"]);
     // The right wording passes.
-    const fixed = "press ⚙️ Menu in the private message, then Stop recording me, then Yes, stop recording me.";
+    const fixed = "press 🗂️ Menu in the private message, then Stop recording me, then Yes, stop recording me.";
     expect(labelProblems(buttonPhrases(fixed), labels, allowed)).toEqual([]);
   });
 

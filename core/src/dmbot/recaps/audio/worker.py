@@ -105,10 +105,12 @@ class AudioWorker:
         allowance: Allowance | None = None,
         renderer: Renderer | None = None,
         max_credits: int = DEFAULT_MAX_CREDITS,
+        voice_tags: bool = True,
         have_ffmpeg: Callable[[], bool] = _has_ffmpeg,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._store = store
+        self._voice_tags = voice_tags  # mood cues become delivery tags (#1983)
         self._provider = provider
         self._files = files
         self._load = load
@@ -213,7 +215,11 @@ class AudioWorker:
                 raise Stop(over)  # the narration is skipped; the text goes out as usual
         try:
             script = sc.build(
-                job.title, job.game_day, job.summary, secret_names=inputs.secret_names
+                job.title,
+                job.game_day,
+                job.summary,
+                secret_names=inputs.secret_names,
+                emotion_tags=self._voice_tags,
             )
         except sc.SecretInScript:
             raise Stop(SECRET) from None
@@ -224,7 +230,13 @@ class AudioWorker:
         async def guard() -> None:
             fresh = await self._check(gid, cid, job)  # again before each paid call
             try:
-                sc.build(job.title, job.game_day, job.summary, secret_names=fresh.secret_names)
+                sc.build(
+                    job.title,
+                    job.game_day,
+                    job.summary,
+                    secret_names=fresh.secret_names,
+                    emotion_tags=self._voice_tags,
+                )
             except sc.SecretInScript:
                 raise Stop(SECRET) from None
 
