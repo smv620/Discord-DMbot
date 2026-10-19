@@ -108,7 +108,7 @@ CONTENTS_PAGES = 10  # the table of contents names every heading too: look after
 SPELLS_HEADING = "Spell Descriptions"
 GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
-AFTER_TOOLBOX_HEADING = "Magic Items"  # the magic item rules after Combat Encounters: left out
+AFTER_TOOLBOX_HEADING = "Magic Items A–Z"  # the Magic Items rules end where the items begin
 TOOLBOX_SECTION = "Gameplay Toolbox"
 CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
@@ -304,6 +304,8 @@ def build_files(
             **header("toolbox", TOOLBOX_SECTION),
             "entries": [
                 *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in gameplay.rules),
+                # The Magic Items rules say their own section (the players' are not the DM's).
+                *({"kind": "rule", **asdict(m) | {"see_also": []}} for m in gameplay.magic),
                 *({"kind": "poison", **asdict(p)} for p in gameplay.poisons),
                 *({"kind": "trap", **asdict(t)} for t in gameplay.traps),
                 *({"kind": "curse", **asdict(c)} for c in gameplay.curses),
