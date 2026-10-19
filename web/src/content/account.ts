@@ -61,6 +61,7 @@ export const text = {
 
   // Signed out
   signedOutHeading: "You're not signed in.",
+  signedOutLead: "Sign in to see your plan, your hours and your campaigns.",
   newHeading: "New to DMbot?",
   signIn: "Sign in with Discord",
   signInNote: "DMbot only asks Discord for your name, your email and your list of servers.",

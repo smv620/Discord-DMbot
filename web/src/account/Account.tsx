@@ -313,6 +313,7 @@ function SignedOut({ notice }: { notice: string | null }) {
           </p>
         )}
         <h2 id="signed-out-heading">{text.signedOutHeading}</h2>
+        <p>{text.signedOutLead}</p>
         <a class="button" href={signIn}>
           {text.signIn}
         </a>

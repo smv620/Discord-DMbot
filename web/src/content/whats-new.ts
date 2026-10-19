@@ -19,6 +19,11 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-19",
+    title: "My Account puts sign-in first",
+    what: "When you are not signed in, My Account now says so and puts Sign in with Discord and the email link at the top. The plans come after, under New to DMbot?.",
+  },
+  {
     date: "2026-10-18",
     title: "Search and link Help steps",
     what: "The Help page has a search box that shows only the steps with your words in them. Every section and step also has its own link, and a Copy link button beside each section to paste it to a friend.",
