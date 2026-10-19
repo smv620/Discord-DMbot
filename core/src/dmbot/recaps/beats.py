@@ -169,7 +169,10 @@ def unsaid_names(
     """The names no evidence covers: not confirmed, and a word of it neither in the beat's own
     cited lines nor, when `transcript_words` is given, anywhere in the session (#1997). Speech to
     text spells a name many ways, so the AI's spelling often differs from the cited line's; a name
-    said somewhere in the session is real, and one said nowhere is invented. Pure."""
+    said somewhere in the session is real, and one said nowhere is invented. This only shows the
+    name exists in the session; it does not tie it to the cited lines, so a name of common words
+    ("Iron Crown") put on a beat that never mentions it passes (a chosen loosening, #1997).
+    Pure."""
     out: list[str] = []
     for n in names:
         mine = set(words(n))

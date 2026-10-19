@@ -189,7 +189,7 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         allowed_names=inputs.allowed_names,
         secret_names=inputs.secret_names,
         dm_ids=inputs.dm_ids,
-        transcript_words={w for s in said for w in words_of(s.text)},
+        transcript_words={w for s in mine for w in words_of(s.text)},
     )
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
     prose = rd.Prose(job.summary, tuple(job.music))
@@ -225,7 +225,7 @@ def explain_sheets(out: Outcome) -> list[str]:
     said = list(readable(out.inputs.lines))
     speakers = set(out.job.speakers) or {s.user_id for s in said}
     mine = [s for s in said if s.user_id in speakers]
-    everything = {w for s in said for w in words_of(s.text)}
+    everything = {w for s in mine for w in words_of(s.text)}  # the speakers used, like the job
     rows: list[str] = []
     for number, sheet in enumerate(out.sheets, start=1):
         kept, problems = bt.check(

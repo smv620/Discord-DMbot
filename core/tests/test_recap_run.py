@@ -4,6 +4,7 @@ fake provider: nothing is paid for."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -86,6 +87,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Varkus", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)  # a line of the transcript never prints
+
+    async def test_a_word_only_a_non_speaker_said_does_not_rescue_a_name(self) -> None:
+        # The words come from the speakers the job used, like the live worker (consent).
+        out = await run.run_text(inputs(), fx.Canned(), fx.Canned())
+        stranger = fx.lines()[0].__class__(99000, 4242, "Okthandom waits at the gate.", "x")
+        wide = replace(out.inputs, lines=[*out.inputs.lines, stranger])
+        bad = (
+            '{"beats": [{"what": "They reached Okthandom", "who": [], "lines": [1],'
+            ' "kind": "event"}]}'
+        )
+        failed = replace(
+            out, inputs=wide, sheets=[json.loads(bad)["beats"]] * 2,
+            job=replace(out.job, state="failed", speakers=(fx.DM, fx.ALICE, fx.BOB)),
+        )  # fmt: skip
+        text = "\n".join(run.explain_sheets(failed))
+        self.assertIn("names it did not accept: Okthandom", text)
 
     async def test_a_finished_run_prints_no_beat_sheet_diagnosis(self) -> None:
         out = await run.run_text(inputs(), happy(), fx.Canned())
