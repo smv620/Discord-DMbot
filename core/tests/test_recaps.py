@@ -4,6 +4,7 @@ email and the text the table reads. Pure functions and canned answers; no databa
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from dataclasses import replace
 from typing import Any, ClassVar
@@ -41,8 +42,10 @@ def beats() -> list[bt.Beat]:
 
 
 def prose_problems(summary: str = fx.SUMMARY, music: str = fx.MUSIC, **kw: Any) -> list[str]:
-    prose = rd.parse_prose(f"SUMMARY:\n{summary}\nMUSIC:\n{music}\n")
-    assert prose is not None
+    prompts = tuple(
+        re.sub(r"^\s*\d+[.)]\s*", "", m).strip() for m in music.splitlines() if m.strip()
+    )
+    prose = rd.Prose(summary, prompts)
     args: dict[str, Any] = {
         "beats": beats(),
         "transcript": TRANSCRIPT,
@@ -208,12 +211,61 @@ class TheProse(unittest.TestCase):
     def test_a_good_draft_passes(self) -> None:
         self.assertEqual(prose_problems(), [])
 
-    def test_the_answer_is_read_by_its_labels(self) -> None:
+    def test_the_answer_is_read_from_its_json(self) -> None:
         prose = rd.parse_prose(fx.PROSE_ANSWER)
         assert prose is not None
         self.assertTrue(prose.summary.startswith("《Tense》"))
         self.assertEqual(len(prose.music), 2)
-        self.assertIsNone(rd.parse_prose("Just prose, no labels."))
+        self.assertEqual(len(CUE.findall(prose.summary)), 2)  # a cue for each section
+        self.assertIn("《Ominous》", prose.summary)  # the mood word, written as a cue
+
+    def test_a_stray_cue_in_the_text_is_no_section_and_an_odd_mood_is_refused(self) -> None:
+        raw = '{"sections": [{"mood": "Tense", "text": "A 《calm》 night.", "music": "m"}]}'
+        prose = rd.parse_prose(raw)
+        assert prose is not None
+        self.assertEqual(prose.summary, "《Tense》 A calm night.")
+        self.assertEqual(len(CUE.findall(prose.summary)), len(prose.music))
+        odd = '{"sections": [{"mood": "tense, then calm", "text": "x", "music": "m"}]}'
+        self.assertIsNone(rd.parse_prose(odd))
+
+    def test_every_mood_the_voice_knows_is_a_mood_the_answer_may_use(self) -> None:
+        from dmbot.recaps.audio import script
+        from dmbot.recaps.audio.script import EMOTION_VOICE
+
+        for mood in EMOTION_VOICE:
+            raw = json.dumps({"sections": [{"mood": mood, "text": "The gate.", "music": "m"}]})
+            prose = rd.parse_prose(raw)
+            assert prose is not None, mood
+            built = script.build("T", None, prose.summary)
+            self.assertEqual(built.emotions[0].tag, EMOTION_VOICE[mood], mood)
+
+    def test_an_empty_draft_shows_no_sections_and_extra_sections_are_merged(self) -> None:
+        self.assertEqual(rd.prose_json(rd.Prose("no cue", ())), '{"sections": []}')
+        many = {
+            "sections": [{"mood": "tense", "text": f"Part {n}.", "music": ""} for n in range(8)]
+        }
+        prose = rd.parse_prose(json.dumps(many))
+        assert prose is not None
+        fixed = rd.fix_prose(prose, 5)
+        self.assertEqual(len(CUE.findall(fixed.summary)), 5)
+        self.assertEqual(len(fixed.music), 5)
+        self.assertTrue(all("tense" in m for m in fixed.music))  # empty prompts made from the mood
+        for n in range(8):
+            self.assertIn(f"Part {n}.", fixed.summary)
+
+    def test_an_answer_that_is_not_the_asked_for_json_is_none(self) -> None:
+        for bad in (
+            "Just prose, no labels.",
+            "",
+            "[]",
+            "{}",
+            '{"sections": []}',
+            '{"sections": [{"mood": "tense", "text": "x"}]}',
+            '{"sections": [{"mood": "tense", "text": "  ", "music": "m"}]}',
+            '{"sections": [{"mood": 5, "text": "x", "music": "m"}]}',
+            '{"sections": ["tense"]}',
+        ):
+            self.assertIsNone(rd.parse_prose(bad), bad)
 
     def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
@@ -313,10 +365,7 @@ class TheProse(unittest.TestCase):
         self.assertTrue(any("keeps secret" in p for p in found))
         # a copied run that starts with a secret name gets no hint
         transcript = "Zarathul stood at the broken gate and wept."
-        prose = rd.parse_prose(
-            f"SUMMARY:\n《Tense》 {body} Zarathul stood at the broken gate.\nMUSIC:\n1. S.\n"
-        )
-        assert prose is not None
+        prose = rd.Prose(f"《Tense》 {body} Zarathul stood at the broken gate.", ("S.",))
         found = rd.check_prose(
             prose,
             beats=beats(),
@@ -327,41 +376,6 @@ class TheProse(unittest.TestCase):
         )
         copy = [p for p in found if "copies the table" in p]
         self.assertTrue(copy and all("Zarathul" not in p and "starting" not in p for p in copy))
-
-    def test_the_label_is_read_in_the_ways_models_write_it(self) -> None:
-        for summary_label, music_label in (
-            ("SUMMARY:", "MUSIC:"),
-            ("**SUMMARY:**", "**MUSIC:**"),
-            ("**SUMMARY**", "**MUSIC**"),
-            ("## Summary", "## Music"),
-            ("Summary —", "Music —"),
-            ("summary:", "music:"),
-            ("### **Summary**", "### **Music**"),
-        ):
-            raw = f"{summary_label}\n《Tense》 The gate stood open.\n{music_label}\n1. Strings.\n"
-            prose = rd.parse_prose(raw)
-            self.assertIsNotNone(prose, summary_label)
-            assert prose is not None
-            self.assertEqual(prose.summary, "《Tense》 The gate stood open.", summary_label)
-            self.assertEqual(prose.music, ("Strings.",), summary_label)
-
-    def test_a_numbered_or_bulleted_label_or_one_with_a_note_is_read(self) -> None:
-        for summary_label, music_label in (
-            ("1. SUMMARY:", "2. MUSIC:"),
-            ("- Summary:", "- Music:"),
-            ("SUMMARY (the narration):", "MUSIC (one for each section):"),
-        ):
-            prose = rd.parse_prose(
-                f"{summary_label}\n《Tense》 Gate.\n{music_label}\n1. Strings.\n"
-            )
-            self.assertIsNotNone(prose, summary_label)
-
-    def test_a_sentence_that_starts_with_the_word_is_not_a_label(self) -> None:
-        raw = "SUMMARY:\n《Tense》 Music drifted down the hall.\nSummary of events were grim.\n"
-        prose = rd.parse_prose(raw + "MUSIC:\n1. Strings.\n")
-        assert prose is not None
-        self.assertIn("Music drifted down the hall.", prose.summary)
-        self.assertIn("Summary of events were grim.", prose.summary)
 
     def test_the_music_count_is_put_right_in_code_both_ways(self) -> None:
         three = "《Tense》 One. 《Uneasy》 Two. 《Wonder》 Three."
@@ -394,7 +408,9 @@ class TheProse(unittest.TestCase):
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
         system = rd.prose_system(None, rd.length_for(2.5))
-        self.assertIn("about 2.5 hours, so write about 350 words (between 280 and 420)", system)
+        self.assertIn(
+            "about 2.5 hours, so write about 350 words in all (between 280 and 420)", system
+        )
         self.assertIn("about 4 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
@@ -508,9 +524,9 @@ class HyphenatedNames(unittest.TestCase):
         self.assertFalse(any("Dun-Varra" in p for p in problems), problems)
 
 
-class TheRetryAndTheLooseForm(unittest.TestCase):
-    """#2026: a retry sends the rejected draft and the target back, and an answer that only lost
-    its labels is still read."""
+class TheRetryAndTheJson(unittest.TestCase):
+    """#2026, #2039: a retry sends the rejected draft (as the JSON it wrote) and the target back,
+    and the answer is JSON of a fixed shape."""
 
     def test_the_prose_retry_carries_the_draft_the_target_and_the_form(self) -> None:
         length = rd.length_for(2.5)
@@ -518,9 +534,9 @@ class TheRetryAndTheLooseForm(unittest.TestCase):
         assert prose is not None
         text = rd.prose_retry(["a name is not allowed"], prose, length)
         self.assertIn("<previous_draft>", text)
-        self.assertIn(prose.summary.split("\n")[0], text)
-        self.assertIn(prose.music[0], text)
-        self.assertIn(f"about {length.target} words, between {length.low} and {length.high}", text)
+        draft = json.loads(text.split("<previous_draft>")[1].split("</previous_draft>")[0])
+        self.assertEqual(rd.parse_prose(json.dumps(draft)), prose)  # the draft as JSON, whole
+        self.assertIn(f"about {length.target} words in all, between {length.low}", text)
         self.assertIn("Revise that draft", text)
         self.assertIn("a name is not allowed", text)
         # without a draft (after a restart) the target and the form are still given
@@ -543,6 +559,10 @@ class TheRetryAndTheLooseForm(unittest.TestCase):
         self.assertIn("hopeful", fixed.music[1])
         self.assertNotIn("Tense", fixed.music[0])  # a sound, never a name or a story
         self.assertEqual(rd.fix_prose(rd.Prose("no cue here", ()), 6).music, ())
+        # an empty prompt in the JSON (the schema allows it) is made the same way
+        empty = rd.parse_prose('{"sections": [{"mood": "tense", "text": "One.", "music": ""}]}')
+        assert empty is not None
+        self.assertIn("tense", rd.fix_prose(empty).music[0])
 
     def test_the_last_try_may_come_in_short_but_not_far_short(self) -> None:
         length = rd.length_for(3.2)  # target 420, 336 to 504
@@ -564,59 +584,89 @@ class TheRetryAndTheLooseForm(unittest.TestCase):
             rd.prose_retry(["x"], prose, rd.length_for(1.0)).count("</previous_draft>"), 1
         )
 
-    def test_the_finish_retry_carries_the_rejected_answer(self) -> None:
+    def test_the_finish_retry_carries_the_rejected_answer_as_json(self) -> None:
         text = rd.finish_retry(["bad name"], ("The Gate", ["[2] Mira ran."]))
         self.assertIn("<previous_answer>", text)
-        self.assertIn("TITLE: The Gate", text)
-        self.assertIn("- [2] Mira ran.", text)
-        self.assertIn("TITLE: … then HOUSEKEEPING", text)
+        shown = json.loads(text.split("<previous_answer>")[1].split("</previous_answer>")[0])
+        self.assertEqual(
+            shown, {"title": "The Gate", "housekeeping": [{"beat": 2, "text": "Mira ran."}]}
+        )
         self.assertNotIn("<previous_answer>", rd.finish_retry(["x"], None))
 
-    def test_an_unlabelled_recap_of_the_right_length_is_read(self) -> None:
-        length = rd.length_for(2.5)
-        loose = f"{fx.SUMMARY}\n\n{fx.MUSIC}\n"
-        prose = rd.parse_prose(loose, length)
+    def test_prose_survives_a_trip_through_the_json(self) -> None:
+        prose = rd.parse_prose(fx.PROSE_ANSWER)
         assert prose is not None
-        self.assertEqual(prose.summary, fx.SUMMARY)
-        self.assertEqual(len(prose.music), 2)
-        self.assertTrue(prose.music[0].startswith("Low strings"))
-        # it still goes through the checks
-        self.assertEqual(
-            rd.check_prose(
-                prose,
-                beats=beats(),
-                transcript=TRANSCRIPT,
-                allowed_names=fx.NAMES,
-                secret_names=[],
-                length=length,
-            ),
-            [],
-        )
-        # without a length asked for, the old rule holds
-        self.assertIsNone(rd.parse_prose(loose))
+        self.assertEqual(rd.parse_prose(rd.prose_json(prose)), prose)
 
-    def test_a_short_or_junk_answer_without_labels_still_fails(self) -> None:
-        length = rd.length_for(2.5)
-        self.assertIsNone(rd.parse_prose("Sorry, I can't help with that.", length))
-        self.assertIsNone(rd.parse_prose("《Tense》 Mira ran.\n1. Low strings.", length))
-        self.assertIsNone(rd.parse_prose("", length))
-
-    def test_an_unlabelled_title_and_bullets_are_read(self) -> None:
-        raw = "The Silver Lock\n- [2] Mira drew her blade.\n[3] Oskar left.\n"
+    def test_the_title_answer_is_read_from_its_json(self) -> None:
+        raw = fx.finish_answer("The Silver Lock", (2, "Mira drew her blade."), (3, "Oskar left."))
         self.assertEqual(
             rd.parse_finish(raw),
             ("The Silver Lock", ["[2] Mira drew her blade.", "[3] Oskar left."]),
         )
-        self.assertEqual(rd.parse_finish("**The Silver Lock**\n"), ("The Silver Lock", []))
+        self.assertEqual(
+            rd.parse_finish(fx.finish_answer("The Silver Lock")), ("The Silver Lock", [])
+        )
+        none = fx.finish_answer("The Silver Lock", (1, "None"), (2, "  "))
+        self.assertEqual(rd.parse_finish(none), ("The Silver Lock", []))
+        for bad in (
+            "",
+            "Sure! Here you go:",
+            "[]",
+            '{"title": "", "housekeeping": []}',
+            '{"title": "T"}',
+            '{"title": "T", "housekeeping": [{"beat": "2", "text": "x"}]}',
+            '{"title": "T", "housekeeping": ["x"]}',
+        ):
+            self.assertIsNone(rd.parse_finish(bad), bad)
 
-    def test_an_unlabelled_reply_to_us_is_not_a_title(self) -> None:
-        for raw in ("Sure! Here you go:", "I cannot write that", "Here is the title:\nThe Gate"):
-            self.assertIsNone(rd.parse_finish(raw), raw)
 
-    def test_an_unlabelled_finish_that_is_junk_still_fails(self) -> None:
-        self.assertIsNone(rd.parse_finish("I am not able to write a title for this long session"))
-        self.assertIsNone(rd.parse_finish("- [2] Mira drew her blade."))
-        self.assertIsNone(rd.parse_finish(""))
+class TheSchemas(unittest.TestCase):
+    """The shapes asked for (#2039): the moods are the fixed ones the voice knows, every object
+    closes (`additionalProperties: false`) and nothing the API does not support is used."""
+
+    UNSUPPORTED = (
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "pattern",
+    )
+
+    def walk(self, node: Any) -> list[str]:
+        found: list[str] = []
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                self.assertIs(node.get("additionalProperties"), False)
+                self.assertEqual(set(node["required"]), set(node["properties"]))
+            found += [k for k in node if k in self.UNSUPPORTED]
+            for value in node.values():
+                found += self.walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                found += self.walk(value)
+        return found
+
+    def test_the_moods_are_the_voices_and_nothing_unsupported_is_asked(self) -> None:
+        from dmbot.recaps.audio.script import EMOTION_VOICE
+
+        schema = rd.prose_schema()
+        mood = schema["properties"]["sections"]["items"]["properties"]["mood"]
+        self.assertEqual(mood["enum"], list(EMOTION_VOICE))
+        self.assertEqual(self.walk(schema), [])
+        self.assertEqual(self.walk(rd.finish_schema()), [])
+        self.assertEqual(
+            rd.finish_schema()["properties"]["housekeeping"]["items"]["properties"]["beat"]["type"],
+            "integer",
+        )
+
+    def test_the_prompts_ask_for_the_json_not_the_labels(self) -> None:
+        for text in (rd.prose_system(None), rd.housekeeping_system()):
+            self.assertIn("JSON", text)
+            self.assertNotIn("SUMMARY:", text)
+            self.assertNotIn("HOUSEKEEPING:", text)
 
 
 class TheTitleAndHousekeeping(unittest.TestCase):
@@ -638,28 +688,27 @@ class TheTitleAndHousekeeping(unittest.TestCase):
         self.assertEqual(done.housekeeping, ("Mira drew her blade.",))
 
     def test_no_housekeeping_is_fine(self) -> None:
-        done, problems = self.finish("TITLE: The Silver Lock\nHOUSEKEEPING:\n")
+        done, problems = self.finish(fx.finish_answer())
         self.assertEqual((problems, done.housekeeping), ([], ()))
 
     def test_every_bullet_must_name_a_real_beat(self) -> None:
-        for bullet in ("- Mira drew her blade.", "- [9] Mira drew her blade."):
-            _, problems = self.finish(f"TITLE: The Silver Lock\nHOUSEKEEPING:\n{bullet}\n")
-            self.assertTrue(any("name a real beat" in p for p in problems), bullet)
+        for beat in (9, 0):
+            _, problems = self.finish(fx.finish_answer("The Silver Lock", (beat, "Mira drew.")))
+            self.assertTrue(any("name a real beat" in p for p in problems), beat)
 
     def test_the_title_is_short_and_has_no_secret_or_invented_name(self) -> None:
-        _, problems = self.finish("TITLE: A very long title that goes on and on and on forever\n")
+        _, problems = self.finish(
+            fx.finish_answer("A very long title that goes on and on and on forever")
+        )
         self.assertTrue(any("over 8 words" in p for p in problems), problems)
-        _, problems = self.finish("TITLE: Oskar Below\n", secret_names=["Oskar"])
+        _, problems = self.finish(fx.finish_answer("Oskar Below"), secret_names=["Oskar"])
         self.assertTrue(any("secret" in p for p in problems), problems)
-        _, problems = self.finish("TITLE: Varkus Rises\n")
+        _, problems = self.finish(fx.finish_answer("Varkus Rises"))
         self.assertTrue(any("Varkus" in p for p in problems), problems)
 
-    def test_a_title_is_required(self) -> None:
-        self.assertIsNone(rd.parse_finish("HOUSEKEEPING:\n- [1] x"))
-
     def test_too_many_or_too_long_bullets_are_refused(self) -> None:
-        many = "\n".join(f"- [1] Mira note {n}." for n in range(20))
-        _, problems = self.finish(f"TITLE: The Silver Lock\nHOUSEKEEPING:\n{many}\n")
+        many = fx.finish_answer("The Silver Lock", *[(1, f"Mira note {n}.") for n in range(20)])
+        _, problems = self.finish(many)
         self.assertTrue(any("too long" in p for p in problems), problems)
 
 

@@ -61,11 +61,12 @@ from dmbot.devtools.recap_measure.golden import GoldenError, load_golden
 from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run import transcript_file as tf
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore
-from dmbot.memory.extractor import Client, readable
+from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.names import SpokenName
+from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import names_a_secret, narration_of, proper_nouns, strip_cues
 from dmbot.recaps.text import words as words_of
@@ -91,9 +92,19 @@ class Counting:
     input_tokens: int = 0
     output_tokens: int = 0
 
-    async def complete(self, system: str, text: str, *, max_tokens: int = 8000) -> Reply:
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = 8000,
+        schema: dict[str, Any] | None = None,
+    ) -> Reply:
         self.calls += 1  # counted when made: a call that fails was still a call
-        reply = await self.client.complete(system, text, max_tokens=max_tokens)
+        if schema is None:
+            reply = await self.client.complete(system, text, max_tokens=max_tokens)
+        else:
+            reply = await self.client.complete(system, text, max_tokens=max_tokens, schema=schema)
         self.input_tokens += reply.input_tokens
         self.output_tokens += reply.output_tokens
         return reply

@@ -23,9 +23,10 @@ from dataclasses import dataclass, field
 from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.recap_measure.golden import GoldenError, Session, load_golden
-from dmbot.memory.extractor import Client, readable
+from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
+from dmbot.recaps.pipeline import Client
 from dmbot.recaps.text import names_a_secret, narration_of, words
 
 
@@ -125,6 +126,7 @@ async def run_one(fast: Client, session: Session) -> Score:
             rd.prose_system(None, length),
             rd.prose_message(rd.pick_beats(kept, length.beats), "", session.names, None),
             max_tokens=length.max_tokens,
+            schema=rd.prose_schema(),
         )
         prose = rd.parse_prose(written.text)
     return score_session(session, raw, prose, session.title)
