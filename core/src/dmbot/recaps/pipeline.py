@@ -96,7 +96,9 @@ class RecapWorker:
         audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
+        on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
     ) -> None:
+        self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -527,6 +529,8 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, problems: Sequence[str]
     ) -> Job | None:
         """A check failed: once more on the careful tier, then the job fails plainly."""
+        if self._on_problems is not None:  # the live job keeps only the first try's problems
+            self._on_problems(job.state, job.attempt, problems)
         if job.attempt >= 1:
             return await self._fail(gid, cid, job, FAILED_CHECKS)
         await self._store.update(
