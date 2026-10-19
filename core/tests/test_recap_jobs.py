@@ -11,6 +11,7 @@ from typing import Any
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
+from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.transcript.models import Line
@@ -529,7 +530,8 @@ class Working(Base):
         job = await self.go()
         self.assertEqual(job.state, "ready")
         self.assertEqual(job.grade["tension"], 2)  # the first draft's own grade
-        self.assertTrue(job.summary.startswith("《"))
+        self.assertEqual(job.summary, fx.SUMMARY)  # the first draft, not the revision
+        self.assertEqual(self.worker._fallback, {})
         self.assertEqual(len(self.careful.sent), 1)  # one revision tried, not three
         self.assertTrue(any("first draft stands" in n for n in notes))
 
@@ -542,6 +544,35 @@ class Working(Base):
         job = await self.go()
         self.assertEqual((job.state, job.grade["tension"]), ("ready", 2))
         self.assertEqual(len(self.careful.sent), 1)
+
+    async def test_a_declined_revision_leaves_the_first_draft_standing_too(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE),
+            fx.Canned(Reply("", cut=False, refused=True)),
+        )
+        self.fast.answers += [fx.FINISH_ANSWER]
+        job = await self.go()
+        self.assertEqual((job.state, job.summary), ("ready", fx.SUMMARY))
+
+    async def test_a_name_made_secret_between_the_tries_is_not_kept_in_the_first_draft(
+        self,
+    ) -> None:
+        test = self
+
+        class SecretAppears(fx.Canned):
+            async def complete(self, *args: Any, **kwargs: Any) -> Reply:
+                if args[0] == rd.GRADE_SYSTEM:  # between the first try and its revision
+                    test.secret = ["Silver Lock"]  # the DM keeps it secret
+                return await super().complete(*args, **kwargs)
+
+        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        await self.setUpWorker(
+            SecretAppears(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE), fx.Canned(short)
+        )
+        self.assertIn("silver lock", fx.SUMMARY)  # (the canned recap does say it)
+        job = await self.go()
+        self.assertNotEqual((job.state, job.summary), ("ready", fx.SUMMARY))
+        self.assertNotIn("silver lock", job.summary)
 
     async def test_without_a_passing_first_draft_the_failing_tries_still_fail_the_job(self) -> None:
         short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")

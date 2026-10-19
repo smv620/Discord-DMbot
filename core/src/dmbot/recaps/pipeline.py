@@ -455,11 +455,11 @@ class RecapWorker:
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         if why := unusable(raw):
-            return await self._prose_failed(gid, cid, job, [why])
+            return await self._prose_failed(gid, cid, job, [why], inputs, sheet, length)
         prose = rd.parse_prose(raw.text)
         if prose is None:
             return await self._prose_failed(
-                gid, cid, job, ["answer with the sections JSON asked for"]
+                gid, cid, job, ["answer with the sections JSON asked for"], inputs, sheet, length
             )
         fixed = rd.fix_prose(prose, length.sections)  # the mechanical form, in code (#2013)
         if fixed != prose:
@@ -511,53 +511,78 @@ class RecapWorker:
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-            return await self._prose_failed(gid, cid, job, problems)
+            return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
             grade = await self._grade(gid, cid, job, sheet, prose.summary)
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
         weak = rd.weak(grade) if grade else []
-        to_confirm = rd.kept_names(
-            prose.summary,
-            beats=sheet,
-            transcript=transcript,
-            allowed_names=inputs.allowed_names,
-            secret_names=inputs.secret_names,
-            previous=inputs.previous,
-            setting=inputs.setting,
-        )[: un.MAX_TO_CONFIRM]
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-            self._fallback[key] = (prose, grade, to_confirm, inputs.day)
+            self._fallback[key] = (prose, grade)
             await self._store.update(
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
             return await self._store.get(gid, cid, job.session_at)
         self._fallback.pop(key, None)
-        return await self._accept_prose(gid, cid, job, key, prose, grade, to_confirm, inputs.day)
+        return await self._accept_prose(gid, cid, job, key, prose, grade, inputs, sheet, transcript)
 
     async def _prose_failed(
-        self, gid: int, cid: str, job: Job, problems: Sequence[str]
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        problems: Sequence[str],
+        inputs: Inputs,
+        sheet: Sequence[bt.Beat],
+        length: rd.Length,
     ) -> Job | None:
-        """The prose stage's try failed. After a draft that passed but graded weak, the revision
-        failing leaves that draft standing (the recap is never worse than its first, good-enough
-        draft); otherwise the usual retry, and the third try's failure fails the job."""
+        """The prose stage's try failed. After a draft that passed but graded weak, a revision
+        that fails its checks (cut off, declined, unreadable, too short) leaves that draft
+        standing, checked again against the names as they are now (the DM may have made one
+        secret since); otherwise the usual retry, and the last try's failure fails the job. A
+        service error or running out of credit during the revision still fails the job."""
         key = (gid, cid, job.session_at)
         kept = self._fallback.pop(key, None)
-        if kept is None:
-            return await self._retry_or_fail(
-                gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
+        if kept is not None:
+            prose, grade = kept
+            transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
+            prose, refused = rd.respelled(
+                prose,
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                transcript=transcript,
             )
-        if self._on_problems is not None:
-            self._on_problems(job.state, job.attempt, problems)
-        prose, grade, to_confirm, day = kept
-        log.info("Recap: the revision failed %d check(s); the first draft stands", len(problems))
-        if self._on_note is not None:
-            self._on_note(
-                "The revised recap failed a check, so the first draft stands: it passed every "
-                "check, and the grader scored it below the bar on cue placement or mood."
-            )
-        return await self._accept_prose(gid, cid, job, key, prose, grade, to_confirm, day)
+            if not rd.check_prose(
+                prose,
+                beats=sheet,
+                transcript=transcript,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                length=length,
+                last=True,
+                refused=refused,
+            ):
+                if self._on_problems is not None:
+                    self._on_problems(job.state, job.attempt, problems)
+                log.info(
+                    "Recap: the revision failed %d check(s); the first draft stands", len(problems)
+                )
+                if self._on_note is not None:
+                    weak = ", ".join(rd.weak(grade)) or "a score"
+                    self._on_note(
+                        "The revised recap failed a check, so the first draft stands: it passed "
+                        f"every check, and the grader scored it below the bar ({weak})."
+                    )
+                return await self._accept_prose(
+                    gid, cid, job, key, prose, grade, inputs, sheet, transcript
+                )
+        return await self._retry_or_fail(gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT)
 
     async def _accept_prose(
         self,
@@ -567,8 +592,9 @@ class RecapWorker:
         key: tuple[int, str, int],
         prose: rd.Prose,
         grade: dict[str, int],
-        to_confirm: list[str],
-        day: int | None,
+        inputs: Inputs,
+        sheet: Sequence[bt.Beat],
+        transcript: str,
     ) -> Job | None:
         """The prose stage's draft is the recap's: store it and go on to the next stage."""
         self._rejected_prose.pop(key, None)
@@ -581,8 +607,16 @@ class RecapWorker:
             summary=prose.summary,
             original=prose.summary,
             music=list(prose.music),
-            to_confirm=to_confirm,
-            game_day=day,
+            to_confirm=rd.kept_names(
+                prose.summary,
+                beats=sheet,
+                transcript=transcript,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+            )[: un.MAX_TO_CONFIRM],
+            game_day=inputs.day,
             grade=grade,
             attempt=0,
             errors=0,
