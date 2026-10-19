@@ -81,7 +81,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Delete my transcripts",
-    what: "Press ⚙️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
+    what: "Press 🗂️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
   },
   {
     date: "2026-10-16",
@@ -299,6 +299,13 @@ export const held: Held[] = [
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
+  },
+  {
+    date: "2026-10-18",
+    title: "Who is alive, who carries what",
+    what: "DMbot remembers who is alive or dead and who carries the one-of-a-kind things, from lines you say yes to. If something doesn't fit, such as a dead character speaking, it asks you privately after the session, and you decide.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1284).",
   },
   {
     date: "2026-10-16",

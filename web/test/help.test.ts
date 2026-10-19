@@ -10,7 +10,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop } from "../src/content/help";
+import { storyStatesLine } from "../src/content/privacy-channels";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps, ruleKindDmSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -235,7 +236,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(words).toContain("👤 My buttons");
     expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
     expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
-    expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
+    expect(words).toContain("you get 🗂️ Menu, where you can stop being recorded.");
     expect(words).toContain("Players also get 📜 My character sheet.");
     expect(words).toContain("Game masters get ⚙️ Settings too.");
     expect(words).toContain("/dmbot settings");
@@ -420,6 +421,18 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(del).toContain("It can't be undone.");
     expect(del).toContain("type the campaign's name");
     expect(del).toContain("💾 Back up first");
+  });
+
+  it("holds the alive-and-carries words with the held What's new entry and the privacy line (#1284)", () => {
+    const heldTitle = held.map((h) => h.title).includes("Who is alive, who carries what");
+    expect(heldTitle).toBe(!STORY_STATES_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("remembers who is alive or dead")).toBe(STORY_STATES_LIVE);
+    const words = storyStateSteps.map((x) => x.text).join(" ");
+    expect(storyStatesLine.live).toBe(STORY_STATES_LIVE);
+    expect(words).toContain("You decide");
+    expect(words).toContain("Players never do, and it is never in a transcript");
+    expect(words).not.toMatch(/state fact|ontology|knowledge graph|claim/i);
   });
 
   it("holds the rule-kinds step with the held \"Look up any rule\" entry, and flips them together (#1924)", () => {

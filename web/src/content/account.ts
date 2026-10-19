@@ -271,14 +271,14 @@ export const text = {
   recordingLine: (server: string, date: string): string =>
     `${server}: DMbot may record you. You said yes on ${shortDate(date)}.`,
   recordingOld: (server: string): string =>
-    `${server}: not recording you. To allow it, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `${server}: not recording you. To allow it, press 🗂️ Menu in DMbot's private message in Discord.`,
   stopRecording: "Stop recording me",
   stopWarning: (server: string): string =>
     `Stop recording you in ${server}? DMbot won't write down anything you say from now on. The campaign's record will have gaps wherever you speak, so its summaries can miss things and plot holes can appear. You can start again any time in Discord.`,
   stopYes: "Yes, stop recording me",
   stopKeep: "Keep recording",
   stoppedRecording: (server: string): string =>
-    `Stopped. DMbot is not recording you in ${server}. To start again, press ⚙️ Menu in DMbot's private message in Discord.`,
+    `Stopped. DMbot is not recording you in ${server}. To start again, press 🗂️ Menu in DMbot's private message in Discord.`,
 
   // My DMbot ID and experience points, and moving to a new Discord account (#1231)
   idHeading: "Your DMbot ID",

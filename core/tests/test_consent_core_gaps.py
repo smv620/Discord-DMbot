@@ -70,7 +70,7 @@ class FramesAreCheckedAtTheDoor(unittest.TestCase):
         self.assertEqual(queue.call_args.args[0].user_id, AGREED)
 
     def test_the_next_frame_after_a_stop_is_dropped(self) -> None:
-        """Hard rule, Consent (⚙️ Menu, Stop recording me): the person agreed, then pressed Stop.
+        """Hard rule, Consent (🗂️ Menu, Stop recording me): the person agreed, then pressed Stop.
         The very next frame, already on its way from ears, is not kept."""
         agreed = Agreed(AGREED)
         bot, queue = bot_with(agreed)

@@ -18,8 +18,8 @@ describe("matcher", () => {
   });
 
   it("ignores emoji and punctuation", () => {
-    expect(normalize("⚙️ Menu, then 🗑 Delete my transcripts!")).toBe("menu then delete my transcripts");
-    expect(matches("menu delete", "press ⚙️ Menu, then 🗑 Delete my transcripts")).toBe(true);
+    expect(normalize("🗂️ Menu, then 🗑 Delete my transcripts!")).toBe("menu then delete my transcripts");
+    expect(matches("menu delete", "press 🗂️ Menu, then 🗑 Delete my transcripts")).toBe(true);
     expect(matches("🗑", "anything")).toBe(true); // an emoji alone is no word
   });
 
@@ -74,7 +74,7 @@ describe("on the Help page", () => {
     const shown = visibleSteps(doc);
     expect(found).toBe(shown.length);
     expect(found).toBeGreaterThan(0);
-    expect(shown.some((t) => t.includes("⚙️ Menu") && t.includes("Stop recording me"))).toBe(true);
+    expect(shown.some((t) => t.includes("🗂️ Menu") && t.includes("Stop recording me"))).toBe(true);
   });
 
   it("keeps matching steps under their section headings, and hides the rest", () => {
