@@ -222,7 +222,7 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
 
             return FakeClient(model), close
 
-        with patch.object(fast_compare.asyncio, "sleep", fake_sleep):
+        with patch.object(asyncio, "sleep", fake_sleep):
             await fast_compare.compare(["a-model", NEW], ["recap"], make_client, pause=7.0)
         self.assertEqual(sleeps, [7.0])  # two runs: one wait
 
