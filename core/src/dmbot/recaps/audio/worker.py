@@ -69,6 +69,13 @@ class AudioInputs:
     secret_names: Collection[str]
     names: Sequence[nm.SpokenName]  # confirmed names with their "said as" spellings
 
+    @property
+    def allowed_names(self) -> list[str]:
+        """The confirmed names that are not secret: the ones a secret name's word may share (the
+        recap check's own list (`inputs.py`: confirmed, not secret, not a person), so the two
+        secret locks agree; #2050)."""
+        return [n.text for n in self.names if n.confirmed and not n.secret and not n.person]
+
 
 Load = Callable[[int, str, Job], Awaitable["AudioInputs | None"]]
 Consenting = Callable[[int], Awaitable[Collection[int]]]
@@ -222,9 +229,11 @@ class AudioWorker:
                 job.game_day,
                 job.summary,
                 secret_names=inputs.secret_names,
+                allowed_names=inputs.allowed_names,
                 emotion_tags=self._voice_tags,
             )
-        except sc.SecretInScript:
+        except sc.SecretInScript as exc:
+            log.warning("Recap audio: refused, a secret name (rule %s)", exc.rule)  # the rule only
             raise Stop(SECRET) from None
         # The estimate assumes a new ambience bed: the cap is a ceiling, not a forecast.
         if job.audio_credits + estimate_credits(script, ambience_needed=True) > self._max:
@@ -238,6 +247,7 @@ class AudioWorker:
                     job.game_day,
                     job.summary,
                     secret_names=fresh.secret_names,
+                    allowed_names=fresh.allowed_names,
                     emotion_tags=self._voice_tags,
                 )
             except sc.SecretInScript:

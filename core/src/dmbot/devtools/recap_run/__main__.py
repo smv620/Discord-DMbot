@@ -433,10 +433,11 @@ async def run_audio(
             job.game_day,
             job.summary,
             secret_names=inputs.secret_names,
+            allowed_names=inputs.allowed_names,
             emotion_tags=voice_tags,
         )
-    except sc.SecretInScript:
-        return ["audio: not made (the text names a secret)"]
+    except sc.SecretInScript as exc:  # the rule's word only, never the name or the match
+        return [f"audio: not made (the text names a secret: {exc.rule})"]
     renderer = Renderer(provider, files, runner=runner or run_ffmpeg)  # type: ignore[arg-type]
     folder = Path(tempfile.mkdtemp(prefix="recap-run-"))
     try:
@@ -938,6 +939,7 @@ def _cue_lines(out: Outcome) -> list[str]:
             out.job.game_day,
             out.job.summary,
             secret_names=out.inputs.secret_names,
+            allowed_names=out.inputs.allowed_names,
             emotion_tags=voice_tags_on(),  # the cue map must show what the audio will say
         )
     except sc.SecretInScript:
