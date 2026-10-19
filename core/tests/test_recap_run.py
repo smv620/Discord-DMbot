@@ -28,7 +28,7 @@ from tests.test_recap_audio_step import Fake, Mixer
 def inputs(**kw: Any) -> pl.Inputs:
     base: dict[str, Any] = {
         "lines": fx.lines(), "dm_ids": {fx.DM}, "allowed_names": list(fx.NAMES),
-        "secret_names": [], "previous": "", "day": 4,
+        "secret_names": [], "previous": "", "day": 4, "hours": 2.5,  # the canned recap's length
     }  # fmt: skip
     return pl.Inputs(**{**base, **kw})
 
@@ -108,11 +108,12 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         # The beats pass; the draft is refused twice (#1969). The report names the checks, in
         # fixed sentences: no line of the transcript is printed.
         bad = "SUMMARY:\nThey walked on.\nMUSIC:\nsoft strings\n"
-        out = await run.run_text(inputs(), fx.Canned(fx.BEATS_ANSWER, bad), fx.Canned(bad))
+        out = await run.run_text(inputs(), fx.Canned(fx.BEATS_ANSWER, bad), fx.Canned(bad, bad))
         self.assertEqual(out.job.state, "failed")
         text = "\n".join(run.report(out, {}))
         self.assertIn("Step prose, try 1:", text)
         self.assertIn("Step prose, try 2:", text)
+        self.assertIn("Step prose, try 3:", text)
         self.assertIn("problem: it must open with an emotion cue", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)
