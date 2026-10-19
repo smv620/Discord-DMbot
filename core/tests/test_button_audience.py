@@ -147,6 +147,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.name_questions.NameQuestionButton",
             "dm_screen.pack_suggestion.PackSuggestionButton",
             "dm_screen.pack_update.PackUpdateButton",
+            "dm_screen.names_button.NamesButton",
             "dm_screen.recap_panel.RecapsButton",
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
@@ -221,6 +222,8 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     "dm_screen.handover.TakeOnButton": ["dmbot.campaigns.store:CampaignStore.take_ownership"],
     "dm_screen.rules_cards.RulesCardButton": ["dmbot.dm_screen.rules_cards:press"],
     "ui.sheets.OpenCardButton": ["dmbot.ui.name_card:show_card"],
+    # The names home asks `logic.can_run` (the campaign's DMs and server managers) when it opens.
+    "dm_screen.names_button.NamesButton": ["dmbot.ui.names:_campaign_for"],
 }
 
 # Direct callbacks where the first reply may come before the check, each with why. A reply with a

@@ -402,3 +402,15 @@ class Mixing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheShortestRecap(unittest.TestCase):
+    """A recap of a short session (180 words, #2013) still has music: at least one section, each
+    at least the provider's shortest."""
+
+    def test_a_180_word_recap_makes_at_least_one_music_section(self) -> None:
+        summary = "《Tense》 " + " ".join(["calm"] * 90) + " ((slow)) " + " ".join(["calm"] * 90)
+        built_script = script.build("A Short One", None, summary)
+        plan = music.composition_request(built_script)["composition_plan"]["sections"]
+        self.assertGreaterEqual(len(plan), 1)
+        self.assertTrue(all(s["duration_ms"] >= 3000 for s in plan))
