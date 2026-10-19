@@ -160,6 +160,27 @@ def parse(raw: str) -> list[dict[str, object]] | None:
     return [b for b in beats if isinstance(b, dict)][: WINDOW_BEATS * 2]
 
 
+def unsaid_names(
+    names: Sequence[str],
+    said_words: Collection[str],
+    allowed_names: Collection[str],
+    transcript_words: Collection[str] | None = None,
+) -> list[str]:
+    """The names no evidence covers: not confirmed, and a word of it neither in the beat's own
+    cited lines nor, when `transcript_words` is given, anywhere in the session (#1997). Speech to
+    text spells a name many ways, so the AI's spelling often differs from the cited line's; a name
+    said somewhere in the session is real, and one said nowhere is invented. Pure."""
+    out: list[str] = []
+    for n in names:
+        mine = set(words(n))
+        if not mine or mine <= set(said_words) or is_known_name(n, allowed_names):
+            continue
+        if transcript_words is not None and mine <= set(transcript_words):
+            continue
+        out.append(n)
+    return out
+
+
 def check(
     raw_beats: Sequence[Mapping[str, object]],
     *,
@@ -167,12 +188,17 @@ def check(
     speakers: Mapping[int, int],
     allowed_names: Collection[str],
     secret_names: Collection[str],
+    dm_ids: Collection[int] = (),
+    transcript_words: Collection[str] | None = None,
 ) -> tuple[list[Beat], list[str]]:
     """The beats that pass, renumbered, and what was wrong (plain words, for the retry and the
     log). `lines`: line number → cleaned text. `speakers`: line number → speaker. A beat is cut
     when it cites no real line, names something its own lines do not say, names a secret, or is
     not a sentence of the expected size. The whole sheet is refused (the problems say so) if too
-    few beats are left, or if a player who spoke a lot is in none."""
+    few beats are left, or if a player who spoke a lot is in none. The DM (`dm_ids`) is not such a
+    player: the DM narrates, so a sheet that cites the players' lines for the action is fine
+    (#1997). `transcript_words`: every word said in the session, so a name spelt differently from
+    the cited line is not cut when it was said elsewhere (`unsaid_names`)."""
     problems: list[str] = []
     kept: list[Beat] = []
     cut = {"no line": 0, "unknown name": 0, "secret": 0, "form": 0}
@@ -199,11 +225,7 @@ def check(
         said = " ".join(lines[n] for n in numbers)
         said_words = set(words(said))
         names = [*proper_nouns(what), *who]
-        if any(
-            not (set(words(n)) <= said_words or is_known_name(n, allowed_names))
-            for n in names
-            if words(n)
-        ):
+        if unsaid_names(names, said_words, allowed_names, transcript_words):
             cut["unknown name"] += 1
             continue
         if names_a_secret(" ".join([what, *who]), secret_names, allowed_names):
@@ -226,7 +248,9 @@ def check(
     missing = [
         u
         for u, n in count_by.items()
-        if n >= MIN_LINES_FOR_A_PLAYER and not any(speakers.get(c) == u for c in cited_lines)
+        if u not in dm_ids
+        and n >= MIN_LINES_FOR_A_PLAYER
+        and not any(speakers.get(c) == u for c in cited_lines)
     ]
     if missing:
         # Equal representation is checked, not hoped for: a player with many lines who is in no
