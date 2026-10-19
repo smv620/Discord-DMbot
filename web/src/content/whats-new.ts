@@ -25,6 +25,11 @@ export const entries: Entry[] = [
   },
   {
     date: "2026-10-19",
+    title: "Campaign labels look like labels",
+    what: "On My Account, a campaign's Active and You run it marks are now plain words with a small picture, so they no longer look like buttons you can press.",
+  },
+  {
+    date: "2026-10-19",
     title: "A shorter campaigns list",
     what: "On My Account, Your campaigns shows the five you played most recently, with a button for the older ones. A paused campaign, or one with a hand-over waiting, always stays in view.",
   },
@@ -261,11 +266,24 @@ export const held: Held[] = [
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
   },
   {
+    date: "2026-10-19",
+    title: "Recaps fit your session: a short game gets a short recap",
+    what: "A recap's length now follows your session: about 200 words for a one-hour game, about 400 for three hours, and about 700 for a game of six hours or more.",
+    reason: "Held with recaps (RECAPS_LIVE, #2018).",
+  },
+  {
     date: "2026-10-16",
     title: "Narrated recaps with music",
     what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
     reason:
       "Needs the owner's ElevenLabs account and the first real narrated recap (#1385). When it is on, move this up and turn on RECAP_AUDIO_LIVE in recap-words.ts (it needs RECAPS_LIVE and the add-on's price too).",
+  },
+  {
+    date: "2026-10-19",
+    title: "Play a recap's voice and music together",
+    what: "Voice and music now play together from one Play button. Switch either off, or turn it down, to hear the other alone. A new section, Where the music changes, shows tags in the recap text; only you see them, never your players.",
+    reason:
+      "Waits for narrated recaps (RECAP_AUDIO_LIVE, #1385). When it is on, move this up with that entry (#2017).",
   },
   {
     date: "2026-10-16",
