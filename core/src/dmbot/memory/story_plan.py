@@ -19,6 +19,7 @@ campaign, and a restored campaign reads again after its files are given again.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 import uuid
@@ -56,7 +57,8 @@ def micro_usd(
     quarter more than plain input and a read a tenth (the AI service's list rule)."""
     price_in, price_out = PRICE_PER_MILLION.get(model, DEFAULT_PRICE)
     weighted_in = input_tokens * 4 + cache_write * 5 + -(-cache_read * 4 // 10)
-    return -(-(weighted_in * price_in) // 4) + output_tokens * price_out
+    # (a price may have cents, like the cheaper fast model's: round up to a whole millionth)
+    return math.ceil(-(-(weighted_in * price_in) // 4) + output_tokens * price_out)
 
 
 def dearer(model: str, than: str) -> bool:
@@ -84,7 +86,7 @@ def worst_micro(text: str, max_output_tokens: int) -> int:
     made with this can't be overrun by a fallback and the caps hold."""
     price_in = max([DEFAULT_PRICE[0], *(p[0] for p in PRICE_PER_MILLION.values())])
     price_out = max([DEFAULT_PRICE[1], *(p[1] for p in PRICE_PER_MILLION.values())])
-    return tokens_in(text) * price_in + max_output_tokens * price_out
+    return math.ceil(tokens_in(text) * price_in + max_output_tokens * price_out)
 
 
 def month_of(now: float) -> str:

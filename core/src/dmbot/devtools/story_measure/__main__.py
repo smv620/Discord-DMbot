@@ -33,6 +33,7 @@ from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import Client, extract, transcript
 from dmbot.devtools.claims.scenes import Scene
 from dmbot.devtools.claims.score import Score, score
+from dmbot.devtools.common import add_fast_model_arg, with_fast_model
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.story_measure import report
 from dmbot.devtools.story_measure.golden import GOLDEN, GoldenError, load_golden, summary
@@ -89,6 +90,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=[],
         help="MODEL=IN,OUT: list prices in dollars per million tokens, for a model not on file",
     )
+    add_fast_model_arg(parser)
     parser.add_argument(
         "--max-usd",
         type=_dollars,
@@ -202,7 +204,9 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"story_measure: {exc}", file=sys.stderr)
         return 2
     try:
-        models = parse_ai_models(lambda name: os.environ.get(name, ""))[0]
+        models = with_fast_model(
+            parse_ai_models(lambda name: os.environ.get(name, ""))[0], args.fast_model
+        )
     except ConfigError as exc:
         print(f"story_measure: {exc}", file=sys.stderr)
         return 2
