@@ -61,6 +61,8 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "A 📇 Names button", // until dev1 deploys it (#1987, #2002)
+      "See what DMbot looked at", // until #1957 deploys (#1958)
       "Look up any rule", // until dev1 deploys it (#1890, #1891)
       "See what's switched on", // until dev1 deploys it and the owner's live check (#1831)
       "Find Settings more easily", // until the owner's live check (#1619)
@@ -69,7 +71,9 @@ describe("What's new", () => {
       "Add or remove game masters", // until the owner's live check (#1600)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
+      "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
+      "Play a recap's voice and music together", // with it (#2017)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
       "Ask a question in public", // until QAbot is live (#1352)
       "Move to a new Discord account",
@@ -77,6 +81,7 @@ describe("What's new", () => {
       "New names from what was said",
       "A note before tonight's session",
       "When a player says a secret name",
+      "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Record what your players did", // until it has been seen on the test server (#1732)
@@ -143,9 +148,14 @@ describe("What's new", () => {
 
   it("claims nothing that isn't live, and uses no hard-rule banned term", () => {
     const all = [...entries, ...held].map((e) => `${e.title} ${e.what}`).join(" ");
-    // Alive-or-dead is stored but nothing records it yet, and who-carries-what is merged but not
-    // deployed (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entries.
-    expect(all).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
+    // Alive-or-dead is stored but nothing records it until the extractor is on (#1284), and
+    // who-carries-what likewise (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entry,
+    // which stays held (help.test.ts ties it to STORY_STATES_LIVE), so nothing else may say them.
+    const others = [...entries, ...held]
+      .filter((e) => e.title !== "Who is alive, who carries what")
+      .map((e) => `${e.title} ${e.what}`)
+      .join(" ");
+    expect(others).not.toMatch(/alive|\bdead\b|destroyed|carries|carried/i);
     expect(all).not.toMatch(/knowledge graph|ontology|claims|extractor/i);
     expect(all).not.toMatch(/D&D|Dungeons|Wizards|Beyond/);
     expect(all).not.toMatch(/database|API|LLM|transcription/i);

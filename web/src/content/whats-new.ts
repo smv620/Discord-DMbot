@@ -19,6 +19,21 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-19",
+    title: "My Account puts sign-in first",
+    what: "When you are not signed in, My Account now says so and puts Sign in with Discord and the email link at the top. The plans come after, under New to DMbot?.",
+  },
+  {
+    date: "2026-10-19",
+    title: "Campaign labels look like labels",
+    what: "On My Account, a campaign's Active and You run it marks are now plain words with a small picture, so they no longer look like buttons you can press.",
+  },
+  {
+    date: "2026-10-19",
+    title: "A shorter campaigns list",
+    what: "On My Account, Your campaigns shows the five you played most recently, with a button for the older ones. A paused campaign, or one with a hand-over waiting, always stays in view.",
+  },
+  {
     date: "2026-10-18",
     title: "Search and link Help steps",
     what: "The Help page has a search box that shows only the steps with your words in them. Every section and step also has its own link, and a Copy link button beside each section to paste it to a friend.",
@@ -81,7 +96,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Delete my transcripts",
-    what: "Press ⚙️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
+    what: "Press 🗂️ Menu in DMbot's private message to you, then Delete my transcripts, to remove every line you said in that server. It can't be undone, and other people's lines and downloaded copies stay.",
   },
   {
     date: "2026-10-16",
@@ -190,9 +205,21 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-19",
+    title: "A 📇 Names button",
+    what: "Press 📇 Names to see, search and fix the names DMbot remembers. Any after-session check you haven't done yet waits there too. Only game masters see it.",
+    reason: "Merged (#1987); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-18",
+    title: "See what DMbot looked at",
+    what: "Under a rules answer on your DM screen, press 📖 What I looked at to see the rules it used, with the book and page number. Press a rule to open it. Only you see it.",
+    reason: "Waits for #1957 to deploy.",
+  },
+  {
     date: "2026-10-18",
     title: "Look up any rule",
-    what: "Type /dmbot rule and a word to read what the free rules say. Try cover, dash, long rest, rage, Bag of Holding, Thieves' Tools, Alert, Longsword, Purple Worm Poison, Hidden Pit or Demonic Possession. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: if a player asks about one at the table, DMbot answers That's one for your DM.",
+    what: "Type /dmbot rule and a word like cover, dash or long rest, a class feature like rage, a magic item like Bag of Holding, a weapon or armor like longsword or plate armor, a tool like Thieves' Tools, gear like a Healer's Kit, or a feat, species or background like Alert, Goliath or Sage to read what the free rules say. If a spell, condition or creature has the same name, you get that first. Your table's house rule on it shows above. Traps, poisons, curses and hazards are for the game master: if a player asks about one at the table, DMbot answers That's one for your DM.",
     reason:
       "Merged (#1890, #1891, #1912, #1913, #1919); #1935 is in review; held until dev1 deploys it.",
   },
@@ -245,11 +272,24 @@ export const held: Held[] = [
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
   },
   {
+    date: "2026-10-19",
+    title: "Recaps fit your session: a short game gets a short recap",
+    what: "A recap's length now follows your session: about 200 words for a one-hour game, about 400 for three hours, and about 700 for a game of six hours or more.",
+    reason: "Held with recaps (RECAPS_LIVE, #2018).",
+  },
+  {
     date: "2026-10-16",
     title: "Narrated recaps with music",
     what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
     reason:
       "Needs the owner's ElevenLabs account and the first real narrated recap (#1385). When it is on, move this up and turn on RECAP_AUDIO_LIVE in recap-words.ts (it needs RECAPS_LIVE and the add-on's price too).",
+  },
+  {
+    date: "2026-10-19",
+    title: "Play a recap's voice and music together",
+    what: "Voice and music now play together from one Play button. Switch either off, or turn it down, to hear the other alone. A new section, Where the music changes, shows tags in the recap text; only you see them, never your players.",
+    reason:
+      "Waits for narrated recaps (RECAP_AUDIO_LIVE, #1385). When it is on, move this up with that entry (#2017).",
   },
   {
     date: "2026-10-16",
@@ -299,6 +339,13 @@ export const held: Held[] = [
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
     reason:
       "Held until it has been seen working on the test server (#1407).",
+  },
+  {
+    date: "2026-10-18",
+    title: "Who is alive, who carries what",
+    what: "DMbot remembers who is alive or dead and who carries the one-of-a-kind things, from lines you say yes to. If something doesn't fit, such as a dead character speaking, it asks you privately after the session, and you decide.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1284).",
   },
   {
     date: "2026-10-16",
