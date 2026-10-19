@@ -70,6 +70,7 @@ describe("What's new", () => {
       "Add or remove game masters", // until the owner's live check (#1600)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
+      "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
       "Ask a question in public", // until QAbot is live (#1352)

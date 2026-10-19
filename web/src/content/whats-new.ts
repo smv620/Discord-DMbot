@@ -261,6 +261,12 @@ export const held: Held[] = [
       "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
   },
   {
+    date: "2026-10-19",
+    title: "Recaps fit your session: a short game gets a short recap",
+    what: "A recap's length now follows your session: about 200 words for a one-hour game and about 400 for three hours, up to about 700 for the longest.",
+    reason: "Held with recaps (RECAPS_LIVE).",
+  },
+  {
     date: "2026-10-16",
     title: "Narrated recaps with music",
     what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
