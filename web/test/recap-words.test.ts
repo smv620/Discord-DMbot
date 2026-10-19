@@ -111,6 +111,7 @@ describe("the switches and What's new agree", () => {
   // turning a switch on without its line, or the line up without its switch, fails (#1463).
   it.each([
     ["Choose what recaps do", RECAPS_LIVE],
+    ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {
