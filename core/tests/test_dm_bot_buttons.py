@@ -160,7 +160,7 @@ class Cards(PanelTest):
     async def test_the_card_holds_only_the_buttons_of_that_role(self) -> None:
         await self.make_player()
         expected = {
-            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings"],
+            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings", "Names"],
             PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
             MEMBER: [*OPEN_TO_ALL, "Menu"],
             GUEST: OPEN_TO_ALL,
