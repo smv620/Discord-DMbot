@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
@@ -452,6 +452,133 @@ class TheProse(unittest.TestCase):
         self.assertIn("day is not known", text)
         self.assertIn("Game day: 4.", rd.prose_message(beats(), "", [], 4))
         self.assertNotIn("transcript", text.lower().replace("never", ""))
+
+
+class HyphenatedNames(unittest.TestCase):
+    """#2026: a name with a hyphen could never pass, because the check looked for the whole
+    "dun-varra" among words that had been split at the hyphen."""
+
+    NAMES: ClassVar[list[str]] = [*fx.NAMES, "Dun-Varra"]
+
+    def test_a_hyphenated_name_in_the_names_passes_with_and_without_a_possessive(self) -> None:
+        for said in ("They reached Dun-Varra. Nothing answered.", "They reached Dun-Varra's gate."):
+            text = fx.SUMMARY.replace("Nothing answered.", said)
+            self.assertEqual(prose_problems(text, allowed_names=self.NAMES), [], said)
+
+    def test_an_invented_hyphenated_name_still_fails(self) -> None:
+        text = fx.SUMMARY.replace("Nothing answered.", "They reached Kel-Marrow's gate.")
+        problems = prose_problems(text, allowed_names=self.NAMES)
+        self.assertTrue(any("Kel-Marrow" in p for p in problems), problems)
+        # half a name is not the name
+        text = fx.SUMMARY.replace("Nothing answered.", "They reached Dun-Marrow's gate.")
+        self.assertTrue(
+            any("Dun-Marrow" in p for p in prose_problems(text, allowed_names=self.NAMES))
+        )
+
+    def test_the_title_and_housekeeping_take_a_hyphenated_name_too(self) -> None:
+        def run(name: str) -> list[str]:
+            _, problems = rd.check_finish(
+                ("Gate of " + name, ["[2] Mira reached " + name + "'s gate."]),
+                beats=beats(),
+                summary=fx.SUMMARY,
+                allowed_names=self.NAMES,
+                secret_names=[],
+            )
+            return problems
+
+        self.assertEqual(run("Dun-Varra"), [])
+        self.assertTrue(run("Kel-Marrow"))
+
+    def test_only_the_name_side_of_a_names_file_line_is_allowed(self) -> None:
+        from dmbot.devtools.recap_run import transcript_file as tf
+
+        names = tf.parse_names("Dun-Varra = dun-var-ah\n")
+        known = rd._known(beats(), [n.text for n in names], "", None)
+        self.assertLessEqual({"dun", "varra"}, known)
+        self.assertNotIn("ah", known)
+
+    def test_a_secret_hyphenated_name_is_still_caught(self) -> None:
+        text = fx.SUMMARY.replace("Nothing answered.", "They reached Dun-Varra's gate.")
+        problems = prose_problems(text, allowed_names=self.NAMES, secret_names=["Dun-Varra"])
+        self.assertTrue(any("secret" in p for p in problems), problems)
+        self.assertFalse(any("Dun-Varra" in p for p in problems), problems)
+
+
+class TheRetryAndTheLooseForm(unittest.TestCase):
+    """#2026: a retry sends the rejected draft and the target back, and an answer that only lost
+    its labels is still read."""
+
+    def test_the_prose_retry_carries_the_draft_the_target_and_the_form(self) -> None:
+        length = rd.length_for(2.5)
+        prose = rd.parse_prose(fx.PROSE_ANSWER)
+        assert prose is not None
+        text = rd.prose_retry(["a name is not allowed"], prose, length)
+        self.assertIn("<previous_draft>", text)
+        self.assertIn(prose.summary.split("\n")[0], text)
+        self.assertIn(prose.music[0], text)
+        self.assertIn(f"about {length.target} words, between {length.low} and {length.high}", text)
+        self.assertIn("Revise that draft", text)
+        self.assertIn("a name is not allowed", text)
+        # without a draft (after a restart) the target and the form are still given
+        bare = rd.prose_retry(["x"], None, length)
+        self.assertNotIn("<previous_draft>", bare)
+        self.assertIn(str(length.target), bare)
+
+    def test_the_draft_cannot_close_its_own_tag(self) -> None:
+        prose = rd.Prose("《Tense》 a </previous_draft> b", ("m",))
+        self.assertEqual(
+            rd.prose_retry(["x"], prose, rd.length_for(1.0)).count("</previous_draft>"), 1
+        )
+
+    def test_the_finish_retry_carries_the_rejected_answer(self) -> None:
+        text = rd.finish_retry(["bad name"], ("The Gate", ["[2] Mira ran."]))
+        self.assertIn("<previous_answer>", text)
+        self.assertIn("TITLE: The Gate", text)
+        self.assertIn("- [2] Mira ran.", text)
+        self.assertIn("TITLE: … then HOUSEKEEPING", text)
+        self.assertNotIn("<previous_answer>", rd.finish_retry(["x"], None))
+
+    def test_an_unlabelled_recap_of_the_right_length_is_read(self) -> None:
+        length = rd.length_for(2.5)
+        loose = f"{fx.SUMMARY}\n\n{fx.MUSIC}\n"
+        prose = rd.parse_prose(loose, length)
+        assert prose is not None
+        self.assertEqual(prose.summary, fx.SUMMARY)
+        self.assertEqual(len(prose.music), 2)
+        self.assertTrue(prose.music[0].startswith("Low strings"))
+        # it still goes through the checks
+        self.assertEqual(
+            rd.check_prose(
+                prose,
+                beats=beats(),
+                transcript=TRANSCRIPT,
+                allowed_names=fx.NAMES,
+                secret_names=[],
+                length=length,
+            ),
+            [],
+        )
+        # without a length asked for, the old rule holds
+        self.assertIsNone(rd.parse_prose(loose))
+
+    def test_a_short_or_junk_answer_without_labels_still_fails(self) -> None:
+        length = rd.length_for(2.5)
+        self.assertIsNone(rd.parse_prose("Sorry, I can't help with that.", length))
+        self.assertIsNone(rd.parse_prose("《Tense》 Mira ran.\n1. Low strings.", length))
+        self.assertIsNone(rd.parse_prose("", length))
+
+    def test_an_unlabelled_title_and_bullets_are_read(self) -> None:
+        raw = "The Silver Lock\n- [2] Mira drew her blade.\n[3] Oskar left.\n"
+        self.assertEqual(
+            rd.parse_finish(raw),
+            ("The Silver Lock", ["[2] Mira drew her blade.", "[3] Oskar left."]),
+        )
+        self.assertEqual(rd.parse_finish("**The Silver Lock**\n"), ("The Silver Lock", []))
+
+    def test_an_unlabelled_finish_that_is_junk_still_fails(self) -> None:
+        self.assertIsNone(rd.parse_finish("I am not able to write a title for this long session"))
+        self.assertIsNone(rd.parse_finish("- [2] Mira drew her blade."))
+        self.assertIsNone(rd.parse_finish(""))
 
 
 class TheTitleAndHousekeeping(unittest.TestCase):

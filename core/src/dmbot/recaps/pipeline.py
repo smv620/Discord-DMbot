@@ -103,6 +103,11 @@ class RecapWorker:
     ) -> None:
         self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._on_note = on_note  # plain notes a test run puts in its report (#2013)
+        # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
+        # in memory only: after a restart the retry just goes without it. Dropped when the stage
+        # passes or the job fails.
+        self._rejected_prose: dict[tuple[int, str, int], rd.Prose] = {}
+        self._rejected_finish: dict[tuple[int, str, int], tuple[str, list[str]]] = {}
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -376,6 +381,7 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         sheet = bt.from_json(job.beats)
+        key = (gid, cid, job.session_at)
         if len(sheet) < bt.MIN_BEATS:
             return await self._fail(gid, cid, job, TOO_LITTLE)
         # The recap's length follows the session's hours (#2013). The writer is shown at most
@@ -387,11 +393,7 @@ class RecapWorker:
             rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
         )
         if job.problems:
-            message += (
-                "\nYour last draft was rejected: "
-                + "; ".join(job.problems)
-                + ". Write the whole recap again, fixing exactly that."
-            )
+            message += rd.prose_retry(job.problems, self._rejected_prose.get(key), length)
         raw = await self._call(
             gid,
             cid,
@@ -405,7 +407,7 @@ class RecapWorker:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        prose = rd.parse_prose(raw)
+        prose = rd.parse_prose(raw, length)
         if prose is None:
             return await self._retry_or_fail(
                 gid,
@@ -454,6 +456,7 @@ class RecapWorker:
                 )
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
+            self._rejected_prose[key] = prose
             return await self._retry_or_fail(
                 gid, cid, job, problems, last_attempt=PROSE_LAST_ATTEMPT
             )
@@ -467,6 +470,7 @@ class RecapWorker:
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
             return await self._store.get(gid, cid, job.session_at)
+        self._rejected_prose.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
             gid,
@@ -513,11 +517,10 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         sheet = bt.from_json(job.beats)
+        key = (gid, cid, job.session_at)
         message = rd.housekeeping_message(sheet, job.summary)
         if job.problems:
-            message += (
-                "\nYour last answer was rejected: " + "; ".join(job.problems) + ". Write it again."
-            )
+            message += rd.finish_retry(job.problems, self._rejected_finish.get(key))
         raw = await self._call(
             gid, cid, job, self._client(job), rd.housekeeping_system(), message, 600
         )
@@ -540,7 +543,9 @@ class RecapWorker:
             transcript="\n".join(x.text for x in self._said(inputs, set(job.speakers))),
         )
         if finish is None:
+            self._rejected_finish[key] = parsed
             return await self._retry_or_fail(gid, cid, job, problems)
+        self._rejected_finish.pop(key, None)
         await self._store.update(
             gid,
             cid,
@@ -616,8 +621,13 @@ class RecapWorker:
 
     async def _fail(self, gid: int, cid: str, job: Job, why: str, *, error: str = "") -> Job | None:
         log.info("Recap: failed at %s (%s)", job.state, error or "plain reason")
+        self._forget(gid, cid, job)
         await self._store.update(gid, cid, job.session_at, state="failed", last_error=why[:200])
         return await self._store.get(gid, cid, job.session_at)
+
+    def _forget(self, gid: int, cid: str, job: Job) -> None:
+        self._rejected_prose.pop((gid, cid, job.session_at), None)
+        self._rejected_finish.pop((gid, cid, job.session_at), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
         """A player whose lines were used stopped being recorded: begin again without them, a
@@ -625,6 +635,7 @@ class RecapWorker:
         if job.restarts >= MAX_RESTARTS:
             return await self._fail(gid, cid, job, STOPPED)
         log.info("Recap: starting again, a speaker stopped being recorded")
+        self._forget(gid, cid, job)
         await self._store.update(
             gid,
             cid,

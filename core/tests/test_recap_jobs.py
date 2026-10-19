@@ -388,6 +388,11 @@ class Working(Base):
         self.assertEqual(job.state, "ready")
         self.assertEqual(len(self.careful.sent), 2)  # the second and the third try
         self.assertIn("Varkus", self.careful.sent[1])  # told which name, on the retry only
+        # the retry carries the rejected draft and the target, to revise (#2026)
+        self.assertIn("<previous_draft>", self.careful.sent[1])
+        self.assertIn("Lord Varkus laughed.", self.careful.sent[1])
+        self.assertIn("between", self.careful.sent[1])
+        self.assertNotIn("<previous_draft>", self.fast.sent[1])  # the first try has none
 
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
         await self.setUpWorker(
