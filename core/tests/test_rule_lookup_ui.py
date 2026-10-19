@@ -847,6 +847,30 @@ class FeatureLookup(LookupTest):
             )
             self.assertNotIn(label, [c.name for c in await ui._typeahead(as_player, typed)], typed)
 
+    async def test_the_5_1_game_master_chapters_for_a_dm_and_not_for_a_player(self) -> None:
+        self.campaigns[C1] = campaign(target="2014", fallback="2024")
+        it = self.it(kind=discord.InteractionType.autocomplete)
+        labels = [c.name for c in await ui._typeahead(it, "drow poi")]
+        self.assertEqual(labels, ["Drow Poison (poison: Injury) [Legacy 2014]"])
+        disease = self.sent(await self.command("sight rot (disease)"))[0]
+        self.assertIn("📖 **Sight Rot** (disease)", disease)
+        self.assertIn("Eyebright", disease)
+        self.assertIn("SRD 5.1, Gameplay Toolbox, p. 199", disease)
+        trap = self.sent(await self.command("rolling sphere"))[0]
+        self.assertIn("📖 **Rolling Sphere** (trap)", trap)
+        self.assertIn("Mechanical trap", trap)
+        with unittest.mock.patch.object(ui, "_too_soon", return_value=False):
+            for name in (
+                "drow poison",
+                "rolling sphere",
+                "sight rot (disease)",
+                "short-term madness",
+            ):
+                text = self.sent(await self.command(name, PLAYER))[0]
+                self.assertEqual(text, ui.DM_ONLY, name)
+            as_player = self.it(PLAYER, kind=discord.InteractionType.autocomplete)
+            self.assertEqual(await ui._typeahead(as_player, "drow poi"), [])
+
     async def test_a_toolbox_rule_that_shares_a_spells_name_can_be_picked_by_its_kind(self) -> None:
         it = self.it(kind=discord.InteractionType.autocomplete)
         values = {c.name: c.value for c in await ui._typeahead(it, "bestow curse")}

@@ -37,6 +37,7 @@ FILES = (
     "origins.json",
     "rules.json",
     "spells.json",
+    "toolbox.json",
 )
 FILES_52 = (
     "ATTRIBUTION.md",
@@ -732,11 +733,51 @@ class ClassFeatures(unittest.TestCase):
         self.assertIn("no more than one size larger", grappling.entry.text)
         self.assertEqual(grappling.entry.citation, "SRD 5.1, Rules, p. 95")
 
+    def test_the_5_1_game_master_chapters_follow_the_per_name_fallback(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str, kind: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        # in both: the 2024 entry alone in 2024, the 5.1's first in a 2014 campaign
+        self.assertEqual(found("Hidden Pit", "2024", "2014", "trap"), ("Hidden Pit", "2024", ""))
+        self.assertEqual(
+            found("Hidden Pit", "2014", "2024", "trap"), ("Hidden Pit", "2014", "[Legacy 2014]")
+        )
+        self.assertEqual(
+            found("Purple Worm Poison", "2024", "2014", "poison"),
+            ("Purple Worm Poison", "2024", ""),
+        )
+        # only in the 5.1: found, tagged, in a 2024 campaign
+        self.assertEqual(
+            found("Drow Poison", "2024", "2014", "poison"),
+            ("Drow Poison", "2014", "[Legacy 2014]"),
+        )
+        self.assertEqual(
+            found("Sight Rot", "2024", "2014", "disease"), ("Sight Rot", "2014", "[Legacy 2014]")
+        )
+        self.assertIsNone(srd.lookup("Drow Poison", "2024", kind="poison"))  # no fallback, no hit
+        # a renamed sample trap: the 2024 name finds the 5.1 trap in 2014, and the old one the 2024
+        self.assertEqual(
+            found("Poison Darts", "2024", "2014", "trap"), ("Poisoned Darts", "2024", "")
+        )
+        self.assertEqual(
+            found("Poisoned Darts", "2014", "2024", "trap"),
+            ("Poison Darts", "2014", "[Legacy 2014]"),
+        )
+        for entry in srd.entries:
+            if entry.edition == "2014" and entry.section == "Gameplay Toolbox":
+                self.assertTrue(entry.dm_side, entry.name)
+
     def test_the_name_list_never_offers_both_editions_of_a_core_rule(self) -> None:
         srd = index.srd()
         for target, fallback, edition in (("2024", "2014", "2024"), ("2014", "2024", "2014")):
             offered = srd.asked_names("grappl", target, fallback, kinds=(index.RULE,))
             self.assertEqual([(e.name, e.edition) for e in offered], [("Grappling", edition)])
+            offered = srd.asked_names("hidden pi", target, fallback, kinds=index.HAZARD_KINDS)
+            self.assertEqual([(e.name, e.edition) for e in offered], [("Hidden Pit", edition)])
             offered = srd.asked_names("suffocat", target, fallback, kinds=(index.RULE,))
             self.assertEqual(len(offered), 1, (target, [e.name for e in offered]))
 
@@ -775,8 +816,9 @@ class ClassFeatures(unittest.TestCase):
 
         srd = index.srd()
         for older, current in aliases.RULE_ALIASES:
-            self.assertIsNotNone(srd.lookup(current, "2024", kind="rule"), current)
-            self.assertIsNotNone(srd.lookup(older, "2014", kind="rule"), older)
+            for name, edition in ((current, "2024"), (older, "2014")):
+                found = [srd.lookup(name, edition, kind=k) for k in ("rule", "trap")]
+                self.assertTrue(any(found), name)
 
     def test_a_direct_lookup_of_the_short_name_gives_the_2024_piece_not_its_2014_twin(self) -> None:
         srd = index.srd()

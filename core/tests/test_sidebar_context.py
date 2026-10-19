@@ -759,6 +759,16 @@ class GameplayToolbox(unittest.TestCase):
             self.assertNotIn("RULES ENTRIES", table.prompt, question)
             self.assertNotIn("Gameplay Toolbox", table.prompt, question)
 
+    def test_a_comparison_never_brings_the_other_editions_dm_chapter_to_the_table(self) -> None:
+        question = "travel pace 2014 vs 2024"
+        for target, fallback in (("2014", "2024"), ("2024", "2014")):
+            dms = context.mentioned_rules(question, INDEX, target, fallback, both=True)
+            table = context.mentioned_rules(
+                question, INDEX, target, fallback, both=True, table=True
+            )
+            self.assertTrue(any(h.entry.dm_side for h in dms), target)
+            self.assertEqual([h for h in table if h.entry.dm_side], [], target)
+
     def test_a_table_question_still_gets_the_rules_glossary(self) -> None:
         table = self.build("how does cover work", table=True)
         self.assertEqual([h.entry.name for h in table.hits], ["Cover"])
@@ -767,6 +777,58 @@ class GameplayToolbox(unittest.TestCase):
         for hit in self.hits("purple worm poison") + self.hits("extreme cold"):
             self.assertTrue(hit.entry.dm_side, hit.entry.name)
         self.assertFalse(self.hits("how does cover work")[0].entry.dm_side)
+
+
+class TheGameMasterChapters(unittest.TestCase):
+    """The SRD 5.1's traps, diseases, poisons and madness (#1944): the DM's, like the 5.2.1's."""
+
+    def names(self, question: str, target: str = "2024", fallback: str = "2014") -> list[str]:
+        hits = context.mentioned_rules(question, INDEX, target, fallback)
+        return [f"{h.entry.kind}:{h.entry.name} {h.entry.edition}" for h in hits]
+
+    def test_a_2014_only_poison_trap_and_disease_are_found_tagged_in_a_2024_campaign(self) -> None:
+        self.assertEqual(self.names("what does drow poison do"), ["poison:Drow Poison 2014"])
+        self.assertEqual(self.names("the rolling sphere"), ["trap:Rolling Stone 2024"])
+
+    def test_the_2014_chapters_are_first_in_a_2014_campaign(self) -> None:
+        self.assertEqual(
+            self.names("how does cackle fever work", "2014", "2024"), ["disease:Cackle Fever 2014"]
+        )
+        self.assertEqual(
+            self.names("what is the dc for a pit trap", "2014", "2024"),
+            ["trap:Simple Pit 2014", "trap:Hidden Pit 2014", "trap:Locking Pit 2014"],  # (three)
+        )
+
+    def test_the_2024_contagion_wins_in_2024_and_the_disease_in_2014(self) -> None:
+        # all three diseases are contagions in the 5.2.1: the newer entry, never the 2014 one
+        for name in ("cackle fever", "sewer plague", "sight rot"):
+            got = self.names(name)
+            self.assertEqual(len(got), 1, name)
+            self.assertTrue(got[0].startswith("rule:") and got[0].endswith("2024"), got)
+            old = self.names(name, "2014", "2024")
+            self.assertTrue(old[0].startswith("disease:") and old[0].endswith("2014"), old)
+
+    def test_a_table_question_gets_none_of_them(self) -> None:
+        for question, target, fallback in (
+            ("how does sight rot work", "2024", "2014"),
+            ("what does drow poison do", "2014", "2024"),
+            ("how do I disarm the hidden pit", "2014", "2024"),
+        ):
+            built = context.build(
+                question,
+                target=target,
+                fallback=fallback,
+                index=INDEX,
+                house_rules=[],
+                lookup=None,
+                scene="",
+                table=True,
+            )
+            self.assertEqual(built.hits, (), question)
+            self.assertNotIn("Gameplay Toolbox", built.prompt, question)
+
+    def test_the_disease_cue_makes_a_one_word_name_count(self) -> None:
+        self.assertIn("rule:Madness 2014", self.names("madness table", "2014", "2024"))
 
 
 class AboutDMbot(unittest.TestCase):

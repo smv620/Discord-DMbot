@@ -334,6 +334,8 @@ def mentioned_rules(
     unique = unique[:ENTRIES_MAX]
     if both:  # the other edition's entry beside each, so a comparison can be answered
         extra = [h for h in (other_edition(hit, index, target, fallback) for hit in unique) if h]
+        if table:  # the other edition's DM chapter is no more the table's than this one's
+            extra = [h for h in extra if not h.entry.dm_side]
         unique += [h for h in extra if all(h.entry is not o.entry for o in unique)]
         unique = unique[: ENTRIES_MAX + 1]  # one more than usual, never a long list
     return unique
@@ -437,6 +439,7 @@ def equipment_hits(
 # everyday words, "Purple Worm Poison" and "Hidden Pit" are not.
 HAZARD_CUES = frozenset(
     {"poison", "poisons", "trap", "traps", "curse", "curses", "hazard", "hazards", "dc"}
+    | {"disease", "diseases", "plague"}
 )
 
 
@@ -448,6 +451,8 @@ def hazard_hits(index: Index, name: str, target: str, fallback: str, *, cued: bo
         return []
     for kind in HAZARD_KINDS:
         hits = index.lookup_all(name, target, fallback, kind=kind)
+        if hits and hits[0].from_fallback and index.has_asked_for(name, target, rules=True):
+            continue  # the target has its own entry of the name (the 2024 contagion Cackle Fever)
         if hits:
             return hits if kind == TRAP else hits[:1]
     return []
