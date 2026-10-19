@@ -246,6 +246,44 @@ def prose_message(
     return "\n".join(parts)
 
 
+def prose_retry(problems: Sequence[str], rejected: Prose | None, length: Length) -> str:
+    """What the writer is told after a rejected draft (#2026): the draft itself, the target and
+    the form again, and to revise that draft and change only what the problems name. A rewrite
+    asked for without the draft came back as a 54-word fix-up with the labels gone."""
+    form = (
+        f"Keep the form: SUMMARY: (about {length.target} words, between {length.low} and "
+        f"{length.high}) then MUSIC: 1. … one prompt for each 《…》 section."
+    )
+    head = "\nYour last draft was rejected: " + _data("; ".join(problems)) + ". "
+    if rejected is None:
+        return head + "Write the whole recap again, fixing exactly that. " + form
+    music = "\n".join(f"{i}. {m}" for i, m in enumerate(rejected.music, start=1))
+    return (
+        f"\n<previous_draft>\nSUMMARY:\n{_data(rejected.summary)}\nMUSIC:\n{_data(music)}\n"
+        f"</previous_draft>{head}Revise that draft: change only what the problems name and keep "
+        f"the rest as it is. {form}"
+    )
+
+
+def finish_retry(problems: Sequence[str], rejected: tuple[str, list[str]] | None) -> str:
+    """The same for the title and the housekeeping: the rejected answer and the form again."""
+    form = "Keep the form: TITLE: … then HOUSEKEEPING: one `- [beat number] …` line each."
+    head = "\nYour last answer was rejected: " + _data("; ".join(problems)) + ". "
+    if rejected is None:
+        return head + "Write it again. " + form
+    title, bullets = rejected
+    body = "\n".join(f"- {_data(b)}" for b in bullets)
+    return (
+        f"\n<previous_answer>\nTITLE: {_data(title)}\nHOUSEKEEPING:\n{body}\n"
+        f"</previous_answer>{head}Revise that answer: change only what the problems name. {form}"
+    )
+
+
+def _data(text: str) -> str:
+    """Text shown back to the writer as data: no bracket in it can close the tag around it."""
+    return text.replace("<", "‹").replace(">", "›")
+
+
 def housekeeping_system() -> str:
     return HOUSEKEEPING_SYSTEM.replace("{words}", str(TITLE_WORDS))
 
@@ -291,29 +329,66 @@ def fix_prose(prose: Prose, sections_max: int = SECTIONS_MAX) -> Prose:
     return Prose(summary, tuple(music))
 
 
-def parse_prose(raw: str) -> Prose | None:
-    """Read the answer's form. None when it does not follow it (no summary)."""
+def parse_prose(raw: str, length: Length | None = None) -> Prose | None:
+    """Read the answer's form. None when it does not follow it (no summary). With `length`, an
+    answer with no SUMMARY label that is still a recap's length is read leniently (#2026): the
+    text before a trailing numbered list is the summary and the list is the music prompts. The
+    checks run on it all the same, so this only saves a retry for a missing label."""
     found = _sections(raw, ("SUMMARY", "MUSIC"))
     summary = "\n".join(found.get("SUMMARY", [])).strip()
     if not summary:
-        return None
+        return _unlabelled_prose(raw, length) if length is not None else None
     music = tuple(
         m for m in (re.sub(r"^\s*\d+[.)]\s*", "", x).strip() for x in found.get("MUSIC", [])) if m
     )
     return Prose(summary, music)
 
 
+_NUMBERED = re.compile(r"^\s*\d+[.)]\s+\S")
+
+
+def _unlabelled_prose(raw: str, length: Length) -> Prose | None:
+    lines = raw.strip().splitlines()
+    cut = len(lines)
+    while cut > 0 and (_NUMBERED.match(lines[cut - 1]) or not lines[cut - 1].strip()):
+        cut -= 1
+    summary = "\n".join(lines[:cut]).strip()
+    if len(words(narration_of(summary))) < length.low:
+        return None  # not a recap: a short note or junk still fails, and is retried
+    music = tuple(
+        m for m in (re.sub(r"^\s*\d+[.)]\s*", "", x).strip() for x in lines[cut:] if x.strip()) if m
+    )
+    return Prose(summary, music)
+
+
 def parse_finish(raw: str) -> tuple[str, list[str]] | None:
-    """The title and the bullets as written, beat numbers still on. None without a title."""
+    """The title and the bullets as written, beat numbers still on. With no TITLE label (#2026)
+    the first short line is the title and the `[n]` lines are the bullets; None when there is
+    no such line."""
     found = _sections(raw, ("TITLE", "HOUSEKEEPING"))
     title = " ".join(" ".join(found.get("TITLE", [])).split())
     if not title:
-        return None
+        return _unlabelled_finish(raw)
     bullets = [
         b
         for b in (re.sub(r"^\s*[-*•]\s*", "", x).strip() for x in found.get("HOUSEKEEPING", []))
         if b and b.lower() not in ("none", "nothing", "n/a")
     ]
+    return title, bullets
+
+
+_CHAT = re.compile(r"(sure|here|certainly|of course|okay|i)\b", re.IGNORECASE)
+_BULLET = re.compile(r"^\s*[-*•]?\s*(\[\d{1,3}\].*)$")
+
+
+def _unlabelled_finish(raw: str) -> tuple[str, list[str]] | None:
+    lines = [x for x in raw.strip().splitlines() if x.strip()]
+    if not lines or _BULLET.match(lines[0]) or re.match(r"[\W_]*HOUSEKEEPING\b", lines[0], re.I):
+        return None
+    title = " ".join(re.sub(r"^[\s#*_>\"“]+|[\s*_\"”]+$", "", lines[0]).split())
+    if not title or len(title.split()) > TITLE_WORDS or _CHAT.match(title) or title.endswith(":"):
+        return None  # a reply to us ("Sure! Here you go:", a refusal), not a title
+    bullets = [m.group(1).strip() for m in (_BULLET.match(x) for x in lines[1:]) if m]
     return title, bullets
 
 
@@ -354,6 +429,14 @@ def _known(
     for name in allowed_names:
         known |= set(words(name))
     return known
+
+
+def _all_known(name: str, known: set[str]) -> bool:
+    """A name passes when every word of it is known. `proper_nouns` keeps "Dun-Varra's" whole but
+    `known` is made of `words()`, which split at a hyphen, so the whole could never be found
+    (#2026); each word is looked up instead, as `is_known_name` does."""
+    mine = set(words(name))
+    return not mine or mine <= known | NOT_NAMES
 
 
 def check_prose(
@@ -409,8 +492,7 @@ def check_prose(
         {
             n
             for n in proper_nouns(narration, sentence_starts=True)
-            if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES
-            and not _ordinary_opener(n, narration, transcript)
+            if not _all_known(n, known) and not _ordinary_opener(n, narration, transcript)
         }
     )
     # A secret name is never written into a retry message, which is stored and printed; the
@@ -513,7 +595,7 @@ def check_finish(
         {
             n
             for n in proper_nouns(" ".join([title, *bullets]), sentence_starts=True)
-            if _POSSESSIVE.sub("", n).lower().strip("'’-") not in known | NOT_NAMES and len(n) > 3
+            if not _all_known(n, known) and len(n) > 3
         }
     )
     unknown = [n for n in unknown if not names_a_secret(n, secret_names, allowed_names)]

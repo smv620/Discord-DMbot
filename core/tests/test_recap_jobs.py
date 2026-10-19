@@ -388,6 +388,11 @@ class Working(Base):
         self.assertEqual(job.state, "ready")
         self.assertEqual(len(self.careful.sent), 2)  # the second and the third try
         self.assertIn("Varkus", self.careful.sent[1])  # told which name, on the retry only
+        # the retry carries the rejected draft and the target, to revise (#2026)
+        self.assertIn("<previous_draft>", self.careful.sent[1])
+        self.assertIn("Lord Varkus laughed.", self.careful.sent[1])
+        self.assertIn("between", self.careful.sent[1])
+        self.assertNotIn("<previous_draft>", self.fast.sent[1])  # the first try has none
 
     async def test_a_secret_name_never_reaches_the_prose_stage(self) -> None:
         await self.setUpWorker(
@@ -402,6 +407,10 @@ class Working(Base):
         # ...and a draft that names him anyway is refused, three times, and nothing is kept.
         self.assertEqual((job.state, job.summary), ("failed", ""))
         self.assertIn("secret", self.careful.sent[0])
+        # a rejected draft that names a secret is never sent back (#2026)
+        for sent in self.careful.sent:
+            self.assertNotIn("Oskar", sent)
+            self.assertNotIn("<previous_draft>", sent)
 
     async def test_too_few_beats_left_after_the_cuts_fails_plainly(self) -> None:
         await self.setUpWorker(
@@ -418,6 +427,7 @@ class Working(Base):
         self.fast.answers += [fx.WEAK_GRADE, fx.FINISH_ANSWER]
         job = await self.go()
         self.assertEqual(job.state, "ready")
+        self.assertIn("<previous_draft>", self.careful.sent[0])  # the weak draft, to revise (#2026)
         self.assertIn("keep the stakes", self.careful.sent[0])
         self.assertEqual(job.grade["tension"], 2)  # recorded as it was, never hidden
 
