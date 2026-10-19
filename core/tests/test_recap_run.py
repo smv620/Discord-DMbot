@@ -261,6 +261,20 @@ class TheAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(leftovers(), before)  # the temporary folder is gone
         self.assertTrue(fake.calls)
 
+    async def test_a_refused_text_says_which_rule_and_never_the_name(self) -> None:
+        import dataclasses
+
+        out = await run.run_text(inputs(), happy(), fx.Canned())
+        job = dataclasses.replace(out.job, summary="《Calm》 Rae Quillon walked in.")
+        secret = dataclasses.replace(out.inputs, secret_names=["Rae Quillon"])
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = await run.run_audio(
+                job, secret, ElevenLabs(Fake(), voice_id="v"), AudioFiles(Path(tmp)),
+                runner=Mixer(),
+            )  # fmt: skip
+        self.assertEqual(lines, ["audio: not made (the text names a secret: whole-name)"])
+        self.assertNotIn("Quillon", "\n".join(lines))
+
 
 class TheKeep(DatabaseTest):
     async def test_keep_writes_one_draft_row_and_nothing_else_and_never_over_an_existing_one(
