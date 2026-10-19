@@ -235,7 +235,7 @@ MAGIC_ALIASES = {
 }
 
 
-def rule_keys(entry: Entry) -> list[str]:
+def section_rule_keys(entry: Entry) -> list[str]:
     """The other names a rule of the Combat Encounters or Magic Items section, or the glossary's
     Attunement, is found by (#2000, #2001)."""
     own = normalize(entry.name)
@@ -390,14 +390,16 @@ class Index:
                 for key in hazard_keys(entry.kind, entry.name):
                     self._add(entry.edition, key, entry)
             elif entry.kind == RULE:
-                for key in rule_keys(entry):
+                for key in section_rule_keys(entry):
                     self._add(entry.edition, key, entry)
         # The singulars of rule titles come last, and never take a name another entry of the same
         # edition already has: "Bonus Actions" (the combat rule) must not be found as "bonus
         # action", which is the spellcasting rule's own name (#1956).
         own_names = {(e.edition, normalize(e.name)) for e in self.entries}
         for entry in self.entries:
-            if entry.kind == RULE:
+            # Not the DM's section titles nor the Magic Items section's: their keys are the curated
+            # ones, and "a magic item" in a question is not a question about the section (#2001).
+            if entry.kind == RULE and not entry.dm_side and entry.section != "Magic Items":
                 for key in rule_keys(entry.name):
                     if (entry.edition, key) not in own_names:
                         self._add(entry.edition, key, entry)
