@@ -33,6 +33,10 @@ def inputs(**kw: Any) -> pl.Inputs:
     return pl.Inputs(**{**base, **kw})
 
 
+def found(folder: str, name: str) -> list[Path]:
+    return list(Path(folder).rglob(name))
+
+
 def leftovers() -> set[str]:
     return {str(p) for p in Path(tempfile.gettempdir()).glob("recap-run-*")}
 
@@ -274,6 +278,46 @@ class TheAudio(unittest.IsolatedAsyncioTestCase):
             )  # fmt: skip
         self.assertEqual(lines, ["audio: not made (the text names a secret: whole-name)"])
         self.assertNotIn("Quillon", "\n".join(lines))
+
+    async def test_an_audio_run_with_a_scene_reaches_the_ambience_and_makes_the_files(self) -> None:
+        # #2062: the ambience loop is kept under the audio file store's ids, which refuse a
+        # server number of 0; the test run's placeholders must be ones it accepts
+        import dataclasses
+
+        out = await run.run_text(inputs(), happy(), fx.Canned())
+        job = dataclasses.replace(
+            out.job, summary="《Calm》 Mira and Oskar walked into the dark forest at dusk."
+        )
+        fake = Fake()
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = await run.run_audio(
+                job, out.inputs, ElevenLabs(fake, voice_id="v"), AudioFiles(Path(tmp)),
+                runner=Mixer(),
+            )  # fmt: skip
+            text = "\n".join(lines)
+            self.assertNotIn("failed", text)
+            self.assertIn("recap-mix.mp3", text)
+            kept = found(tmp, "forest.mp3")  # the loop, kept under the placeholders
+            self.assertEqual(len(kept), 1)
+            self.assertIn(str(run.PLACEHOLDER_GUILD), kept[0].parts)
+        self.assertTrue(fake.paths("sound-generation"))  # the provider was asked for it
+
+    def test_the_placeholder_ids_are_ones_the_audio_file_store_accepts(self) -> None:
+        files = AudioFiles(Path("/tmp/anywhere"))
+        files.ambience_path(run.PLACEHOLDER_GUILD, run.PLACEHOLDER_CAMPAIGN, "forest")
+        files.recap_dir(run.PLACEHOLDER_GUILD, run.PLACEHOLDER_CAMPAIGN, 1)
+        with self.assertRaises(ValueError):  # and the store's own checks are unchanged
+            files.ambience_path(0, run.PLACEHOLDER_CAMPAIGN, "forest")
+
+    def test_a_value_error_says_its_message_but_no_other_error_does(self) -> None:
+        self.assertEqual(
+            run.audio_failure(ValueError("not a campaign")),
+            ["audio: failed (ValueError: not a campaign); the text above is unchanged"],
+        )
+        long = run.audio_failure(ValueError("x" * 500))[0]
+        self.assertLessEqual(len(long), 200)  # cut short
+        other = run.audio_failure(KeyError("a line of the transcript"))
+        self.assertEqual(other, ["audio: failed (KeyError); the text above is unchanged"])
 
 
 class TheKeep(DatabaseTest):
