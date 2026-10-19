@@ -6,8 +6,9 @@ the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-scre
 goes to players):
 
 - it opens with an emotion cue `《…》` and its length follows the session's: about 100 words plus
-  100 for each hour played (`length_for`), at most 700, within 20% of that (35% over on the last
-  try: length is a quality target and not a grounding rule, owner decision on #2013);
+  100 for each hour played (`length_for`), at most 700, from half of that to 20% over it (35% over
+  on the last try: length is a quality target and not a grounding rule, owner decisions on #2013
+  and #2058);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -43,9 +44,9 @@ from dmbot.recaps.text import (
 BASE_WORDS = 100  # the recap's length: this many words, and 100 more for each hour played
 WORDS_PER_HOUR = 100
 WORDS_CEILING = 700  # a 6-hour session or longer
-RANGE = 0.20  # a draft within this far of the target passes
+RANGE = 0.20  # a draft up to this far over the target passes
 LAST_UP = 0.35  # on the last try a draft this far over the target still passes
-LAST_DOWN = 0.35  # and this far under it, the same as over (recap test 4; #2036)
+BELOW = 0.50  # a draft of at least this share of the target passes, on every try (owner, #2058)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
@@ -169,7 +170,7 @@ class Length:
     low: int
     high: int
     last_high: int  # the most the last try may run to
-    last_low: int  # the least the last try may come to
+    last_low: int  # the least the last try may come to (the same as `low`, never stricter)
     summary_max: int  # characters
     beats: int  # most beats the writer is shown
     sections: int  # most 《…》 sections
@@ -179,21 +180,23 @@ class Length:
 
 def length_for(hours: float) -> Length:
     """100 words and 100 for each hour played, to the nearest 10 and at most 700 (0.5 hours 150, 1
-    hour 200, 3 hours 400, 6 hours or more 700); within 20% of it, and up to 35% over on the last
-    try. The other limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
+    hour 200, 3 hours 400, 6 hours or more 700). A draft passes from half the target (the owner
+    asked for 50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
+    limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
     a paragraph for every 100 words (2 or more), 8 characters for each word of the longest
     accepted draft (so the cap never cuts a draft the length check passes) and a token budget for
     the words, the music prompts and the form."""
     target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
+    low = round(target * BELOW)
     high = round(target * (1 + RANGE))
     last_high = round(target * (1 + LAST_UP))
     return Length(
         hours=hours,
         target=target,
-        low=round(target * (1 - RANGE)),
+        low=low,
         high=high,
         last_high=last_high,
-        last_low=round(target * (1 - LAST_DOWN)),
+        last_low=low,
         summary_max=round(last_high * CHARS_PER_WORD),
         beats=min(10, max(3, round(3 * hours))),
         sections=min(SECTIONS_MAX, max(1, target // 70)),
