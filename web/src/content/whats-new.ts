@@ -286,7 +286,7 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "New names from your recap",
-    what: "When a recap uses a name DMbot didn't know yet, it keeps the name if someone said it at the table, and puts right names it misheard. It then asks you to check the new ones, on your DM screen and by private message. Only you see the list. Nothing is added to your game until you say so.",
+    what: "When a recap uses a name DMbot didn't know, it asks you to check it, on your DM screen and by private message. Nothing is added to your game until you say so.",
     reason:
       "Held until dev1 deploys #2030 (#2027, #2031). When it is on, move this up and turn on RECAP_NAMES_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },

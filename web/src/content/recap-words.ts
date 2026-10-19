@@ -12,11 +12,13 @@
 // ElevenLabs gets its script. Turning it on also needs: the owner's go-ahead on naming ElevenLabs,
 // ElevenLabs in the "Companies that help us" list and its country in the sentence under it (not
 // known today, so not guessed here), and a What's new entry. It can only be true with RECAPS_LIVE.
+//
+// RECAP_NAMES_LIVE is the names-to-check part of a recap (#2027, #2030, #2031): held until dev1
+// deploys #2030, because until then no recap has the "Facts to be confirmed" list or the private
+// message. It moves with the What's new entry "New names from your recap" and can only be true with
+// RECAPS_LIVE.
 export const RECAPS_LIVE = false;
 export const RECAP_AUDIO_LIVE = false;
-// RECAP_NAMES_LIVE is the names-to-check part of a recap (#2027, #2030): held until dev1 deploys
-// #2030, because until then no recap has the "Facts to be confirmed" list or the private message. It
-// can only be true with RECAPS_LIVE. It moves with the What's new entry "New names from your recap".
 export const RECAP_NAMES_LIVE = false;
 
 export const recapsHeading = "Recaps";
@@ -37,6 +39,18 @@ export const allowanceSentence = (recapsLive: boolean, audioLive: boolean): stri
       ? `Each campaign gets up to ${RECAPS_PER_MONTH} recaps a month. Up to ${RECAP_AUDIO_PER_MONTH} of those can be narrated, with a voice and music.`
       : `Each campaign gets up to ${RECAPS_PER_MONTH} recaps a month.`;
 
+/** The Help step for the names a recap asks you to check (#2031). A function so a test can read both
+ * wordings while the switch is off. The narration is named only while narration is on: nothing here
+ * may promise it before. */
+export const recapNamesStep = (
+  audioLive: boolean,
+): { text: string; names: { name: string; file: string }[] } => ({
+  text: `When a recap uses a name DMbot doesn't know yet, DMbot tells you on the DM screen and in a private message; press 📝 Check new names to look at them. Nothing is added to your game until you say so. Your copy of the recap ends with Facts to be confirmed, a list of those names; it is never posted to the table${
+    audioLive ? ", and the narration never reads it" : ""
+  }. DMbot keeps a new name only if someone said it at the table, and fixes the spelling when it misheard a name.`,
+  names: [{ name: "📝 Check new names", file: "ui/names.py" }],
+});
+
 /** Under the game master's steps on the Help page. Each sentence rests on core/src/dmbot/recaps/
  * and bot.py (post_recaps, recap_inputs): see the pull request for the lines. */
 export const recapSteps: { text: string; names?: { name: string; file: string }[] }[] = [
@@ -49,17 +63,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   {
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
-  ...(RECAP_NAMES_LIVE
-    ? [
-        {
-          // The narration is named only while narration is on: nothing here may promise it before.
-          text: `If a recap uses a name DMbot doesn't know yet, it keeps the name only when someone said it at the table, and puts right a name it misheard. Your copy of the recap ends with Facts to be confirmed, which lists the new names. ${
-            RECAP_AUDIO_LIVE ? "The narration never reads it, and your" : "Your"
-          } players never see it. DMbot also asks you to check them on the DM screen and in a private message: press 📝 Check new names there. Nothing is added to your game until you say so.`,
-          names: [{ name: "📝 Check new names", file: "ui/names.py" }],
-        },
-      ]
-    : []),
+  ...(RECAP_NAMES_LIVE ? [recapNamesStep(RECAP_AUDIO_LIVE)] : []),
   {
     text: "DMbot tells you on the DM screen when a recap is ready, or when it couldn't write one and why. It also emails you, unless you turn that off. The email has the title (or the reason) and a link to your account page, never the recap itself.",
   },

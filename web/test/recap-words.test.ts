@@ -16,6 +16,7 @@ import {
   emailsIntroTail,
   recapEmailStep,
   recapSteps,
+  recapNamesStep,
 } from "../src/content/recap-words";
 import { entries, held } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
@@ -132,7 +133,21 @@ describe("the switches and What's new agree", () => {
 
   it("never has the names to check live without recaps, and says them only while live (#2031)", () => {
     expect(!RECAP_NAMES_LIVE || RECAPS_LIVE).toBe(true);
-    const step = recapSteps.find((s) => s.text.includes("Facts to be confirmed"));
+    const step = recapSteps.find((s) => s.names?.some((n) => n.name === "📝 Check new names"));
     expect(step !== undefined).toBe(RECAP_NAMES_LIVE);
+  });
+
+  // Read directly, so the wording is checked while the switch is still off.
+  it("words the names step both ways, and names the narration only when it is on (#2031)", () => {
+    const off = recapNamesStep(false);
+    const on = recapNamesStep(true);
+    expect(off.text).not.toMatch(/narrat/i);
+    expect(on.text).toContain("the narration never reads it");
+    for (const step of [off, on]) {
+      expect(step.text).toContain("📝 Check new names");
+      expect(step.text).toContain("Nothing is added to your game until you say so");
+      expect(step.text).toContain("never posted to the table");
+      expect(step.names).toEqual([{ name: "📝 Check new names", file: "ui/names.py" }]);
+    }
   });
 });
