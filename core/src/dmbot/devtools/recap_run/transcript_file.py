@@ -11,7 +11,11 @@ them (`FORMATS`):
   known source (#1977), so this reader is forgiving: up to 10 header lines before the first
   utterance are skipped, a line that is not `Name: words` after an utterance is that utterance
   carrying on (joined with a space; refused if over a quarter of the lines would be joined, as
-  then it is not this format), and a name may hold `( ) # . ' _` (`Rowan (rowan_v)`, `kai#0`);
+  then it is not this format), and a name may hold `( ) # . ' _` (`Rowan (rowan_v)`, `kai#0`).
+  Craig marks talk it cut out with a braced placeholder, `{non-game context}` (#1995; the only one
+  seen so far): a line that is only such a placeholder is dropped and counted apart, never as a
+  joined line, and a placeholder at the start of an utterance is stripped (an utterance left empty
+  is dropped);
 * WebVTT and SRT whose cue text starts `Name:`.
 
 Who is who: every speaker gets a made-up number in the order they first speak, and the name given
@@ -53,6 +57,11 @@ _DMBOT_OTHER = re.compile(r"^\[\d+:\d{2}:\d{2}\] \(")  # sidebar, skipped-note a
 _PLAIN = re.compile(
     rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?(?P<who>[^\s:\[\]{{}}<>][^:\[\]{{}}<>]{{0,59}}):\s+(?P<text>\S.*)$"
 )
+# Craig's cut-out placeholder: a braced note of up to about 40 characters, alone on its line or
+# at the start of what someone said. DMbot's own download, which uses braces for characters, is
+# tried before this format, so this only ever reads a plain file.
+_CUT_OUT = re.compile(r"^\{[^{}]{1,40}\}$")
+_CUT_OUT_LEAD = re.compile(r"^(?:\{[^{}]{1,40}\}\s*)+")
 HEADER_MAX = 10  # lines before the first utterance that a plain file may have
 JOINED_MAX_SHARE = 4  # at most one line in this many may be a wrapped line (a quarter)
 _TIMING = re.compile(r"^(?P<h>\d+:)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{3})\s+-->\s+")
@@ -77,6 +86,7 @@ class Transcript:
     characters: tuple[str, ...] = ()  # named characters found in DMbot's download
     skipped: int = 0  # plain format: header lines before the first utterance (a count only)
     joined: int = 0  # plain format: wrapped lines joined to the utterance before them
+    cut_out: int = 0  # plain format: lines that were only a cut-out placeholder, dropped
 
     @property
     def speakers(self) -> list[str]:
@@ -106,7 +116,7 @@ def detect(text: str) -> str:
         return VTT
     if any(_TIMING.match(line) for line in lines[:6]) and lines[0].isdigit():
         return SRT
-    split = _plain_split(lines)
+    split = _plain_split([line for line in lines if not _CUT_OUT.match(line)])
     if split is not None:
         _, rows = split
         if sum(1 for found, _ in rows if found) * 2 > len(rows):  # most lines have a name and words
@@ -145,6 +155,8 @@ def _plain_split(lines: list[str]) -> tuple[int, list[tuple[re.Match[str] | None
 
 def _plain(text: str) -> Transcript:
     numbered = [(n, raw.strip()) for n, raw in enumerate(text.splitlines(), start=1) if raw.strip()]
+    cut_out = sum(1 for _, line in numbered if _CUT_OUT.match(line))
+    numbered = [(n, line) for n, line in numbered if not _CUT_OUT.match(line)]
     split = _plain_split([line for _, line in numbered])
     if split is None:
         raise TranscriptError(f"no 'Name: words' line in the first {HEADER_MAX + 1} lines")
@@ -161,8 +173,12 @@ def _plain(text: str) -> Transcript:
         # A line with no time follows the one before it, so a mixed file keeps its order.
         after = out[-1].at_ms + LINE_MS if out else 0
         at = _clock_ms(found["at"]) if found["at"] else after
-        out.append(Utterance(found["who"].strip(), at, found["text"].strip()))
-    return Transcript(PLAIN, tuple(out), skipped=header, joined=len(wrapped))
+        # A leading placeholder is stripped; an utterance left empty stays until the end so that the
+        # wrapped lines after it join to it and not to the speaker before.
+        said = _CUT_OUT_LEAD.sub("", found["text"].strip())
+        out.append(Utterance(found["who"].strip(), at, said))
+    kept = tuple(Utterance(u.speaker, u.at_ms, u.text.strip()) for u in out if u.text.strip())
+    return Transcript(PLAIN, kept, skipped=header, joined=len(wrapped), cut_out=cut_out)
 
 
 def _cues(text: str, kind: str) -> Transcript:
