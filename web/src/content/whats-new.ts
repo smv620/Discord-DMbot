@@ -284,6 +284,13 @@ export const held: Held[] = [
     reason: "Held with recaps (RECAPS_LIVE, #2018).",
   },
   {
+    date: "2026-10-19",
+    title: "New names from your recap",
+    what: "When a recap uses a name DMbot didn't know, it asks you to check it, on your DM screen and by private message. Nothing is added to your game until you say so.",
+    reason:
+      "Held until dev1 deploys #2030 (#2027, #2031). When it is on, move this up and turn on RECAP_NAMES_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
+  },
+  {
     date: "2026-10-16",
     title: "Narrated recaps with music",
     what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
