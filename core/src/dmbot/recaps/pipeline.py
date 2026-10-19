@@ -29,6 +29,7 @@ from dmbot.memory.extractor import Client, Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.recaps.text import words
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
@@ -319,6 +320,8 @@ class RecapWorker:
             speakers={s.number: s.user_id for s in said},
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
+            dm_ids=inputs.dm_ids,
+            transcript_words={w for s in said for w in words(s.text)},
         )
         usable = len(kept) >= bt.MIN_BEATS and not any("in no beat" in p for p in problems)
         if not usable:
