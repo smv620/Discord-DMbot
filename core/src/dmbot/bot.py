@@ -356,9 +356,11 @@ from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton, UndoConnectionButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
+    RecapNamesButton,
     ReviewButton,
     after_session_text,
     held_back_text,
+    recap_names_dm_view,
     recap_names_reminder,
     recap_names_text,
     review_view,
@@ -1224,6 +1226,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
+        self.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
@@ -7427,12 +7430,30 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id, recap_names_text(added), view=review_view(cid)
                 )
+            if added:
+                await self._private_names_note(gid, cid, job.dm_user_id, added)
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
                 self.lookup.drop([cid])
         except Exception:
             log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _private_names_note(self, gid: int, cid: str, dm_user_id: int, added: int) -> None:
+        """The same note as a private message to the DM, with the same check (#2027): it waits
+        until the DM next opens Discord. Closed private messages cost nothing but a line in the
+        log: the DM screen has it too. Never raises."""
+        try:
+            user = await self.fetch_user(dm_user_id)
+            await user.send(
+                recap_names_text(added),
+                view=recap_names_dm_view(gid, cid),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.Forbidden:
+            log.info("Recap: the DM's private messages are closed (names note)")
+        except Exception:
+            log.info("Recap: the private names note could not be sent")
 
     async def _waiting_recap_names(self, table: Table) -> None:
         """A session starts and names from a recap are still unanswered (#2027): the DM screen

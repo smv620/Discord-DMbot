@@ -26,6 +26,7 @@ from tests.test_recap_jobs import Clock
 from tests.test_recaps import TRANSCRIPT, beats
 
 GUILD = 1
+DM_ID = 4242
 CID = "c" * 32
 NAMES = [*fx.NAMES, "Caer-Dineval"]
 
@@ -228,7 +229,10 @@ def bot_with(**kw: Any) -> Any:
         set_names_state=AsyncMock(return_value=True),
         names_waiting=AsyncMock(return_value=[]),
     )
-    return SimpleNamespace(
+    sent = SimpleNamespace(send=AsyncMock())
+    bot = SimpleNamespace(
+        dm=sent,
+        fetch_user=AsyncMock(return_value=sent),
         memory=memory,
         recaps=recaps,
         lookup=None,
@@ -237,13 +241,17 @@ def bot_with(**kw: Any) -> Any:
         recap_secret_names=AsyncMock(return_value=[]),
         **kw,
     )
+    bot._private_names_note = DMBot._private_names_note.__get__(bot)
+    return bot
 
 
 class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
     CAMPAIGN = SimpleNamespace(dm_screen_channel_id=77)
 
     def job(self) -> Any:
-        return SimpleNamespace(session_at=100, to_confirm=("Mira", "Zarathon Keep", "Yrsa"))
+        return SimpleNamespace(
+            session_at=100, dm_user_id=DM_ID, to_confirm=("Mira", "Zarathon Keep", "Yrsa")
+        )
 
     async def test_new_names_are_proposed_and_the_dm_screen_is_told_once(self) -> None:
         bot = bot_with()
@@ -261,6 +269,33 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         bot.post.reset_mock()
         await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
         bot.post.assert_not_awaited()
+
+    async def test_the_dm_also_gets_a_private_message_with_the_check(self) -> None:
+        bot = bot_with()
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
+        bot.fetch_user.assert_awaited_once_with(DM_ID)
+        (call,) = bot.dm.send.await_args_list
+        self.assertIn("2 new names in the recap", call.args[0])
+        self.assertNotIn("Zarathon", call.args[0])
+        (button,) = call.kwargs["view"].children
+        self.assertEqual(button.custom_id, f"dmbot:names:recap:{GUILD}:{CID}")
+
+    async def test_closed_private_messages_cost_nothing_and_the_dm_screen_still_has_it(
+        self,
+    ) -> None:
+        import discord
+
+        bot = bot_with()
+        bot.dm.send.side_effect = discord.Forbidden(
+            SimpleNamespace(status=403, reason=""), "closed"
+        )
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
+        (call,) = bot.post.await_args_list  # the DM screen note was sent
+        self.assertEqual(call.args[0], 77)
+        # and a dead lookup of the user is no worse
+        bot.fetch_user.side_effect = RuntimeError("gone")
+        bot.recaps.set_names_state.return_value = True
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
 
     async def test_a_name_made_secret_since_is_never_queued(self) -> None:
         bot = bot_with()
