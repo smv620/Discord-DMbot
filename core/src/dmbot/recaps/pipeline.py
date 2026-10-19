@@ -28,6 +28,7 @@ from dmbot.ai import AIOutOfFunds
 from dmbot.memory.extractor import Client, Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
+from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
 from dmbot.transcript.models import Line
@@ -198,7 +199,7 @@ class RecapWorker:
                 gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
                 title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
                 attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
-                window_done=0, window_count=0,
+                window_done=0, window_count=0, to_confirm=[], names_state=0,
             )  # fmt: skip
             await self._store.reset_audio(gid, cid, job.session_at)  # a new recap, new audio
             return await self._store.get(gid, cid, job.session_at)
@@ -425,7 +426,15 @@ class RecapWorker:
                 len(prose.music),
                 len(fixed.music),
             )
-        prose = fixed
+        prose, refused = rd.respelled(
+            fixed,
+            beats=sheet,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+            previous=inputs.previous,
+            setting=inputs.setting,
+            transcript="\n".join(s.text for s in said),
+        )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
 
@@ -440,6 +449,7 @@ class RecapWorker:
                 setting=inputs.setting,
                 length=length,
                 last=last_try,
+                refused=refused,
             )
 
         problems = checked(False)
@@ -481,6 +491,15 @@ class RecapWorker:
             summary=prose.summary,
             original=prose.summary,
             music=list(prose.music),
+            to_confirm=rd.kept_names(
+                prose.summary,
+                beats=sheet,
+                transcript=transcript,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+            )[: un.MAX_TO_CONFIRM],
             game_day=inputs.day,
             grade=grade,
             attempt=0,
@@ -534,6 +553,20 @@ class RecapWorker:
             return await self._retry_or_fail(
                 gid, cid, job, ["follow the form: TITLE then HOUSEKEEPING"]
             )
+        transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
+        # Near-miss names put right here too (#2027), and the names the DM is to confirm added.
+        fixed = [
+            rd.respelled(
+                rd.Prose(text, ()),
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                transcript=transcript,
+            )
+            for text in (parsed[0], *parsed[1])
+        ]
+        parsed = (fixed[0][0].summary, [f.summary for f, _ in fixed[1:]])
         finish, problems = rd.check_finish(
             parsed,
             beats=sheet,
@@ -541,8 +574,10 @@ class RecapWorker:
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             previous=inputs.previous,
-            transcript="\n".join(x.text for x in self._said(inputs, set(job.speakers))),
+            transcript=transcript,
         )
+        if finish is not None and any(r for _, r in fixed):
+            finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
         if finish is None:
             self._keep_rejected(key, parsed, inputs, [parsed[0], *parsed[1]])
             return await self._retry_or_fail(gid, cid, job, problems)
@@ -554,6 +589,17 @@ class RecapWorker:
             state="ready",
             title=finish.title,
             housekeeping=list(finish.housekeeping),
+            to_confirm=un.to_confirm(
+                job.to_confirm,
+                rd.kept_names(
+                    " ".join([finish.title, *finish.housekeeping]),
+                    beats=sheet,
+                    transcript=transcript,
+                    allowed_names=inputs.allowed_names,
+                    secret_names=inputs.secret_names,
+                    previous=inputs.previous,
+                ),
+            ),
             attempt=0,
             errors=0,
             problems=[],

@@ -200,6 +200,8 @@ export interface Recap {
   /** The text with its cues, which is what an edit sends back. */
   summary: string;
   housekeeping: string[];
+  /** Names the recap kept that DMbot didn't know: the DM's copy only, never posted (#2027). */
+  toConfirm?: string[];
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;

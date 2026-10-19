@@ -617,6 +617,17 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 </ul>
               )}
             </section>
+            {recap.toConfirm && recap.toConfirm.length > 0 && (
+              <section class="panel">
+                <h3>{text.toConfirmHeading}</h3>
+                <p class="muted small">{text.toConfirmNote}</p>
+                <ul>
+                  {recap.toConfirm.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </>
         )
       )}

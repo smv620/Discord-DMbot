@@ -41,7 +41,7 @@ COLUMNS = (
     " window_done, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
-    " audio_credits, audio_error, audio_text_hash"
+    " audio_credits, audio_error, audio_text_hash, to_confirm, names_state"
 )
 
 
@@ -80,6 +80,10 @@ class Job:
     audio_credits: int = 0
     audio_error: str = ""
     audio_text_hash: str = ""
+    to_confirm: tuple[str, ...] = ()  # names the recap kept that the DM is asked to confirm (#2027)
+    names_state: int = (
+        0  # 0 none, 1 the DM was told of the names to confirm, 2 and reminded (#2027)
+    )
 
     @property
     def finished(self) -> bool:
@@ -121,6 +125,8 @@ def _job(r: dict[str, Any]) -> Job:
         int(r["audio_credits"]),
         r["audio_error"],
         r["audio_text_hash"],
+        tuple(r["to_confirm"]),
+        int(r["names_state"]),
     )
 
 
@@ -148,9 +154,11 @@ _WRITABLE = frozenset(
         "speakers",
         "grade",
         "emailed_at",
+        "to_confirm",
+        "names_state",
     }
 )
-_LISTS = frozenset({"problems", "housekeeping", "music", "speakers"})
+_LISTS = frozenset({"problems", "housekeeping", "music", "speakers", "to_confirm"})
 
 
 class RecapStore:
@@ -493,6 +501,31 @@ class RecapStore:
                 (guild_id, campaign_id, limit),
             )
             return [(int(r["session_at"]), str(r["title"])) for r in await cur.fetchall()]
+
+    async def set_names_state(
+        self, guild_id: int, campaign_id: str, session_at: int, state: int, *, only_from: int
+    ) -> bool:
+        """Move the names notice on (#2027), once: True only for the call that moved it from
+        `only_from`, so the DM is told and reminded once however many rounds race."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET names_state = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND names_state = %s",
+                (state, guild_id, campaign_id, session_at, only_from),
+            )
+            return cur.rowcount == 1
+
+    async def names_waiting(self, guild_id: int, campaign_id: str) -> list[tuple[int, list[str]]]:
+        """The campaign's recaps whose names the DM was told of and not yet reminded about, as
+        (session_at, names), oldest first (#2027)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, to_confirm FROM recap_jobs WHERE guild_id = %s"
+                " AND campaign_id = %s AND state = 'ready' AND names_state = 1"
+                " ORDER BY session_at LIMIT 5",
+                (guild_id, campaign_id),
+            )
+            return [(int(r["session_at"]), list(r["to_confirm"])) for r in await cur.fetchall()]
 
     async def to_post(self, guild_id: int) -> list[tuple[str, int]]:
         """Recaps the DM pressed Post on, which the bot has yet to send."""

@@ -178,7 +178,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_email_is_skipped_when_off_and_sent_when_on(self) -> None:
-        job = SimpleNamespace(state="ready", session_at=100, title="T")
+        job = SimpleNamespace(state="ready", session_at=100, title="T", to_confirm=())
         with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
             await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c" * 32, job)
             sent.assert_not_awaited()
@@ -188,7 +188,9 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
     async def test_a_ready_recap_is_on_the_dm_screen_with_its_buttons_email_or_not(self) -> None:
         for email in (False, True):
             bot = fake_bot(campaign(recaps_email=email))
-            ready = SimpleNamespace(state="ready", session_at=100, title="The Silver Lock")
+            ready = SimpleNamespace(
+                state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+            )
             with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
                 await bot.recap_told(GUILD, "c" * 32, ready)
             self.assertEqual(sent.await_count, 1 if email else 0)

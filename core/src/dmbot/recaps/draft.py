@@ -431,6 +431,68 @@ def _known(
     return known
 
 
+def respelled(
+    prose: Prose,
+    *,
+    beats: Sequence[Beat],
+    allowed_names: Collection[str],
+    secret_names: Collection[str],
+    previous: str = "",
+    setting: str | None = None,
+    transcript: str = "",
+) -> tuple[Prose, tuple[str, ...]]:
+    """The prose with near-miss names put right (#2027), and what is too close to a secret name.
+    The spellings to put in are the confirmed names and the beats' own names."""
+    from dmbot.recaps.unknown_names import respell
+
+    names = {*allowed_names, *(w for b in beats for w in b.who)}
+    done = respell(
+        prose.summary,
+        names=sorted(names),
+        secret_names=secret_names,
+        known_words=_known(beats, allowed_names, previous, setting),
+        ordinary_words=_english() | set(_LOWER_WORD.findall(transcript)),
+    )
+    return Prose(done.text, prose.music), done.refused
+
+
+def kept_names(
+    text: str,
+    *,
+    beats: Sequence[Beat],
+    transcript: str,
+    allowed_names: Collection[str],
+    secret_names: Collection[str],
+    previous: str = "",
+    setting: str | None = None,
+) -> list[str]:
+    """Names the text uses that no list knows but the session's lines say (#2027): the DM is asked
+    to confirm them. A stretch of capitalised words that were kept is one name. Never a secret
+    name, and never an ordinary word that opens a sentence."""
+    narration = narration_of(text)
+    lists = _known(beats, allowed_names, previous, setting)
+    heard = set(words(transcript))
+    single = sorted(
+        {
+            n
+            for n in proper_nouns(narration, sentence_starts=True)
+            if not _all_known(n, lists)
+            and _all_known(n, heard)
+            and not _ordinary_opener(n, narration, transcript)
+            and not names_a_secret(n, secret_names, allowed_names)
+        }
+    )
+    if not single:
+        return []
+    alt = "|".join(re.escape(n) for n in sorted(single, key=len, reverse=True))
+    found: list[str] = []
+    for match in re.finditer(rf"(?<![\w'’-])(?:{alt})(?:[ ]+(?:{alt}))*(?![\w])", narration):
+        name = _POSSESSIVE.sub("", match.group())
+        if name not in found:
+            found.append(name)
+    return found
+
+
 def _all_known(name: str, known: set[str]) -> bool:
     """A name passes when every word of it is known. `proper_nouns` keeps "Dun-Varra's" whole but
     `known` is made of `words()`, which split at a hyphen, so the whole could never be found
@@ -450,6 +512,7 @@ def check_prose(
     setting: str | None = None,
     length: Length | None = None,
     last: bool = False,
+    refused: Collection[str] = (),
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
@@ -505,6 +568,8 @@ def check_prose(
         )
     if names_a_secret(" ".join([summary, *prose.music]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")
+    elif refused and any(r in "".join(words(narration)) for r in refused):
+        problems.append("a name is too like one the DM keeps secret: leave it out")
     copied = copied_run(narration, transcript)
     if copied:
         # The hint is the run's first words; a run that starts with a secret name gets none.

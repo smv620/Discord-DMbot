@@ -185,6 +185,7 @@ AUDIENCE: dict[str, str] = {
             "ui.name_card.UndoButton",
             "ui.name_card.UndoConnectionButton",
             "ui.name_lists.UndoListButton",
+            "ui.names.RecapNamesButton",
             "ui.names.ReviewButton",
             "ui.people_review.PeopleReviewButton",
             "ui.recap_dm.RecapButton",

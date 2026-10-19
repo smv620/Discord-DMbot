@@ -32,7 +32,7 @@ LIST_LIMIT = 20
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
-    " r.audio, r.audio_error, r.audio_text_hash"
+    " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -77,6 +77,7 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "text": strip_cues(row["summary"]),
         "summary": row["summary"],
         "housekeeping": list(row["housekeeping"]),
+        "toConfirm": list(row["to_confirm"]),  # the DM's copy only (#2027): never posted
         "error": row["last_error"],
         "canEdit": ready,
         "canPost": ready,

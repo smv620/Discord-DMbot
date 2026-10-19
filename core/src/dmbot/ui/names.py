@@ -885,6 +885,12 @@ async def start_review(interaction: discord.Interaction, campaign_id: str) -> No
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
+    await _review(interaction, memory, campaign)
+
+
+async def _review(
+    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign
+) -> None:
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting:
         await _tell(interaction, "✅ No new names to check. DMbot suggests some after a session.")
@@ -1210,6 +1216,48 @@ class ReviewButton(
         await start_review(interaction, self.campaign_id)
 
 
+class RecapNamesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:names:recap:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32})",
+):
+    """The same check, in the private message the DM gets when a recap used names DMbot didn't
+    know (#2027). A private message has no server, so the server is in the button's ID. Only a DM
+    of the campaign may use it; it works after a restart."""
+
+    def __init__(self, guild_id: int, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="📝 Check new names",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dmbot:names:recap:{guild_id}:{campaign_id}",
+            )
+        )
+        self.guild_id, self.campaign_id = guild_id, campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> RecapNamesButton:
+        return cls(int(match["guild"]), match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        memory = _memory(interaction)
+        if memory is None:
+            await _tell(interaction, NOT_AVAILABLE)
+            return
+        campaign = await _bot(interaction).campaigns.get(self.guild_id, self.campaign_id)
+        if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        await _review(interaction, memory, campaign)
+
+
+def recap_names_dm_view(guild_id: int, campaign_id: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(RecapNamesButton(guild_id, campaign_id))
+    return view
+
+
 def review_view(campaign_id: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ReviewButton(campaign_id))
@@ -1225,6 +1273,24 @@ def held_back_text(names: list[str]) -> str:
         f"📝 **{_plural(len(names), 'new name')} to check** from this session: {shown}{more}.\n"
         "What was said about them is held back until you check them. Say which are in your "
         "game: the check opens privately for the DM."
+    )
+
+
+def recap_names_text(count: int) -> str:
+    """For the DM screen when a recap used names DMbot didn't know yet (#2027): the names are
+    listed on the DM's recap page, not here, so nothing is spoiled for players who peek."""
+    return (
+        f"📝 **{_plural(count, 'new name')} in the recap.** Said at your table, and DMbot "
+        "doesn't know them yet. Tap **Check new names** to say which are in your game. "
+        "Only you will see them."
+    )
+
+
+def recap_names_reminder(count: int) -> str:
+    return (
+        f"📝 **{_plural(count, 'new name')}** from the last recap "
+        f"{'is' if count == 1 else 'are'} still unchecked. Tap **Check new names** when you "
+        "have a moment."
     )
 
 
