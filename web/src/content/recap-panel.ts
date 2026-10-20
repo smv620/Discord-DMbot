@@ -17,7 +17,8 @@ export const panelWords = {
   cuesNote:
     "Coloured tags are the mood the music changes to. Dashed grey tags are pauses or pace for the narrator. Only you see this; your players get the text without them.",
   lead: "Voice and music play together. Switch one off to hear the other alone.",
-  mixNote: "One file with both, for downloads or other apps. It plays on its own.",
+  mixNote:
+    "One file with both, for downloads or other apps. It plays on its own.",
   switchOn: "On",
   switchOff: "Off",
   volume: "Volume",
@@ -28,6 +29,7 @@ export const panelWords = {
     "The audio was made from the earlier text. Make it again after you save.",
   again: "Make the audio again",
   asked: "Making the audio again. This page shows it when it is ready.",
+  needsApproval: "Approve the new text first.",
   tooSoon: "You asked a few minutes ago. Try again in a little while.",
   expired: "The audio link ran out. Reload the page to play it.",
 };
