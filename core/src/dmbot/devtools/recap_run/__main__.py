@@ -70,6 +70,7 @@ from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.recaps.style import StyleStore
 from dmbot.recaps.text import names_a_secret, narration_of, proper_nouns, strip_cues
 from dmbot.recaps.text import words as words_of
 from dmbot.transcript.improvement import filter_lines
@@ -794,6 +795,7 @@ async def _session(
             guild_id=gid,
             campaign_id=cid,
             session_at=at,
+            styles=StyleStore(db),
         )
         if inputs is None:
             print(
