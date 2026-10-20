@@ -77,7 +77,7 @@ export const text = {
   // message in Discord is not changed, so the DM is told. Only on a posted recap.
   respelledHeading: "Spelling updated",
   respelled: (day: string): string =>
-    `A name's spelling was fixed in this recap on ${day}. The message already posted in Discord still shows the old spelling.`,
+    `A name's spelling was fixed in this recap on ${day}. The text on this page has the new spelling. The message already posted in Discord still has the old one.`,
   housekeepingHeading: "Housekeeping",
   housekeepingNone: "Nothing to sort out.",
   toConfirmHeading: "Facts to be confirmed",

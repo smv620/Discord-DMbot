@@ -238,7 +238,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "A note when a spelling changed a posted recap",
-    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website says \"Spelling updated\" and reminds you that the message in Discord still shows the old spelling.",
+    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website now says \"Spelling updated\". It reminds you that the message in Discord still shows the old spelling.",
     reason: "Waits for the spelling change to reach recaps (#2170) and for dev1 to deploy it (#2178).",
   },
   {

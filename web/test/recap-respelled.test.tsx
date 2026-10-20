@@ -26,7 +26,7 @@ function withRecap(extra: Partial<Recap>): AccountApi {
 describe("the spelling note", () => {
   it("names the day and says Discord still shows the old spelling", () => {
     expect(text.respelled("3 March 2027")).toBe(
-      "A name's spelling was fixed in this recap on 3 March 2027. The message already posted in Discord still shows the old spelling.",
+      "A name's spelling was fixed in this recap on 3 March 2027. The text on this page has the new spelling. The message already posted in Discord still has the old one.",
     );
   });
 
