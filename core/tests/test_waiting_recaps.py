@@ -78,7 +78,11 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
         )
         ids = [cast(Any, i).custom_id for i in kwargs["view"].children]
         self.assertEqual(
-            ids, [f"dmbot:recap:{a}:{'c' * 32}:300" for a in ("read", "post", "drop", "tell")]
+            ids,
+            [
+                f"dmbot:recap:{a}:{'c' * 32}:300"
+                for a in ("read", "approve", "post", "drop", "tell")
+            ],
         )
         self.assertEqual(bot.post.await_count, 1)
 

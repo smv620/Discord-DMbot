@@ -63,18 +63,27 @@ _INVENT = re.compile(
 # negation or reversal ("stop", "forget", "fail", "quit", "neglect") anywhere before it. Anything
 # longer ("Avoid dullness by inventing twists", "Don't stop making things up") is refused.
 _NEGATION = (
-    r"never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not|forget|fail|quit|neglect"
+    r"never|don['’]?t|do\s+not|doesn['’]?t|stop|without|avoid|no\s+more|not"
+    r"|forget|fail|quit|neglect"
 )
 _NEGATORS = re.compile(rf"\b(?:{_NEGATION})\b", re.IGNORECASE)
 _DIRECT = re.compile(
-    r"\b(?:never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)"
+    r"\b(?:never|don['’]?t|do\s+not|doesn['’]?t|stop|without|avoid|no\s+more|not)"
     r"(?:[ \t]+[\w'’]+)?[ \t]*$",
     re.IGNORECASE,
 )
 
 
+# One filler word in between turns the ban into something else ("Never mind, invent twists").
+_FILLER = re.compile(r"\b(?:mind|worry|hesitate|be|fear)\s*$", re.IGNORECASE)
+
+
 def _negated(before: str) -> bool:
-    return len(_NEGATORS.findall(before)) == 1 and _DIRECT.search(before) is not None
+    return (
+        len(_NEGATORS.findall(before)) == 1
+        and _DIRECT.search(before) is not None
+        and _FILLER.search(before) is None
+    )
 
 
 class FeedbackLimit:

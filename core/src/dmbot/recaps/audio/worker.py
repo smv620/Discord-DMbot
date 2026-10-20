@@ -25,11 +25,14 @@ from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from dmbot.recaps.approval import BOTH, text_hash
+from dmbot.recaps.approval import MUSIC as MUSIC_CHOICE
+from dmbot.recaps.approval import VOICE as VOICE_CHOICE
 from dmbot.recaps.audio import names as nm
 from dmbot.recaps.audio import script as sc
 from dmbot.recaps.audio.eleven import ElevenLabs, Locator, ProviderError
-from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
-from dmbot.recaps.audio.render import Renderer, RenderError, estimate_credits
+from dmbot.recaps.audio.files import FILE_NAMES, AudioFiles
+from dmbot.recaps.audio.render import Renderer, RenderError, estimate_credits, kinds_for
 from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
 
 log = logging.getLogger(__name__)
@@ -77,16 +80,13 @@ class AudioInputs:
         return [n.text for n in self.names if n.confirmed and not n.secret and not n.person]
 
 
+AUDIO_CHOICES = (VOICE_CHOICE, MUSIC_CHOICE, BOTH)  # what makes audio; `text` makes none
+
 Load = Callable[[int, str, Job], Awaitable["AudioInputs | None"]]
 Consenting = Callable[[int], Awaitable[Collection[int]]]
 Allowed = Callable[[int, str, Job], Awaitable[bool]]
 Allowance = Callable[[int, str, Job], Awaitable["str | None"]]  # why not, or None (#1428)
 Switched = Callable[[int, str, Job], Awaitable[bool]]  # the DM's own choice (#1421)
-
-
-def text_hash(title: str, summary: str) -> str:
-    """A fingerprint of what the narration is made from."""
-    return hashlib.sha256(f"{title}\n{summary}".encode()).hexdigest()
 
 
 def _hash(rules: Sequence[nm.Rule]) -> str:
@@ -131,6 +131,7 @@ class AudioWorker:
         self._now = clock
         self._one = asyncio.Lock()  # one recap's audio at a time: memory, credits, the counter
         self._start = 0  # the provider's credit count when this job began
+        self._choice = ""  # the approved choice read by the last check (#2083)
 
     async def run(self, gid: int, cid: str, session_at: int) -> Job | None:
         """Make the audio of one recap, if it is waiting and nobody else has it. None if it
@@ -153,8 +154,10 @@ class AudioWorker:
         try:
             async with asyncio.timeout(DEADLINE_S):
                 await self._make(gid, cid, job)
-        except Off:
-            await self._store.set_audio(gid, cid, job.session_at, audio="off")
+        except Off:  # (what was spent before it stopped is kept: it counts toward the caps)
+            await self._store.set_audio(
+                gid, cid, job.session_at, audio="off", credits=self._spent(job)
+            )
         except Stop as stop:
             await self._finish(gid, cid, job, stop.why, permanent=stop.permanent)
         except ProviderError as exc:
@@ -198,6 +201,12 @@ class AudioWorker:
     async def _check(self, gid: int, cid: str, job: Job) -> AudioInputs:
         """Everything that must hold before a paid call, read now: the plan, consent, the
         secret names, the cap. Raises `Stop` otherwise."""
+        # No paid call without the DM's approval of this very text and a choice that makes audio
+        # (#2083): read fresh every time, so an edit or a change of mind stops the work.
+        fresh = await self._store.get(gid, cid, job.session_at)
+        if fresh is None or not fresh.approved or fresh.audio_choice not in AUDIO_CHOICES:
+            raise Off
+        self._choice = fresh.audio_choice  # what is made is what the DM approved just now
         if self._switched is not None and not await self._switched(gid, cid, job):
             raise Off  # the DM chose no narration and music; the plan gate below still wins
         if not await self._allowed(gid, cid, job):
@@ -236,7 +245,10 @@ class AudioWorker:
             log.warning("Recap audio: refused, a secret name (rule %s)", exc.rule)  # the rule only
             raise Stop(SECRET) from None
         # The estimate assumes a new ambience bed: the cap is a ceiling, not a forecast.
-        if job.audio_credits + estimate_credits(script, ambience_needed=True) > self._max:
+        if (
+            job.audio_credits + estimate_credits(script, ambience_needed=True, mode=self._choice)
+            > self._max
+        ):
             raise Stop(OVER_CAP)
 
         async def guard() -> None:
@@ -258,7 +270,14 @@ class AudioWorker:
         try:
             dictionary = await self._dictionary(gid, cid, inputs)
             made = await self._renderer.render(
-                gid, cid, script, into=temp, seed=job.session_at, dictionary=dictionary, guard=guard
+                gid,
+                cid,
+                script,
+                into=temp,
+                seed=job.session_at,
+                dictionary=dictionary,
+                guard=guard,
+                mode=self._choice,
             )
             await guard()  # and once more after the last call, before anything is kept
             now_job = await self._store.get(gid, cid, job.session_at)
@@ -269,7 +288,7 @@ class AudioWorker:
                 or (now_job.title, now_job.summary) != (job.title, job.summary)
             ):
                 raise Stop(EDITED, permanent=False)  # the recap went, or the DM changed the text
-            await asyncio.to_thread(_put_in_place, temp, folder)
+            await asyncio.to_thread(_put_in_place, temp, folder, kinds_for(self._choice))
         finally:
             await asyncio.to_thread(shutil.rmtree, temp, True)
         kept = await self._store.set_audio(
@@ -309,10 +328,10 @@ class AudioWorker:
         return locator
 
 
-def _put_in_place(temp: Path, folder: Path) -> None:
+def _put_in_place(temp: Path, folder: Path, kinds: Sequence[str]) -> None:
     """The finished files replace the old ones: the old folder is moved aside first, so a reader
     never finds the recap with no files."""
-    for kind in (VOICE, MUSIC):
+    for kind in kinds:
         if not (temp / FILE_NAMES[kind]).is_file():
             raise RenderError("files")
     aside = folder.with_name(f"{folder.name}.old")

@@ -321,6 +321,19 @@ class CorrectionsTest(DatabaseTest):
         self.assertFalse(await self.store.try_again(GUILD_A, self.one.id, 100))
         self.assertEqual((await self.job()).tries, MAX_TRIES)
 
+    async def test_try_again_ends_the_approval_of_the_old_text(self) -> None:
+        await self.store.update(GUILD_A, self.one.id, 100, state="ready")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET approved_by = 7, approved_at = 5, approved_hash = 'h',"
+                " audio_choice = 'both'"
+            )
+        self.assertTrue(await self.store.try_again(GUILD_A, self.one.id, 100))
+        job = await self.job()
+        self.assertEqual(
+            (job.approved_by, job.approved_at, job.approved_hash, job.audio_choice), (0, 0, "", "")
+        )
+
     async def test_try_again_is_refused_once_it_is_decided(self) -> None:
         await self.store.decide(GUILD_A, self.one.id, 100, "drop")
         self.assertFalse(await self.store.try_again(GUILD_A, self.one.id, 100))

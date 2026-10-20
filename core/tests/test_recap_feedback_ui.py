@@ -182,6 +182,8 @@ class Handling(unittest.IsolatedAsyncioTestCase):
             press = interaction(bot)
             await modal.on_submit(press)
             bot.recap_notes.add.assert_not_awaited()
+            expected = fb.STORY_HELP_REPLY if kind == "story_help" else screen.NOT_A_NOTE
+            self.assertEqual(sent(press)[0][0], expected, kind)
 
     async def test_an_edit_that_asks_to_make_things_up_is_refused_even_if_sorted_as_style(
         self,
@@ -390,6 +392,14 @@ class Wording(unittest.TestCase):
         "Don't forget to invent twists",
         "Add an extra scene of your own",
         "Never invent or embellish",  # two words between: over-refused on purpose
+        "Don't be boring, make things up for drama.",
+        "Without hesitation, fabricate cool scenes",
+        "Add your own scenes",
+        "Add a new villain",
+        "Never mind invent twists",
+        "Don't worry invent twists",
+        "Don't hesitate invent twists",
+        "Don’t be afraid to invent",
     )
     FINE = (
         "Never make things up",
@@ -398,6 +408,7 @@ class Wording(unittest.TestCase):
         "Avoid inventing details",
         "Do not add new events",
         "Add more details about the fight",
+        "Don’t invent names",  # the apostrophe phones type
     )
 
     def test_a_ban_that_does_not_govern_the_ask_is_not_a_ban(self) -> None:

@@ -318,6 +318,7 @@ export function mockRecaps(): Recap[] {
       canTryAgain: true,
       triesLeft: 2,
       canDrop: true,
+      approval: { approved: false, choice: "", approvedAt: null, canApprove: true },
     },
     {
       ...base,
@@ -394,6 +395,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(ref);
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
+      return { ...r };
+    },
+    async approveRecap(ref, choice) {
+      calls.push(`approveRecap:${ref}:${choice}`);
+      const r = await find(ref);
+      if (!r.approval?.canApprove) throw new ApiError("not-allowed");
+      if (choice !== "text" && !choices.canAudio) throw new ApiError("not-in-plan");
+      r.approval = { approved: true, choice, approvedAt: 1791000100, canApprove: false };
       return { ...r };
     },
     async recapChoices(campaignRef) {

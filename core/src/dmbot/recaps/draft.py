@@ -93,7 +93,8 @@ The narration: this session ran about {hours} hours, so write about {aim} words 
 most {sections} sections. Start a new section only where the mood or the pace of the beats really \
 changes, and never give two sections in a row the same mood; the first section's mood is the \
 opening mood.
-1. Use ((…)) cues, for example ((slow)) or ((hushed)), for pacing and volume inside a paragraph. \
+1. Use ((…)) cues for pacing and volume inside a paragraph, only these: ((pause)), \
+((short pause)), ((long pause)), ((beat)), ((hushed)), ((whisper)), ((sigh)). \
 The cues are not read aloud.
 2. The first paragraph is the hook: it bridges from the previous session's recap (given below, if \
 there is one) and sets the scene. The middle is the core action and the characters' moments, and \
@@ -257,6 +258,22 @@ def length_for(hours: float) -> Length:
         paragraphs=max(2, round(target / 100)),
         max_tokens=800 + last_high * 2,
     )
+
+
+PLAIN_ROOM_BASE = 600  # tokens for the MOOD and MUSIC lines and a sentence of lead-in
+PLAIN_TOKENS_PER_WORD = (
+    6  # ample: English runs about 1.4, so even a draft several times too long ends
+)
+
+
+def write_room(length: Length) -> int:
+    """The output room of the two-model recap's plain-text writer (#2086). `max_tokens` was sized
+    for the old structured answer; in run 12 the creative writer's first try was cut off at it, a
+    whole call spent for nothing. The room is only a ceiling (the call is paid for the tokens
+    written, and the length band is checked as before), so it is generous: the longest accepted
+    draft's words times a roomy factor plus the label lines. Never below the structured room. The
+    formatter keeps `max_tokens`."""
+    return max(length.max_tokens, PLAIN_ROOM_BASE + length.last_high * PLAIN_TOKENS_PER_WORD)
 
 
 def session_hours(said: Sequence[Said], given: float | None = None) -> float:
