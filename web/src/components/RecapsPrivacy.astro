@@ -46,11 +46,13 @@ const { live, audio, share = false } = Astro.props;
         {share && (
           <li>
             <strong>A shared link.</strong> A game master can share a recap by a link. Anyone who
-            has the link can read it{audio ? " and play its voice and music" : ""}, without signing
-            in, and search engines are asked not to list it. A game master can turn a link off at any
-            time, or make a new one, and the old one then stops working. A recap that is not shared
-            can only be read by the game masters of its campaign, and by everyone in the table's chat
-            channel once a game master has posted it.
+            has it can read the recap{audio ? " and play its voice and music" : ""} without signing
+            in, even people outside your Discord server, and they can pass it on. We ask search
+            engines not to list it, but that is only a request: treat the link like a password. A
+            game master can turn a link off or make a new one. The old link then no longer opens
+            the recap, though anyone who already saw it may keep a copy. A posted recap is already
+            in the table's chat channel for everyone there. A recap that is not posted can be read
+            only by the game masters of its campaign.
           </li>
         )}
         {audio && (

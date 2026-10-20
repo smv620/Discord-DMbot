@@ -77,18 +77,19 @@ describe("the privacy section", () => {
   it("says nothing of a shared link until sharing is live, and then says it plainly (#2119)", () => {
     expect(RECAP_SHARE_LIVE).toBe(false);
     expect(!RECAP_SHARE_LIVE || RECAPS_LIVE).toBe(true);
-    expect(text(on.body)).not.toMatch(/shared link|has the link/i);
+    expect(text(on.body)).not.toMatch(/shared link|has it can read/i);
     const t = text(shared.body);
     for (const part of [
-      "Anyone who has the link can read it, without signing in",
-      "search engines are asked not to list it",
-      "turn a link off at any time",
-      "make a new one, and the old one then stops working",
+      "even people outside your Discord server, and they can pass it on",
+      "only a request: treat the link like a password",
+      "turn a link off or make a new one",
+      "no longer opens the recap, though anyone who already saw it may keep a copy",
+      "A posted recap is already in the table's chat channel for everyone there",
     ]) {
       expect(t, part).toContain(part);
     }
     expect(t).not.toContain("play its voice and music");
-    expect(text(sharedAudio.body)).toContain("read it and play its voice and music, without signing in");
+    expect(text(sharedAudio.body)).toContain("play its voice and music without signing in");
   });
 
   it("names ElevenLabs only when audio is live", () => {
