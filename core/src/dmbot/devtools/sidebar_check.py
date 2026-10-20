@@ -21,12 +21,12 @@ import os
 import sys
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
+from dmbot.ai import FEATURE_TIERS, AIError, AnthropicClient, Feature
 from dmbot.campaigns.models import Campaign
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.common import add_fast_model_arg, with_fast_model
@@ -36,6 +36,7 @@ from dmbot.sidebar import brevity
 from dmbot.sidebar.answer import Sidebar
 
 DEFAULT_CASES = Path("tests/sidebar_brevity_cases.py")
+MAX_ERRORS_IN_A_ROW = 3
 SAMPLE_HOUSE_RULE = HouseRule(
     3, "check", "Criticals deal maximum damage plus the roll.", "Critical hits", None, None, 1, 0, 0
 )
@@ -76,6 +77,7 @@ class Checked:
     failed: int
     total: int
     lines: list[str]
+    errors: list[str] = field(default_factory=list)  # the AI errors' own plain words, each once
 
 
 async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = False) -> Checked:
@@ -83,6 +85,8 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
     must-say and must-not-say words. `quiet`: collect the lines without printing them."""
     failed = 0
     lines: list[str] = []
+    errors: list[str] = []
+    in_a_row = 0
 
     def say(text: str) -> None:
         lines.append(text)
@@ -91,7 +95,20 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
 
     for number, case in enumerate(cases, start=1):
         started = time.monotonic()
-        got = await sidebar.answer(sample_campaign(), case.question, asker_id=1)
+        try:
+            got = await sidebar.answer(sample_campaign(), case.question, asker_id=1)
+        except AIError as exc:  # the AI service said no: that case fails, with its words
+            failed += 1
+            in_a_row += 1
+            if str(exc) not in errors:
+                errors.append(str(exc))
+            say(f"{number:2}. {case.question}")
+            say(f"    → AI ERROR: {exc}")
+            if in_a_row >= MAX_ERRORS_IN_A_ROW:  # a refused model or key would only fail again
+                say(f"    stopped after {in_a_row} errors in a row; the rest were not asked")
+                break
+            continue
+        in_a_row = 0
         took = time.monotonic() - started
         body = got.text.rsplit(" (", 1)[0] if got.text.endswith(")") else got.text
         ok = brevity.within_limit(body) or len(got.parts) > 1
@@ -108,7 +125,7 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
         say(f"{number:2}. {case.question}")
         say(f"    → {got.text}")
         say(f"    {took:.1f} s, {len(got.text)} characters, {verdict}, answered by {got.model}")
-    return Checked(failed, len(cases), lines)
+    return Checked(failed, len(cases), lines, errors)
 
 
 def new_sidebar(client: Any) -> Sidebar:
