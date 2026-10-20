@@ -40,6 +40,7 @@ class ShortRecapButton(
     def __init__(self, act: str, campaign_id: str, session_at: int) -> None:
         custom_id = f"dmbot:recapask:{act}:{campaign_id}:{session_at}"
         # (the labels are written out here so the site's button-label test can find them)
+        button: discord.ui.Button[discord.ui.View]
         if act == "go":
             button = discord.ui.Button(
                 label="Write a recap", style=discord.ButtonStyle.primary, custom_id=custom_id
