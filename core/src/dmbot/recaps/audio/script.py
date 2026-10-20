@@ -39,6 +39,7 @@ _PERFORMANCE_TAGS = {
     "hushed": "[whispers]",
     "whisper": "[whispers]",
     "sigh": "[sighs]",
+    "whispered": "[whispers]",
 }
 SCENE_BREAK_TAG = "[long pause]"
 
