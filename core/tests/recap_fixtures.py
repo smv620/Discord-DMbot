@@ -67,7 +67,7 @@ BEATS = {
 BEATS_ANSWER = json.dumps(BEATS)
 
 _PARAS = [
-    "《Tense》 ((slow)) Dusk settled over the road as Mira and Oskar came to Greywater Keep, and "
+    "《Tense》 ((pause)) Dusk settled over the road as Mira and Oskar came to Greywater Keep, and "
     "the great gate stood open with no guard to challenge them. The party had travelled for "
     "days, and every one of them felt the quiet press against their shoulders. Mira drew her "
     "blade without a word, and Oskar kindled a torch whose small flame shook in the cold air.",

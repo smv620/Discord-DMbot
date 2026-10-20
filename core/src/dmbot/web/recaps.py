@@ -18,8 +18,9 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Conn, Database
+from dmbot.recaps import cues
 from dmbot.recaps.allowance import month_bounds
-from dmbot.recaps.audio.worker import text_hash
+from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
@@ -32,7 +33,8 @@ LIST_LIMIT = 20
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
-    " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm"
+    " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
+    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -40,11 +42,23 @@ _FROM = (
 
 
 class RecapError(Exception):
-    """Something the page shows in plain words. `code` is for the page's own message."""
+    """Something the page shows in plain words. `code` is for the page's own message.
+    `problems`: for "cue_problems", what is wrong with the cues (#2083), as `cues.Problem.as_dict`
+    with the same problem in plain words under "words"."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, problems: list[dict[str, Any]] | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.problems = problems
+
+
+def cue_refusal(summary: str) -> RecapError | None:
+    """The refusal to give when this text's cues are wrong, else None. The API's answer is the
+    only check: the page shows it and never checks cues itself (#2083)."""
+    found = cues.cue_problems(summary)
+    if not found:
+        return None
+    return RecapError("cue_problems", [{**p.as_dict(), "words": p.words()} for p in found])
 
 
 def _audio_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
@@ -59,6 +73,19 @@ def _audio_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
         "error": row["audio_error"] if state == "failed" else "",
         "current": current,
         "canAskAgain": ready and state in ("ready", "failed"),
+    }
+
+
+def _approval_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
+    approved = bool(row["approved_hash"]) and row["approved_hash"] == text_hash(
+        row["title"], row["summary"]
+    )
+    return {
+        "approved": approved,
+        "choice": row["audio_choice"] if approved else "",
+        "approvedAt": row["approved_at"] if approved else None,
+        # The audio is under way or made, or the choice was text only: approving again is not on.
+        "canApprove": ready and not approved,
     }
 
 
@@ -87,6 +114,11 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
         "audio": _audio_view(row, ready=status in ("draft", "posting") and state == "ready"),
+        # The DM's approval of the text (#2083). It counts only while the text is what they
+        # approved: an edit ends it. `choice` is what they picked (voice, music, both or text).
+        "approval": _approval_view(row, ready=ready),
+        # The words the cue check allows, so the page shows exactly what the API checks.
+        "cue_words": cues.allowed_words(),
         # When the session's transcript was deleted by the campaign's "Keep transcripts for"
         # setting (Unix seconds, as the transcripts page says it), else null; the recap stays. And
         # how many days the table keeps transcripts, for the page's words (#2022).
@@ -226,6 +258,8 @@ async def edit_recap(
     bullets = [" ".join(b.split()) for b in housekeeping if b.strip()]
     if not text or len(text) > SUMMARY_MAX:
         raise RecapError("bad_text")
+    if refusal := cue_refusal(text):  # the edit stays unsaved until the cues are right (#2083)
+        raise refusal
     if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -270,6 +304,32 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
         else:
             raise RecapError("not_found")
         if not cur.rowcount:
+            raise RecapError("not_allowed")
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def approve_recap(
+    db: Database, session: Session, ref: str, choice: str, *, audio_in_plan: bool
+) -> dict[str, Any]:
+    """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
+    database's door (`dmbot_recap_approve`) records who and when and the hash of this very text and
+    queues the audio. The secret names and the plan are checked again by the audio step before
+    any paid call. `audio_in_plan`: from the campaign owner's plan; an audio choice without it is
+    refused ("not_in_plan")."""
+    if choice not in CHOICES:
+        raise RecapError("bad_choice")
+    if choice != TEXT and not audio_in_plan:
+        raise RecapError("not_in_plan")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, row = await _one(conn, ref, session, marks=False)
+        if refusal := cue_refusal(row["summary"]):
+            raise refusal
+        cur = await conn.execute(
+            "SELECT dmbot_recap_approve(%s, %s, %s, %s) AS r", (gid, cid, at, choice)
+        )
+        outcome = (await cur.fetchone() or {}).get("r")
+        if outcome != "approved":
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
     return _view(row)

@@ -70,6 +70,7 @@ from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import (
     RecapError,
+    approve_recap,
     audio_again,
     decide,
     edit_recap,
@@ -589,7 +590,7 @@ def create_app(
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.put("/me/recaps/{ref}")
-    async def me_recap_edit(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+    async def me_recap_edit(ref: str, signed: Signed, request: Request) -> Any:
         """Save the DM's edit of the text and the housekeeping (never logged)."""
         session, _token = signed
         try:
@@ -605,6 +606,10 @@ def create_app(
         try:
             return await edit_recap(db, session, ref, summary=summary, housekeeping=bullets)
         except RecapError as err:
+            if err.problems is not None:  # the cues are wrong: say where, and save nothing
+                return JSONResponse(
+                    {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
+                )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
@@ -630,6 +635,35 @@ def create_app(
         try:
             return await audio_again(db, session, ref)
         except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/approve")
+    async def me_recap_approve(ref: str, signed: Signed, request: Request) -> Any:
+        """✅ Approve the text and pick what to make (#2083): `{"choice": "voice" | "music" |
+        "both" | "text"}`. Wrong cues refuse it (422 with `cue_problems`); an audio choice
+        needs the campaign owner's plan to include it."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        choice = body.get("choice") if isinstance(body, dict) else None
+        if not isinstance(choice, str):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            facts = await read_choices(
+                db, session, ref.rsplit(".", 1)[0], now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+            return await approve_recap(
+                db, session, ref, choice, audio_in_plan=bool(facts["canAudio"])
+            )
+        except RecapError as err:
+            if err.problems is not None:
+                return JSONResponse(
+                    {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
+                )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

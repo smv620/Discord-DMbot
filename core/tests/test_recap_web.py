@@ -592,6 +592,141 @@ class TheAudio(Base):
         self.assertEqual(callers("dmbot_recap_audio_again"), {"schema.py", "web/recaps.py"})
 
 
+class TheApproval(Base):
+    """Cue problems on save, and approving the text with a choice of audio (#2083)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+        await super().asyncTearDown()
+
+    async def save(self, summary: str) -> httpx.Response:
+        return await self.client.put(
+            f"/me/recaps/{self.ref}", json={"summary": summary, "housekeeping": []}
+        )
+
+    async def approve(self, choice: str, ref: str = "") -> httpx.Response:
+        return await self.client.post(
+            f"/me/recaps/{ref or self.ref}/approve", json={"choice": choice}
+        )
+
+    async def test_the_recap_carries_the_allowed_words_and_no_approval_yet(self) -> None:
+        got = (await self.client.get(f"/me/recaps/{self.ref}")).json()
+        words = got["cue_words"]
+        self.assertEqual(len(words["moods"]), 18)
+        self.assertIn("tension", words["synonyms"])
+        self.assertIn("long pause", words["pacing"])
+        self.assertEqual(
+            got["approval"],
+            {"approved": False, "choice": "", "approvedAt": None, "canApprove": True},
+        )
+
+    async def test_a_save_with_wrong_cues_is_refused_with_where_and_nothing_is_saved(self) -> None:
+        bad = "《Tens》 Mira waited ((pausse)) for him.\n\n《calm》 Then it ended."
+        got = await self.save(bad)
+        self.assertEqual(got.status_code, 422)
+        body = got.json()
+        self.assertEqual(body["error"], "cue_problems")
+        first, second = body["cue_problems"]
+        self.assertEqual(
+            (first["kind"], first["suggest"], first["paragraph"], first["cue"]),
+            ("unknown", "tense", 1, "《Tens》"),
+        )
+        self.assertEqual((second["kind"], second["suggest"]), ("unknown", "pause"))
+        self.assertIn("Did you mean tense?", first["words"])
+        self.assertEqual((await self.state(self.one.id)).summary, fx.SUMMARY)  # unchanged
+
+    async def test_a_save_with_good_cues_works(self) -> None:
+        got = await self.save("《Calm》 Mira waited ((pause)) for him.")
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(
+            (await self.state(self.one.id)).summary, "《Calm》 Mira waited ((pause)) for him."
+        )
+
+    async def test_each_choice_approves_and_only_audio_choices_queue_audio(self) -> None:
+        for choice, queued in (
+            ("text", "off"),
+            ("voice", "queued"),
+            ("music", "queued"),
+            ("both", "queued"),
+        ):
+            with self.subTest(choice):
+                await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="off")
+                got = await self.approve(choice)
+                self.assertEqual(got.status_code, 200, got.text)
+                self.assertEqual(got.json()["approval"]["choice"], choice)
+                job = await self.state(self.one.id)
+                self.assertEqual(
+                    (job.audio, job.audio_choice, job.approved), (queued, choice, True)
+                )
+                self.assertEqual(job.approved_by, ALICE.id)
+
+    async def test_an_approval_with_wrong_cues_approves_nothing(self) -> None:
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="《Tens》 Mira waited.")
+        got = await self.approve("both")
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "cue_problems"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.approved, job.audio), (False, "off"))
+
+    async def test_an_edit_ends_the_approval(self) -> None:
+        self.assertEqual((await self.approve("text")).status_code, 200)
+        self.assertTrue((await self.state(self.one.id)).approved)
+        await self.save("《Calm》 The DM rewrote it.")
+        got = (await self.client.get(f"/me/recaps/{self.ref}")).json()
+        self.assertFalse(got["approval"]["approved"])
+        self.assertEqual(got["approval"]["choice"], "")
+
+    async def test_a_stranger_a_bad_choice_and_a_decided_recap_are_refused(self) -> None:
+        self.assertEqual((await self.approve("both", self.other)).status_code, 404)  # Bob's recap
+        self.assertEqual((await self.approve("loud")).status_code, 422)
+        self.assertEqual(
+            (await self.client.post(f"/me/recaps/{self.ref}/approve", json={})).status_code, 422
+        )
+        await decide(self.web, self.session, self.ref, "drop")
+        got = await self.approve("both")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+
+    async def test_audio_already_under_way_is_not_started_over(self) -> None:
+        self.assertEqual((await self.approve("both")).status_code, 200)
+        again = await self.approve("voice")
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual((await self.state(self.one.id)).audio_choice, "both")
+
+    async def test_a_plan_without_audio_may_only_approve_text(self) -> None:
+        from dmbot.web.recaps import approve_recap
+
+        with self.assertRaises(RecapError) as no:
+            await approve_recap(self.web, self.session, self.ref, "both", audio_in_plan=False)
+        self.assertEqual(no.exception.code, "not_in_plan")
+        got = await approve_recap(self.web, self.session, self.ref, "text", audio_in_plan=False)
+        self.assertEqual(got["approval"]["choice"], "text")
+
+    async def test_the_website_cannot_write_the_approval_columns_itself(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            for column in ("approved_by", "approved_at", "approved_hash", "audio_choice"):
+                with (
+                    self.subTest(column),
+                    self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                ):
+                    async with conn.transaction():
+                        await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
+
+    async def test_the_door_has_one_caller(self) -> None:
+        self.assertEqual(callers("dmbot_recap_approve"), {"schema.py", "web/recaps.py"})
+
+
 class TheAddressDoor(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
