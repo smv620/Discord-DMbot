@@ -344,8 +344,8 @@ class TranscriptStore:
                 " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s AND l.sidebar IS NULL"
                 " AND NOT l.typed AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
-                " ORDER BY s.started_at, l.started_ms, l.id FOR UPDATE OF l",
-                (guild_id, campaign_id, longest),
+                " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
+                (guild_id, campaign_id, longest, MAX_RESPELLED * 4),
             )
             for row in await cur.fetchall():
                 if changed >= MAX_RESPELLED:
@@ -359,15 +359,15 @@ class TranscriptStore:
                 )
                 await conn.execute(
                     "INSERT INTO transcript_respells (guild_id, campaign_id, batch, session_id,"
-                    " user_id, started_ms, new_text, offsets, was, made_at)"
+                    " line_id, user_id, new_text, offsets, was, made_at)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         guild_id,
                         campaign_id,
                         batch,
                         row["session_id"],
+                        row["id"],
                         row["user_id"],
-                        row["started_ms"],
                         new,
                         list(found.offsets),
                         list(found.was),
@@ -386,15 +386,14 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND campaign_id = %s"
-                " AND batch = %s RETURNING session_id, user_id, started_ms, new_text, offsets, was",
+                " AND batch = %s RETURNING session_id, line_id, new_text, offsets, was",
                 (guild_id, campaign_id, batch),
             )
             for row in await cur.fetchall():
                 found = await conn.execute(
                     "SELECT id, heard, coalesce(text, heard) AS cleaned FROM transcript_lines"
-                    " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                    " AND sidebar IS NULL AND NOT typed FOR UPDATE",
-                    (row["session_id"], row["user_id"], row["started_ms"]),
+                    " WHERE id = %s AND sidebar IS NULL AND NOT typed FOR UPDATE",
+                    (row["line_id"],),
                 )
                 line = await found.fetchone()
                 if line is None:

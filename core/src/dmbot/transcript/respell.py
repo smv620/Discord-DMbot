@@ -39,6 +39,11 @@ def _spans(text: str, name: str) -> list[tuple[int, int]]:
     return [m.span() for m in _words(name).finditer(text)] if name.split() else []
 
 
+def contains(text: str, name: str) -> bool:
+    """Whether `name` is in `text` as whole words, any case (the longer-name check)."""
+    return bool(_spans(text, name))
+
+
 def respell(text: str, old: str, new: str, longer: Iterable[str] = ()) -> Respelled | None:
     """`text` with each whole-word `old` written as `new`, or None when nothing changes. `longer`:
     the campaign's other names that contain `old` as whole words; a match inside one of them

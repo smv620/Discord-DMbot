@@ -178,6 +178,54 @@ class ThePastTranscripts(NamesTest):
         await self.fix("Brannoch")
         self.assertEqual(await self.texts(), before)
 
+    async def test_a_hyphenated_longer_name_is_not_rewritten_inside(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Branok-Keep", "place", [], [])
+        await self.transcripts.add_lines(
+            GUILD, self.session, [Line(MS + 6000, PLAYER, "x", "Branok-Keep and Branok")]
+        )
+        await self.fix()
+        texts = await self.texts()
+        self.assertIn("Branok-Keep and Brannoch", texts)
+
+    async def test_two_lines_with_the_same_start_both_come_back(self) -> None:
+        await self.transcripts.add_lines(
+            GUILD,
+            self.session,
+            [
+                Line(MS + 7000, PLAYER, "branok a", "Branok a"),
+                Line(MS + 7000, PLAYER, "branok b", "Branok b"),
+            ],
+        )
+        it = await self.fix()
+        self.assertIn("Brannoch a", await self.texts())
+        (undo,) = [
+            c for c in it.response.edited[0][1].children
+            if isinstance(c, name_card.UndoSpellingButton)
+        ]  # fmt: skip
+        await undo.callback(self.it())
+        texts = await self.texts()
+        self.assertIn("Branok a", texts)
+        self.assertIn("Branok b", texts)
+
+    async def test_a_failed_transcript_undo_can_be_pressed_again(self) -> None:
+        it = await self.fix()
+        (undo,) = [
+            c for c in it.response.edited[0][1].children
+            if isinstance(c, name_card.UndoSpellingButton)
+        ]  # fmt: skip
+        real = self.transcripts.undo_respell
+
+        async def down(*args: Any) -> tuple[int, int]:
+            raise RuntimeError("database")
+
+        self.transcripts.undo_respell = down  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.ui.name_card", "ERROR"):
+            await undo.callback(self.it())
+        self.assertIn("Brannoch waits", (await self.texts())[0])  # the name is back, lines not
+        self.transcripts.undo_respell = real  # type: ignore[method-assign]
+        await undo.callback(self.it())
+        self.assertEqual((await self.texts())[0], "Branok waits at the gate")
+
     async def test_deleting_a_person_forgets_where_their_lines_were_respelled(self) -> None:
         await self.fix()
         async with self.db.guild(GUILD) as conn:

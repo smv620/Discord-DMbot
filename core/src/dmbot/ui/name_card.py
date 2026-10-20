@@ -43,7 +43,8 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
-from dmbot.transcript.respell import done_note, undone_note
+from dmbot.transcript.respell import contains, done_note, undone_note
+from dmbot.transcript.store import MAX_RESPELLED
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -1041,7 +1042,7 @@ async def _respell_past(
             return ""
         # Names that hold the old spelling as whole words ("Branok Hall"): never rewritten
         # inside. Secret ones count too; they only stop a change, nothing is written from them.
-        longer = [a.text for a in everyone if a.key != old_key and f" {old_key} " in f" {a.key} "]
+        longer = [a.text for a in everyone if a.key != old_key and contains(a.text, old)]
         now = int(time.time())
         lines, sessions = await store.respell_names(
             campaign.guild_id,
@@ -1057,7 +1058,10 @@ async def _respell_past(
         log.exception("Fix spelling: couldn't carry it into the past transcripts")
         return "The past transcripts were not changed; fix the spelling again to try once more."
     log.info("Fix spelling: %d lines of %d past sessions", lines, sessions)  # counts only
-    return done_note(_md(old), _md(new), lines, sessions) if lines else ""
+    if not lines:
+        return ""
+    more = " That is the most it changes at once; fix the spelling again for the rest."
+    return done_note(_md(old), _md(new), lines, sessions) + (more if lines >= MAX_RESPELLED else "")
 
 
 class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
@@ -1501,18 +1505,19 @@ class UndoSpellingButton(
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, "Only the DM can undo that.")
             return
+        refused = False
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
         except TooLateToUndo as exc:
             await _tell(interaction, str(exc))
             return
         except MemoryRuleError:
-            await _tell(interaction, f"Not undone. {NOTHING_MORE}")  # changed, or already undone
-            return
+            refused = True  # undone already, or changed since: the lines may still be waiting
         note = "↩️ Spelling put back."
         back = await _current(interaction, self.campaign_id, self.entity_id)
         spelled = back[1] if back is not None else "the old spelling"
         store = _bot(interaction).transcripts
+        lines = sessions = 0
         if store is not None:
             try:
                 lines, sessions = await store.undo_respell(
@@ -1520,10 +1525,12 @@ class UndoSpellingButton(
                 )
             except Exception:
                 log.exception("Undo of a fixed spelling: couldn't reach the past transcripts")
-                note += " The past transcripts could not be put back; try again later."
-            else:
-                if lines:
-                    note += " " + undone_note(_md(spelled), lines, sessions)
+                note += " The past transcripts could not be put back; press Undo again."
+        if refused and not lines:
+            await _tell(interaction, f"Not undone. {NOTHING_MORE}")  # changed, or already undone
+            return
+        if lines:
+            note += " " + undone_note(_md(spelled), lines, sessions)
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
