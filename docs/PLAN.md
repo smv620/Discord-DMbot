@@ -3720,6 +3720,26 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
   estimates them from the words spoken, and `recap_run --hours` sets them.
+  **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
+  test 10: it passed every check yet said the party travelled south (never said at the table) and
+  had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
+  was hidden). Grounding is the recap's first rule, ahead of length and style:
+  - **Each beat carries where it happened** (`where`, a place name from the lines, or "" when the
+    lines do not say) and the writer is told never to move an event to another place, never to add
+    a direction, distance, time or detail the beats do not state, and never to say "all" or "every"
+    of the party unless the beat does.
+  - **A fact check follows the draft checks:** one careful-model call reads the beat sheet and the
+    draft and lists every sentence that states something the beats do not support (wrong place,
+    wrong person, invented event or detail, contradiction), as a fixed-shape answer. A flagged draft
+    is revised once with the list; a sentence still flagged after that is cut in code, and the
+    recap stands only if it still meets the minimum length. The grader's style scores never
+    outrank this check.
+  - **Coverage:** the fact check also names the beats the draft leaves out that change the story
+    (a new place, a new person met, a decision, a reveal). Those are given to the revision; the
+    length band, not coverage, decides when it stops.
+  - Knowing the adventure's map (where a town lies, which way the party travels) needs the Shared
+    story reader (docs/STORY_MEMORY.md); until a DM shares the adventure, the recap states no
+    direction at all.
   **Names the recap uses that DMbot doesn't know yet** (owner, 2026-10-19, #2027, after recap test 3
   refused place names from the owner's own names file): the names list can miss a name, most often a
   new one. So an unknown name in a draft is looked at before it fails the draft:

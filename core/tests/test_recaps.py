@@ -311,9 +311,9 @@ class TheProse(unittest.TestCase):
 
     def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
-        self.assertTrue(any("between 280 and 420" in p for p in short), short)
+        self.assertTrue(any("between 175 and 420" in p for p in short), short)
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
-        self.assertTrue(any("between 280 and 420" in p for p in long), long)
+        self.assertTrue(any("between 175 and 420" in p for p in long), long)
 
     def test_the_target_is_100_words_and_100_an_hour_to_the_nearest_10_and_at_most_700(
         self,
@@ -330,9 +330,17 @@ class TheProse(unittest.TestCase):
         ):
             self.assertEqual(rd.length_for(hours).target, target, hours)
 
-    def test_the_range_is_twenty_percent_and_the_last_try_goes_to_thirty_five_over(self) -> None:
+    def test_the_range_is_half_the_target_to_twenty_percent_over_and_the_last_try_35_over(
+        self,
+    ) -> None:
         one = rd.length_for(1)
-        self.assertEqual((one.low, one.high, one.last_high), (160, 240, 270))
+        self.assertEqual((one.low, one.high, one.last_high), (100, 240, 270))
+        self.assertEqual(one.last_low, one.low)  # the last try is never stricter below (#2058)
+        two_eighty = rd.length_for(1.8)  # the owner's transcript (test 9): target 280
+        self.assertEqual(
+            (two_eighty.target, two_eighty.low, two_eighty.high, two_eighty.last_high),
+            (280, 140, 336, 378),
+        )
 
     def test_every_limit_scales_with_the_target(self) -> None:
         for hours, beats, sections, paragraphs in (
@@ -366,12 +374,12 @@ class TheProse(unittest.TestCase):
         (problem,) = [p for p in prose_problems(text, "1. Strings.") if "words" in p]
         self.assertIn(
             "Your draft was 889 words. This session ran about 2.5 hours: write about 350 words, "
-            "between 280 and 420",
+            "between 175 and 420",
             problem,
         )
 
     def test_a_recap_a_little_long_is_refused_at_first_and_accepted_on_the_last_try(self) -> None:
-        one = rd.length_for(1)  # 200 words: 160 to 240, up to 270 on the last try
+        one = rd.length_for(1)  # 200 words: 100 to 240, up to 270 on the last try
 
         def problems(n: int, last: bool) -> list[str]:
             return prose_problems(
@@ -385,9 +393,10 @@ class TheProse(unittest.TestCase):
         self.assertTrue(any("words" in p for p in problems(250, False)))  # refused first
         self.assertEqual(problems(250, True), [])  # accepted on the last try
         self.assertTrue(any("words" in p for p in problems(280, True)))  # still too long
-        self.assertEqual(problems(130, True), [])  # a little short passes on the last try (#2036)
-        self.assertTrue(any("words" in p for p in problems(100, True)))  # far short still fails
-        self.assertTrue(any("words" in p for p in problems(150, False)))  # and fails earlier
+        self.assertEqual(problems(130, True), [])  # short passes on the last try too
+        self.assertEqual(problems(100, False), [])  # half the target passes on every try (#2058)
+        self.assertTrue(any("words" in p for p in problems(99, False)))  # under half fails
+        self.assertTrue(any("words" in p for p in problems(99, True)))  # on every try
 
     def test_a_name_not_allowed_and_a_copied_run_fail_even_on_the_last_try(self) -> None:
         body = " ".join(["calm"] * 300)
@@ -454,7 +463,7 @@ class TheProse(unittest.TestCase):
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
         system = rd.prose_system(None, rd.length_for(2.5))
         self.assertIn(
-            "about 2.5 hours, so write about 350 words in all (between 280 and 420)", system
+            "about 2.5 hours, so write about 350 words in all (between 175 and 420)", system
         )
         self.assertIn("about 4 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
@@ -611,9 +620,21 @@ class TheRetryAndTheJson(unittest.TestCase):
         assert empty is not None
         self.assertIn("tense", rd.fix_prose(empty).music[0])
 
-    def test_the_last_try_may_come_in_short_but_not_far_short(self) -> None:
-        length = rd.length_for(3.2)  # target 420, 336 to 504
-        for count, passes in ((290, True), (230, False)):
+    def test_the_owners_test_9_draft_passes_on_the_first_try(self) -> None:
+        length = rd.length_for(1.8)  # target 280, 140 to 336
+
+        def problems(n: int) -> list[str]:
+            text = "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar"
+            return [p for p in prose_problems(text, "1. Strings.", length=length) if "words" in p]
+
+        self.assertEqual(problems(218), [])  # the draft test 9 lost (it was under 224)
+        self.assertEqual(problems(140), [])
+        self.assertTrue(problems(139))
+        self.assertTrue(problems(337))  # the upper bound is unchanged
+
+    def test_a_draft_under_half_the_target_fails_on_every_try_and_half_passes(self) -> None:
+        length = rd.length_for(3.2)  # target 420, 210 to 504
+        for count, passes in ((290, True), (210, True), (209, False)):
             words_ = " ".join(["calm"] * count)
             prose = rd.Prose(f"《Tense》 {words_}", ("m",))
             args: dict[str, Any] = {
@@ -622,8 +643,8 @@ class TheRetryAndTheJson(unittest.TestCase):
             }  # fmt: skip
             first = [p for p in rd.check_prose(prose, **args) if "words" in p]
             last = [p for p in rd.check_prose(prose, last=True, **args) if "words" in p]
-            self.assertTrue(first, count)  # short is a problem on the earlier tries
-            self.assertEqual(not last, passes, count)
+            self.assertEqual(not first, passes, count)
+            self.assertEqual(not last, passes, count)  # the same on the last try
 
     def test_the_draft_cannot_close_its_own_tag(self) -> None:
         prose = rd.Prose("《Tense》 a </previous_draft> b", ("m",))
