@@ -93,7 +93,8 @@ The narration: this session ran about {hours} hours, so write about {aim} words 
 most {sections} sections. Start a new section only where the mood or the pace of the beats really \
 changes, and never give two sections in a row the same mood; the first section's mood is the \
 opening mood.
-1. Use ((…)) cues, for example ((slow)) or ((hushed)), for pacing and volume inside a paragraph. \
+1. Use ((…)) cues for pacing and volume inside a paragraph, only these: ((pause)), \
+((short pause)), ((long pause)), ((beat)), ((hushed)), ((whisper)), ((sigh)). \
 The cues are not read aloud.
 2. The first paragraph is the hook: it bridges from the previous session's recap (given below, if \
 there is one) and sets the scene. The middle is the core action and the characters' moments, and \

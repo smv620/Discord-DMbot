@@ -194,6 +194,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_dm.RecapButton",
             "ui.recap_short.ShortRecapButton",
             "ui.secret_aloud.SecretAloudButton",
+            "ui.secret_reveal.RevealButton",
             "ui.story_watch.KnowButton",
             "ui.story_watch.WordsButton",
             "ui.threads.ThreadListButton",
