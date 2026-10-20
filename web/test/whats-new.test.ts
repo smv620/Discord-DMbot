@@ -76,6 +76,7 @@ describe("What's new", () => {
       "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Recaps stick to what happened", // with recaps (RECAPS_LIVE, #2064, #2067)
       "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
+      "Share a recap by a link", // until the link API is deployed (RECAP_SHARE_LIVE, #2119)
       "Approve the text before any audio", // with narration (RECAP_AUDIO_LIVE, #2084)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "Play a recap's voice and music together", // with it (#2017)

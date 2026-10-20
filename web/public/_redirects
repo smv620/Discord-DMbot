@@ -11,3 +11,6 @@
 # The transcript pages (#1501): one page for the list, a campaign and a session; it reads which
 # from the address.
 /account/transcripts/*  /account/transcripts  200
+
+# A shared recap (#2119): one page for every link; it reads the secret from the address.
+/r/*  /r  200

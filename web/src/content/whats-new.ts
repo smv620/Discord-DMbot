@@ -304,6 +304,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "Share a recap by a link",
+    what: "On a posted recap's page, a game master can choose Make a link to share it. Anyone who has the link can read the recap without signing in, even people outside your Discord server, and they can pass it on. You can turn the link off or make a new one whenever you like; the old link then stops opening the recap. Treat the link like a password.",
+    reason:
+      "Waits for the link API (#2118) to deploy and for the page (#2119). When it is live, move this up and turn on RECAP_SHARE_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
+  },
+  {
+    date: "2026-10-20",
     title: "Approve the text before any audio",
     what: "DMbot makes no voice-over or music until you have read the recap and pressed Approve the text, on your DM screen or on the recap page. Then you pick voice-over, background music, both, or text only (no audio), and you see only what your plan includes. If you change the text afterwards, you approve it again. If a mood or pause mark in the text is wrong, DMbot shows what to fix, and nothing is approved until you fix it.",
     reason:

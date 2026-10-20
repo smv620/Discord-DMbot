@@ -92,6 +92,13 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   {
     text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
+  ...(RECAP_SHARE_LIVE
+    ? [
+        {
+          text: "To share a posted recap, open it on the website and choose Make a link. Anyone who has the link can read the recap without signing in, even people outside your Discord server, and they can pass it on, so treat the link like a password. Choose Turn the link off, or Make a new link, whenever you like: the old link then stops opening the recap, though anyone who already read it may keep a copy. Only a posted recap can be shared, never a draft.",
+        },
+      ]
+    : []),
   ...(RECAP_AUDIO_LIVE
     ? [
         {
