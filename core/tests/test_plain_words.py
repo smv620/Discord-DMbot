@@ -42,6 +42,14 @@ WORDS = re.compile(
 # a fixed or deleted phrase leaves the list (the stale-entry check below).
 ALLOWED: list[tuple[str, str, str]] = [
     (
+        "recaps/draft.py",
+        "json",
+        "the instructions the recap's AI is given (what form to answer in, #2074): sent to the AI, "
+        "never shown to a person",
+    ),
+    ("recaps/draft.py", "schema", "the same AI instructions: the shape of the answer asked for"),
+    ("recaps/draft.py", "model", "the same AI instructions: 'a small model' cuts the text up"),
+    (
         "ui/logic.py",
         "json",
         "the file name of a backup the DM downloads and uploads again (.dmbot.json.gz): a name to "
