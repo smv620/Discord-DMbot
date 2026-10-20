@@ -254,6 +254,6 @@ Unlocks: #1831
 - **Recaps and narrated recaps (#1382, #1385):** need `DMBOT_RECAPS=1`, and narration needs your ElevenLabs go-ahead.
 - **QAbot (#1341):** needs the steps on #1341.
 - **Heads-up when a fallen character speaks (#2068, #2078):** off until `DMBOT_LIVE_HEADS_UP=1`. It also needs a
-  character confirmed as dead, and today only the story extractor records that, so there is nothing to check yet.
+  character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
 
 The reasons are in `docs/GO_LIVE.md`.
