@@ -7494,7 +7494,9 @@ class DMBot(commands.AutoShardedBot):
         secrets = await self.recap_secret_names(campaign)
         if secrets is None:
             problems.append("DMbot couldn't check your secret names just now. Try again.")
-        elif names_a_secret(recap_post.to_the_table(job), secrets, []):
+        elif names_a_secret(
+            recap_post.to_the_table(job), secrets, await self.recap_allowed_names(campaign)
+        ):
             problems.append("It names something you keep secret. Change the text first.")
         if not set(job.speakers) <= set(await self.consent.consenting(campaign.guild_id)):
             problems.append(
