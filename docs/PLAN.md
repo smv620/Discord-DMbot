@@ -210,6 +210,30 @@ database.
   would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
   questions ("who plays Vaelora?") would miss facts.
 
+**A worker container, and a smaller bot.py** (owner, 2026-10-20; details Supervisor's; the first step toward #57's workers).
+- **The worker.** Heavy background work leaves the live bot for a `worker` container: recap writing, audio rendering with ffmpeg, cleaning imported sessions, PlotBot's checks and the story extractor. It runs the same `core` image and code with a different start command, against the same database, with no new network API. The bot keeps everything that happens live at the table: voice, the Cleaner, the sidebar, rules cards, the live heads-up and the buttons.
+- **No races: the database is the only coordinator.**
+  - **Claiming work.** Every job is claimed with a lease, a conditional `UPDATE … WHERE leased_to <= now`, as `recap_jobs` already does. Two processes can never work one job, and a crashed worker's lease simply expires and the job is picked up again. In-process locks (`asyncio.Lock`) don't count across processes: the audio worker's "one at a time" lock becomes a lease row.
+  - **Every step resumable.** Every job step is idempotent and resumable, as the recap job already is. A paid call is never repeated for a step that already finished (the stored state says so).
+  - **Changes during a job.** A DM's change wins over a running job: jobs re-read the approval or text hash before every paid call, as the audio worker already does, and stop cleanly.
+- **Results back to Discord through an outbox.** Only the bot holds the Discord connection, so the worker never posts. It writes an outbox row ("recap ready", "names to check") and the bot delivers it. The bot is woken by Postgres `LISTEN`/`NOTIFY`, with a poll every 30 s as a backstop. Delivery is at most a few seconds late and is never lost: a row is marked sent only after Discord accepts it.
+- **No waiting, so no time-outs.**
+  - **Nothing live waits on the worker.** Discord buttons answer within Discord's 3 seconds by deferring, then follow up.
+  - **The website** queues a job and shows its state ("Writing…", "Checking the change…"), polling the job's status. It never holds a request open for an AI call, except short ones under about 10 s (speech to text for a 2-minute clip).
+- **No starving backlog.**
+  - **Limits per kind:** audio at most 1 at a time, recaps at most 3, imports and PlotBot at most 1 per campaign.
+  - **Fair order:** jobs are taken oldest first per campaign, round-robin across campaigns, so one big import never holds up another table's recap.
+  - **Visible depth:** the queue depth and oldest waiting job go to the log every round. The DM sees "queued" with its place.
+  - **Stuck jobs:** a job past its tries fails with a plain reason, as now.
+- **Resources.** The worker container gets its own CPU and memory limits, so ffmpeg can never starve `ears` or the bot during a game. The bot and the worker always deploy from the same commit (one image), and dev1 restarts both.
+- **Breaking up `bot.py`.** Each feature moves into its own discord.py extension (a Cog) in its package: `recaps/discord.py`, `memory/discord.py` and so on. Each holds its commands, buttons, listeners and session hooks. `bot.py` keeps startup, the session table and the wiring.
+  - **One feature per PR,** with no change in behaviour, starting with recaps.
+  - **This adds no queues and no new concurrency:** it is the same process and the same event loop.
+  - **One owner of session state:** the shared session state (`Table`) stays owned by one place, and features use it through small methods, never by editing each other's fields.
+- **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
+- **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
+- **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
+
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
 be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
 earlier "one pod per Discord server" idea:* Discord gives a bot one gateway connection per
