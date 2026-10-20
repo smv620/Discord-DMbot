@@ -91,7 +91,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(
         "secret reveal",
         "Asks when you say a secret",
-        "DMbot asks you or your co-DMs privately, at once, whether a secret name you said is revealed now.",
+        "DMbot asks you or your co-DMs privately, at once, if a secret name you said is revealed.",
         lambda s: s.secret_reveal_ask,
         ("secret_reveal_ask",),
     ),
