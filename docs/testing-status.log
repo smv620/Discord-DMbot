@@ -112,3 +112,4 @@ TEST K (the DM Bot channel, 2026-10-18): done by the owner. Passed: the DM scree
 Open problems (CloudDev): #1963 the panel is not pinned; #1964 Help "didn't respond in time"; #1965 the undo button cuts off long item names (about 25% wider needed); #1966 the Menu and Settings icons are swapped (Settings is the gear, Menu 🗂️).
 Note: after adding the bot only the dmb-dm-bot- channel shows; the others appear after /dmbot start then Start listening.
 NEXT TEST: none until the four fixes are on the server (docs/next-test-step.md).
+NEXT TEST: Test L (docs/next-test-step.md): a real session of at least 35 minutes, with one secret name said aloud; the recap waits for approval; Both makes the voice-over and music. Recaps are on (DMBOT_RECAPS=1) and recap audio follows them, guarded by the approval gate (#2090).

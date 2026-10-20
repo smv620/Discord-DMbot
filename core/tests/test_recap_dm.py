@@ -270,7 +270,10 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     def test_the_views_carry_ids_that_survive_a_restart(self) -> None:
         ids = [cast(Any, i).custom_id for i in ready_view(CID, AT).children]
-        self.assertEqual(ids, [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "post", "drop")])
+        self.assertEqual(
+            ids,
+            [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
+        )
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
         longest = f"dmbot:recap:post:{CID}:{10**11}"
         self.assertLessEqual(len(longest), 100)

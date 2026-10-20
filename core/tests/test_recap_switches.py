@@ -199,9 +199,8 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Recap ready: **The Silver Lock**", line)
             self.assertIn("Edit it here: https://site.example.com", line)
             ids = [i.custom_id for i in kwargs["view"].children]
-            self.assertEqual(
-                ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in ("read", "post", "drop")]
-            )
+            acts = ("read", "approve", "post", "drop", "tell")
+            self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in acts])
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
         failed = SimpleNamespace(state="failed", session_at=100, title="")
