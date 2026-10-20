@@ -112,6 +112,10 @@ class Settings:
     recall_budget: int = DEFAULT_BUDGET
     # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
     sidebar_recall: bool = True
+    # The first live heads-up, a confirmed-dead character voiced at the table (#2068): off until
+    # dev1's live check. The gap between two of them, in seconds.
+    live_heads_up: bool = False
+    live_heads_up_cooldown_s: float = 300.0
     presession_note: bool = True  # the note on the DM screen when a session starts (#1403)
     sidebar_recall_budget: int = SIDEBAR_RECALL_BUDGET
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
@@ -207,6 +211,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(
             'DMBOT_SIDEBAR_RECALL must be 1 (on) or 0 (off), got "' + sidebar_recall_raw + '".'
+        )
+    live_raw = (get("DMBOT_LIVE_HEADS_UP") or "0").lower()
+    if live_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_LIVE_HEADS_UP must be 1 (on) or 0 (off), got "' + live_raw + '".')
+    live_minutes_raw = get("DMBOT_LIVE_HEADS_UP_MINUTES") or "5"
+    try:
+        live_minutes = float(live_minutes_raw)
+    except ValueError:
+        live_minutes = -1.0
+    if not 0 <= live_minutes <= 120:
+        raise ConfigError(
+            'DMBOT_LIVE_HEADS_UP_MINUTES must be a number from 0 to 120, got "'
+            + live_minutes_raw
+            + '".'
         )
     presession_raw = (get("DMBOT_PRESESSION_NOTE") or "1").lower()
     if presession_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -359,6 +377,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         thread_stalled_sessions=int(stalled_raw),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
+        live_heads_up=live_raw in ("1", "true", "on"),
+        live_heads_up_cooldown_s=live_minutes * 60,
         presession_note=presession_raw in ("1", "true", "on"),
         sidebar_recall_budget=int(sidebar_budget_raw),
         admin_primary_id=admin_primary,
@@ -399,10 +419,11 @@ def _unquote(raw: str) -> str:
 
 
 def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
-    """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and
-    `AI_MODEL_DEEP` (empty: that tier's default). The old `AI_MODEL`, if set, stands for
-    FAST for now; the second value is the line to log about that (or ""). A value that
-    isn't a Claude model name stops start-up, naming the setting (never the value)."""
+    """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`,
+    `AI_MODEL_CREATIVE` and `AI_MODEL_FORMATTING` (empty: that tier's default). The old
+    `AI_MODEL`, if set, stands for FAST for now; the second value is the line to log about
+    that (or ""). A value that isn't a Claude model name stops start-up, naming the setting
+    (never the value)."""
     old = get("AI_MODEL")
     notice = ""
     chosen: dict[str, str] = {}
@@ -410,6 +431,8 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
         ("fast", "AI_MODEL_FAST"),
         ("careful", "AI_MODEL_CAREFUL"),
         ("deep", "AI_MODEL_DEEP"),
+        ("creative", "AI_MODEL_CREATIVE"),
+        ("formatting", "AI_MODEL_FORMATTING"),
     ):
         raw, shown = _unquote(get(name)), name  # (a phone adds quotes)
         if tier == "fast":

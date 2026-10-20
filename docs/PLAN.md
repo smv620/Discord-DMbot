@@ -3782,6 +3782,38 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
      sits in the raw transcript as a DM sidebar line.
   - **Order:** first the two models (measured on the owner's test transcript with `recap_run`),
     then the style guide and examples, then the feedback.
+  **The DM approves the text before any audio** (owner, 2026-10-20; details Supervisor's).
+  - **No audio starts by itself.** When the text is ready, the DM reads it and may edit it on the
+    website or in Discord, then presses **✅ Approve the text**. Only an approved text goes on to
+    narration or music. An edit after approval asks for approval again.
+  - **Cues follow a fixed list, checked before anything is sent.**
+    - **Moods** (`《…》`) are one of the 18 mood words (`audio/script.py` `EMOTION_VOICE`: tense,
+      urgent, battle, somber, sorrowful, melancholy, hopeful, tender, triumphant, defiant,
+      mysterious, eerie, ominous, dread, playful, wonder, calm, grim), or a synonym `music.SYNONYMS`
+      already maps to one ("tension" counts as tense).
+    - **Pacing cues** (`((…))`) are one of the performance cues (pause, short pause, beat, long
+      pause, hushed, whisper, whispered, sigh).
+    - **Today an unknown word is silently ignored.** From now on, **✅ Approve the text** checks
+      every cue first. That covers an unknown word, a bracket left open or mismatched, a mood with no
+      words after it, and a cue inside a word. Each problem is shown in plain words with where it is,
+      the list of allowed words, and the closest one ("《tensed》: did you mean 《tense》?").
+      Nothing goes on until it is fixed. The same check runs on a website edit when it is saved.
+    - The name and secret checks run again on an edited text, as at post time.
+  - **The DM chooses what to make.** After approval, four buttons: **🎙️ Voice-over**,
+    **🎵 Background music**, **Both** and **Text only**. Only what the plan includes is offered:
+    narration is Guild and Pro, or the add-on, as now. Any audio counts once against the month's
+    narrated-recap allowance. Background music alone is a music bed the length the voice-over
+    would have had, with the same mood sections.
+  - **The music's style: described, never borrowed.**
+    - The music prompts never name a composer, a game, a film or a soundtrack, as now. The owner's
+      taste (the instrumental style of classic fantasy MMO scores) is written as a house sound
+      palette in plain musical terms, in `audio/music.py`'s style table and the writer's
+      music-prompt rule: sweeping orchestral strings, warm horns, a wordless choir, Celtic harp and
+      flute, frame drums, slow tempos and long reverb.
+    - No recording from those works is ever uploaded, as a reference or otherwise.
+    - ElevenLabs' Music v2 can take a short reference track, and it screens each one for copyright.
+      Using one is a later, separate decision, and only with audio we own or that is public domain
+      or CC0.
   **Names the recap uses that DMbot doesn't know yet** (owner, 2026-10-19, #2027, after recap test 3
   refused place names from the owner's own names file): the names list can miss a name, most often a
   new one. So an unknown name in a draft is looked at before it fails the draft:

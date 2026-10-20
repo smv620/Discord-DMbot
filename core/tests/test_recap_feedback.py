@@ -142,7 +142,11 @@ class Spoken(unittest.TestCase):
 class TheWriter(unittest.IsolatedAsyncioTestCase):
     def test_corrections_go_under_the_content_rules_and_never_into_the_style_guide(self) -> None:
         text = rd.prose_system(
-            None, None, ["An example."], ["Keep it short."], ["Mira was not at the gate."]
+            None,
+            None,
+            style=["An example."],
+            notes=["Keep it short."],
+            corrections=["Mira was not at the gate."],
         )
         rules, _, block = text.partition("\n<style_guide>\n")
         self.assertIn("<corrections>", rules)

@@ -50,6 +50,11 @@ ANTHROPIC_PER_MILLION: dict[str, tuple[Price, Price]] = {
         Price(2.0, "per million input tokens", _ANTHROPIC, "2026-10-15"),
         Price(10.0, "per million output tokens", _ANTHROPIC, "2026-10-15"),
     ),
+    # The recap's creative model (#2074).
+    "claude-opus-5-5": (
+        Price(4.0, "per million input tokens", _ANTHROPIC, "2026-10-20"),
+        Price(20.0, "per million output tokens", _ANTHROPIC, "2026-10-20"),
+    ),
 }
 
 

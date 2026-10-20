@@ -230,6 +230,8 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.heard_backup import HeardSection
+from dmbot.memory.live_heads_up import LiveSession
+from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import DM, FIX, KEEP, PROPOSED, Heard, MemoryRuleError, name_key
 from dmbot.memory.ontology import Tally
@@ -365,6 +367,7 @@ from dmbot.ui.line_fix import (
     fix_line_view,
     suggestion_view,
 )
+from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton, UndoConnectionButton
 from dmbot.ui.name_lists import UndoListButton
@@ -688,6 +691,7 @@ class Table:
     heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
+    live_heads_up: LiveSession = field(default_factory=LiveSession)  # #2068, for this session
     # Listening minutes already written to the hours meter (#437). None until first read:
     # the stored number, so a restart counts none twice. `meter_base` is that number and
     # `meter_since` when this process began listening, so time while DMbot was down is
@@ -1068,6 +1072,17 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client and settings.recaps_on
             else None
         )
+        # The recap's two models (#2074): a creative one writes the prose, a small one shapes it.
+        self.recap_write_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_WRITE], Feature.RECAP_WRITE)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        self.recap_format_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_FORMAT], Feature.RECAP_FORMAT)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
         # Sorts a DM's feedback on a recap (#2076): one small fast-tier call a DM presses for.
         self.recap_feedback_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_FEEDBACK], Feature.RECAP_FEEDBACK)
@@ -1086,6 +1101,8 @@ class DMBot(commands.AutoShardedBot):
                 notify=self.recap_told,
                 audio_wanted=self.recap_audio_wanted,
                 allowance=self.recap_text_allowance,
+                creative=self.recap_write_ai,
+                formatting=self.recap_format_ai,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -1264,6 +1281,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
+        self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
@@ -5615,6 +5633,87 @@ class DMBot(commands.AutoShardedBot):
                         )
                     except Exception:
                         log.exception("Couldn't save who a line was said as")
+        if self.settings.live_heads_up and entity and entity != NARRATING:
+            self._track(self._live_heads_up(table, speaker, entity), "live-heads-up")
+
+    async def _live_heads_up(self, table: Table, speaker: int, label: str) -> None:
+        """The first live heads-up (#2068, docs/STORY_MEMORY.md section 4, level 1): a line was
+        just labelled as a character the DM confirmed dead. Code only, no AI; a post on the DM
+        screen alone, and nothing is written without the DM's press. Runs only while that
+        speaker is recorded (asked again after every wait), while the session runs, on a plan that
+        includes story memory (closed if that can't be checked), and never on Quiet. A failure
+        costs the heads-up, never the line."""
+        gid, cid = table.guild_id, table.campaign_id
+        lookup = table.name_lookup
+        if (
+            self.memory is None
+            or cid is None
+            or lookup is None
+            or self.tables.get(gid) is not table
+            or not screen_levels.allows(table.screen_level, screen_levels.WARNING)
+            or not self.consent.has_consent(gid, speaker)
+        ):
+            return
+        entity_id = speaker_ai.entity_for(lookup, label)  # exactly one entry, by the label's rule
+        entity = lookup.entities.get(entity_id) if entity_id is not None else None
+        if entity is None:
+            return
+        live = table.live_heads_up
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                if live.ready is None:  # read once a session
+                    live.ready = await ContinuityStore(self.memory).is_ready(
+                        gid, cid, self.settings.continuity
+                    )
+                if not live.ready or not self.consent.has_consent(gid, speaker):
+                    return
+                state = (await self.memory.states(gid, cid, [entity.id])).get(entity.id)
+                if not self.consent.has_consent(gid, speaker) or self.tables.get(gid) is not table:
+                    return
+                before = live.last_at
+                found = live_heads_up_for(
+                    entity,
+                    state,
+                    ready=live.ready,
+                    session=live,
+                    now=time.monotonic(),
+                    cooldown_s=self.settings.live_heads_up_cooldown_s,
+                )
+                if found is None:
+                    return
+                posted = False
+                try:
+                    number = None
+                    if self.transcripts is not None and found.since is not None:
+                        sessions = await self.transcripts.sessions(gid, cid, limit=1000)
+                        number = {s.started_at: s.number for s in sessions}.get(found.since)
+                    if (
+                        not self.consent.has_consent(gid, speaker)
+                        or self.tables.get(gid) is not table
+                        or table.campaign_id != cid
+                        or not screen_levels.allows(table.screen_level, screen_levels.WARNING)
+                    ):
+                        return
+                    posted = bool(
+                        await self.post(
+                            table.screen_channel_id,
+                            heads_up_text(found, number),
+                            view=heads_up_view(cid, found.entity_id),
+                        )
+                    )
+                finally:
+                    if not posted:
+                        live.last_at = before  # nothing was said, so the cooldown is not used
+                if not posted:
+                    return
+                log.info("Live heads-up posted")  # no names, no words
+            except Exception:
+                log.exception("The live heads-up failed")
 
     async def _save_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
         """Save a line's topic, waiting or saved. Only while its speaker is recorded."""

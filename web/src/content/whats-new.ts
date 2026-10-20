@@ -373,6 +373,13 @@ export const held: Held[] = [
       "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#1284).",
   },
   {
+    date: "2026-10-20",
+    title: "Heads-up when a fallen character speaks",
+    what: "If someone speaks as a character you confirmed has died, DMbot points it out on your DM screen, and nothing changes unless you press a button. It waits a few minutes between heads-ups, stays silent on Quiet, and players see it only if your DM screen lets them.",
+    reason:
+      "It needs the story extractor, which stays off until its prompt passes the measurement (#1282); held until it has been seen working on the test server (#2068, #2078), and DMBOT_LIVE_HEADS_UP stays off until dev1's live check.",
+  },
+  {
     date: "2026-10-16",
     title: "Secrets only some people know",
     what: "Mark a clue or secret as something only some characters know, and list who. After a session, DMbot tells you, privately, if someone who isn't on the list spoke of it. You decide whether they really learned it. DMbot never decides, and players never see the list.",
