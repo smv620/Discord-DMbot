@@ -20,6 +20,7 @@ only.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ MAX_POINTS = 6  # a longer rant is cut to its first points
 POINT_CHARS = 300  # a kept note or correction
 FEEDBACK_TOKENS = 700
 
+log = logging.getLogger(__name__)
+
 STORY_HELP_REPLY = "DMbot only retells what happened at your table. The story is yours to write."
 OTHER_REPLY = "Thanks. DMbot can change how recaps sound, or fix a detail in this one."
 NOTHING_REPLY = "I couldn't find anything to change in that. Tell me what to do differently."
@@ -42,21 +45,25 @@ BROKEN = "DMbot can't sort that right now. Please try again in a minute."
 # the note's words as well as the model's kind, because a model can be talked into calling it style.
 _INVENT = re.compile(
     r"\b(make\w*\s+(?:things|stuff|it|them|some\s+\w+)\s+up|make\w*\s+up\b|made[- ]up|"
-    r"invent\w*|fabricat\w*|"
-    r"embellish\w*|exaggerat\w*|dramati[sz]\w*|add\w*\s+(?:\w+\s+)?(?:things|drama|twists?)|"
-    # "add more details about the fight" asks for what happened, which is fine; bare "add details"
-    # or "add events" asks for new ones.
-    r"add\w*\s+(?:\w+\s+)?(?:details?|events|scenes)\b(?!\s+(?:about|on|of|from|for|to\s+the)\b)|(?:fill|filling)\s+in\s+the\s+gaps|"
+    r"invent\w*|fabricat\w*|embellish\w*|exaggerat\w*|dramati[sz]\w*|"
+    # "add" asks for the new only when the thing added is new or the DM's own: "add more details
+    # about the fight" asks for what happened, which is fine.
+    r"add\w*\s+(?:\w+\s+)?(?:drama|twists?)|"
+    r"add\w*\s+(?:some\s+|a\s+few\s+)?(?:new|your\s+own|made-up|extra|fake)\s+\w+|"
+    r"(?:fill|filling)\s+in\s+the\s+gaps|"
     r"(?:ignore|break|skip|bend|loosen)\w*\s+(?:the\s+|any\s+)?(?:rules?|checks?)|"
     r"(?:use|allow)\w*\s+(?:any|other|new)\s+names)\b",
     re.IGNORECASE,
 )
-# "Never make things up" asks for the opposite: a standing note that agrees with the rules.
-# A negation counts only when it governs the match: nothing between them that ends the clause (a
-# comma, a colon, "but", "instead"), or "Never be dull, make things up" would pass as a ban.
+# "Never make things up" asks for the opposite: a standing note that agrees with the rules. A
+# negation counts only when it governs the match: at most three plain words between them, none of
+# which ends the clause ("and", "but", "instead") or turns the ban round ("hesitate", "afraid",
+# "hold back"); a comma, dash, "&" or any stop also ends it. So "Stop being literal and invent"
+# is refused.
+_BREAKERS = r"and|but|instead|rather|except|yet|then|so|hesitat\w*|afraid|shy|scared|reluctant|back"
 _NEGATED = re.compile(
-    r"\b(never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)\b"
-    r"(?:(?![.;,:!?\n])(?!\b(?:but|instead|rather|except|yet|then|so)\b).)*$",
+    r"\b(?:never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)"
+    rf"(?:[ \t]+(?!(?:{_BREAKERS})\b)[\w'’]+){{0,3}}[ \t]*$",
     re.IGNORECASE,
 )
 
@@ -117,7 +124,7 @@ _OPINION = re.compile(
 )
 _QUESTION = re.compile(
     r"^\s*(what|when|where|who|why|how|which|did|does|do|is|are|was|were|can|could|will|would|"
-    r"should|shall|may|might|has|have|had|read|show|play|tell|give|post|recap)\b",
+    r"should|shall|may|might|has|have|had|read|show|play|tell|give|post)\b",
     re.IGNORECASE,
 )
 
@@ -212,7 +219,9 @@ def route(points: Sequence[Point]) -> Sorted:
             replies.append(text)
 
     for p in points:
-        if p.kind in ("style", "accuracy", "content") and asks_to_invent(p.text):
+        # Only a standing style note can ask for invention: a correction that says "the bard
+        # invented a song" is a fact about the recap, not a request.
+        if p.kind == "style" and asks_to_invent(p.text):
             reply(STORY_HELP_REPLY)
         elif p.kind == "style":
             style.append(p.text)
@@ -238,7 +247,8 @@ async def sort_feedback(ai: Client, feedback: str) -> Sorted | None:
             max_tokens=FEEDBACK_TOKENS,
             schema=schema(),
         )
-    except Exception:
+    except Exception as exc:
+        log.warning("Recap feedback: the sort failed (%s)", type(exc).__name__)  # never the message
         return None
     if reply.refused or reply.cut:
         return None

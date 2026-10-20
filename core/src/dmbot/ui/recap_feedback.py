@@ -33,9 +33,13 @@ NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this recap any more. Nothing was changed."
 DECIDED = "This recap was already posted or skipped, so nothing was changed."
 TIMED_OUT = "These buttons timed out. Tell DMbot again to get new ones."
+NO_RECAPS = "Recaps are off for this campaign, or not in its plan, so there is nothing to change."
 NO_FEEDBACK = "Feedback isn't available right now. Try again in a minute."
 SAVED = "Saved. DMbot will remember this for your next recaps."
 SAVED_DROPPED = " That was one note too many, so the oldest one was removed."
+NOT_A_NOTE = (
+    "That isn't about how recaps sound, so I didn't keep it. Change the words and try again."
+)
 NOT_KEPT = "Okay, I won't keep that."
 ASK_AGAIN = "Noted for this recap. Want DMbot to write it again with that?"
 AGAIN_STARTED = "👍 Writing it again. You'll get the new one when it's ready."
@@ -180,7 +184,9 @@ class AgainView(_Timed):
     needs no stored button IDs; the DM is checked again on the press."""
 
     def __init__(self, guild_id: int, campaign_id: str, session_at: int) -> None:
-        super().__init__(timeout=840)
+        super().__init__(
+            timeout=840
+        )  # inside the private reply's 15 minutes, so on_timeout can still edit
         self.guild_id, self.campaign_id, self.session_at = guild_id, campaign_id, session_at
 
     @discord.ui.button(label="Try again", style=discord.ButtonStyle.primary)
@@ -202,7 +208,9 @@ class NoteView(_Timed):
     """Save / Edit / Don't keep for one style note. Saved only on Save."""
 
     def __init__(self, guild_id: int, campaign_id: str, note: str) -> None:
-        super().__init__(timeout=840)
+        super().__init__(
+            timeout=840
+        )  # inside the private reply's 15 minutes, so on_timeout can still edit
         self.guild_id, self.campaign_id, self.note = guild_id, campaign_id, note
 
     async def _save(self, interaction: discord.Interaction, note: str) -> None:
@@ -221,7 +229,12 @@ class NoteView(_Timed):
         self.stop()
         text = SAVED + (SAVED_DROPPED if dropped else "")
         if interaction.type == discord.InteractionType.modal_submit:
-            await interaction.response.send_message(text, ephemeral=True, allowed_mentions=NO_PINGS)
+            # The edit form was answered (and the AI asked) first, so this is a follow-up; the
+            # note's own message loses its buttons, which would only fail now.
+            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
+            if interaction.message is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.message.edit(content=text, view=None)
         else:
             await interaction.response.edit_message(
                 content=text, view=None, allowed_mentions=NO_PINGS
@@ -258,11 +271,42 @@ class EditNoteModal(discord.ui.Modal, title="Edit the note"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         edited = " ".join(str(self.text.value).split())
-        if fb.route([fb.Point("style", edited)]).style != (edited,):
-            # The edit asks for something DMbot won't do (made-up story): the same plain no.
-            await _tell(interaction, fb.STORY_HELP_REPLY)
+        view = self.view_
+        campaign = await dm_campaign(interaction, view.campaign_id, view.guild_id)
+        if campaign is None:
             return
-        await self.view_._save(interaction, edited)
+        # An edit is sorted again like the first words were: it is kept only as exactly one style
+        # note, never as a correction or a request to invent (the same gate, the same AI call).
+        bot = _bot(interaction)
+        job = await bot.recaps.latest_draft(campaign.guild_id, campaign.id) if bot.recaps else None
+        ai = bot.recap_feedback_ai
+        if ai is None or job is None:
+            await _tell(interaction, NO_FEEDBACK)
+            return
+        stopped = await bot.recap_feedback_gate(campaign, job)
+        if stopped is not None:
+            await _tell(interaction, stopped)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        sorted_ = await fb.sort_feedback(ai, edited)
+        if sorted_ is None:
+            await interaction.followup.send(fb.BROKEN, ephemeral=True, allowed_mentions=NO_PINGS)
+            return
+        # (what the AI wrote back is not kept: the DM's own words are, once it agrees they are one
+        # style note)
+        if (
+            len(sorted_.style) != 1
+            or sorted_.corrections
+            or sorted_.replies
+            or fb.asks_to_invent(edited)
+        ):
+            await interaction.followup.send(
+                fb.STORY_HELP_REPLY if sorted_.replies else NOT_A_NOTE,
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
+            )
+            return
+        await view._save(interaction, edited)
 
 
 __all__ = ["MAX_NOTES", "handle", "open_form"]

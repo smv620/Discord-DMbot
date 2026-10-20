@@ -40,7 +40,7 @@ _LABELS = {
     "read": ("Read it", discord.ButtonStyle.primary),
     "post": ("Post to the table", discord.ButtonStyle.success),
     "drop": ("Not this one", discord.ButtonStyle.secondary),
-    "tell": ("Tell DMbot what you think", discord.ButtonStyle.secondary),
+    "tell": ("💬 Tell DMbot what you think", discord.ButtonStyle.secondary),
     "yes": ("Yes", discord.ButtonStyle.success),
     "no": ("Not now", discord.ButtonStyle.secondary),
 }
@@ -105,7 +105,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if job is None:
             await _tell(interaction, GONE)
             return
-        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with the three buttons
+        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with its buttons
             bot.decision_lines.remember_pressed(self.key, interaction)
         if self.act == "no":
             await _tell(interaction, NOT_NOW)

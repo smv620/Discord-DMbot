@@ -2183,7 +2183,7 @@ class DMBot(commands.AutoShardedBot):
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
-        the DM screen says so once, with the same three buttons as when it was ready, for at most
+        the DM screen says so once, with the same buttons as when it was ready, for at most
         the two newest. Not after a restart in the middle of a session, and nothing for a posted,
         skipped or unfinished recap, or when the campaign's recaps are off. No email."""
         if (
@@ -4129,7 +4129,7 @@ class DMBot(commands.AutoShardedBot):
         recap's switch and plan (as at every stage) and a limit per campaign, both before the
         AI call that sorts it costs anything (#2076)."""
         if not await self.recap_allowed(campaign.guild_id, campaign.id, job):
-            return recap_feedback_screen.NO_FEEDBACK
+            return recap_feedback_screen.NO_RECAPS
         if not self.recap_feedback_limit.allow(campaign.id, time.monotonic()):
             return recap_feedback.TOO_OFTEN
         return None
@@ -7641,8 +7641,9 @@ class DMBot(commands.AutoShardedBot):
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
         """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
-        the DM screen with three buttons (read it, post it, skip it; #1455), and is emailed unless
-        the DM chose not to be (#1421). A failed one is emailed, or said on the DM screen."""
+        the DM screen with buttons (read it, post it, skip it, tell DMbot what you thought; #1455),
+        and is emailed unless the DM chose not to be (#1421). A failed one is emailed, or said on
+        the DM screen."""
         campaign = await self.campaigns.get(gid, cid)
         link = (
             page_link(self.settings.site_url, gid, cid, job.session_at)

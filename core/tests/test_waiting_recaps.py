@@ -1,5 +1,5 @@
 """A finished recap the DM never decided on is said once at the next session start (#1474), with the
-same three buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
+same buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
 or unfinished one; nothing when the campaign's recaps are off or the session resumed."""
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ async def run(bot: Any, table: Any) -> None:
 
 
 class TheStartLines(unittest.IsolatedAsyncioTestCase):
-    async def test_a_waiting_draft_is_said_once_with_the_three_buttons(self) -> None:
+    async def test_a_waiting_draft_is_said_once_with_its_buttons(self) -> None:
         bot, table = fake_bot([(300, "The Silver Lock")])
         await run(bot, table)
         ((channel, line), kwargs) = bot.post.await_args.args, bot.post.await_args.kwargs

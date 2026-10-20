@@ -133,17 +133,57 @@ class Handling(unittest.IsolatedAsyncioTestCase):
         bot.recap_notes.add.assert_not_awaited()
         bot.recaps.add_corrections.assert_not_awaited()
 
-    async def test_an_edit_that_asks_to_make_things_up_is_refused_too(self) -> None:
+    async def edit(self, bot: Any, words: str) -> Any:
+        i = interaction(bot)
+        await screen.handle(i, CID, AT, "too long")
+        modal = screen.EditNoteModal(sent(i)[0][1])
+        modal.text._value = words
+        press = interaction(bot)
+        press.type = discord.InteractionType.modal_submit
+        press.message = SimpleNamespace(edit=AsyncMock())
+        await modal.on_submit(press)
+        return press
+
+    async def test_an_edit_is_sorted_again_and_kept_only_as_one_style_note(self) -> None:
+        bot = bot_with(("style", "Keep recaps short."))
+        press = await self.edit(bot, "Keep recaps shorter.")
+        bot.recap_notes.add.assert_awaited_once()
+        self.assertEqual(bot.recap_notes.add.await_args.args[3], "Keep recaps shorter.")  # as typed
+        press.message.edit.assert_awaited_once()  # the note's buttons are taken away
+        self.assertIsNone(press.message.edit.await_args.kwargs["view"])
+
+    async def test_an_edit_the_ai_sorts_as_story_help_or_content_is_not_kept(self) -> None:
+        for kind in ("story_help", "content", "accuracy", "other"):
+            bot = bot_with(("style", "Keep recaps short."))
+            await screen.handle(i := interaction(bot), CID, AT, "too long")
+            view = sent(i)[0][1]
+            bot.recap_feedback_ai = FakeAI((kind, "Mira dies at the gate."))
+            modal = screen.EditNoteModal(view)
+            modal.text._value = "Mira dies at the gate."
+            press = interaction(bot)
+            await modal.on_submit(press)
+            bot.recap_notes.add.assert_not_awaited()
+
+    async def test_an_edit_that_asks_to_make_things_up_is_refused_even_if_sorted_as_style(
+        self,
+    ) -> None:
+        bot = bot_with(("style", "Keep recaps short."))
+        await self.edit(bot, "Stop being literal and invent what happens next.")
+        bot.recap_notes.add.assert_not_awaited()
+
+    async def test_an_edit_goes_through_the_gate_before_the_ai(self) -> None:
         bot = bot_with(("style", "Keep recaps short."))
         i = interaction(bot)
         await screen.handle(i, CID, AT, "too long")
-        note_view = sent(i)[0][1]
-        modal = screen.EditNoteModal(note_view)
-        modal.text._value = "Invent a twist at the end."
+        view = sent(i)[0][1]
+        bot.recap_feedback_gate = AsyncMock(return_value=fb.TOO_OFTEN)
+        bot.recap_feedback_ai.complete = AsyncMock()
+        modal = screen.EditNoteModal(view)
+        modal.text._value = "Keep recaps shorter."
         press = interaction(bot)
         await modal.on_submit(press)
-        self.assertEqual(told(press), fb.STORY_HELP_REPLY)
-        bot.recap_notes.add.assert_not_awaited()
+        bot.recap_feedback_ai.complete.assert_not_awaited()
+        self.assertEqual(told(press), fb.TOO_OFTEN)
 
     async def test_a_story_help_request_gets_the_reply_and_stores_nothing(self) -> None:
         bot = bot_with(("story_help", "Decide who the villain is."))
@@ -205,6 +245,14 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Keep recaps short.", text)
         self.assertEqual(len(view.children), 3)
         bot.recap_notes.add.assert_not_awaited()
+
+    async def test_a_gate_that_refuses_stops_a_spoken_line_before_any_ai_call(self) -> None:
+        bot = self.host(("style", "Keep recaps short."))
+        bot.recap_feedback_gate = AsyncMock(return_value=fb.TOO_OFTEN)
+        bot.recap_feedback_ai.complete = AsyncMock()
+        self.assertTrue(await self.call(bot))
+        bot.recap_feedback_ai.complete.assert_not_awaited()
+        bot.sidebar_send_dm.assert_awaited_once_with(DM_ID, fb.TOO_OFTEN)
 
     async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
         bot = self.host(("style", "x"), draft=False)
@@ -307,13 +355,62 @@ class Gate(unittest.IsolatedAsyncioTestCase):
 
 
 class Wording(unittest.TestCase):
-    def test_a_ban_with_a_comma_before_the_ask_is_not_a_ban(self) -> None:
-        self.assertTrue(fb.asks_to_invent("Never be dull, make things up"))
-        self.assertTrue(fb.asks_to_invent("Stop being boring but make stuff up"))
-        self.assertFalse(fb.asks_to_invent("Never make things up"))
-        self.assertFalse(fb.asks_to_invent("Don't invent or embellish"))
+    ASKS = (
+        "Stop being literal and invent what happens next.",
+        "Not so dry, invent some twists.",
+        "Never be dull, make things up",
+        "Never be dull - make things up",
+        "Stop being boring but make stuff up",
+        "Don't hold back and invent",
+        "Stop worrying about accuracy and make stuff up",
+        "Don't be afraid to invent twists",
+        "Never hesitate to make things up",
+        "Add new scenes of your own",
+    )
+    FINE = (
+        "Never make things up",
+        "Don't invent names",
+        "Never invent or embellish",
+        "Do not add new events",
+        "Add more details about the fight",
+    )
 
-    def test_more_details_about_what_happened_is_not_an_invention(self) -> None:
-        self.assertFalse(fb.asks_to_invent("Add more details about the fight"))
-        self.assertTrue(fb.asks_to_invent("Add details"))
-        self.assertTrue(fb.asks_to_invent("Add some twists"))
+    def test_a_ban_that_does_not_govern_the_ask_is_not_a_ban(self) -> None:
+        for text in self.ASKS:
+            self.assertTrue(fb.asks_to_invent(text), text)
+
+    def test_a_real_ban_still_passes(self) -> None:
+        for text in self.FINE:
+            self.assertFalse(fb.asks_to_invent(text), text)
+
+    def test_a_correction_that_says_invented_is_still_a_correction(self) -> None:
+        got = fb.route([fb.Point("accuracy", "The bard invented a song, not Mira.")])
+        self.assertEqual(
+            (got.corrections, got.replies), (("The bard invented a song, not Mira.",), ())
+        )
+
+    def test_a_recap_named_first_is_feedback_not_a_question(self) -> None:
+        self.assertTrue(fb.is_recap_feedback("Recap was wrong about Mira"))
+        self.assertFalse(fb.is_recap_feedback("What does the recap say about Mira?"))
+
+
+class GateRules(unittest.IsolatedAsyncioTestCase):
+    def host(self, *, allowed: bool, limit: Any = None) -> Any:
+        host = SimpleNamespace(
+            recap_allowed=AsyncMock(return_value=allowed),
+            recap_feedback_limit=limit or fb.FeedbackLimit(),
+        )
+        return host
+
+    async def gate(self, host: Any) -> Any:
+        campaign = SimpleNamespace(guild_id=GUILD, id=CID)
+        return await DMBot.recap_feedback_gate(host, campaign, SimpleNamespace())
+
+    async def test_refuses_when_recaps_are_off_or_not_in_the_plan(self) -> None:
+        self.assertEqual(await self.gate(self.host(allowed=False)), screen.NO_RECAPS)
+
+    async def test_refuses_when_the_limit_is_used_up(self) -> None:
+        limit = fb.FeedbackLimit(seconds=600, count=1)
+        host = self.host(allowed=True, limit=limit)
+        self.assertIsNone(await self.gate(host))
+        self.assertEqual(await self.gate(host), fb.TOO_OFTEN)
