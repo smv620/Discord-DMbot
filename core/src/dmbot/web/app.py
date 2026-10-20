@@ -560,6 +560,8 @@ def create_app(
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
         "not_in_plan": (409, "not_in_plan"),
+        "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
+        "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 

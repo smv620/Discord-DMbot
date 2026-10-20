@@ -659,6 +659,27 @@ class Choices(Base):
         self.assertFalse(await self.approve("voice"))  # queued
         self.assertEqual((await self.job()).audio_choice, "both")
 
+    async def test_nothing_is_approved_over_queued_audio_text_only_included(self) -> None:
+        self.assertEqual((await self.job()).audio, "queued")
+        for choice in ("text", "voice", "music", "both"):
+            self.assertFalse(await self.approve(choice), choice)
+        self.assertEqual((await self.job()).audio_choice, "both")
+
+    async def test_work_stopped_by_an_edit_keeps_what_it_spent(self) -> None:
+        worker = self.worker()
+        original = worker._renderer.render  # type: ignore[union-attr]
+
+        async def render_then_edit(*a: Any, **kw: Any) -> Any:
+            made = await original(*a, **kw)
+            await self.store.update(1, self.one.id, 100, summary="《Calm》 The DM rewrote this.")
+            return made
+
+        worker._renderer.render = render_then_edit  # type: ignore[union-attr,method-assign]
+        await worker.run(1, self.one.id, 100)
+        job = await self.job()
+        self.assertEqual(job.audio, "off")
+        self.assertGreater(job.audio_credits, 0)  # the voice and music already paid for count
+
     async def test_a_text_that_changed_since_it_was_checked_is_not_approved(self) -> None:
         job = await self.job()
         stale = text_hash(job.title, "an older text")

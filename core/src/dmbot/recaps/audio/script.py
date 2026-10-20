@@ -165,7 +165,7 @@ def _walk(
             before = mood
             tag, mood = _mood_tag(name, mood, emotion_tags)
         else:
-            kind, name = PERFORMANCE_KIND, raw[2:-2].strip().lower()
+            kind, name = PERFORMANCE_KIND, " ".join(raw[2:-2].lower().split())  # (spaces folded)
             tag = _PERFORMANCE_TAGS.get(name, "")
         cues.append([len(spoken), len(tagged), kind, name, tag])
         if tag:

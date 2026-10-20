@@ -154,8 +154,10 @@ class AudioWorker:
         try:
             async with asyncio.timeout(DEADLINE_S):
                 await self._make(gid, cid, job)
-        except Off:
-            await self._store.set_audio(gid, cid, job.session_at, audio="off")
+        except Off:  # (what was spent before it stopped is kept: it counts toward the caps)
+            await self._store.set_audio(
+                gid, cid, job.session_at, audio="off", credits=self._spent(job)
+            )
         except Stop as stop:
             await self._finish(gid, cid, job, stop.why, permanent=stop.permanent)
         except ProviderError as exc:

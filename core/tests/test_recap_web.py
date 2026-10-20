@@ -393,6 +393,7 @@ class TheAudio(Base):
             path.write_bytes(f"audio-{kind}".encode())
 
     async def test_the_recap_says_where_its_audio_is(self) -> None:
+        await self.approved_with_audio()
         off = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
         self.assertEqual(off, {"state": "off", "error": "", "current": False, "canAskAgain": False})
         await self.make(self.one.id)
@@ -408,6 +409,7 @@ class TheAudio(Base):
         self.assertEqual((stale["state"], stale["current"]), ("ready", False))
 
     async def test_a_failed_audio_carries_its_sentence_and_may_be_asked_for_again(self) -> None:
+        await self.approved_with_audio()
         await self.store.set_audio(
             THURSDAY.id, self.one.id, 100, audio="failed", error="The voice company is busy."
         )
@@ -525,7 +527,16 @@ class TheAudio(Base):
         self.assertEqual((await client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}})
         await client.aclose()
 
+    async def approved_with_audio(self) -> None:
+        """The DM approved this very text and chose both tracks (#2083): "again" needs that."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET audio_choice = 'both', approved_hash = encode(sha256("
+                "convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+            )
+
     async def test_asking_again_queues_it_and_waits_ten_minutes(self) -> None:
+        await self.approved_with_audio()
         await self.store.set_audio(
             THURSDAY.id, self.one.id, 100, audio="failed", tries=2, error="x"
         )
@@ -606,6 +617,11 @@ class TheApproval(Base):
             transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
         )
         self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, %s)",
+                (THURSDAY.id, fx.ALICE, NOW),
+            )
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
@@ -752,6 +768,68 @@ class TheApproval(Base):
         self.assertEqual(await self.door(good, choice="loud"), "not_allowed")
         await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
         self.assertEqual(await self.door(good), "not_allowed")
+
+    async def names(self, secret: str, allowed: str = "") -> None:
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.store import MemoryStore
+
+        memory = MemoryStore(self.db)
+        g, c = THURSDAY.id, self.one.id
+        hall = await memory.add_entity(
+            g, c, type="place", name=allowed or "Quiet Hall", source=DM_SOURCE, status="confirmed"
+        )
+        await memory.add_alias(
+            g, c, hall.value.id, secret, kind="title", source=DM_SOURCE, status="confirmed",
+            secret=True,
+        )  # fmt: skip
+
+    async def test_a_text_that_names_a_secret_is_not_approved_and_the_name_is_not_returned(
+        self,
+    ) -> None:
+        await self.names("Mira")  # the canned text says Mira
+        got = await self.approve("text")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "names_secret"))
+        self.assertNotIn("Mira", got.text)
+        self.assertFalse((await self.state(self.one.id)).approved)
+
+    async def test_a_player_who_stopped_being_recorded_stops_the_approval(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM consent WHERE user_id = %s", (fx.ALICE,))
+        await self.store.update(THURSDAY.id, self.one.id, 100, speakers=[fx.ALICE])
+        got = await self.approve("text")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
+
+    async def test_make_the_audio_again_needs_a_current_approval(self) -> None:
+        from dmbot.web.recaps import audio_again
+
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready", tries=0)
+        with self.assertRaises(RecapError):  # never approved
+            await audio_again(self.web, self.session, self.ref)
+        self.assertEqual((await self.approve("text")).status_code, 200)
+        with self.assertRaises(RecapError):  # approved, but text only
+            await audio_again(self.web, self.session, self.ref)
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="off")
+        self.assertEqual((await self.approve("voice")).status_code, 200)
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="failed")
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="《Calm》 It was rewritten.")
+        with self.assertRaises(RecapError):  # the text changed since: the approval is stale
+            await audio_again(self.web, self.session, self.ref)
+
+    async def test_nothing_is_approved_over_audio_that_is_queued_text_only_included(self) -> None:
+        self.assertEqual((await self.approve("both")).status_code, 200)  # queued
+        for choice in ("text", "voice", "music", "both"):
+            got = await self.approve(choice)
+            self.assertEqual(got.status_code, 409, choice)
+        self.assertEqual((await self.state(self.one.id)).audio_choice, "both")
+
+    async def test_the_names_door_has_one_caller_and_answers_only_a_dm(self) -> None:
+        self.assertEqual(callers("dmbot_recap_check_names"), {"schema.py", "web/recaps.py"})
+        async with self.web.user(BOB.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_recap_check_names(%s, %s) AS r", (THURSDAY.id, self.one.id)
+            )
+            self.assertIsNone((await cur.fetchone() or {})["r"])  # Bob is no DM of One
 
     async def test_the_door_has_one_caller(self) -> None:
         self.assertEqual(callers("dmbot_recap_approve"), {"schema.py", "web/recaps.py"})

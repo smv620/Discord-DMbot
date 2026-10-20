@@ -442,9 +442,11 @@ class RecapStore:
         sets = f"approved_by = %s, approved_at = %s, approved_hash = {now_hash}, audio_choice = %s"
         if queue:
             sets += ", audio = 'queued', audio_tries = 0, audio_next_at = 0, audio_error = ''"
+        # Nothing is approved over audio that is queued or being made, text only included: the
+        # spend so far would be lost and the caps dodged.
         where = (
             f" WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
-            f" AND status = 'draft' AND {now_hash} = %s"
+            f" AND status = 'draft' AND audio <> 'queued' AND {now_hash} = %s"
         )
         if queue:
             where += (
