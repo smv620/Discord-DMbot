@@ -199,9 +199,8 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Recap ready: **The Silver Lock**", line)
             self.assertIn("Edit it here: https://site.example.com", line)
             ids = [i.custom_id for i in kwargs["view"].children]
-            self.assertEqual(
-                ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in ("read", "post", "drop")]
-            )
+            acts = ("read", "approve", "post", "drop")
+            self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in acts])
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
         failed = SimpleNamespace(state="failed", session_at=100, title="")
@@ -262,9 +261,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
 
     def test_the_buttons_follow_the_plan(self) -> None:
         three = panel.RecapsPanel(campaign(), panel.PlanFacts(True, True, "part of your plan"))
-        self.assertEqual(len(three.children), 3)
+        self.assertEqual(len(three.children), 4)  # and ✍️ Recap style
         two = panel.RecapsPanel(campaign(), panel.PlanFacts(True, False))
-        self.assertEqual(len(two.children), 2)
+        self.assertEqual(len(two.children), 3)
         self.assertEqual(
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   againLabel,
   allowanceLines,
+  cueWords,
   errors,
   sessionDay,
   statusLine,
@@ -18,19 +19,21 @@ import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
+  type CueProblem,
   type Recap,
   type RecapAction,
   type RecapMonth,
   type RecapAudioLinks,
 } from "./api";
+import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
+import RecapApprove from "./RecapApprove";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
 
 const POLL_MS = 5000;
-
 
 type Load =
   | { kind: "loading" }
@@ -370,9 +373,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [editing, setEditing] = useState(false);
   const [summary, setSummary] = useState("");
   const [bullets, setBullets] = useState("");
+  const [cueProblems, setCueProblems] = useState<CueProblem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   // Where focus goes when the button that was pressed is disabled or gone (#1466).
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const problemsRef = useRef<HTMLDivElement>(null);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
     null,
   );
@@ -458,6 +463,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const startEdit = () => {
     setSummary(recap.summary);
     setBullets(recap.housekeeping.join("\n"));
+    setCueProblems([]);
     setNote(null);
     setEditing(true);
   };
@@ -468,6 +474,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     inFlight.current = true;
     setBusy("save");
     setNote(null);
+    setCueProblems([]);
     try {
       const lines = bullets
         .split("\n")
@@ -477,12 +484,21 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       setEditing(false);
       setNote({ ok: true, message: text.saved });
     } catch (error) {
-      setNote({ ok: false, message: messageFor(error) });
+      // The API decides what is wrong with a cue; the edit stays open and unsaved (#2084).
+      const badCues = error instanceof ApiError && error.kind === "bad-cues";
+      if (badCues) setCueProblems(error.cueProblems);
+      setNote({
+        ok: false,
+        message:
+          badCues && error.cueProblems.length === 0 ? cueWords.noteEmpty : messageFor(error),
+      });
       await refresh(error);
     } finally {
       inFlight.current = false;
       setBusy(null);
-      keepFocus(() => headingRef.current);
+      // After a refused save the problems are what the DM needs next; anything else goes to the
+      // heading as before (#1466).
+      keepFocus(() => problemsRef.current ?? headingRef.current);
     }
   };
 
@@ -567,8 +583,26 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             id="recap-text"
             rows={14}
             value={summary}
+            aria-invalid={cueProblems.length > 0 ? "true" : undefined}
+            aria-describedby={cueProblems.length > 0 ? "recap-cue-problems" : undefined}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
           />
+          {/* The list is shown whenever the API refused with problems, narration live or not: the
+              API decides what is wrong. It and aria-invalid stay until the next save, which
+              clears them. */}
+          {cueProblems.length > 0 && (
+            <CueProblems
+              ref={problemsRef}
+              problems={cueProblems}
+              help={RECAP_AUDIO_LIVE && !!recap.cueWords}
+            />
+          )}
+          {RECAP_AUDIO_LIVE && recap.cueWords && (
+            <CueWordsHelp
+              words={recap.cueWords}
+              open={cueProblems.some((p) => p.kind === "unknown")}
+            />
+          )}
           <label for="recap-housekeeping">{text.housekeepingLabel}</label>
           <textarea
             id="recap-housekeeping"
@@ -632,6 +666,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
+      {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}

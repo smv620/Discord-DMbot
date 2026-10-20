@@ -172,7 +172,9 @@ class Speed(unittest.TestCase):
         secrets = [f"Secret Name{n} Holder" for n in range(30)]
         allowed = [f"Allowed Place{n} Hall" for n in range(300)]
         best = min(self.timed(text, secrets, allowed) for _ in range(3))
-        self.assertLess(best, 0.05)
+        self.assertLess(
+            best, 0.15
+        )  # (a loaded CI runner took 0.1 s; a slow search would take seconds)
         self.assertFalse(sm.names_a_secret(text, secrets, allowed))
         # And with a secret in it, the allowed names are looked at and the answer is still quick.
         said = text + " Secret Name3 Holder spoke"
