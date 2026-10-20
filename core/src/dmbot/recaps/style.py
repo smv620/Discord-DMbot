@@ -78,7 +78,7 @@ class StyleStore:
     async def examples_for(self, guild_id: int, campaign_id: str) -> list[str]:
         """What the writer reads: the DM's own examples, or the defaults when there are none."""
         own = await self.own(guild_id, campaign_id)
-        return [e.text for e in own] if own else defaults()
+        return [example.text for example in own] if own else defaults()
 
     async def add(self, guild_id: int, campaign_id: str, user_id: int, text: str) -> Example:
         """Add an example. Only the campaign's DMs, at most `MAX_EXAMPLES`."""
