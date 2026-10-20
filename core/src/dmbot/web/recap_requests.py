@@ -87,7 +87,12 @@ async def read_instructions(
 
 
 async def send_voice(
-    db: Database, session: Session, ref: str, data: bytes, content_type: str
+    db: Database,
+    session: Session,
+    ref: str,
+    data: bytes,
+    content_type: str,
+    outside: str | None = None,
 ) -> dict[str, Any]:
     """Queue a spoken note for the bot to write down. The clip waits in the request row until the
     bot has the words (then it is deleted in the same statement), and at the longest ten
@@ -96,8 +101,8 @@ async def send_voice(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute(
-            "SELECT dmbot_recap_voice_add(%s, %s, %s, %s, %s, %s) AS r",
-            (gid, cid, at, data, kind, TERMS_VERSION),
+            "SELECT dmbot_recap_voice_add(%s, %s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, data, kind, TERMS_VERSION, outside),
         )
         got = (await cur.fetchone() or {}).get("r")
     if got is None:

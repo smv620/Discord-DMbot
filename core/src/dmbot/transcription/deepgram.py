@@ -274,23 +274,22 @@ class DeepgramTranscriber:
         params = request_params(s, terms)
         for attempt in (1, 2):
             await self._wait_if_busy()
+            session = self._get_session()
+            # Always passed: a short line keeps the session's own limit, a long clip gets its own.
+            limit = (
+                session.timeout
+                if timeout_s is None
+                else aiohttp.ClientTimeout(total=timeout_s, connect=CONNECT_TIMEOUT_S)
+            )
             sent_at = _clock()
             pause = 0.0  # before the second try, when Deepgram gave no Retry-After
             try:
-                async with self._get_session().post(
+                async with session.post(
                     s.deepgram_url,
                     params=params,
                     data=body,
                     headers=headers,
-                    **(
-                        {}
-                        if timeout_s is None
-                        else {
-                            "timeout": aiohttp.ClientTimeout(
-                                total=timeout_s, connect=CONNECT_TIMEOUT_S
-                            )
-                        }
-                    ),
+                    timeout=limit,
                 ) as resp:
                     if resp.status == 200:
                         self._400_is_settings = False

@@ -107,6 +107,35 @@ class TheDoors(WithClips):
         assert row is not None
         self.assertEqual(row["n"], 0)  # not even the clip's row
 
+    async def test_consent_for_another_company_does_not_count(self) -> None:
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id, outside_to="cloud")
+        got = await web.send_voice(
+            self.web, self.session, self.ref, CLIP, "audio/webm", outside="cloud"
+        )
+        self.assertRegex(got["requestId"], r"^[0-9a-f]{32}$")  # agreed to the company in use
+        self.assertEqual(
+            await self.code(
+                web.send_voice(
+                    self.web, self.session, self.ref, CLIP, "audio/webm", outside="deepgram"
+                )
+            ),
+            "no_consent",
+        )
+
+    async def test_a_server_the_bot_has_left_keeps_no_clips(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, via, left_at)"
+                " VALUES (%s, 1, 'link', 2)",
+                (THURSDAY.id,),
+            )
+        self.assertEqual(await self.code(self.send_clip()), "not_allowed")
+
+    async def test_clips_do_not_count_against_the_typed_notes_either(self) -> None:
+        for _ in range(3):
+            await self.send_clip()
+        await self.send()  # three clips waiting do not stop a typed note
+
     async def test_failed_clips_do_not_count_against_the_limit(self) -> None:
         for _ in range(3):
             rid = await self.send_clip()
@@ -466,6 +495,7 @@ class TheLoop(WithClips):
             recaps=object(),
             settings=SimpleNamespace(recaps_on=True),
             guilds=[SimpleNamespace(id=THURSDAY.id)],
+            _clip_sweep_rounds=0,
             _voice_gate=MagicMock(),
             recap_voice_text=MagicMock(),
             _meter_voice=MagicMock(),
@@ -581,3 +611,69 @@ class TheDeepgramTimeout(unittest.TestCase):
 
         self.assertLess(deepgram.LONG_REQUEST_MAX_S, VOICE_TRANSCRIBE_S)
         self.assertLess(VOICE_TRANSCRIBE_S, VOICE_TIMEOUT_S)
+
+
+class TheSweepRounds(WithClips):
+    def bot(self, *, recaps_on: bool) -> Any:
+        store = SimpleNamespace(claim_next=AsyncMock(return_value=None), sweep_clips=AsyncMock())
+        return SimpleNamespace(
+            recap_requests=store,
+            recap_feedback_ai=None,
+            recaps=object(),
+            settings=SimpleNamespace(recaps_on=recaps_on),
+            guilds=[SimpleNamespace(id=THURSDAY.id)],
+            _clip_sweep_rounds=0,
+        )
+
+    async def test_clips_are_swept_about_once_a_minute_even_with_recaps_off(self) -> None:
+        from dmbot.bot import CLIP_SWEEP_EVERY
+
+        bot = self.bot(recaps_on=False)
+        for _ in range(CLIP_SWEEP_EVERY):
+            await DMBot.run_recap_requests(bot)
+        self.assertEqual(bot.recap_requests.sweep_clips.await_count, 1)  # the first round only
+        await DMBot.run_recap_requests(bot)
+        self.assertEqual(bot.recap_requests.sweep_clips.await_count, 2)  # and one a minute on
+
+
+class TheDeepgramSession(unittest.IsolatedAsyncioTestCase):
+    async def test_every_request_carries_a_timeout_a_long_clip_a_longer_one(self) -> None:
+        import aiohttp
+
+        from dmbot.audio.segmenter import Utterance
+        from dmbot.transcription.config import TranscriptionSettings
+        from dmbot.transcription.deepgram import DeepgramTranscriber
+
+        seen: list[aiohttp.ClientTimeout] = []
+
+        class Response:
+            status = 200
+
+            async def json(self, content_type: str | None = None) -> Any:
+                return {"results": {"channels": [{"alternatives": [{"transcript": "hi"}]}]}}
+
+            async def __aenter__(self) -> Response:
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+        class Session:
+            closed = False
+            timeout = aiohttp.ClientTimeout(total=4, connect=2)
+
+            def post(self, url: str, **kwargs: Any) -> Response:
+                seen.append(kwargs["timeout"])
+                return Response()
+
+        engine = DeepgramTranscriber(
+            TranscriptionSettings(engine="deepgram", deepgram_api_key="dg-test"),
+            cast(Any, Session()),
+        )
+        short = Utterance(1, 2, 0, 0, bytes(3200))
+        long = Utterance(1, 2, 0, 0, bytes(32_000 * 90))  # 90 seconds of 16 kHz audio
+        await engine.transcribe(short, [])
+        await engine.transcribe(long, [])
+        self.assertEqual(seen[0].total, 4)  # a live line keeps the session's limit
+        assert seen[1].total is not None
+        self.assertGreater(seen[1].total, 30)  # a long clip is given time

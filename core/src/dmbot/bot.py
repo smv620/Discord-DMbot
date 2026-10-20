@@ -471,6 +471,9 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+CLIP_SWEEP_EVERY = (
+    30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
+)
 RECAP_ROUND_S = 60
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -909,6 +912,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
+        self._clip_sweep_rounds = 0
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
@@ -8493,13 +8497,19 @@ class DMBot(commands.AutoShardedBot):
     async def run_recap_requests(self) -> None:
         store = self.recap_requests
         ai = self.recap_feedback_ai
+        if store is not None:
+            # No clip outlives about ten minutes, whatever happened to its request and whether or
+            # not recaps are on: this runs before that is looked at, about once a minute.
+            self._clip_sweep_rounds += 1
+            if self._clip_sweep_rounds % CLIP_SWEEP_EVERY == 1:
+                for guild in list(self.guilds):
+                    try:
+                        await store.sweep_clips(guild.id)
+                    except Exception as exc:
+                        log.warning("The clip sweep failed: %s", type(exc).__name__)
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
         for guild in list(self.guilds):
-            try:  # no clip outlives ten minutes, whatever happened to its request
-                await store.sweep_clips(guild.id)
-            except Exception as exc:
-                log.warning("The clip sweep failed: %s", type(exc).__name__)
             for _ in range(RECAP_REQUESTS_PER_ROUND):
                 request = await store.claim_next(guild.id)
                 if request is None:

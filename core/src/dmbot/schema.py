@@ -2980,7 +2980,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
     ),
     # A spoken note: the clip is held until the bot has written it down (#2113).
-    ("dmbot_recap_voice_add", "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT)"),
+    (
+        "dmbot_recap_voice_add",
+        "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)",
+    ),
     ("dmbot_recap_voice_read", "dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)"),
     (
         "dmbot_recap_check_names",
@@ -7227,7 +7230,7 @@ RECAP_VOICE = r"""
         CHECK (clip_type IN ('', 'audio/webm', 'audio/ogg'));
 
     CREATE FUNCTION dmbot_recap_voice_add(
-        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT, terms INT
+        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT, terms INT, outside TEXT
     ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -7241,11 +7244,18 @@ RECAP_VOICE = r"""
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        -- Audio DMbot holds, even for minutes, needs the speaker's agreement to be recorded under
-        -- the current wording (`terms` is the code's TERMS_VERSION). The bot checks again.
+        -- A server the bot has left keeps no clips: nobody would write them down or sweep them.
+        IF EXISTS (SELECT 1 FROM installs i WHERE i.guild_id = g AND i.left_at IS NOT NULL) THEN
+            RETURN jsonb_build_object('status', 'not_allowed');
+        END IF;
+        -- Audio DMbot holds, even for minutes, needs the speaker's agreement to be recorded
+        -- under the current wording, naming the outside company in use if there is one
+        -- (`terms` and `outside` are the code's TERMS_VERSION and TRANSCRIBER). The bot checks
+        -- again.
         IF NOT EXISTS (SELECT 1 FROM consent k
                        WHERE k.guild_id = g AND k.user_id = dmbot_current_user()
-                         AND k.terms_version = terms) THEN
+                         AND k.terms_version = terms
+                         AND (outside IS NULL OR k.outside_to = outside)) THEN
             RETURN jsonb_build_object('status', 'no_consent');
         END IF;
         IF ctype IS NULL OR ctype NOT IN ('audio/webm', 'audio/ogg') THEN
@@ -7308,10 +7318,52 @@ RECAP_VOICE = r"""
         RETURN jsonb_build_object('state', r.state, 'error', r.error, 'answer', r.answer);
     END
     $fn$;
+    -- The typed notes' limit counts typed notes only: clips have their own (above).
+    CREATE OR REPLACE FUNCTION dmbot_recap_request_add(g BIGINT, c TEXT, at_ BIGINT, txt TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF txt IS NULL OR char_length(btrim(txt)) = 0 OR char_length(txt) > 1000 THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM recap_jobs j
+                       WHERE j.guild_id = g AND j.campaign_id = c AND j.session_at = at_
+                         AND j.state = 'ready' AND j.status = 'draft') THEN
+            RETURN jsonb_build_object('status', 'not_editable');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
+        -- The one-hour promise holds for a server the bot has left too: old words go here.
+        DELETE FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.kind = 'instructions'
+              AND r.state IN ('waiting', 'working')
+              AND r.created_at > now_s - 600) >= 3 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind, body,
+                                    created_at)
+            VALUES (g, c, rid, at_, dmbot_current_user(), 'instructions', btrim(txt), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT)'
+            'ALTER FUNCTION dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());  -- (reset by REPLACE)
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)'
@@ -7319,7 +7371,7 @@ RECAP_VOICE = r"""
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_recap_voice_add(
-        BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT) FROM PUBLIC;
+        BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
     """
 
