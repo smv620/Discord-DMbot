@@ -73,5 +73,36 @@ class TheFormatters(unittest.TestCase):
         self.assertTrue(TokenMaskFilter().filter(bad))
 
 
+class TheConfiguredLogging(unittest.TestCase):
+    def test_json_and_text_logging_as_the_servers_configure_them_write_no_token(self) -> None:
+        import contextlib
+        import sys
+
+        from dmbot.logs import configure_logging
+        from dmbot.sharding import ShardSettings
+
+        root = logging.getLogger()
+        saved = (list(root.handlers), root.level)
+        try:
+            for fmt in ("json", "text"):
+                out = io.StringIO()
+                with contextlib.redirect_stderr(out):
+                    configure_logging(fmt, "INFO", ShardSettings())
+                    log = logging.getLogger("test.configured")
+                    try:
+                        raise ValueError(f"bad /recaps/{TOKEN}")
+                    except ValueError:
+                        log.exception("Request failed: GET /recaps/%s", TOKEN)
+                    sys.stderr.flush()
+                self.assertNotIn(TOKEN, out.getvalue(), fmt)
+                self.assertIn("<token>", out.getvalue(), fmt)
+        finally:
+            for h in list(root.handlers):
+                root.removeHandler(h)
+            for h in saved[0]:
+                root.addHandler(h)
+            root.setLevel(saved[1])
+
+
 if __name__ == "__main__":
     unittest.main()

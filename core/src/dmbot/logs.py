@@ -69,7 +69,8 @@ def mask_tokens(text: str) -> str:
 
 
 class TokenMaskFilter(logging.Filter):
-    """Hides shared-recap tokens in the message and in a traceback's text, on every handler."""
+    """Hides shared-recap tokens in the message and in a traceback's text. Any new handler must
+    carry this filter (`configure_logging` adds it); the two formatters mask again as a backstop."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
