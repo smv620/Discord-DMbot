@@ -76,13 +76,15 @@ class CallEvent:
 
 
 def line(event: CallEvent) -> str:
-    """One line, like `prose try 2: careful, 1204/2310 (limit 2559), stop: max_tokens, 173 words,
-    checks: length`."""
+    """One line, like `prose try 2: careful, 1204/2310 (limit 2559), stop: max_tokens, cut off at
+    2559, 173 words, checks: length`."""
     parts = [
         f"{event.stage} try {event.attempt}: {event.tier}",
         f"{event.tokens_in}/{event.tokens_out} (limit {event.limit})",
         f"stop: {event.stop or 'unknown'}",
     ]
+    if event.stop == "max_tokens":  # the next run shows whether the room is now enough (#2086)
+        parts.append(f"cut off at {event.limit}")
     if event.words is not None:
         parts.append(f"{event.words} words")
     if event.checks is not None:
