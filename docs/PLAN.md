@@ -4017,8 +4017,16 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
        box, "Here's what I heard", for the DM to read, correct and send. It's the typed path from
        then on.
      - **Privacy:** the clip is the DM's own voice, given by pressing. It is transcribed and thrown
-       away, never stored, never in any transcript, and only the campaign's DMs can use it. A clip
-       is at most 2 minutes.
+       away, never kept, never in any transcript, and only the campaign's DMs can use it.
+       - **Consent first** (Supervisor, 2026-10-20, #2159): the DM must have agreed to recording
+         (the current terms, and the speech company in use) before the website accepts a clip. A
+         clip waits in the database only until the bot turns it into words, and at most about 10
+         minutes, swept across every server.
+       - **Length:** the page records up to **a minute** (Supervisor, 2026-10-20, #2160), because
+         the note box holds 1,000 letters. The server accepts up to 2 minutes as a ceiling.
+       - **Listening time** counts the clip's real length; a clip never costs a minute it didn't
+         use.
+       - The privacy page names the speech company.
      - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
        for the recap page only.
      - **Names help, as in a live session** (owner, 2026-10-20): the clip is transcribed with the
