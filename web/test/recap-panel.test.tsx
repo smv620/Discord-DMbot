@@ -403,6 +403,24 @@ describe("the audio part of the recap page", () => {
     expect(await screen.findByText(panelWords.tooSoon)).toBeTruthy();
   });
 
+  it("says to approve the new text first when the API asks for that (#2090)", async () => {
+    const api = withAudio(ready);
+    api.askRecapAudioAgain = async () => {
+      throw new ApiError("needs-approval");
+    };
+    render(<Recaps api={api} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.again }));
+    expect(await screen.findByText("Approve the new text first.")).toBeTruthy();
+  });
+
+  it("maps the API's needs_approval code to that kind", async () => {
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ error: "needs_approval" }), { status: 409 })) as unknown as typeof fetch;
+    await expect(
+      httpApi("https://api.example.test", fetcher).askRecapAudioAgain!("a.b.1"),
+    ).rejects.toMatchObject({ kind: "needs-approval" });
+  });
+
   it("sends one request when the button is tapped twice", async () => {
     const api = withAudio(ready);
     render(<Recaps api={api} path={path} />);
