@@ -36,7 +36,7 @@ export const voiceWords = {
     no_words: "DMbot didn't hear any words. Speak closer to the microphone and try again.",
     transcribe_failed: "DMbot couldn't turn that into words. Try again, or type your note instead.",
     "no-consent":
-      "DMbot only listens to people who have agreed to be recorded. Agree in Discord when DMbot asks you (it sends a button in a private message), then try again. Or type your note instead.",
+      "Agree to recording in Discord first, then try again. DMbot only listens to people who have agreed to be recorded; it sends you a button in a private message to agree. Or type your note instead.",
     "not-allowed":
       "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
     "not-editable":

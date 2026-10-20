@@ -186,7 +186,11 @@ export default function RecapVoice({
     const chunks: Blob[] = [];
     let rec: MediaRecorder;
     try {
-      rec = new MediaRecorder(got, { mimeType: type });
+      rec = new MediaRecorder(got, {
+        mimeType: type,
+        // About 32 kbit/s keeps two minutes under the API's 2 MB limit.
+        audioBitsPerSecond: 32000,
+      });
     } catch {
       release();
       setPhase("idle");

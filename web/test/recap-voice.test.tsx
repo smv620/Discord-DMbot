@@ -177,6 +177,27 @@ describe("speaking a note", () => {
     expect(screen.queryByText(/no_consent|no_words/)).toBeNull();
   }, 10000);
 
+  it("shows a no-consent refusal at send time (403) in words, and asks for 32 kbit/s", async () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal("MediaRecorder", class extends FakeRecorder {
+      constructor(_s: unknown, options: unknown) {
+        super();
+        seen.push(options);
+      }
+    });
+    const api = mockApi("table");
+    api.sendVoice = async () => {
+      throw new ApiError("no-consent");
+    };
+    await open(api);
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    expect((await screen.findByRole("alert")).textContent).toBe(w.problem["no-consent"]);
+    expect(w.problem["no-consent"]).toContain("Agree to recording in Discord first");
+    expect(seen).toEqual([{ mimeType: "audio/webm", audioBitsPerSecond: 32000 }]);
+  });
+
   it("shows a refusal from the API in words", async () => {
     const api = mockApi("table");
     api.sendVoice = async () => {
