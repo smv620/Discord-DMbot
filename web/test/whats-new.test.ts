@@ -61,6 +61,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "See what your plan is doing", // until the web API change deploys and the owner checks it in test mode (#2165)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
       "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)

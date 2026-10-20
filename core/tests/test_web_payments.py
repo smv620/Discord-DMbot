@@ -288,6 +288,166 @@ class Payments(DatabaseTest):
         got = await self.plan()
         self.assertEqual((got.status, got.period_start), ("active", self.now + 30 * DAY))
 
+    # The plan line's state, Renew and Change plan (#2165)
+
+    async def me_plan(self) -> dict[str, Any]:
+        plan = (await self.client.get("/me")).json()["plan"]
+        assert isinstance(plan, dict)
+        return plan
+
+    async def test_an_active_plan_renews_and_a_cancelled_one_ends_on_its_date(self) -> None:
+        await self.start_table()
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "active")
+        self.assertNotIn("endsOn", plan)
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "ending")
+        self.assertEqual(plan["endsOn"], plan["renewsOn"])
+
+    async def test_a_plan_change_set_for_the_end_shows_what_starts_and_when(self) -> None:
+        await self.start_table()
+        self.provider.owners["sub_1"] = ALICE.id
+        sent = await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_1",
+            occurred_at=self.now + 1,
+        )
+        self.assertEqual(sent.status_code, 200)
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "changing")
+        self.assertEqual(plan["id"], "table")
+        self.assertEqual(plan["nextPlan"], "guild")
+        self.assertEqual(plan["nextPlanOn"], plan["renewsOn"])
+        # Undone at the company: back to a plain renewal.
+        await self.send(
+            kind="plan_unscheduled",
+            user_id=0,
+            subscription_id="sub_1",
+            occurred_at=self.now + 2,
+        )
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "active")
+        self.assertNotIn("nextPlan", plan)
+
+    async def test_the_new_plan_starting_clears_the_pending_change(self) -> None:
+        await self.start_table()
+        self.provider.owners["sub_1"] = ALICE.id
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_1",
+            occurred_at=self.now + 1,
+        )
+        await self.start_table(
+            kind="subscription_renewed",
+            plan="guild",
+            occurred_at=self.now + 30 * DAY,
+            period_start=self.now + 30 * DAY,
+            period_end=self.now + 60 * DAY,
+        )
+        got = await self.plan()
+        self.assertEqual((got.plan, got.next_plan, got.next_plan_on), ("guild", None, None))
+
+    async def test_a_schedule_for_someone_else_or_an_add_on_changes_nothing(self) -> None:
+        await self.start_table()
+        # The provider doesn't know whose subscription it is: a quiet 200, nothing stored.
+        sent = await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_unknown",
+            occurred_at=self.now + 1,
+        )
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual((await self.plan()).next_plan, None)
+        # A schedule of an older subscription of the same person is not the current plan's.
+        self.provider.owners["sub_old"] = ALICE.id
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_old",
+            occurred_at=self.now + 2,
+        )
+        self.assertEqual((await self.plan()).next_plan, None)
+
+    async def test_an_ended_plan_is_expired_with_its_end_date(self) -> None:
+        await self.start_table()
+        self.provider.owners["sub_1"] = ALICE.id
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_1",
+            occurred_at=self.now + 1,
+        )
+        await self.send(
+            kind="subscription_ended", subscription_id="sub_1", occurred_at=self.now + 2
+        )
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "expired")
+        self.assertIsNotNone(plan["endedOn"])
+        self.assertNotIn("nextPlan", plan)
+        self.assertEqual((await self.plan()).next_plan, None)
+
+    async def test_renew_undoes_a_cancellation_at_the_company_and_here(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        renewed = await self.post("/billing/renew")
+        self.assertEqual(renewed.json(), {"ok": True})
+        self.assertEqual(self.provider.resumed, ["sub_1"])
+        plan = await self.me_plan()
+        self.assertEqual(plan["state"], "active")
+        self.assertNotIn("endsOn", plan)
+
+    async def test_renew_is_only_for_a_cancelled_plan_that_still_works(self) -> None:
+        await self.start_table()
+        # Not cancelled: nothing to undo, and the company is not asked.
+        none = await self.post("/billing/renew")
+        self.assertEqual((none.status_code, none.json()), (409, {"error": "not_ending"}))
+        self.assertEqual(self.provider.resumed, [])
+        # Cancelled, but the paid period has run out: it cannot be renewed any more.
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + DAY,
+            occurred_at=self.now + 1,
+        )
+        self.now += 2 * DAY
+        late = await self.post("/billing/renew")
+        self.assertEqual(late.status_code, 409)
+        self.assertEqual(self.provider.resumed, [])
+
+    async def test_renew_needs_a_plan_and_a_signed_in_person(self) -> None:
+        # Try It has no subscription at the company.
+        self.assertEqual((await self.post("/plan/try-it")).status_code, 204)
+        self.assertEqual((await self.post("/billing/renew")).status_code, 409)
+
+    async def test_change_plan_opens_on_the_plan_list(self) -> None:
+        await self.start_table()
+        url = (await self.post("/billing/portal")).json()["url"]
+        self.assertIn("fake_billing=1", url)
+        self.assertIn("flow=plans", url)
+
     async def test_try_it_after_a_stopped_plan_forgets_the_old_subscription(self) -> None:
         await self.start_table()
         await self.send(

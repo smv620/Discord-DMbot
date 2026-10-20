@@ -97,6 +97,7 @@ export const text = {
   errors: {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
+    "not-ending": "Your plan isn't set to end any more, or it has already ended. The page shows what's true now.",
     "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
@@ -146,6 +147,22 @@ export const text = {
   addHours: `Add ${extraHours} hours (${extraPrice})`,
   addHoursNote: `You pay once, on our payment company's page. These ${extraHours} hours are for this month only and don't roll over.`,
   changePlan: "Change plan",
+  // The plan line says what the plan is doing, not only its name (#2165). Dates are the site's usual words.
+  planRenews: (plan: string, iso: string): string => `${plan} (renews on ${shortDate(iso)})`,
+  planEndsLine: (plan: string, iso: string): string => `${plan} (ends on ${shortDate(iso)})`,
+  planChanging: (plan: string, next: string, iso: string): string =>
+    `${plan} (new plan: ${next} starts on ${shortDate(iso)})`,
+  planExpired: (plan: string, iso: string): string => `Your ${plan} plan ended on ${shortDate(iso)}.`,
+  planExpiredNoDate: (plan: string): string => `Your ${plan} plan has ended.`,
+  // Renew undoes a cancellation that hasn't taken effect, after one plain question.
+  renew: "Renew",
+  renewAsk: (plan: string, iso: string): string =>
+    `Keep your ${plan} plan? It will renew on ${shortDate(iso)} as before. You won't be charged before then.`,
+  renewAskNoDate: (plan: string): string =>
+    `Keep your ${plan} plan? It will renew as before. You won't be charged before the renewal date.`,
+  renewYes: "Yes, renew",
+  renewNo: "Not now",
+  renewed: (plan: string): string => `Done. Your ${plan} plan will renew as before.`,
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",
   grace: (date: string | null): string =>

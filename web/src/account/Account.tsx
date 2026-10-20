@@ -21,6 +21,7 @@ import {
   type Campaign,
   type Character,
   type Me,
+  type MyPlan,
   type Offer,
   type Person,
   type RecordingEntry,
@@ -526,6 +527,27 @@ function PlanList({ choose }: { choose: (id: PlanId) => JSX.Element }) {
   );
 }
 
+/** What a paid plan is doing. An API older than #2165 gives no state: a cancel date means ending. */
+function planState(plan: MyPlan): NonNullable<MyPlan["state"]> {
+  if (plan.state) return plan.state;
+  if (plan.status === "lapsed") return "expired";
+  return plan.endsOn ? "ending" : "active";
+}
+
+/** The plan line (#2165): the name, and what the plan is doing, in the site's date words. Try It
+ * and a payment still being fixed keep the plain name. */
+function planLine(plan: MyPlan): string {
+  const name = planName(plan.id);
+  if (plan.id === "try-it" || plan.status === "grace") return name;
+  const state = planState(plan);
+  if (state === "expired")
+    return plan.endedOn ? text.planExpired(name, plan.endedOn) : text.planExpiredNoDate(name);
+  if (state === "ending" && plan.endsOn) return text.planEndsLine(name, plan.endsOn);
+  if (state === "changing" && plan.nextPlan && plan.nextPlanOn)
+    return text.planChanging(name, planName(plan.nextPlan), plan.nextPlanOn);
+  return plan.renewsOn ? text.planRenews(name, plan.renewsOn) : name;
+}
+
 function PlanSection({ me }: { me: Me }) {
   const { api, go, refresh } = useShared();
   const { busy, notice, run } = useAction();
@@ -552,6 +574,27 @@ function PlanSection({ me }: { me: Me }) {
         if (error.kind === "already-included" || error.kind === "already-subscribed") {
           void refresh();
           return audioWords.errors[error.kind];
+        }
+        return null;
+      },
+    );
+  // Renew (#2165): undo a cancellation, after one plain question.
+  const [renewAsk, setRenewAsk] = useState(false);
+  const [renewed, setRenewed] = useState(false);
+  const renew = (): void =>
+    void run(
+      async () => {
+        if (!api.renewPlan) throw new ApiError("server");
+        await api.renewPlan();
+        setRenewAsk(false);
+        setRenewed(true);
+        await refresh();
+      },
+      (error) => {
+        // Already renewed elsewhere, or the paid time ran out: show what's true now.
+        if (error.kind === "not-ending") {
+          setRenewAsk(false);
+          void refresh();
         }
         return null;
       },
@@ -668,7 +711,10 @@ function PlanSection({ me }: { me: Me }) {
         </>
       ) : (
         <>
-          <p class="plan-name">{planName(plan.id)}</p>
+          <p class="plan-name">{planLine(plan)}</p>
+          {renewed && (
+            <p role="status">{text.renewed(planName(plan.id))}</p>
+          )}
           {plan.status === "grace" && (
             <div class="warn-box" role="alert">
               <p>{text.grace(plan.graceEndsOn)}</p>
@@ -709,6 +755,29 @@ function PlanSection({ me }: { me: Me }) {
                   <ActionButton busy={busy} kind="secondary" onClick={portal}>
                     {text.changePlan}
                   </ActionButton>
+                  {/* A cancelled plan that still works can be renewed (#2165): one question, then
+                      the cancellation is undone and nothing is charged before the renewal date. */}
+                  {plan.state === "ending" && api.renewPlan && (
+                    renewAsk ? (
+                      <div role="group" aria-label={text.renew}>
+                        <p>
+                          {plan.endsOn
+                            ? text.renewAsk(planName(plan.id), plan.endsOn)
+                            : text.renewAskNoDate(planName(plan.id))}
+                        </p>
+                        <ActionButton busy={busy} onClick={renew}>
+                          {text.renewYes}
+                        </ActionButton>
+                        <ActionButton busy={busy} kind="secondary" onClick={() => setRenewAsk(false)}>
+                          {text.renewNo}
+                        </ActionButton>
+                      </div>
+                    ) : (
+                      <ActionButton busy={busy} kind="secondary" onClick={() => setRenewAsk(true)}>
+                        {text.renew}
+                      </ActionButton>
+                    )
+                  )}
                   {RECAP_AUDIO_LIVE && me.recapAudio && (
                     <div class="addon" aria-labelledby="recap-audio-heading">
                       <h3 id="recap-audio-heading">{audioWords.heading}</h3>

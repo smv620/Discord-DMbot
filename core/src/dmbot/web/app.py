@@ -12,6 +12,7 @@ Security rules (CLAUDE.md, #434, #435):
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import hmac
 import ipaddress
@@ -1342,11 +1343,38 @@ def create_app(
         if plan is None or customer is None:
             raise HTTPException(status_code=409, detail="no_paid_plan")
         try:
-            url = await provider.billing_url(customer_id=customer, return_url=account_page)
+            # Change plan opens straight on choosing a plan (#2165), when there is a subscription
+            # to change; the ordinary page opens if the company refuses that.
+            url = await provider.billing_url(
+                customer_id=customer,
+                return_url=account_page,
+                subscription_id=await entitlements_writer.plan_subscription(db, session.user_id),
+            )
         except PaymentError as exc:
             log.warning("Billing page failed: %s", exc)
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc
         return {"url": url}
+
+    @app.post("/billing/renew")
+    async def billing_renew(signed: Signed) -> dict[str, bool]:
+        """Renew (#2165): undo a cancellation that has not taken effect yet. The plan runs on to
+        its date and renews as before, with no new charge. Only for a paid plan that was
+        cancelled and still works."""
+        provider = require_payments()
+        session, _token = signed
+        plan = await entitlements.get(db, session.user_id)
+        subscription = await entitlements_writer.plan_subscription(db, session.user_id)
+        if plan is None or plan.ends_at is None or subscription is None:
+            raise HTTPException(status_code=409, detail="not_ending")
+        if plan.ends_at <= int(clock()):
+            raise HTTPException(status_code=409, detail="not_ending")  # it has run out already
+        try:
+            await provider.resume(subscription_id=subscription)
+        except PaymentError as exc:
+            log.warning("Renew failed: %s", exc)
+            raise HTTPException(status_code=502, detail="payments_unavailable") from exc
+        await entitlements_writer.clear_cancel(db, session.user_id, now=int(clock()))
+        return {"ok": True}
 
     async def release_recap_audio(user_id: int) -> None:
         """Cancel this person's add-on subscription at the company and clear it here (#1389):
@@ -1414,6 +1442,21 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad_event") from None
         if event is None:
             return Response(status_code=200)  # an event DMbot doesn't use
+        if event.kind in ("plan_scheduled", "plan_unscheduled") and event.user_id == 0:
+            # A plan schedule doesn't name the person: ask the company whose subscription it is.
+            # One that isn't a plan's (the add-on, or made outside DMbot) is not ours.
+            try:
+                owner = (
+                    None
+                    if event.subscription_id is None
+                    else await payments.subscription_owner(subscription_id=event.subscription_id)
+                )
+            except PaymentError as exc:
+                log.warning("Couldn't find whose plan a schedule is: %s", exc)
+                raise HTTPException(status_code=503, detail="retry_later") from exc
+            if owner is None:
+                return Response(status_code=200)
+            event = dataclasses.replace(event, user_id=owner)
         outcome = await entitlements_writer.apply_event(db, event, now=clock())
         log.info("Payment event %s for user %s: %s", event.event_id, event.user_id, outcome)
         if outcome == "retry":

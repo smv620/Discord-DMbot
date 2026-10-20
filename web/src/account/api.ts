@@ -25,6 +25,14 @@ export interface MyPlan {
   graceEndsOn: string | null;
   /** ISO date a cancelled plan ends (it works until then and does not renew), if it was. */
   endsOn?: string;
+  /** What the plan is doing (#2165): renews, cancelled but still works, another plan starts at the
+   * period's end, or stopped. Missing from an API older than that. */
+  state?: "active" | "ending" | "changing" | "expired";
+  /** ISO date a stopped plan ended (state "expired"). */
+  endedOn?: string;
+  /** The plan that starts on `nextPlanOn` (state "changing"). */
+  nextPlan?: PlanId;
+  nextPlanOn?: string;
 }
 
 export interface Campaign {
@@ -510,6 +518,7 @@ export type ApiErrorKind =
   | "ticket-too-long" // the message is over 4,000 letters (#1340)
   | "subject-too-long" // the subject is over 120 letters (#1340)
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
+  | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
@@ -544,6 +553,8 @@ export interface AccountApi {
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
   billingPortalUrl(): Promise<string>;
+  /** Renew (#2165): undo a cancellation that has not taken effect. The plan renews on its date as before. */
+  renewPlan?(): Promise<void>;
   /** The payment company's page to add narrated recaps (#1390). Missing from an API older than #1389. */
   recapAudioUrl?(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
@@ -704,6 +715,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  not_ending: "not-ending",
   not_in_plan: "not-in-plan",
   bad_choice: "bad-choice",
   too_big: "too-big",
@@ -832,6 +844,9 @@ export function httpApi(
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
     billingPortalUrl: () => url("/billing/portal"),
+    renewPlan: async () => {
+      await call("POST", "/billing/renew");
+    },
     extraHoursUrl: () => url("/billing/extra-hours"),
     recapAudioUrl: () => url("/billing/recap-audio"),
     downloadExport: async () =>

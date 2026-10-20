@@ -7138,6 +7138,15 @@ RECAP_SHARE = (
     """
 )
 
+PLAN_PENDING = """
+    -- A plan change the payment company has scheduled for the end of the paid period (a downgrade
+    -- or upgrade picked on its billing page, #2165): the plan that starts, and when. Filled from
+    -- the company's schedule events and cleared when the change begins, is undone, or the plan
+    -- ends. Two nullable columns: no rows change, so no row-level-security policy is needed.
+    ALTER TABLE entitlements ADD COLUMN next_plan TEXT;
+    ALTER TABLE entitlements ADD COLUMN next_plan_on BIGINT;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7290,6 +7299,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0134_recap_style_notes", RECAP_STYLE_NOTES),  # style notes and corrections (#2076)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
+    ("0142_plan_pending", PLAN_PENDING),  # a plan change set for the period's end (#2165)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

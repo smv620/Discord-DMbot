@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Account from "../src/account/Account";
-import { type Access, type AccountApi, ApiError, httpApi, type Me } from "../src/account/api";
+import { type Access, type AccountApi, ApiError, httpApi, type Me, type MyPlan } from "../src/account/api";
 import {
   candidates,
   incomingOffers,
@@ -133,7 +133,7 @@ describe("states", () => {
   it("Table: hours as words and a bar, campaigns, servers", async () => {
     show("table");
     expect(await screen.findByText("Hi, Belleros.")).toBeTruthy();
-    expect(screen.getByText("Table")).toBeTruthy();
+    expect(screen.getByText(text.planRenews("Table", "2026-10-14"))).toBeTruthy();
     expect(screen.getByText("About 11 of 18 hours used")).toBeTruthy();
     const bar = screen.getByLabelText(text.hoursBarLabel) as HTMLProgressElement;
     expect([bar.value, bar.max]).toEqual([11.2, 18]);
@@ -1256,6 +1256,107 @@ describe("free access (#806)", () => {
     }));
     render(<Account api={api} go={vi.fn()} search="" />);
     expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
+  });
+});
+
+describe("the plan line says what the plan is doing (#2165)", () => {
+  function withPlan(change: Partial<MyPlan>, status?: MyPlan["status"]) {
+    const api = mockApi("table");
+    const base = scenarioMe("table");
+    const plan = base?.plan;
+    if (!base || !plan) throw new Error("the table scenario has a plan");
+    const me: Me = { ...base, plan: { ...plan, ...change, ...(status ? { status } : {}) } };
+    api.me = vi.fn(async (): Promise<Me | null> => me);
+    return api;
+  }
+  const open = (api: ReturnType<typeof mockApi>) =>
+    render(<Account api={api} go={vi.fn()} search="" />);
+
+  it("active: renews on the date", async () => {
+    open(withPlan({ state: "active", renewsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (renews on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("cancelled but still running: ends on the date, with Renew beside Change plan", async () => {
+    open(withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (ends on Nov 18)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.changePlan })).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.renew })).toBeTruthy();
+  });
+
+  it("another plan starts at the end of the period", async () => {
+    open(withPlan({ state: "changing", nextPlan: "guild", nextPlanOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (new plan: Guild starts on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("expired: says when it ended and links to the plans", async () => {
+    open(withPlan({ state: "expired", endedOn: "2026-10-01" }, "lapsed"));
+    expect(await screen.findByText("Your Table plan ended on Oct 1.")).toBeTruthy();
+    // The plans to pick from are right there, with the link to the page that has them all.
+    const link = screen.getByRole("link", { name: text.seePrices }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/pricing");
+    expect(screen.getByRole("button", { name: text.choose("table") })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("an API without a state still shows a cancel date, but offers no Renew it can't do", async () => {
+    open(withPlan({ endsOn: "2026-11-18" }));
+    expect(await screen.findByText("Table (ends on Nov 18)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: text.renew })).toBeNull();
+  });
+
+  it("a payment still being fixed keeps the plain name", async () => {
+    open(withPlan({ state: "active", graceEndsOn: "2026-10-20" }, "grace"));
+    expect(await screen.findByText("Table")).toBeTruthy();
+  });
+
+  it("Renew asks once, then undoes the cancellation and shows the plan renewing", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => undefined);
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    expect(screen.getByText(text.renewAsk("Table", "2026-11-18"))).toBeTruthy();
+    expect(api.renewPlan).not.toHaveBeenCalled(); // asked, not done
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect(await screen.findByText(text.renewed("Table"))).toBeTruthy();
+    expect(api.renewPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("Not now leaves everything as it was", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => undefined);
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewNo }));
+    expect(screen.getByRole("button", { name: text.renew })).toBeTruthy();
+    expect(api.renewPlan).not.toHaveBeenCalled();
+  });
+
+  it("a plan that is no longer ending is refreshed, in words", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => {
+      throw new ApiError("not-ending");
+    });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-ending"]);
+  });
+
+  it("Renew is one POST on the wire and a not_ending answer is read as such", async () => {
+    const seen: { url: string; method: string }[] = [];
+    const reply = (status: number, body: unknown) =>
+      httpApi("https://api.example.test", (async (url: string, init: RequestInit) => {
+        seen.push({ url, method: String(init.method) });
+        return new Response(JSON.stringify(body), { status });
+      }) as unknown as typeof fetch);
+    await reply(200, { ok: true }).renewPlan!();
+    expect(seen).toEqual([{ url: "https://api.example.test/billing/renew", method: "POST" }]);
+    await expect(reply(409, { error: "not_ending" }).renewPlan!()).rejects.toMatchObject({
+      kind: "not-ending",
+    });
   });
 });
 

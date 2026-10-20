@@ -231,6 +231,13 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "See what your plan is doing",
+    what: "On My Account, the plan line now says what your plan is doing: when it renews, when it ends, or which plan starts next. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
+    reason:
+      "Waits for the website's API change (#2165) to deploy and for the owner to check it in Stripe's test mode. When it is live, move this up.",
+  },
+  {
+    date: "2026-10-20",
     title: "Bring in older sessions",
     what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
