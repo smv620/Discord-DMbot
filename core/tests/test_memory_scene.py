@@ -217,6 +217,19 @@ class Hints(unittest.TestCase):
         self.assertNotIn("Garik", hints)
         self.assertIn("Garrick", hints)
 
+    def test_the_names_download_leaves_old_spellings_out(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.ui import name_lists
+
+        more = entity("9" * 32, "Garrick")
+        old = replace(alias(more.id, "Garik"), kind="old")
+        names = lookup(more=(more,), extra=(old,))
+        campaign = SimpleNamespace(name="Test", id="c" * 32)
+        files, _ = name_lists.download_files(names, campaign, secrets=False)  # type: ignore[arg-type]
+        self.assertIn("Garrick", "".join(files))
+        self.assertNotIn("Garik", "".join(files))  # added again, it would be listened for
+
     def test_a_long_session_keeps_a_bounded_history(self) -> None:
         names = lookup()
         scene = SceneTracker()

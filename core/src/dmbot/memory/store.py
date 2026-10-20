@@ -1728,7 +1728,10 @@ class MemoryStore:
             elif clash:
                 # The right spelling was already one of its other names: that becomes
                 # its name, and the misspelling stops being listened for.
-                await w.update(ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED})
+                # kind too: it may have been an "old spelling" (a rename back, #2170).
+                await w.update(
+                    ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED, "kind": "full"}
+                )
                 if own:
                     await w.update(ALIASES, own[0]["id"], {"status": REJECTED})
             else:
@@ -1940,6 +1943,8 @@ class MemoryStore:
             if existing:
                 old = existing[0]
                 upgrade = _upgrade(old, status, secret, source)
+                if old["kind"] == "old" and kind != "old":
+                    upgrade = {**upgrade, "kind": kind}  # asked for by name: listened for again
                 row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
                 return Written(_alias(row), w.batch)
             row = await w.insert(

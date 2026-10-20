@@ -1925,6 +1925,26 @@ class Renaming(MemoryTest):
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
         self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
 
+    async def test_renaming_back_makes_the_name_listened_for_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Beleros", source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "old"})
+
+    async def test_adding_an_old_spelling_as_a_name_makes_it_listened_for(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="nickname", source="dm", status=CONFIRMED
+        )
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "nickname"})
+
     async def test_fixing_it_again_keeps_each_old_spelling(self) -> None:
         a = await self.add("Beleros", status=CONFIRMED)
         await self.memory.add_alias(
