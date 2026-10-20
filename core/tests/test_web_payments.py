@@ -444,9 +444,60 @@ class Payments(DatabaseTest):
 
     async def test_change_plan_opens_on_the_plan_list(self) -> None:
         await self.start_table()
-        url = (await self.post("/billing/portal")).json()["url"]
+        url = (await self.post("/billing/portal", {"flow": "plans"})).json()["url"]
         self.assertIn("fake_billing=1", url)
         self.assertIn("flow=plans", url)
+        # Fix my payment and Stop paying want the ordinary page, not the plan list.
+        plain = (await self.post("/billing/portal")).json()["url"]
+        self.assertNotIn("flow=plans", plain)
+
+    async def test_renew_is_refused_while_a_payment_is_being_fixed(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        await self.send(kind="payment_failed", subscription_id="sub_1", occurred_at=self.now + 2)
+        refused = await self.post("/billing/renew")
+        self.assertEqual((refused.status_code, refused.json()), (409, {"error": "not_ending"}))
+        self.assertEqual(self.provider.resumed, [])
+
+    async def test_a_company_that_will_not_resume_sends_the_person_to_its_page(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        self.provider.refuse_resume = True
+        with self.assertLogs("dmbot.web.app", "WARNING"):
+            refused = await self.post("/billing/renew")
+        self.assertEqual(
+            (refused.status_code, refused.json()), (409, {"error": "use_billing_page"})
+        )
+        self.assertEqual((await self.me_plan())["state"], "ending")  # nothing changed here
+
+    async def test_a_late_cancel_event_does_not_undo_a_renew(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        self.now += 100
+        await self.post("/billing/renew")
+        late = await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now - 50,  # said before the Renew, arrived after it
+        )
+        self.assertEqual(late.status_code, 200)
+        self.assertEqual((await self.me_plan())["state"], "active")
 
     async def test_try_it_after_a_stopped_plan_forgets_the_old_subscription(self) -> None:
         await self.start_table()

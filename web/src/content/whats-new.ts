@@ -232,7 +232,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "See what your plan is doing",
-    what: "On My Account, the plan line now says what your plan is doing: when it renews, when it ends, or which plan starts next. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
+    what: "My Account now shows when your plan renews, ends or changes. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
     reason:
       "Waits for the website's API change (#2165) to deploy and for the owner to check it in Stripe's test mode. When it is live, move this up.",
   },

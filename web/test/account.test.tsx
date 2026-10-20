@@ -1255,7 +1255,10 @@ describe("free access (#806)", () => {
       plan: { ...plan, endsOn: "2026-10-14" },
     }));
     render(<Account api={api} go={vi.fn()} search="" />);
-    expect(await screen.findByText(text.planEnds("Table", "2026-10-14"))).toBeTruthy();
+    expect(await screen.findByText(text.planEndsLine("Table", "2026-10-14"))).toBeTruthy();
+    // The hours don't "start again" on a plan that is ending, and the date isn't said twice.
+    expect(screen.queryByText(/Your hours start again/)).toBeNull();
+    expect(screen.queryByText(text.planEnds("Table", "2026-10-14"))).toBeNull();
   });
 });
 
@@ -1320,7 +1323,7 @@ describe("the plan line says what the plan is doing (#2165)", () => {
     expect(screen.getByText(text.renewAsk("Table", "2026-11-18"))).toBeTruthy();
     expect(api.renewPlan).not.toHaveBeenCalled(); // asked, not done
     fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
-    expect(await screen.findByText(text.renewed("Table"))).toBeTruthy();
+    expect(await screen.findByText(text.renewed("Table", "2026-11-18"))).toBeTruthy();
     expect(api.renewPlan).toHaveBeenCalledTimes(1);
   });
 
@@ -1343,6 +1346,50 @@ describe("the plan line says what the plan is doing (#2165)", () => {
     fireEvent.click(await screen.findByRole("button", { name: text.renew }));
     fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
     expect((await screen.findByRole("alert")).textContent).toBe(text.errors["not-ending"]);
+  });
+
+  it("Renew moves focus to the question, and Not now gives it back to Renew", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18", renewsOn: "2026-11-18" });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    const ask = screen.getByText(text.renewAsk("Table", "2026-11-18"));
+    await waitFor(() => expect(document.activeElement).toBe(ask));
+    fireEvent.click(screen.getByRole("button", { name: text.renewNo }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: text.renew })),
+    );
+  });
+
+  it("Change plan asks for the plan list; Fix my payment and Stop paying do not", async () => {
+    const api = withPlan({ state: "active" });
+    const portal = vi.fn(async (_flow?: "plans") => "#demo-billing");
+    api.billingPortalUrl = portal;
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.changePlan }));
+    await waitFor(() => expect(portal).toHaveBeenCalledWith("plans"));
+    expect(screen.getByText(text.changePlanNote)).toBeTruthy();
+  });
+
+  it("the Change plan call sends the flow only when it is asked for", async () => {
+    const bodies: string[] = [];
+    const reply = httpApi("https://api.example.test", (async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body ?? ""));
+      return new Response(JSON.stringify({ url: "https://billing.stripe.com/p/x" }), { status: 200 });
+    }) as unknown as typeof fetch);
+    await reply.billingPortalUrl("plans");
+    await reply.billingPortalUrl();
+    expect(bodies).toEqual([JSON.stringify({ flow: "plans" }), ""]);
+  });
+
+  it("a company that won't renew from here sends the person to its page, in words", async () => {
+    const api = withPlan({ state: "ending", endsOn: "2026-11-18" });
+    api.renewPlan = vi.fn(async () => {
+      throw new ApiError("use-billing-page");
+    });
+    open(api);
+    fireEvent.click(await screen.findByRole("button", { name: text.renew }));
+    fireEvent.click(screen.getByRole("button", { name: text.renewYes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.errors["use-billing-page"]);
   });
 
   it("Renew is one POST on the wire and a not_ending answer is read as such", async () => {

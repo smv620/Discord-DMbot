@@ -21,7 +21,7 @@ from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
-from dmbot.web.payments import PaymentError
+from dmbot.web.payments import PaymentError, ResumeRefused
 from dmbot.web.settings import load_web_settings
 from dmbot.web.stripe import API_VERSION, HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
@@ -889,6 +889,17 @@ class Provider(unittest.IsolatedAsyncioTestCase):
 
     async def test_if_stripe_refuses_the_plan_flow_the_ordinary_page_opens(self) -> None:
         answers = [(400, {"error": {"message": "flow not allowed"}}), (200, {"url": PORTAL_URL})]
+        # An outage or a rate limit is not that refusal: it is an error, and no second call is made.
+        self.http.answers[("POST", "/v1/billing_portal/sessions")] = (503, None)
+        for status in (401, 429, 503):
+            self.http.answers[("POST", "/v1/billing_portal/sessions")] = (status, None)
+            self.http.calls.clear()
+            with self.assertRaises(PaymentError):
+                await self.provider.billing_url(
+                    customer_id="cus_777", return_url="https://x.example", subscription_id="sub_55"
+                )
+            self.assertEqual(len(self.http.calls), 1, status)
+        self.http.calls.clear()
 
         class Queue(Fake):
             async def __call__(
@@ -925,9 +936,17 @@ class Provider(unittest.IsolatedAsyncioTestCase):
 
     async def test_resume_fails_for_an_ended_subscription_and_a_refusal(self) -> None:
         path = ("GET", "/v1/subscriptions/sub_55")
-        self.http.answers[path] = (200, {"status": "canceled"})
-        with self.assertRaises(PaymentError):
+        # Ended, or overdue (its failed invoice would be retried): never resumed.
+        for status in ("canceled", "incomplete_expired", "past_due", "unpaid", "incomplete"):
+            self.http.answers[path] = (200, {"status": status, "cancel_at_period_end": True})
+            with self.assertRaises(PaymentError, msg=status):
+                await self.provider.resume(subscription_id="sub_55")
+        self.assertEqual([c[0] for c in self.http.calls], ["GET"] * 5)  # no write
+        self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (400, None)
+        with self.assertRaises(ResumeRefused):  # a scheduled change can refuse a direct update
             await self.provider.resume(subscription_id="sub_55")
+        self.http.answers[path] = (200, {"status": "canceled"})
         self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
         self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (500, None)
         with self.assertRaises(PaymentError):
@@ -945,7 +964,11 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
         self.http.answers[path] = (200, {"metadata": {}})
         self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
-        self.http.answers[path] = (404, None)
+        self.http.answers[path] = (200, {"metadata": {"user_id": "not-a-number"}})
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (404, None)  # gone at the company: not ours
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (500, None)
         with self.assertRaises(PaymentError):
             await self.provider.subscription_owner(subscription_id="sub_55")
 

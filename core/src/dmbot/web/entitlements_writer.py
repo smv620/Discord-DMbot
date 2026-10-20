@@ -261,9 +261,12 @@ async def clear_cancel(db: Database, user_id: int, *, now: int) -> bool:
     goes here too, at once, instead of waiting for its event. True if there was one to clear."""
     async with db.plan_writer(user_id) as conn:
         cur = await conn.execute(
-            "UPDATE entitlements SET ends_at = NULL, updated_at = %s"
-            " WHERE user_id = %s AND ends_at IS NOT NULL AND status <> 'lapsed' RETURNING 1 AS ok",
-            (now, user_id),
+            # last_event_at moves up too, so a late "cancelled" event from before this Renew cannot
+            # set the end date again (the company's own resume event follows and agrees).
+            "UPDATE entitlements SET ends_at = NULL, updated_at = %s,"
+            " last_event_at = GREATEST(last_event_at, %s)"
+            " WHERE user_id = %s AND ends_at IS NOT NULL AND status = 'active' RETURNING 1 AS ok",
+            (now, now, user_id),
         )
         return await cur.fetchone() is not None
 

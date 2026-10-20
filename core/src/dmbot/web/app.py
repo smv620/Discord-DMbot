@@ -69,7 +69,7 @@ from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
-from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
+from dmbot.web.payments import PaymentError, PaymentProvider, ResumeRefused, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import (
     RecapError,
@@ -1335,9 +1335,16 @@ def create_app(
         return {"url": url}
 
     @app.post("/billing/portal")
-    async def billing_portal(signed: Signed) -> dict[str, str]:
+    async def billing_portal(signed: Signed, request: Request) -> dict[str, str]:
         provider = require_payments()
         session, _token = signed
+        # Only Change plan asks for the plan list; Fix my payment and Stop paying want the
+        # ordinary page (#2165).
+        try:
+            body = await request.json()
+            wants_plans = isinstance(body, dict) and body.get("flow") == "plans"
+        except ValueError:
+            wants_plans = False
         plan = await entitlements.get(db, session.user_id)
         customer = await customer_id(db, session.user_id)
         if plan is None or customer is None:
@@ -1348,7 +1355,11 @@ def create_app(
             url = await provider.billing_url(
                 customer_id=customer,
                 return_url=account_page,
-                subscription_id=await entitlements_writer.plan_subscription(db, session.user_id),
+                subscription_id=(
+                    await entitlements_writer.plan_subscription(db, session.user_id)
+                    if wants_plans
+                    else None
+                ),
             )
         except PaymentError as exc:
             log.warning("Billing page failed: %s", exc)
@@ -1364,12 +1375,18 @@ def create_app(
         session, _token = signed
         plan = await entitlements.get(db, session.user_id)
         subscription = await entitlements_writer.plan_subscription(db, session.user_id)
-        if plan is None or plan.ends_at is None or subscription is None:
+        # Only a plan that is paid up: one in its payment grace has a failed invoice to fix first.
+        if plan is None or plan.ends_at is None or subscription is None or plan.status != "active":
             raise HTTPException(status_code=409, detail="not_ending")
         if plan.ends_at <= int(clock()):
             raise HTTPException(status_code=409, detail="not_ending")  # it has run out already
         try:
             await provider.resume(subscription_id=subscription)
+        except ResumeRefused as exc:
+            # The company won't undo it from here (a plan change is scheduled, say): its billing
+            # page can. The page says so.
+            log.warning("Renew refused by the company: %s", exc)
+            raise HTTPException(status_code=409, detail="use_billing_page") from exc
         except PaymentError as exc:
             log.warning("Renew failed: %s", exc)
             raise HTTPException(status_code=502, detail="payments_unavailable") from exc

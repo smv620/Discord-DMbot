@@ -519,6 +519,7 @@ export type ApiErrorKind =
   | "subject-too-long" // the subject is over 120 letters (#1340)
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
+  | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
@@ -552,7 +553,7 @@ export interface AccountApi {
   /** The payment company's checkout page for a paid plan. */
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
-  billingPortalUrl(): Promise<string>;
+  billingPortalUrl(flow?: "plans"): Promise<string>;
   /** Renew (#2165): undo a cancellation that has not taken effect. The plan renews on its date as before. */
   renewPlan?(): Promise<void>;
   /** The payment company's page to add narrated recaps (#1390). Missing from an API older than #1389. */
@@ -716,6 +717,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_subscribed: "already-subscribed",
   not_found: "not-found",
   not_ending: "not-ending",
+  use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
   bad_choice: "bad-choice",
   too_big: "too-big",
@@ -843,7 +845,7 @@ export function httpApi(
       await call("POST", "/plan/try-it");
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
-    billingPortalUrl: () => url("/billing/portal"),
+    billingPortalUrl: (flow) => url("/billing/portal", flow ? { flow } : undefined),
     renewPlan: async () => {
       await call("POST", "/billing/renew");
     },

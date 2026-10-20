@@ -50,7 +50,7 @@ import aiohttp
 
 from dmbot.alerts import Problem, raise_alert
 from dmbot.plans import Plan
-from dmbot.web.payments import EventKind, PaymentError, PaymentEvent
+from dmbot.web.payments import EventKind, PaymentError, PaymentEvent, ResumeRefused
 
 log = logging.getLogger(__name__)
 
@@ -398,6 +398,9 @@ class StripeProvider:
                     "billing.stripe.com",
                     "billing",
                 )
+            if status != 400:
+                # An outage or a rate limit is not a reason to change the page: say so, once.
+                raise PaymentError(f"Stripe answered {status} for a billing page")
             log.warning(
                 "Stripe answered %s to a plan-choosing billing page: the ordinary one opens", status
             )
@@ -416,8 +419,10 @@ class StripeProvider:
         if status != 200:
             raise PaymentError(f"Stripe answered {status} for a subscription")
         current = answer if isinstance(answer, dict) else {}
-        if current.get("status") in ("canceled", "incomplete_expired"):
-            raise PaymentError("the subscription has ended and cannot be resumed")
+        # Only a subscription that is paid up and running: an overdue one (past_due, unpaid) would
+        # have its failed invoice retried, and one that has ended cannot be brought back.
+        if current.get("status") not in ("active", "trialing"):
+            raise PaymentError("the subscription is not active and cannot be resumed")
         if current.get("cancel_at_period_end") is not True and current.get("cancel_at") is None:
             return  # not cancelled: nothing to undo
         form = {"cancel_at_period_end": "false"}
@@ -425,17 +430,26 @@ class StripeProvider:
             form["cancel_at"] = ""  # an empty value clears a cancel date
         status, _ = await self._http("POST", path, form)
         if status != 200:
+            # A subscription with a plan change scheduled for the period's end can refuse a
+            # direct update (4xx): the person is sent to the billing page then.
+            if 400 <= status < 500:
+                raise ResumeRefused(f"Stripe refused a resume ({status})")
             raise PaymentError(f"Stripe answered {status} to a resume")
 
     async def subscription_owner(self, *, subscription_id: str) -> int | None:
         path = f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
         status, answer = await self._http("GET", path, None)
+        if status == 404:
+            return None  # gone at the company: not ours to act on
         if status != 200 or not isinstance(answer, dict):
             raise PaymentError(f"Stripe answered {status} for a subscription")
         metadata = answer.get("metadata") or {}
         if _is_add_on(metadata):
             return None
-        return _person(metadata)
+        try:
+            return _person(metadata)
+        except ValueError:
+            return None  # an unreadable user id: not a plan of ours, and a retry would not help
 
     async def cancel(self, *, subscription_id: str) -> None:
         path = f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"

@@ -97,7 +97,9 @@ export const text = {
   errors: {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
-    "not-ending": "Your plan isn't set to end any more, or it has already ended. The page shows what's true now.",
+    "not-ending": "This plan isn't ending, or has already ended. The page now shows how things are.",
+    "use-billing-page":
+      "We can't renew it from here. Tap Change plan and renew on our payment company's page.",
     "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
@@ -157,12 +159,15 @@ export const text = {
   // Renew undoes a cancellation that hasn't taken effect, after one plain question.
   renew: "Renew",
   renewAsk: (plan: string, iso: string): string =>
-    `Keep your ${plan} plan? It will renew on ${shortDate(iso)} as before. You won't be charged before then.`,
+    `Keep your ${plan} plan? It renews on ${shortDate(iso)}, as before. Nothing is charged before then.`,
   renewAskNoDate: (plan: string): string =>
-    `Keep your ${plan} plan? It will renew as before. You won't be charged before the renewal date.`,
+    `Keep your ${plan} plan? It renews as before. Nothing is charged before the renewal date.`,
   renewYes: "Yes, renew",
   renewNo: "Not now",
-  renewed: (plan: string): string => `Done. Your ${plan} plan will renew as before.`,
+  renewed: (plan: string, iso: string | null): string =>
+    iso ? `Done. Your ${plan} plan renews on ${shortDate(iso)}.` : `Done. Your ${plan} plan will renew as before.`,
+  endingNote: "You won't be charged again unless you tap Renew.",
+  changePlanNote: "Opens our payment company's page, on the plans.",
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",
   grace: (date: string | null): string =>
@@ -201,7 +206,7 @@ export const text = {
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
   freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
-  lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
+  lapsed: `Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
   campaignsHeading: "Your campaigns",
