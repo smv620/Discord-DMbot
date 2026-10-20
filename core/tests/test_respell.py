@@ -1,0 +1,203 @@
+"""A fixed spelling carries through the cleaned transcripts of past sessions (#2170): the rules
+(pure), the table (a real Postgres), the card's Fix spelling and its Undo. Invented names and
+numbers; no real speech."""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from typing import Any
+
+from dmbot.transcript.models import Line
+from dmbot.transcript.respell import done_note, put_back, respell, undone_note
+from dmbot.transcript.store import TranscriptStore
+from dmbot.ui import name_card
+from dmbot.ui import names as ui
+from tests.test_memory_names import DM, GUILD, NamesTest
+
+PLAYER = 8
+START = 1_700_000_000
+MS = START * 1000
+
+
+class TheRules(unittest.TestCase):
+    def test_whole_names_in_any_case_become_the_new_spelling(self) -> None:
+        got = respell("Branok's axe, branok  said hi", "Branok", "Brannoch")
+        assert got is not None
+        self.assertEqual(got.text, "Brannoch's axe, Brannoch  said hi")
+        self.assertEqual(got.offsets, (0, 16))
+        self.assertEqual(got.was, ("Branok", "branok"))
+
+    def test_part_of_a_longer_word_or_longer_name_is_left_alone(self) -> None:
+        self.assertIsNone(respell("Branoki and Sbranok", "Branok", "Brannoch"))
+        got = respell("Branok Hall, then Branok", "Branok", "Brannoch", ["Branok Hall"])
+        assert got is not None
+        self.assertEqual(got.text, "Branok Hall, then Brannoch")
+
+    def test_a_name_in_two_words_matches_across_any_spaces(self) -> None:
+        got = respell("Old  Branok came", "Old Branok", "Old Brannoch")
+        assert got is not None
+        self.assertEqual(got.text, "Old Brannoch came")
+
+    def test_nothing_to_change_is_none(self) -> None:
+        self.assertIsNone(respell("nothing here", "Branok", "Brannoch"))
+        self.assertIsNone(respell("Brannoch is here", "Branok", "Brannoch"))
+
+    def test_put_back_restores_the_text_as_it_was(self) -> None:
+        text = "Branok's axe, branok  said hi. Branok Hall."
+        got = respell(text, "Branok", "Brannoch", ["Branok Hall"])
+        assert got is not None
+        self.assertEqual(put_back(got.text, got.offsets, got.was, "Brannoch"), text)
+
+    def test_a_line_changed_since_is_not_put_back(self) -> None:
+        got = respell("Branok waits", "Branok", "Brannoch")
+        assert got is not None
+        self.assertIsNone(put_back("Someone waits", got.offsets, got.was, "Brannoch"))
+
+    def test_the_notes_are_plain_and_count(self) -> None:
+        self.assertEqual(
+            done_note("Branok", "Brannoch", 12, 3),
+            "Changed Branok to Brannoch in 12 lines of 3 past sessions.",
+        )
+        self.assertEqual(
+            done_note("Branok", "Brannoch", 1, 1),
+            "Changed Branok to Brannoch in 1 line of 1 past session.",
+        )
+        self.assertEqual(
+            undone_note("Branok", 2, 1), "Put Branok back in 2 lines of 1 past session."
+        )
+
+
+class ThePastTranscripts(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.memory.lookup import LookupCache
+
+        self.bot.lookup = LookupCache(self.memory)
+        self.transcripts = TranscriptStore(self.db)
+        self.bot.transcripts = self.transcripts
+        self.branok = await ui.save_name(self.memory, self.campaign, "Branok", "npc", [], [])
+        await ui.save_name(self.memory, self.campaign, "Branok Hall", "place", [], [])
+        self.session = await self.transcripts.open_session(GUILD, self.campaign.id, START)
+        await self.transcripts.add_lines(
+            GUILD,
+            self.session,
+            [
+                Line(MS + 1000, PLAYER, "branok waits at the gate", "Branok waits at the gate"),
+                Line(MS + 2000, PLAYER, "branok hall burns", "Branok Hall burns"),
+                Line(MS + 3000, PLAYER, "branok's axe and Branok", "Branok's axe and Branok"),
+                Line(MS + 4000, PLAYER, "nothing here", "nothing here"),
+                Line(MS + 5000, PLAYER, "Branok typed", "Branok typed", typed=True),
+            ],
+        )
+
+    async def texts(self) -> list[str]:
+        return [x.text for x in await self.transcripts.lines(GUILD, self.session)]
+
+    async def heard(self) -> list[str]:
+        return [x.heard for x in await self.transcripts.lines(GUILD, self.session)]
+
+    async def fix(self, new: str = "Brannoch") -> Any:
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        form = name_card.FixSpellingForm(self.campaign.id, self.branok.id, "Branok")
+        form.name = SimpleNamespace(value=new)  # type: ignore[assignment]
+        it = self.it()
+        await form.on_submit(it)
+        return it
+
+    async def test_fixing_a_spelling_changes_the_cleaned_lines_and_tells_the_dm(self) -> None:
+        heard = await self.heard()
+        it = await self.fix()
+        self.assertEqual(
+            await self.texts(),
+            [
+                "Brannoch waits at the gate",
+                "Branok Hall burns",  # a longer name: left as it was
+                "Brannoch's axe and Brannoch",
+                "nothing here",
+                "Branok typed",  # typed lines are only in the as-heard transcript
+            ],
+        )
+        self.assertEqual(await self.heard(), heard)  # what was heard never changes
+        text = it.response.edited[0][0]
+        self.assertIn("Changed Branok to Brannoch in 2 lines of 1 past session.", text)
+
+    async def test_one_undo_takes_back_the_name_and_the_lines(self) -> None:
+        before = await self.texts()
+        it = await self.fix()
+        view = it.response.edited[0][1]
+        (undo,) = [c for c in view.children if isinstance(c, name_card.UndoSpellingButton)]
+        again = self.it()
+        await undo.callback(again)
+        self.assertEqual(await self.texts(), before)
+        entity = await self.memory.entity(GUILD, self.campaign.id, self.branok.id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Branok")
+        self.assertIn("Put Branok back in 2 lines of 1 past session.", again.response.edited[0][0])
+
+    async def test_only_a_dm_may_press_undo(self) -> None:
+        it = await self.fix()
+        view = it.response.edited[0][1]
+        (undo,) = [c for c in view.children if isinstance(c, name_card.UndoSpellingButton)]
+        other = self.it(99)
+        await undo.callback(other)
+        self.assertIn("Brannoch waits", (await self.texts())[0])
+
+    async def test_a_line_changed_since_stays_when_undoing(self) -> None:
+        it = await self.fix()
+        await self.transcripts.relabel_line(GUILD, self.session, PLAYER, MS + 1000, "Someone waits")
+        view = it.response.edited[0][1]
+        (undo,) = [c for c in view.children if isinstance(c, name_card.UndoSpellingButton)]
+        await undo.callback(self.it())
+        texts = await self.texts()
+        self.assertEqual(texts[0], "Someone waits")
+        self.assertEqual(texts[2], "Branok's axe and Branok")
+
+    async def test_another_campaigns_lines_are_not_touched(self) -> None:
+        other = await self.campaigns.create(GUILD, "Sunken City", DM)
+        elsewhere = await self.transcripts.open_session(GUILD, other.id, START + 10)
+        await self.transcripts.add_lines(
+            GUILD, elsewhere, [Line(MS + 9000, PLAYER, "branok sails", "Branok sails")]
+        )
+        await self.fix()
+        (line,) = await self.transcripts.lines(GUILD, elsewhere)
+        self.assertEqual(line.text, "Branok sails")
+
+    async def test_a_name_that_clashes_is_not_kept_so_nothing_is_rewritten(self) -> None:
+        rival = await ui.save_name(self.memory, self.campaign, "Branoch", "npc", [], [])
+        await self.memory.add_alias(
+            GUILD,
+            self.campaign.id,
+            rival.id,
+            "Branok",
+            kind="nickname",
+            source="dm",
+            status="confirmed",
+        )  # another entry is also called that: the old spelling is not kept
+        before = await self.texts()
+        await self.fix("Brannoch")
+        self.assertEqual(await self.texts(), before)
+
+    async def test_deleting_a_person_forgets_where_their_lines_were_respelled(self) -> None:
+        await self.fix()
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM transcript_respells")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 2)
+        await self.transcripts.delete_person(GUILD, PLAYER)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM transcript_respells")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_the_places_kept_hold_positions_and_the_name_never_the_words(self) -> None:
+        await self.fix()
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT * FROM transcript_respells")
+            rows = await cur.fetchall()
+        for row in rows:
+            self.assertEqual(row["new_text"], "Brannoch")
+            self.assertTrue(set(row["was"]) <= {"Branok", "branok"})
+            self.assertNotIn("gate", str(dict(row)))

@@ -7147,6 +7147,33 @@ OLD_SPELLING = """
         CHECK (kind IN ('full', 'short', 'nickname', 'title', 'misheard', 'old'));
     """
 
+TRANSCRIPT_RESPELLS = """
+    -- Where a fixed name's old spelling was written as the new one in past cleaned transcripts
+    -- (#2170), so one Undo can put it back. Positions only: the character places in the cleaned
+    -- line and the name as it was written there; never the words around it, so a line a person
+    -- later asks DMbot to forget leaves nothing behind here. Keyed by the memory change that
+    -- fixed the spelling (`batch`). Rows go with their campaign and their session. New table:
+    -- no rows change, so no backfill policy.
+    CREATE TABLE transcript_respells (
+        id          BIGSERIAL PRIMARY KEY,
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        batch       BIGINT NOT NULL,
+        session_id  TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        started_ms  BIGINT NOT NULL,
+        new_text    TEXT NOT NULL CHECK (char_length(new_text) BETWEEN 1 AND 200),
+        offsets     INTEGER[] NOT NULL,
+        was         TEXT[] NOT NULL,
+        made_at     BIGINT NOT NULL,
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE INDEX transcript_respells_batch ON transcript_respells (campaign_id, batch);
+    """ + _isolate("transcript_respells")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7300,11 +7327,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
     ("0142_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
+    ("0143_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "transcript_respells",
     "test_voice_consent",
     "campaigns",
     "campaign_dms",

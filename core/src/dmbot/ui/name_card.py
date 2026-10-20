@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any
 
 import discord
@@ -30,16 +31,19 @@ from dmbot.memory.models import (
     MERGED,
     REJECTED,
     Alias,
+    Entity,
     MemoryRuleError,
     Relation,
     TooLateToUndo,
+    Written,
     days,
     is_id,
     name_key,
 )
 from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
-from dmbot.memory.store import SAID_AS_MAX
+from dmbot.memory.store import SAID_AS_MAX, MemoryStore
+from dmbot.transcript.respell import done_note, undone_note
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -374,10 +378,12 @@ async def show_card(
     replace: bool = False,
     note: str | None = None,
     undo_connection: int | None = None,
+    undo_spelling: int | None = None,
 ) -> None:
     """The card, as a new private message or in place of the one pressed; `note` goes
     on top (what just changed). `undo_connection`: the batch of a connection just removed,
-    which puts an Undo on the card (#1566)."""
+    which puts an Undo on the card (#1566). `undo_spelling`: the batch of a spelling just fixed
+    (#2170), which puts an Undo on the card that takes the name and the past transcripts back."""
     await _answer_first(interaction, in_place=replace)  # names may load slowly (#537)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -519,6 +525,7 @@ async def show_card(
             and sees_secrets(campaign, interaction.user.id)
         ),
         undo_connection=undo_connection,
+        undo_spelling=undo_spelling,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -655,6 +662,7 @@ class NameCard(_Menu):
         led: bool = False,
         book: bool = False,
         undo_connection: int | None = None,
+        undo_spelling: int | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -663,6 +671,8 @@ class NameCard(_Menu):
         grey = discord.ButtonStyle.secondary
         if undo_connection is not None:  # last row but one: out of the way of the edits
             self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
+        if undo_spelling is not None:
+            self.add_item(UndoSpellingButton(campaign_id, entity_id, undo_spelling))
         # First row: the three edits the names panel names, in its words (#353). Remove
         # says what it does and still asks first.
         self.add_item(_Button(self._fix, label="✏️ Fix spelling", style=discord.ButtonStyle.primary))
@@ -1002,6 +1012,54 @@ SAID_AS_LABEL = "How to say it in the narration (optional)"
 SAID_AS_HELP = "Spell it how it sounds, like Kah-zeth. Empty: as written."
 
 
+def renamed_key(old: str, new: str) -> bool:
+    return name_key(old) != name_key(new)
+
+
+async def _respell_past(
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    entity_id: str,
+    old: str,
+    written: Written[Entity],
+) -> str:
+    """After a spelling fix: the cleaned transcripts of this campaign's past sessions follow
+    (#2170), in the same Undo. Only when the old spelling was kept as an old spelling (a clash
+    with another name or a secret one drops it, and nothing is rewritten). The DM is told the
+    counts. A failure here never undoes the fix; the DM is told, and can fix it again."""
+    new = written.value.name
+    store = _bot(interaction).transcripts
+    if store is None or written.batch is None or not renamed_key(old, new):
+        return ""
+    old_key = name_key(old)
+    try:
+        everyone = await memory.aliases(campaign.guild_id, campaign.id, include_secret=True)
+        if not any(
+            a.entity_id == entity_id and a.key == old_key and a.kind == "old" for a in everyone
+        ):
+            return ""
+        # Names that hold the old spelling as whole words ("Branok Hall"): never rewritten
+        # inside. Secret ones count too; they only stop a change, nothing is written from them.
+        longer = [a.text for a in everyone if a.key != old_key and f" {old_key} " in f" {a.key} "]
+        now = int(time.time())
+        lines, sessions = await store.respell_names(
+            campaign.guild_id,
+            campaign.id,
+            written.batch,
+            old,
+            new,
+            longer,
+            now=now,
+            forget_before=now - int(memory.keep_days * 86400),
+        )
+    except Exception:
+        log.exception("Fix spelling: couldn't carry it into the past transcripts")
+        return "The past transcripts were not changed; fix the spelling again to try once more."
+    log.info("Fix spelling: %d lines of %d past sessions", lines, sessions)  # counts only
+    return done_note(_md(old), _md(new), lines, sessions) if lines else ""
+
+
 class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
     name: discord.ui.TextInput[FixSpellingForm] = discord.ui.TextInput(
         label="Name", max_length=NAME_LIMIT
@@ -1056,6 +1114,9 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
             await _tell(interaction, f"Couldn't change it. {exc}")
             return
         note = f"✏️ Now spelled **{_md(written.value.name)}**."
+        past = await _respell_past(interaction, memory, campaign, self.entity_id, old, written)
+        if past:
+            note += " " + past
         if self.spoken:
             spelling = " ".join(self.said_as.value.split()) or None
             renamed = name_key(new) != name_key(old)
@@ -1079,7 +1140,14 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
                         " Open Fix spelling to try again."
                     )
         changed(interaction, campaign)
-        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+        await show_card(
+            interaction,
+            campaign.id,
+            self.entity_id,
+            replace=True,
+            note=note,
+            undo_spelling=written.batch if renamed_key(old, written.value.name) else None,
+        )
 
 
 class AnotherNameForm(discord.ui.Modal, title="Add another name"):
@@ -1392,6 +1460,71 @@ class UndoConnectionButton(
         names = await _names(interaction, campaign)
         said = sentence(names, written.value) if names is not None else None
         note = f"Put back: {_md(said or 'that connection')}."
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+class UndoSpellingButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:unspell:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
+):
+    """Undo ✏️ Fix spelling (#2170): the name goes back to how it was spelled and the past
+    transcripts get the old spelling back where they were changed. Keeps working after a
+    restart: the batch of the fix is in its ID. Only a DM of the campaign, checked on every
+    press."""
+
+    def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Undo",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:unspell:{campaign_id}:{entity_id}:{batch}",
+                row=3,
+            )
+        )
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.batch = batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> UndoSpellingButton:
+        return cls(match["campaign"], match["entity"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign = found[0]
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await _tell(interaction, "Only the DM can undo that.")
+            return
+        try:
+            await memory.undo(campaign.guild_id, campaign.id, self.batch)
+        except TooLateToUndo as exc:
+            await _tell(interaction, str(exc))
+            return
+        except MemoryRuleError:
+            await _tell(interaction, f"Not undone. {NOTHING_MORE}")  # changed, or already undone
+            return
+        note = "↩️ Spelling put back."
+        back = await _current(interaction, self.campaign_id, self.entity_id)
+        spelled = back[1] if back is not None else "the old spelling"
+        store = _bot(interaction).transcripts
+        if store is not None:
+            try:
+                lines, sessions = await store.undo_respell(
+                    campaign.guild_id, campaign.id, self.batch
+                )
+            except Exception:
+                log.exception("Undo of a fixed spelling: couldn't reach the past transcripts")
+                note += " The past transcripts could not be put back; try again later."
+            else:
+                if lines:
+                    note += " " + undone_note(_md(spelled), lines, sessions)
+        changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 

@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "A fixed spelling carries through",
+    what: "When you fix how a name is spelled, DMbot still knows the old spelling, writes the new one in the cleaned transcripts of your past sessions, and tells you how many lines changed. What was heard is never changed. One Undo puts it all back.",
+    reason: "In review (#2175, #2170); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Bring in older sessions",
     what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:

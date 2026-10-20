@@ -373,7 +373,7 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
-from dmbot.ui.name_card import UndoButton, UndoConnectionButton
+from dmbot.ui.name_card import UndoButton, UndoConnectionButton, UndoSpellingButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
     RecapNamesButton,
@@ -1313,7 +1313,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
-        self.add_dynamic_items(UndoButton, UndoConnectionButton, UndoListButton)
+        self.add_dynamic_items(UndoButton, UndoConnectionButton, UndoListButton, UndoSpellingButton)
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(
