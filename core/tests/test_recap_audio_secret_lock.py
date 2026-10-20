@@ -39,7 +39,7 @@ class ShortSecretsInOrdinaryWords(unittest.TestCase):
         self.assertEqual(refused("Rae walked in.", [RAE]), "whole-name")
         self.assertEqual(refused("It was Vex's blade.", [VEX]), "whole-name")
         self.assertEqual(refused("The Vexs arrived.", [VEX]), "whole-name")  # (s on any word)
-        self.assertEqual(refused("The Vexes arrived.", [VEX]), "")  # -es needs five letters
+        self.assertEqual(refused("The Vexes arrived.", [VEX]), "whole-name")  # -es after an x
 
     def test_hyphen_and_spaced_spellings_block(self) -> None:
         self.assertEqual(refused("Dun-Varra rose.", [DUN]), "whole-name")

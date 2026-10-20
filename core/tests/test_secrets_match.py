@@ -51,12 +51,17 @@ ROWS = [
     ("Wit", [], "wits", True),
     ("Wit", [], "Wit", True),
     ("Wit", [], "Witness", False),
-    ("Vex", [], "Vexes", False),  # -es, -ed, -d and -ing only on words of four letters or more
-    ("Vex", [], "vexing", False),
+    ("Vex", [], "Vexes", True),  # -es on a word ending s, x, z, ch or sh, at any length
+    ("Vex", [], "vexing", False),  # -ed and -ing only on words of four letters or more
+    ("Vex", [], "Vexed", False),
+    ("Bran", [], "brand", False),  # -d only after a final "e"
+    ("Ghoule", [], "Ghouled", True),
+    ("Rook", [], "Rookes", True),
+    ("Ka'zeth", [], "Kaʼzeth spoke", True),  # the modifier apostrophe folds like the others
     ("Vex", [], "Vex's", True),
     ("Vex", [], "the Vexs", True),
     ("Rook", [], "Rooks", True),
-    ("Rook", [], "Rooked", False),
+    ("Rook", [], "Rooked", True),
     ("Ghost", [], "Ghosted", True),
     ("Ghost", [], "Ghosting", True),
     ("Ghost", [], "Ghosts", True),
