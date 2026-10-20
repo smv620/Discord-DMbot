@@ -16,6 +16,7 @@ from typing import Any
 import discord
 
 from dmbot.mentions import NO_PINGS
+from dmbot.recaps import approval, cues
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.notify import page_link
 from dmbot.ui.decision_lines import with_outcome
@@ -32,7 +33,8 @@ NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
 
 _TEMPLATE = (
-    r"dmbot:recap:(?P<act>read|post|yes|no|drop):(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
+    r"dmbot:recap:(?P<act>read|post|yes|no|drop|approve|cv|cm|cb|ct):"
+    r"(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
 )
 _LABELS = {
     "read": ("Read it", discord.ButtonStyle.primary),
@@ -40,7 +42,30 @@ _LABELS = {
     "drop": ("Not this one", discord.ButtonStyle.secondary),
     "yes": ("Yes", discord.ButtonStyle.success),
     "no": ("Not now", discord.ButtonStyle.secondary),
+    "approve": ("✅ Approve the text", discord.ButtonStyle.primary),
+    # After approving: what to make (#2083). cv, cm, cb, ct: voice-over, music, both, text only.
+    "cv": (approval.LABELS[approval.VOICE], discord.ButtonStyle.primary),
+    "cm": (approval.LABELS[approval.MUSIC], discord.ButtonStyle.primary),
+    "cb": (approval.LABELS[approval.BOTH], discord.ButtonStyle.primary),
+    "ct": (approval.LABELS[approval.TEXT], discord.ButtonStyle.secondary),
 }
+_CHOICE = {
+    "cv": approval.VOICE,
+    "cm": approval.MUSIC,
+    "cb": approval.BOTH,
+    "ct": approval.TEXT,
+}
+CUES_FIRST = "Fix these first. Nothing was approved:"
+APPROVED_ALREADY = "You already approved this text. Edit it to change what you approved."
+ASK_AUDIO = "The cues look right. What should DMbot make?"
+APPROVED = {
+    approval.VOICE: "✅ Approved. DMbot is making the voice-over. It will be ready soon.",
+    approval.MUSIC: "✅ Approved. DMbot is making the background music. It will be ready soon.",
+    approval.BOTH: "✅ Approved. DMbot is making the voice-over and music. It will be ready soon.",
+    approval.TEXT: "✅ Approved. No voice-over or music will be made.",
+}
+TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
+MAX_SHOWN = 8  # cue problems listed in one message
 
 
 def ready_text(title: str, link: str) -> str:
@@ -102,7 +127,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if job is None:
             await _tell(interaction, GONE)
             return
-        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with the three buttons
+        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with its buttons
             bot.decision_lines.remember_pressed(self.key, interaction)
         if self.act == "no":
             await _tell(interaction, NOT_NOW)
@@ -110,7 +135,12 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if job.state != "ready":
             await _tell(interaction, NOT_READY)
             return
-        if self.act == "read":
+        if self.act == "approve" or self.act in _CHOICE:
+            if job.status != "draft":
+                await _tell(interaction, DECIDED)
+                return
+            await self._approve(interaction, bot, campaign, job)
+        elif self.act == "read":
             await self._read(interaction, bot, campaign, job)
         elif self.act == "post":
             if job.status != "draft":
@@ -166,6 +196,54 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             for f in audio:
                 f.close()
 
+    async def _approve(
+        self, interaction: discord.Interaction, bot: Any, campaign: Any, job: Any
+    ) -> None:
+        """✅ Approve the text (#2083), then what to make. Every press checks the cues and the
+        secret names again, so a choice taken from an old message approves nothing the text no
+        longer earns. Counts only in the log, never the text."""
+        problems = await bot.recap_approval_problems(campaign, job)
+        if problems:
+            shown = problems[:MAX_SHOWN]
+            more = len(problems) - len(shown)
+            tail = f"\n…and {more} more." if more > 0 else ""
+            words = cues.allowed_words()
+            await _tell(
+                interaction,
+                f"{CUES_FIRST}\n"
+                + "\n".join(f"• {p}" for p in shown)
+                + tail
+                + "\n\nMoods go in 《 》: "
+                + ", ".join(words["moods"])  # type: ignore[arg-type]
+                + ".\nPacing goes in (( )): "
+                + ", ".join(words["pacing"])  # type: ignore[arg-type]
+                + ".\nEdit the text on your recap page, then press Approve again.",
+            )
+            return
+        if self.act == "approve":
+            if job.approved and job.audio_choice:
+                await _tell(interaction, APPROVED_ALREADY)
+                return
+            offered = approval.choices_for(
+                audio_in_plan=await bot.recap_audio_wanted(campaign.guild_id, campaign.id, job)
+            )
+            await _tell(
+                interaction,
+                ASK_AUDIO,
+                view=choice_view(self.campaign_id, self.session_at, offered),
+            )
+            return
+        choice = _CHOICE[self.act]
+        wanted = choice == approval.TEXT or await bot.recap_audio_wanted(
+            campaign.guild_id, campaign.id, job
+        )
+        if not wanted or not await bot.recaps.approve(
+            campaign.guild_id, campaign.id, self.session_at, interaction.user.id, choice
+        ):
+            await _tell(interaction, TOO_LATE)
+            return
+        await _tell(interaction, APPROVED[choice])
+
     async def _post(self, interaction: discord.Interaction, bot: Any, gid: int, cid: str) -> None:
         """Yes was pressed: the website's own move, then the bot's own sending and checks."""
         if not await bot.recaps.decide(gid, cid, self.session_at, "post"):
@@ -190,8 +268,19 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
 
 def ready_view(campaign_id: str, session_at: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for act in ("read", "post", "drop"):
+    for act in ("read", "approve", "post", "drop"):
         view.add_item(RecapButton(act, campaign_id, session_at))
+    return view
+
+
+def choice_view(
+    campaign_id: str, session_at: int, offered: tuple[str, ...] = approval.CHOICES
+) -> discord.ui.View:
+    """Voice-over, Background music, Both and Text only: only what the plan includes."""
+    view = discord.ui.View(timeout=None)
+    for act, choice in _CHOICE.items():
+        if choice in offered:
+            view.add_item(RecapButton(act, campaign_id, session_at))
     return view
 
 
