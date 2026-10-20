@@ -17,8 +17,7 @@ export const panelWords = {
   cuesNote:
     "Coloured tags are the mood the music changes to. Dashed grey tags are pauses or pace for the narrator. Only you see this; your players get the text without them.",
   lead: "Voice and music play together. Switch one off to hear the other alone.",
-  mixNote:
-    "One file with both, for downloads or other apps. It plays on its own.",
+  mixNote: "One file with both, for downloads or other apps. It plays on its own.",
   switchOn: "On",
   switchOff: "Off",
   volume: "Volume",

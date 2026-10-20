@@ -32,10 +32,7 @@ export const RECAP_AUDIO_PER_MONTH = 8;
 
 /** The one sentence about the monthly allowance, for the plans FAQ and Help. Empty while recaps
  * are off (it would promise a feature nobody has); the narrated number only while narration is. */
-export const allowanceSentence = (
-  recapsLive: boolean,
-  audioLive: boolean,
-): string =>
+export const allowanceSentence = (recapsLive: boolean, audioLive: boolean): string =>
   !recapsLive
     ? ""
     : audioLive
@@ -56,10 +53,7 @@ export const recapNamesStep = (
 
 /** Under the game master's steps on the Help page. Each sentence rests on core/src/dmbot/recaps/
  * and bot.py (post_recaps, recap_inputs): see the pull request for the lines. */
-export const recapSteps: {
-  text: string;
-  names?: { name: string; file: string }[];
-}[] = [
+export const recapSteps: { text: string; names?: { name: string; file: string }[] }[] = [
   {
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
@@ -83,9 +77,7 @@ export const recapSteps: {
   },
   {
     text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you)${
-      RECAP_AUDIO_LIVE
-        ? ", or, on plans with narration, to stop the narration"
-        : ""
+      RECAP_AUDIO_LIVE ? ", or, on plans with narration, to stop the narration" : ""
     }. You can turn them back on there. Your plan decides what you can have.`,
     names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
   },

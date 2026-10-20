@@ -13,10 +13,7 @@ import {
   statusLine,
   text,
 } from "../content/recaps";
-import {
-  accountWords as audioWords,
-  price as audioPrice,
-} from "../content/recap-audio";
+import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { panelWords } from "../content/recap-panel";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
@@ -95,12 +92,9 @@ function List({ api }: { api: AccountApi }) {
     // The list with the month's allowance when the API has it (#1444), else the plain list.
     const read = api.recapList
       ? api.recapList()
-      : api
-          .recaps()
-          .then((recaps) => ({ recaps, thisMonth: [] as RecapMonth[] }));
+      : api.recaps().then((recaps) => ({ recaps, thisMonth: [] as RecapMonth[] }));
     read.then(
-      ({ recaps, thisMonth }) =>
-        live && setLoad({ kind: "ready", recaps, thisMonth }),
+      ({ recaps, thisMonth }) => live && setLoad({ kind: "ready", recaps, thisMonth }),
       (error: unknown) => {
         if (!live) return;
         if (error instanceof ApiError && error.kind === "signed-out")
@@ -162,13 +156,11 @@ function List({ api }: { api: AccountApi }) {
       )}
       {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
       {RECAPS_LIVE &&
-        allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map(
-          (line) => (
-            <p key={line} class="small muted">
-              {line}
-            </p>
-          ),
-        )}
+        allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
+          <p key={line} class="small muted">
+            {line}
+          </p>
+        ))}
     </>
   );
 }
@@ -214,12 +206,7 @@ function AudioOffer({ api }: { api: AccountApi }) {
   return (
     <div class="panel">
       <p class="small">{audioWords.notIncluded}</p>
-      <button
-        type="button"
-        class="button secondary"
-        disabled={busy}
-        onClick={() => void buy()}
-      >
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void buy()}>
         {busy ? text.busy : audioWords.buy}
       </button>
       <p class="muted small">{audioWords.buyNote(audioPrice())}</p>
@@ -427,9 +414,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // While DMbot is writing it or posting it, look again every few seconds.
   const waiting =
     recap !== null &&
-    (recap.working ||
-      recap.status === "posting" ||
-      recap.audio?.state === "queued");
+    (recap.working || recap.status === "posting" || recap.audio?.state === "queued");
   useEffect(() => {
     if (!waiting || !api.recap) return;
     const timer = setInterval(() => {
@@ -507,9 +492,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       setNote({
         ok: false,
         message:
-          badCues && error.cueProblems.length === 0
-            ? cueWords.noteEmpty
-            : messageFor(error),
+          badCues && error.cueProblems.length === 0 ? cueWords.noteEmpty : messageFor(error),
       });
       await refresh(error);
     } finally {
@@ -559,10 +542,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       </p>
       {recap.transcriptsDeletedAt && (
         <p class="small">
-          {text.transcriptDeleted(
-            sessionDay(recap.transcriptsDeletedAt),
-            recap.keepDays,
-          )}
+          {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
         </p>
       )}
       {!decided && !recap.working && recap.state !== "failed" && (
@@ -606,9 +586,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             rows={14}
             value={summary}
             aria-invalid={cueProblems.length > 0 ? "true" : undefined}
-            aria-describedby={
-              cueProblems.length > 0 ? "recap-cue-problems" : undefined
-            }
+            aria-describedby={cueProblems.length > 0 ? "recap-cue-problems" : undefined}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
           />
           {/* The list is shown whenever the API refused with problems, narration live or not: the
@@ -690,14 +668,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && (
-        <RecapApprove
-          key={recap.ref}
-          api={api}
-          recap={recap}
-          onRecap={setRecap}
-        />
-      )}
+      {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}

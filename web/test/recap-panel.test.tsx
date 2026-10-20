@@ -83,20 +83,12 @@ describe("the audio part of the recap page", () => {
       expect(document.querySelectorAll("audio")).toHaveLength(3),
     );
     // One Play button and one seek bar drive the voice and music; the mix keeps its own controls.
-    expect(
-      screen.getAllByRole("button", { name: panelWords.play }),
-    ).toHaveLength(1);
-    expect(
-      screen.getByRole("slider", { name: panelWords.position }),
-    ).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: panelWords.play })).toHaveLength(1);
+    expect(screen.getByRole("slider", { name: panelWords.position })).toBeTruthy();
     expect(screen.getByRole("switch", { name: panelWords.voice })).toBeTruthy();
     expect(screen.getByRole("switch", { name: panelWords.music })).toBeTruthy();
-    expect(
-      screen.getByRole("slider", { name: panelWords.voiceVolume }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("slider", { name: panelWords.musicVolume }),
-    ).toBeTruthy();
+    expect(screen.getByRole("slider", { name: panelWords.voiceVolume })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: panelWords.musicVolume })).toBeTruthy();
     const players = [...document.querySelectorAll("audio")];
     expect(players.map((p) => p.getAttribute("aria-label"))).toEqual([
       "Voice",
@@ -112,11 +104,7 @@ describe("the audio part of the recap page", () => {
       true,
     );
     // Only the mix shows the browser's own controls.
-    expect(players.map((p) => p.hasAttribute("controls"))).toEqual([
-      false,
-      false,
-      true,
-    ]);
+    expect(players.map((p) => p.hasAttribute("controls"))).toEqual([false, false, true]);
     expect(
       api.calls.filter((c) => c.startsWith("recapAudioLinks")),
     ).toHaveLength(1);
@@ -127,9 +115,7 @@ describe("the audio part of the recap page", () => {
     await waitFor(() =>
       expect(document.querySelectorAll("audio")).toHaveLength(3),
     );
-    const [voice, music, mix] = [
-      ...document.querySelectorAll("audio"),
-    ] as HTMLAudioElement[];
+    const [voice, music, mix] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
     fireEvent.click(screen.getByRole("switch", { name: panelWords.voice }));
     await waitFor(() => expect(voice!.muted).toBe(true));
     expect(music!.muted).toBe(false);
@@ -145,34 +131,21 @@ describe("the audio part of the recap page", () => {
     await waitFor(() =>
       expect(document.querySelectorAll("audio")).toHaveLength(3),
     );
-    const [voice, music] = [
-      ...document.querySelectorAll("audio"),
-    ] as HTMLAudioElement[];
-    fireEvent.input(
-      screen.getByRole("slider", { name: panelWords.musicVolume }),
-      {
-        target: { value: "0.25" },
-      },
-    );
+    const [voice, music] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
+    fireEvent.input(screen.getByRole("slider", { name: panelWords.musicVolume }), {
+      target: { value: "0.25" },
+    });
     await waitFor(() => expect(music!.volume).toBe(0.25));
     expect(voice!.volume).toBe(1);
   });
 
   it("Play starts the voice and music together; Pause stops both", async () => {
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue(undefined);
-    const pause = vi
-      .spyOn(HTMLMediaElement.prototype, "pause")
-      .mockImplementation(() => undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     render(<Recaps api={withAudio(ready)} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.play }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
     expect(play).toHaveBeenCalledTimes(2);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.pause }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.pause }));
     expect(pause).toHaveBeenCalledTimes(2);
     play.mockRestore();
     pause.mockRestore();
@@ -183,17 +156,9 @@ describe("the audio part of the recap page", () => {
     await waitFor(() =>
       expect(document.querySelectorAll("audio")).toHaveLength(3),
     );
-    const [voice, music] = [
-      ...document.querySelectorAll("audio"),
-    ] as HTMLAudioElement[];
-    Object.defineProperty(voice!, "duration", {
-      value: 100,
-      configurable: true,
-    });
-    Object.defineProperty(music!, "duration", {
-      value: 100,
-      configurable: true,
-    });
+    const [voice, music] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
+    Object.defineProperty(voice!, "duration", { value: 100, configurable: true });
+    Object.defineProperty(music!, "duration", { value: 100, configurable: true });
     fireEvent(voice!, new Event("loadedmetadata"));
     fireEvent.input(screen.getByRole("slider", { name: panelWords.position }), {
       target: { value: "42" },
@@ -203,13 +168,9 @@ describe("the audio part of the recap page", () => {
   });
 
   it("says plainly when a file won't play", async () => {
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockRejectedValue(new Error("no"));
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new Error("no"));
     render(<Recaps api={withAudio(ready)} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.play }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
     expect(await screen.findByText(panelWords.wontPlay)).toBeTruthy();
     expect(screen.getByRole("button", { name: panelWords.play })).toBeTruthy();
     play.mockRestore();
@@ -232,10 +193,7 @@ describe("the audio part of the recap page", () => {
     // The posted text section has no tag and no cue characters.
     const posted = screen
       .getAllByText("The party crossed the ford. The door opened.")
-      .find(
-        (p) =>
-          p.closest("section")?.querySelector("h3")?.textContent === "Recap",
-      );
+      .find((p) => p.closest("section")?.querySelector("h3")?.textContent === "Recap");
     expect(posted?.textContent).not.toMatch(/[《》]|\(\(/);
     expect(posted?.closest("section")?.querySelector(".cue")).toBeNull();
     // A long 《…》 that core's pattern would not match stays plain text, not a tag.
@@ -250,10 +208,7 @@ describe("the audio part of the recap page", () => {
     live.audio = false;
     const api = withAudio(ready);
     const read = api.recap!.bind(api);
-    api.recap = async (ref) => ({
-      ...(await read(ref)),
-      summary: "《Tense》 It begins.",
-    });
+    api.recap = async (ref) => ({ ...(await read(ref)), summary: "《Tense》 It begins." });
     render(<Recaps api={api} path={path} />);
     await screen.findByText(/The party crossed/);
     expect(screen.queryByText(panelWords.cuesHeading)).toBeNull();
@@ -264,28 +219,18 @@ describe("the audio part of the recap page", () => {
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockRejectedValue(new DOMException("", "AbortError"));
     render(<Recaps api={withAudio(ready)} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.play }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
     await Promise.resolve();
     expect(screen.queryByText(panelWords.wontPlay)).toBeNull();
     play.mockRestore();
   });
 
   it("the follower waits while the voice buffers, and the end goes back to the start", async () => {
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue(undefined);
-    const pause = vi
-      .spyOn(HTMLMediaElement.prototype, "pause")
-      .mockImplementation(() => undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     render(<Recaps api={withAudio(ready)} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.play }),
-    );
-    const [voice, music] = [
-      ...document.querySelectorAll("audio"),
-    ] as HTMLAudioElement[];
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
+    const [voice, music] = [...document.querySelectorAll("audio")] as HTMLAudioElement[];
     pause.mockClear();
     const paused: Element[] = [];
     pause.mockImplementation(function (this: HTMLMediaElement) {
@@ -302,33 +247,22 @@ describe("the audio part of the recap page", () => {
   });
 
   it("a pause from outside the page (a media key) moves the button back to Play", async () => {
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue(undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     render(<Recaps api={withAudio(ready)} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.play }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.play }));
     expect(screen.getByRole("button", { name: panelWords.pause })).toBeTruthy();
     fireEvent(document.querySelector("audio")!, new Event("pause"));
-    expect(
-      await screen.findByRole("button", { name: panelWords.play }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("button", { name: panelWords.play })).toBeTruthy();
     play.mockRestore();
   });
 
   it("with only the music, the music leads and has its own switch", async () => {
     const api = withAudio(ready);
-    api.recapAudioLinks = async () => ({
-      music: "#only-music",
-      mix: "#demo-mix",
-    });
+    api.recapAudioLinks = async () => ({ music: "#only-music", mix: "#demo-mix" });
     render(<Recaps api={api} path={path} />);
     await screen.findByRole("switch", { name: panelWords.music });
     expect(screen.queryByRole("switch", { name: panelWords.voice })).toBeNull();
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue(undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole("button", { name: panelWords.play }));
     expect(play).toHaveBeenCalledTimes(1);
     play.mockRestore();
@@ -340,35 +274,23 @@ describe("the audio part of the recap page", () => {
     fireEvent.click(screen.getByRole("switch", { name: panelWords.voice }));
     await waitFor(() =>
       expect(
-        (
-          screen.getByRole("slider", {
-            name: panelWords.voiceVolume,
-          }) as HTMLInputElement
-        ).disabled,
+        (screen.getByRole("slider", { name: panelWords.voiceVolume }) as HTMLInputElement).disabled,
       ).toBe(true),
     );
     expect(
-      (
-        screen.getByRole("slider", {
-          name: panelWords.musicVolume,
-        }) as HTMLInputElement
-      ).disabled,
+      (screen.getByRole("slider", { name: panelWords.musicVolume }) as HTMLInputElement).disabled,
     ).toBe(false);
   });
 
   it("two files failing together ask for fresh links once, not twice", async () => {
     const api = withAudio(ready);
     render(<Recaps api={api} path={path} />);
-    await waitFor(() =>
-      expect(document.querySelectorAll("audio")).toHaveLength(3),
-    );
+    await waitFor(() => expect(document.querySelectorAll("audio")).toHaveLength(3));
     const [voice, music] = [...document.querySelectorAll("audio")];
     fireEvent.error(voice!);
     fireEvent.error(music!);
     await waitFor(() =>
-      expect(
-        api.calls.filter((c) => c.startsWith("recapAudioLinks")),
-      ).toHaveLength(2),
+      expect(api.calls.filter((c) => c.startsWith("recapAudioLinks"))).toHaveLength(2),
     );
     expect(screen.queryByText(panelWords.expired)).toBeNull();
   });
@@ -487,17 +409,13 @@ describe("the audio part of the recap page", () => {
       throw new ApiError("needs-approval");
     };
     render(<Recaps api={api} path={path} />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: panelWords.again }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: panelWords.again }));
     expect(await screen.findByText("Approve the new text first.")).toBeTruthy();
   });
 
   it("maps the API's needs_approval code to that kind", async () => {
     const fetcher = (async () =>
-      new Response(JSON.stringify({ error: "needs_approval" }), {
-        status: 409,
-      })) as unknown as typeof fetch;
+      new Response(JSON.stringify({ error: "needs_approval" }), { status: 409 })) as unknown as typeof fetch;
     await expect(
       httpApi("https://api.example.test", fetcher).askRecapAudioAgain!("a.b.1"),
     ).rejects.toMatchObject({ kind: "needs-approval" });

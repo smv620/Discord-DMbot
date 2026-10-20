@@ -66,7 +66,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Check names after a session",
-    what: 'If DMbot isn\'t sure it heard a name right, it asks the game master "Did they mean…?". Questions nobody answered wait for you: after the session, press Check names on your DM screen and pick a name for each.',
+    what: "If DMbot isn't sure it heard a name right, it asks the game master \"Did they mean…?\". Questions nobody answered wait for you: after the session, press Check names on your DM screen and pick a name for each.",
   },
   {
     date: "2026-10-16",
@@ -207,7 +207,7 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
-    what: 'DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn\'t use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long "a while" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.',
+    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
     reason: "Merged with #2038 (#2041); held until dev1 deploys it.",
   },
   {
@@ -274,8 +274,7 @@ export const held: Held[] = [
     date: "2026-10-16",
     title: "Fix a line",
     what: "If DMbot wrote one of your lines down wrong, type /dmbot fix, or press Fix one of my lines after a session, then pick the line and type what it should say. Your DM says yes or no on the DM screen, and nothing changes unless they say yes. DMs can fix any line themselves: type /dmbot fix or press Fix a line on the DM screen. It changes right away, and you can Undo it while the session runs.",
-    reason:
-      "Held until it has been seen working on the test server (#1491, #1499).",
+    reason: "Held until it has been seen working on the test server (#1491, #1499).",
   },
   {
     date: "2026-10-16",
@@ -294,8 +293,7 @@ export const held: Held[] = [
     date: "2026-10-20",
     title: "Recaps stick to what happened",
     what: "Before you see a recap, DMbot checks each sentence against what was said at the table, including the place and the people. If a sentence doesn't match, DMbot has the recap written again once, then cuts any sentence that still doesn't match. If too little is left, you get no recap at all. It also takes out any compass direction (north, south, east or west). The checking can miss things, so you still read the recap first.",
-    reason:
-      "Held with recaps (RECAPS_LIVE, #2064, #2067). The compass rule is #2071: merge it before this goes live.",
+    reason: "Held with recaps (RECAPS_LIVE, #2064, #2067). The compass rule is #2071: merge it before this goes live.",
   },
   {
     date: "2026-10-19",
@@ -364,13 +362,15 @@ export const held: Held[] = [
     date: "2026-10-16",
     title: "A note before tonight's session",
     what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
-    reason: "Held until it has been seen working on the test server (#1403).",
+    reason:
+      "Held until it has been seen working on the test server (#1403).",
   },
   {
     date: "2026-10-16",
     title: "When a player says a secret name",
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",
-    reason: "Held until it has been seen working on the test server (#1407).",
+    reason:
+      "Held until it has been seen working on the test server (#1407).",
   },
   {
     date: "2026-10-18",
@@ -397,37 +397,43 @@ export const held: Held[] = [
     date: "2026-10-17",
     title: "How NPCs feel about the party",
     what: "On an NPC's, group's or place's name card, press Standing to see how it feels about each player character and the party: Hostile, Unfriendly, Wary, Friendly or Devoted, with the reasons. You can set it too. It only reminds you; you decide how they act. Players never see it.",
-    reason: "Held until it has been seen working on the test server (#1655).",
+    reason:
+      "Held until it has been seen working on the test server (#1655).",
   },
   {
     date: "2026-10-17",
     title: "Record what your players did",
     what: "On a player character's or the party's name card, press Record a deed. Say what happened, pick up to five characters, groups or places it mattered to, and how it landed: helped them, pleased them, annoyed them or hurt them. DMbot then shows it as a reason on their Standing, and it fades after ten sessions. You can undo it, and your own Standing words still win. Players never see it.",
-    reason: "Held until it has been seen working on the test server (#1732).",
+    reason:
+      "Held until it has been seen working on the test server (#1732).",
   },
   {
     date: "2026-10-17",
     title: "Story threads you keep",
     what: "On the Names list, press New thread to keep a quest, mystery, hook or goal, and say how far along it is. Its card shows who is involved, what moved it, and its history. Say Still going when you check on it. After a session, DMbot tells you which threads haven't moved for a few sessions, so you can say Still going, Resolved or Dropped. When a session starts, the note before it names the quiet ones, with a Threads button for your list. On a clue, event or thread, press ➡ Led to… to say what it led to, and the cards show where each came from. It only reminds you; you decide. Players never see your threads.",
-    reason: "Held until it has been seen working on the test server (#1662).",
+    reason:
+      "Held until it has been seen working on the test server (#1662).",
   },
   {
     date: "2026-10-17",
     title: "Species, subclasses and backgrounds in homebrew",
     what: "When you add homebrew, you can now pick Species, Subclass or Background as the kind. Pages you add from a link are sorted into the right kind too.",
-    reason: "Held until it has been seen working on the test server (#1663).",
+    reason:
+      "Held until it has been seen working on the test server (#1663).",
   },
   {
     date: "2026-10-17",
     title: "Keep track of promises made at the table",
     what: "On the Names list, press Add a promise to note something someone swore to do, then say who promised it and who it was promised to. It shows as kept, broken or open, and after a session DMbot tells you which promises haven't moved for a few sessions. Promises you mark Due soon also show in the note before a session. It only reminds you; you decide. Players never see your promises.",
-    reason: "Held until it has been seen working on the test server (#1674).",
+    reason:
+      "Held until it has been seen working on the test server (#1674).",
   },
   {
     date: "2026-10-17",
     title: "A DMbot channel for buttons",
     what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 My buttons there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
-    reason: "Held until it has been seen working on the test server (#1666).",
+    reason:
+      "Held until it has been seen working on the test server (#1666).",
   },
   {
     date: "2026-10-17",
@@ -461,7 +467,8 @@ export const held: Held[] = [
     date: "2026-10-17",
     title: "Homebrew menu by kind",
     what: "In Settings, then Homebrew, you now see one button for each kind, like Spells 10/12, which means 10 are on out of 12. Press one to see only those entries; ↩ All kinds takes you back.",
-    reason: "Held until it has been seen working on the test server (#1665).",
+    reason:
+      "Held until it has been seen working on the test server (#1665).",
   },
   {
     date: "2026-10-17",
@@ -480,14 +487,16 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A time suggestion from your narration",
-    what: 'When you narrate time passing without saying how long ("you walk for a while"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.',
-    reason: "Held until it has been seen working on the test server (#1758).",
+    what: "When you narrate time passing without saying how long (\"you walk for a while\"), DMbot can suggest a time jump on your DM screen, such as +2 hours. Nothing changes unless you press the button. Press Not now to skip it.",
+    reason:
+      "Held until it has been seen working on the test server (#1758).",
   },
   {
     date: "2026-10-17",
     title: "FightBot follows your turn order",
-    what: 'FightBot listens to the people who agreed to be recorded. When it hears things like "Mira, you\'re up", "players go first" or "declare your actions", it guesses how your table takes turns. Your DM screen shows the guess, and you can change it just by saying it differently. FightBot then sends each player a short reminder just before their turn. It only guesses: you decide the order, and it never changes your fight.',
-    reason: "Held until dev1 has live-checked it on the test server (#1771).",
+    what: "FightBot listens to the people who agreed to be recorded. When it hears things like \"Mira, you're up\", \"players go first\" or \"declare your actions\", it guesses how your table takes turns. Your DM screen shows the guess, and you can change it just by saying it differently. FightBot then sends each player a short reminder just before their turn. It only guesses: you decide the order, and it never changes your fight.",
+    reason:
+      "Held until dev1 has live-checked it on the test server (#1771).",
   },
   {
     date: "2026-10-17",
@@ -499,31 +508,21 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A quiet reminder of the game time",
-    what: 'If the game clock hasn\'t come up for a while during a session, DMbot drops one quiet line on the DM screen: "Where we are: Day 4, afternoon (14:30)". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.',
-    reason: "Held until it has been seen working on the test server (#1738).",
+    what: "If the game clock hasn't come up for a while during a session, DMbot drops one quiet line on the DM screen: \"Where we are: Day 4, afternoon (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
+    reason:
+      "Held until it has been seen working on the test server (#1738).",
   },
 ];
 
 const months = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
 ];
 
 /** "2026-10-15" as "15 October 2026": fixed words, so it reads the same on every computer. */
 export function formatDate(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   const name = months[(month ?? 0) - 1];
-  if (name === undefined || !year || !day)
-    throw new Error(`Not a date: ${date}`);
+  if (name === undefined || !year || !day) throw new Error(`Not a date: ${date}`);
   return `${day} ${name} ${year}`;
 }
