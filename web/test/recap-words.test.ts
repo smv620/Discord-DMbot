@@ -12,6 +12,7 @@ import { emailSteps } from "../src/content/help";
 import {
   RECAP_AUDIO_LIVE,
   RECAP_FIX_LIVE,
+  RECAP_VOICE_LIVE,
   RECAP_NAMES_LIVE,
   RECAPS_LIVE,
   emailsIntroTail,
@@ -132,6 +133,7 @@ describe("the switches and What's new agree", () => {
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
     ["Tell DMbot what to fix", RECAP_FIX_LIVE],
+    ["Speak a note to DMbot", RECAP_VOICE_LIVE],
     ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],

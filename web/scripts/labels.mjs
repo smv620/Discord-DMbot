@@ -126,6 +126,8 @@ export const siteButtons = [
   "Session transcripts",
   "Forgot your password",
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
+  "Speak instead", // the recap page (#2114), on the website, not in Discord
+  "Send", // the same page: sends the typed or spoken note
 ];
 
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that

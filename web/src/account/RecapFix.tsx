@@ -9,9 +9,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { FIX_MAX_LETTERS, fixWords as words } from "../content/recap-fix";
-import { RECAP_FIX_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { RECAP_FIX_LIVE, RECAP_VOICE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
 import { keepFocus } from "./focus";
+import RecapVoice from "./RecapVoice";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60; // about two minutes: a sort can take up to 90 seconds
@@ -46,6 +47,7 @@ export default function RecapFix({
   const [started, setStarted] = useState<"approve" | "plain" | null>(null);
   const inFlight = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
   const fail = (error: unknown): string => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -232,9 +234,21 @@ export default function RecapFix({
       >
         {status}
       </p>
+      {RECAP_VOICE_LIVE && (
+        <RecapVoice
+          api={api}
+          recap={recap}
+          onHeard={(heard) => {
+            // The words are only put in the box: nothing is sent until the DM presses Send.
+            setText(heard.slice(0, FIX_MAX_LETTERS));
+            noteRef.current?.focus();
+          }}
+        />
+      )}
       <label class="field">
         {words.label}
         <textarea
+          ref={noteRef}
           rows={4}
           maxLength={FIX_MAX_LETTERS}
           value={text}
