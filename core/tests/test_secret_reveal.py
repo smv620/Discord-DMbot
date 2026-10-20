@@ -155,13 +155,21 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
     async def test_consent_withdrawn_between_the_waits_asks_nothing(self) -> None:
         table = fake_table()
         bot = fake_bot(table)
-        # has_consent is asked at the start, after the stored lookups and before posting: the
-        # first answer is True and every later one False, so the last check stops it.
-        answers = iter([True, False, False, False])
-        bot.consent = SimpleNamespace(has_consent=lambda g, u: next(answers, False))
+        # has_consent is asked twice: at the start (True here), then after the campaign is read
+        # and before anything is sent (False here). The second answer is what stops it.
+        answers = iter([True, False])
+        asked_consent: list[int] = []
+
+        def has_consent(guild: int, user: int) -> bool:
+            asked_consent.append(user)
+            return next(answers)
+
+        bot.consent = SimpleNamespace(has_consent=has_consent)
         await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
+        self.assertEqual(len(asked_consent), 2)  # it got past the first check and met the second
         bot.post.assert_not_awaited()
         bot.sidebar_send_dm.assert_not_awaited()
+        self.assertEqual(table.reveal.asked, set())  # nothing was claimed, so it may ask later
 
     async def test_a_dm_who_stopped_being_recorded_is_not_asked(self) -> None:
         table = fake_table()
@@ -252,11 +260,13 @@ class AHeldLine(unittest.IsolatedAsyncioTestCase):
         answer = ([topic], Reply("x", False, 1, 1, "m"))
         with mock.patch("dmbot.bot.classify", AsyncMock(return_value=answer)):
             await DMBot._label_topics(bot, table, [Waiting(user, 5, "the Arcane Brotherhood")])
-        return [(table, *c[1:]) if c and c[0] is table else c for c in calls]
+        self.table = table
+        return calls
 
     async def test_game_talk_by_the_dm_asks_with_the_line_as_it_was_held(self) -> None:
         calls = await self.label(GAME)
         self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], self.table)
         self.assertEqual(calls[0][1:], (DM_ID, "the Arcane Brotherhood"))
 
     async def test_table_talk_asks_too_and_off_topic_does_not(self) -> None:
@@ -430,12 +440,15 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         got = revealed_in("then the hooded one spoke", found, [], RevealSession())
         assert got is not None
         done = await self.memory.make_name_not_secret(GUILD_A, self.c, got.alias_id, source=DM)
-        self.assertEqual(len(done.value), 2)  # both entries
+        wanted = {a.value.id for a in aliases}
+        self.assertEqual({n.alias_id for n in found}, wanted)  # two entries, one spelling
+        self.assertEqual(got.entries, 2)  # asked about once, for both
+        self.assertEqual({r.id for r in done.value}, wanted)  # both entries, by id
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch)  # one undo brings both back
-        again = await secret_names(self.memory, GUILD_A, self.c)
-        self.assertEqual(sum(len(n.entries) if hasattr(n, "entries") else 1 for n in again), 2)
+        restored = await secret_names(self.memory, GUILD_A, self.c)
+        self.assertEqual({n.alias_id for n in restored}, wanted)  # both, by id
 
     async def test_pressing_no_writes_nothing(self) -> None:
         mira = await self.add(
@@ -446,7 +459,10 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
             status="confirmed", secret=True,
         )  # fmt: skip
         before = await secret_names(self.memory, GUILD_A, self.c)
-        campaign = SimpleNamespace(guild_id=GUILD_A, id=self.c, dm_user_ids=frozenset({DM_ID}))
+        campaign = SimpleNamespace(
+            guild_id=GUILD_A, id=self.c, dm_user_ids=frozenset({DM_ID}),
+            dm_screen_visibility="private",
+        )  # fmt: skip
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             memory=self.memory,
@@ -465,3 +481,8 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         await RevealButton("n", self.c, alias.value.id, GUILD_A).callback(cast(Any, interaction))
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), before)
         bot.lookup.drop.assert_not_called()  # nothing changed, so nothing to refresh
+        # The question was closed: edited once, its buttons gone (the wording is the button's).
+        edit = interaction.response.edit_message
+        edit.assert_awaited_once()
+        self.assertIsNone(edit.await_args.kwargs["view"])
+        self.assertIsInstance(edit.await_args.kwargs["content"], str)

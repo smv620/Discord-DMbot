@@ -5422,6 +5422,8 @@ class DMBot(commands.AutoShardedBot):
                 ):
                     # A held DM line that turned out to be game talk is asked about like any
                     # other (#2101); `_reveal_ask` checks consent and the table again itself.
+                    # A line labelled after the session has ended is not asked, on purpose: the
+                    # after-session question covers it, and `_reveal_ask` finds no table then.
                     self._track(self._reveal_ask(table, waiting.speaker, said), "secret-reveal-ask")
             except Exception:  # never costs the rest of the window its labels
                 log.exception("Secret reveal: couldn't look at a held line")
