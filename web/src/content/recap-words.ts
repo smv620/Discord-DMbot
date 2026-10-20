@@ -107,7 +107,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   ...(RECAP_VOICE_LIVE
     ? [
         {
-          text: "Under that box you can press Speak instead and say your note. Your browser asks to use the microphone the first time. DMbot turns what you said into words in the box and deletes the recording at once. Check the words, change them if you like, then press Send. A note you speak counts toward your listening time, and DMbot only listens to people who have agreed to be recorded.",
+          text: "Under that box you can press Speak instead and say your note. Your browser asks to use the microphone the first time. DMbot turns what you said into words in the box and deletes the recording as soon as the words are ready. Check the words, change them if you like, then press Send. A note you speak counts toward your listening time, and DMbot only listens to people who have agreed to be recorded.",
         },
       ]
     : []),

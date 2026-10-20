@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   VOICE_MAX_BYTES,
-  VOICE_MAX_SECONDS,
+  VOICE_STOP_AT_SECONDS,
   voiceWords as words,
 } from "../content/recap-voice";
 import { ApiError, type AccountApi, type Recap } from "./api";
@@ -45,7 +45,8 @@ export default function RecapVoice({
   const [slow, setSlow] = useState(false);
   const [checks, setChecks] = useState(0);
   const [heard, setHeard] = useState(false);
-  const [tip, setTip] = useState(false);
+  const [atLimit, setAtLimit] = useState(false);
+  const stopRef = useRef<HTMLButtonElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const ticker = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -88,6 +89,7 @@ export default function RecapVoice({
       try {
         const got = await read(recap.ref, requestId);
         if (!live) return;
+        retried = false; // a later blip gets its own second look
         if (got.state === "done") {
           if (typeof got.text !== "string" || got.text === "") throw new ApiError("server");
           setPhase("idle");
@@ -100,7 +102,9 @@ export default function RecapVoice({
           setPhase("idle");
           setRequestId(null);
           const code = (got.error ?? "").replace("no_consent", "no-consent").replace("bad_clip", "bad-clip");
-          setProblem(words.problem[code] ?? words.problem.server);
+          setProblem(
+            Object.hasOwn(words.problem, code) ? words.problem[code]! : words.problem.server,
+          );
           return;
         }
         polls += 1;
@@ -131,6 +135,11 @@ export default function RecapVoice({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, recap.ref, requestId, checks]);
 
+  // The button that was pressed is replaced by Stop, so focus follows it.
+  useEffect(() => {
+    if (phase === "recording") stopRef.current?.focus();
+  }, [phase]);
+
   const type = pickType();
   if (!api.sendVoice || !api.voiceResult || !recap.canEdit) return null;
   if (!type || !navigator.mediaDevices?.getUserMedia)
@@ -153,6 +162,7 @@ export default function RecapVoice({
     setProblem(null);
     setSlow(false);
     setHeard(false);
+    setAtLimit(false);
     setSeconds(0);
     setPhase("asking");
     let got: MediaStream;
@@ -174,7 +184,15 @@ export default function RecapVoice({
     }
     stream.current = got;
     const chunks: Blob[] = [];
-    const rec = new MediaRecorder(got, { mimeType: type });
+    let rec: MediaRecorder;
+    try {
+      rec = new MediaRecorder(got, { mimeType: type });
+    } catch {
+      release();
+      setPhase("idle");
+      setProblem(words.problem["bad-type"] ?? words.problem.server);
+      return;
+    }
     recorder.current = rec;
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
@@ -183,6 +201,11 @@ export default function RecapVoice({
       release();
       // Sent as plain webm or ogg: the API names the types it reads, without the codec part.
       const clip = new Blob(chunks, { type: type.split(";")[0] as string });
+      if (clip.size === 0) {
+        setPhase("idle");
+        setProblem(words.empty);
+        return;
+      }
       if (clip.size > VOICE_MAX_BYTES) {
         setPhase("idle");
         setProblem(words.problem["too-big"] ?? words.problem.server);
@@ -191,14 +214,21 @@ export default function RecapVoice({
       setPhase("sending");
       void send(clip);
     };
-    rec.start();
+    try {
+      rec.start();
+    } catch {
+      release();
+      setPhase("idle");
+      setProblem(words.problem["bad-type"] ?? words.problem.server);
+      return;
+    }
     setPhase("recording");
     let elapsed = 0;
     ticker.current = setInterval(() => {
       elapsed += 1;
       setSeconds(elapsed);
-      if (elapsed >= VOICE_MAX_SECONDS) {
-        setProblem(null);
+      if (elapsed >= VOICE_STOP_AT_SECONDS) {
+        setAtLimit(true);
         stop();
       }
     }, 1000);
@@ -208,13 +238,16 @@ export default function RecapVoice({
     if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop();
   };
 
+  // The timer is not in the live region: a screen reader would read every second.
   const status =
     phase === "asking"
       ? words.starting
       : phase === "recording"
-        ? words.recording(seconds)
+        ? words.recordingNow
         : phase === "sending"
-          ? words.sending
+          ? atLimit
+            ? `${words.atLimit} ${words.sending}`
+            : words.sending
           : slow
             ? words.slow
             : heard
@@ -232,9 +265,20 @@ export default function RecapVoice({
         {status}
       </p>
       {phase === "recording" ? (
-        <button type="button" class="button" aria-label={words.stopLabel} onClick={stop}>
-          {words.stop}
-        </button>
+        <>
+          <button
+            type="button"
+            class="button"
+            ref={stopRef}
+            aria-label={words.stopLabel}
+            onClick={stop}
+          >
+            {words.stop}
+          </button>
+          <span class="small" aria-hidden="true">
+            {words.timer(seconds)}
+          </span>
+        </>
       ) : (
         <button
           type="button"
@@ -258,26 +302,7 @@ export default function RecapVoice({
           {words.checkAgain}
         </button>
       )}
-      <p class="muted small">
-        {words.privacy}{" "}
-        <button
-          type="button"
-          class="button secondary"
-          aria-label={words.listeningButton}
-          aria-expanded={tip}
-          aria-describedby={tip ? "recap-voice-tip" : undefined}
-          onClick={() => setTip((open) => !open)}
-          onMouseEnter={() => setTip(true)}
-          onMouseLeave={() => setTip(false)}
-        >
-          ⓘ
-        </button>
-      </p>
-      {tip && (
-        <p class="muted small" id="recap-voice-tip" role="note">
-          {words.listening}
-        </p>
-      )}
+      <p class="muted small">{words.privacy}</p>
     </div>
   );
 }

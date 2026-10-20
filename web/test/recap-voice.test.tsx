@@ -4,7 +4,7 @@
 // into words by the API and deleted there; this page only records after a press, sends the clip on
 // Stop, and puts the words in the box to check before Send. It shows only while RECAP_VOICE_LIVE is
 // true (false today), so these tests switch it on. The microphone and MediaRecorder are stand-ins.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -95,7 +95,7 @@ describe("speaking a note", () => {
     const api = await open();
     expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
     speak();
-    await screen.findByText(/^Recording 0:00 of 2:00/);
+    await screen.findByText(w.recordingNow);
     stop();
     await screen.findByText(w.heard, {}, { timeout: 6000 });
     expect((screen.getByLabelText(fix.label) as HTMLTextAreaElement).value).toBe(
@@ -108,15 +108,32 @@ describe("speaking a note", () => {
     expect(stopped).toBe(1);
   }, 10000);
 
-  it("says the recording is deleted, and what it costs, on a button that works by keyboard and tap", async () => {
+  it("says in plain sight that the recording is deleted, that only the words are kept, and what it costs", async () => {
     await open();
     expect(screen.getByText(w.privacy)).toBeTruthy();
-    const info = screen.getByRole("button", { name: w.listeningButton });
-    expect(info.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(info);
-    expect(info.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText(w.listening)).toBeTruthy();
-    expect(info.getAttribute("aria-describedby")).toBe("recap-voice-tip");
+    expect(w.privacy).toContain("listening time");
+    expect(w.privacy).toContain("We keep only the words");
+  });
+
+  it("keeps words already typed and adds the heard words after them", async () => {
+    await open();
+    fireEvent.input(screen.getByLabelText(fix.label), { target: { value: "Also shorten part two." } });
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    await screen.findByText(w.heard, {}, { timeout: 6000 });
+    expect((screen.getByLabelText(fix.label) as HTMLTextAreaElement).value).toBe(
+      "Also shorten part two. Change the innkeeper's name to Brannoch.",
+    );
+  }, 10000);
+
+  it("moves focus to Stop when recording starts, and keeps the timer out of the live region", async () => {
+    await open();
+    speak();
+    const button = await screen.findByRole("button", { name: w.stopLabel });
+    await waitFor(() => expect(document.activeElement).toBe(button));
+    expect(screen.getByText(w.recordingNow).getAttribute("aria-live")).toBe("polite");
+    expect(screen.getByText(/^0:00 of 2:00$/).getAttribute("aria-hidden")).toBe("true");
   });
 
   it("says what to do when the browser won't let it use the microphone", async () => {

@@ -3,6 +3,8 @@
 // appear in the box to check before Send. Nothing is kept but the words. A DM who has not agreed to
 // be recorded gets nothing (the consent rule). Shown only while RECAP_VOICE_LIVE is true (recap-words.ts).
 export const VOICE_MAX_SECONDS = 120;
+/** Recording stops a little early: the API refuses a clip over 120 seconds, and the recorder runs on past a timer tick. */
+export const VOICE_STOP_AT_SECONDS = 115;
 export const VOICE_MAX_BYTES = 2 * 1024 * 1024;
 
 const clock = (s: number): string => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -12,29 +14,29 @@ export const voiceWords = {
   stop: "Stop",
   stopLabel: "Stop recording",
   starting: "Waiting for your microphone…",
-  recording: (seconds: number): string =>
-    `Recording ${clock(seconds)} of ${clock(VOICE_MAX_SECONDS)}. Press Stop when you're done.`,
-  atLimit: `That is the longest a note can be (${clock(VOICE_MAX_SECONDS)}), so recording stopped.`,
-  sending: "Turning your note into words…",
+  recordingNow: "Recording. Press Stop when you're done.",
+  timer: (seconds: number): string => `${clock(seconds)} of ${clock(VOICE_MAX_SECONDS)}`,
+  atLimit: "That is the longest a note can be (2 minutes), so recording stopped.",
+  empty: "Nothing was recorded. Try again, or type your note instead.",
+  sending: "Turning your note into words… this takes a few seconds. Stay on this page.",
   slow: "This is taking longer than usual. Press Check again, or type your note instead.",
   checkAgain: "Check again",
-  heard: "Here's what I heard. Check it, change it if you like, then press Send.",
-  privacy: "Your recording is turned into text and then deleted. It is never kept.",
-  listening: "This counts toward your listening time.",
-  listeningButton: "About listening time",
-  unsupported: "This browser can't record here. Type your note instead.",
+  heard: "Here is what DMbot heard. Check it, change it if you like, then press Send.",
+  privacy:
+    "Your recording goes to our speech service, is turned into words, and is deleted as soon as the words are ready. We keep only the words. It counts toward your listening time.",
+  unsupported: "This browser can't record here. Try Chrome or Firefox, or type your note instead.",
   problem: {
     denied:
-      "Your browser didn't let DMbot use the microphone. Allow it in the browser's settings for this site, or type your note instead.",
+      "Your browser blocked the microphone. Tap the lock icon next to the address, allow Microphone, then try again. Or type your note instead.",
     "no-mic": "DMbot couldn't find a microphone. Type your note instead.",
-    "too-big": "That recording is too long. Keep it under 2 minutes, or type your note instead.",
-    "bad-type": "This browser records in a form DMbot can't read. Type your note instead.",
+    "too-big": "That recording is too big. Keep it shorter, or type your note instead.",
+    "bad-type": "This browser records in a way DMbot can't read. Type your note instead.",
     "bad-clip": "DMbot couldn't hear that recording. Try again, or type your note instead.",
     too_long: "That recording is too long. Keep it under 2 minutes, or type your note instead.",
     no_words: "DMbot didn't hear any words. Speak closer to the microphone and try again.",
     transcribe_failed: "DMbot couldn't turn that into words. Try again, or type your note instead.",
     "no-consent":
-      "DMbot only listens to people who have agreed to be recorded. Agree in Discord, then try again, or type your note instead.",
+      "DMbot only listens to people who have agreed to be recorded. Agree in Discord when DMbot asks you (it sends a button in a private message), then try again. Or type your note instead.",
     "not-allowed":
       "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
     "not-editable":

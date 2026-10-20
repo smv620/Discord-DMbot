@@ -240,7 +240,8 @@ export default function RecapFix({
           recap={recap}
           onHeard={(heard) => {
             // The words are only put in the box: nothing is sent until the DM presses Send.
-            setText(heard.slice(0, FIX_MAX_LETTERS));
+            // Words already typed stay: the heard words are added after them.
+            setText((now) => (now.trim() === "" ? heard : `${now.trimEnd()} ${heard}`).slice(0, FIX_MAX_LETTERS));
             noteRef.current?.focus();
           }}
         />
