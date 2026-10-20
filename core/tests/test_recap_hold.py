@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from types import SimpleNamespace
 from typing import Any
@@ -88,6 +89,14 @@ class TheStore(DatabaseTest):
         self.assertEqual(await self.jobs(), 0)
         self.assertEqual(await self.holds.held(GUILD), [])
 
+    async def test_two_releases_at_once_make_one_job(self) -> None:
+        await self.hold_it()
+        results = await asyncio.gather(
+            *(self.holds.release(GUILD, self.campaign.id, AT) for _ in range(4))
+        )
+        self.assertEqual(sorted(results), [hold.GONE, hold.GONE, hold.GONE, hold.QUEUED])
+        self.assertEqual(await self.jobs(), 1)
+
     async def test_holds_stay_in_their_own_server_and_campaign(self) -> None:
         await self.hold_it()
         other = await CampaignStore(self.db).create(OTHER, "Two", DM)
@@ -120,6 +129,7 @@ def fake_bot(*, proposed: int = 0, did_they_mean: int = 0, holds: Any = "default
         hold=AsyncMock(return_value=True),
         held=AsyncMock(return_value=[]),
         release=AsyncMock(return_value=hold.QUEUED),
+        get=AsyncMock(return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, 1)),
     )
     bot = SimpleNamespace(
         settings=SimpleNamespace(site_url=""),
@@ -253,7 +263,7 @@ class EachRound(IsolatedAsyncioTestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("database")
-            return await real(*args, **kwargs)
+            return int(await real(*args, **kwargs))
 
         bot._open_name_questions = flaky
         await bot.release_recap_holds(GUILD)
@@ -282,6 +292,19 @@ class EachRound(IsolatedAsyncioTestCase):
         bot.post.assert_not_awaited()  # answering never writes (or announces) twice
 
 
+class TheStepOrder(IsolatedAsyncioTestCase):
+    async def test_the_recap_is_decided_after_the_extractor_proposed_its_names(self) -> None:
+        # The real step list, every step a stand-in that records its name (#2173).
+        bot = AsyncMock()
+        table = MagicMock()
+        table.transcript_channel_id = None
+        await DMBot._after_session(bot, table, 0, True)
+        called = [c[0] for c in bot.mock_calls if c[0] in (
+            "suggest_names", "extract_claims", "recap_session"
+        )]  # fmt: skip
+        self.assertEqual(called, ["suggest_names", "extract_claims", "recap_session"])
+
+
 def press(bot: Any, user: int = DM) -> tuple[Any, Any]:
     button = screen.WriteNowButton("c" * 32, AT)
     interaction = SimpleNamespace(
@@ -300,6 +323,13 @@ def press(bot: Any, user: int = DM) -> tuple[Any, Any]:
 
 
 class TheButton(IsolatedAsyncioTestCase):
+    async def test_the_line_goes_to_the_dm_screen_the_hold_stored(self) -> None:
+        bot = fake_bot(proposed=3)
+        button, i = press(bot)
+        i.channel_id = 12345  # pressed somewhere else
+        await button.callback(i)
+        self.assertEqual(bot.post.await_args.args[0], 66)
+
     async def test_write_the_recap_now_queues_it_and_closes_the_line(self) -> None:
         bot = fake_bot(proposed=3)
         button, i = press(bot)

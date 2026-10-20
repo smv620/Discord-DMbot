@@ -58,9 +58,7 @@ class WriteNowButton(
             await _tell(interaction, NOT_YOURS)
             return
         await interaction.response.defer()  # the checks below make several calls and a post
-        result = await bot.recap_hold_write_now(
-            guild.id, campaign.id, self.session_at, interaction.channel_id or 0
-        )
+        result = await bot.recap_hold_write_now(guild.id, campaign.id, self.session_at)
         if result == "refused":
             await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
             return

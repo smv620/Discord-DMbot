@@ -2509,10 +2509,12 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
-            # Slow when on (an AI call or two), so last; nothing above waits for it.
-            ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # After the extractor (#2169): the names it proposes are name questions too, and the
+            # recap holds for every open one. This step only queues or holds; the work is the
+            # recap loop's, so nothing here is slow.
+            ("session recap", lambda: self.recap_session(table)),
             ("what was said", lambda: self.ask_about_claims(table)),
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -7679,19 +7681,22 @@ class DMBot(commands.AutoShardedBot):
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
                 await self._say_writing(campaign, held.channel_id, held.session_at)
 
-    async def recap_hold_write_now(
-        self, gid: int, cid: str, session_at: int, channel_id: int
-    ) -> str:
+    async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
-        any session. "queued", "already" (no hold: written or decided before) or "refused"."""
+        any session. "queued", "already" (no hold: written or decided before) or "refused". The
+        "writing it now" line goes to the DM screen the hold stored, wherever the button was
+        pressed."""
         if self.recap_holds is None or self.recaps is None or self.recap_worker is None:
             return "refused"
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.recap_allowed(gid, cid, None):
             return "refused"
+        held = await self.recap_holds.get(gid, cid, session_at)
+        if held is None:
+            return "already"
         result = await self.recap_holds.release(gid, cid, session_at)
         if result == recap_hold.QUEUED:
-            await self._say_writing(campaign, channel_id, session_at)
+            await self._say_writing(campaign, held.channel_id, session_at)
             return "queued"
         return "already"
 
