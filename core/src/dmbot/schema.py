@@ -4923,6 +4923,15 @@ WEB_NAMES = """
     REVOKE ALL ON FUNCTION dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
 """
 
+# WEB_NAMES from its first function on (its comments describe the first migration), reused by
+# OLD_SPELLING to replace the two functions.
+_WEB_NAMES_FUNCTIONS = "    CREATE OR REPLACE FUNCTION dmbot_web_names" + WEB_NAMES.split(
+    "    CREATE FUNCTION dmbot_web_names", 1
+)[1].replace(
+    "    CREATE FUNCTION dmbot_web_set_said_as",
+    "    CREATE OR REPLACE FUNCTION dmbot_web_set_said_as",
+)
+
 MEMORY_SAID_AS = """
     -- A spelling for the recap's narrator (#1419): "Kah-zeth" for Ka'zeth. Set by the DM on a name,
     -- through the same change path as every other edit (so it can be undone), and only on a name
@@ -7145,7 +7154,12 @@ OLD_SPELLING = """
     ALTER TABLE memory_aliases DROP CONSTRAINT memory_aliases_kind_check;
     ALTER TABLE memory_aliases ADD CONSTRAINT memory_aliases_kind_check
         CHECK (kind IN ('full', 'short', 'nickname', 'title', 'misheard', 'old'));
-    """
+
+    -- The website's "said as" list and write door leave old spellings out too: nothing is spoken
+    -- from them, so a spelling set on one would be dead data. The same two functions as
+    -- WEB_NAMES with that one condition changed; replacing a function resets its search_path, so
+    -- it is set again. The grants stay.
+    """ + _WEB_NAMES_FUNCTIONS.replace("a.kind <> 'misheard'", "a.kind NOT IN ('misheard', 'old')")
 
 TRANSCRIPT_RESPELLS = """
     -- Where a fixed name's old spelling was written as the new one in past cleaned transcripts
@@ -7326,8 +7340,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0134_recap_style_notes", RECAP_STYLE_NOTES),  # style notes and corrections (#2076)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
-    ("0142_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
-    ("0143_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
+    ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
+    ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

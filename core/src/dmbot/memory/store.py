@@ -1787,6 +1787,8 @@ class MemoryStore:
                 )
             elif kept[0]["status"] != CONFIRMED:
                 await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
+            if alias["kind"] == "old":  # an old spelling made the name is listened for again
+                await w.update(ALIASES, alias_id, {"kind": "full"})
             row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
             return Written(_entity(row), w.batch)
 

@@ -302,7 +302,11 @@ def card_text(
         return None  # a clue only some people know is the DM's alone (#1649)
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
-    others = [_md(e.text) for e in mine if not e.secret and e.key != own]
+    others = [
+        _md(e.text) + (" (old spelling)" if e.kind == "old" else "")
+        for e in mine
+        if not e.secret and e.key != own
+    ]
     # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
     hidden = [
         _md(e.text) for e in mine if e.secret and not (entity.audience_limited and e.key == own)
