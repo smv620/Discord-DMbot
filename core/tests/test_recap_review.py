@@ -319,7 +319,7 @@ class TheOutFolder(unittest.IsolatedAsyncioTestCase):
                     out = await real(*a, **k)  # type: ignore[arg-type]
                     return run.Outcome(
                         dataclasses.replace(out.job, state="failed"),
-                        out.inputs, out.fast, out.careful, out.stopped,
+                        out.inputs, out.fast, out.careful, stopped=out.stopped,
                     )  # fmt: skip
 
                 with patch.object(run, "run_text", failed):

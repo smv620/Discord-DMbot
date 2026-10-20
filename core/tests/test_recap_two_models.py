@@ -11,6 +11,7 @@ from dmbot.devtools.recap_run import __main__ as run
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps.text import narration_of, words
 from tests import recap_fixtures as fx
 from tests.test_recap_calls import calls_section, inputs
 
@@ -28,7 +29,7 @@ class TheWordCheck(unittest.TestCase):
         self.assertIn("MOOD: tense", WRITTEN)
         self.assertIn("MUSIC: Low strings", WRITTEN)
         self.assertEqual(
-            rd.written_words(WRITTEN), rd.words(rd.narration_of(fx.SUMMARY)), "labels are not words"
+            rd.written_words(WRITTEN), words(narration_of(fx.SUMMARY)), "labels are not words"
         )
         prose = rd.parse_prose(GOOD)
         assert prose is not None
