@@ -577,7 +577,10 @@ class RecapWorker:
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
-            facts = await self._facts(gid, cid, job, rd.pick_beats(sheet, length.beats), prose)
+            facts = await self._facts(
+                gid, cid, job, rd.pick_beats(sheet, length.beats), prose,
+                {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
+            )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
         if facts is None and key in self._flags:
@@ -762,6 +765,23 @@ class RecapWorker:
         return await self._store.get(gid, cid, job.session_at)
 
     async def _facts(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        shown: Sequence[bt.Beat],
+        prose: rd.Prose,
+        names: Collection[str] = (),
+    ) -> rd.Facts | None:
+        """The fact check's flags with the compass directions found in code added (#2067): the
+        rule is checked in code, not only asked of the AI, so it holds when the AI's check fails."""
+        asked = await self._ask_facts(gid, cid, job, shown, prose)
+        facts = rd.with_directions(asked, prose.summary, names)
+        if facts is not asked and facts is not None:
+            self._annotate(gid, cid, job, "facts", facts=facts.counts())
+        return facts
+
+    async def _ask_facts(
         self, gid: int, cid: str, job: Job, shown: Sequence[bt.Beat], prose: rd.Prose
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the

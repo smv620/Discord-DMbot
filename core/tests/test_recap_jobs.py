@@ -964,3 +964,58 @@ class Working(Base):
         self.worker._on_problems = lambda state, attempt, problems: shown.extend(problems)
         await self.go()
         self.assertEqual(shown, [f"sentence {n} says something the beats do not say (place)"])
+
+    # --- compass directions caught in code (#2067) -----------------------------------
+
+    DIRECTION_SUMMARY = fx.SUMMARY.replace(
+        "The torch burned down a little.", "They rode north to the ferry."
+    )
+
+    def with_direction(self, *answers: str, facts: list[str]) -> tuple[fx.Canned, fx.Canned]:
+        prose = fx.prose_answer(self.DIRECTION_SUMMARY)
+        return (
+            fx.Canned(fx.BEATS_ANSWER, prose, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(prose, *answers, facts=facts),
+        )
+
+    def direction_sentence(self) -> int:
+        return next(
+            i for i, t in enumerate(rd.sentences_of(self.DIRECTION_SUMMARY), 1) if "ferry" in t
+        )
+
+    async def test_a_direction_alone_causes_the_revision_and_then_the_cut(self) -> None:
+        fast, careful = self.with_direction(facts=[fx.CLEAN_FACTS, fx.CLEAN_FACTS])
+        await self.setUpWorker(fast, careful)
+        job = await self.go()
+        n = self.direction_sentence()
+        self.assertEqual(job.state, "ready")
+        self.assertIn(
+            f"sentence {n} says something the beats do not say (direction)", careful.sent[0]
+        )
+        self.assertEqual(len(careful.fact_sent), 2)  # the draft and its one revision
+        self.assertNotIn("north", job.summary.lower())
+        self.assertIn("Mira counted her breaths", job.summary)
+
+    async def test_the_code_flags_hold_when_the_fact_check_cannot_be_had(self) -> None:
+        fast, careful = self.with_direction(facts=["not json", "not json"])
+        await self.setUpWorker(fast, careful)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("north", job.summary.lower())
+        self.assertEqual(len(careful.sent), 1)  # one revision, never two
+
+    async def test_the_same_sentence_flagged_by_both_is_one_problem_line(self) -> None:
+        n = self.direction_sentence()
+        flag = fx.facts_answer([(n, "invented")])
+        fast, careful = self.with_direction(facts=[flag, fx.CLEAN_FACTS])
+        await self.setUpWorker(fast, careful)
+        await self.go()
+        retry = careful.sent[0]
+        self.assertEqual(retry.count(f"sentence {n} says"), 1)
+        self.assertIn("(invented)", retry)  # the AI's kind stands
+
+    async def test_a_recap_with_no_direction_makes_the_same_calls_as_before(self) -> None:
+        await self.setUpWorker(self.happy())
+        job = await self.go()
+        self.assertEqual(job.calls, 5)
+        self.assertEqual(len(self.careful.fact_sent), 1)
