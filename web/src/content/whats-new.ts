@@ -205,6 +205,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-20",
+    title: "A short session asks first",
+    what: "If a session is short, under 30 minutes long or with under 30 minutes of game talk, DMbot asks you on your DM screen before writing a recap. Press Write a recap or No recap. If you don't answer, no recap is written. You decide; DMbot only asks.",
+    reason: "In review (#2104); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
