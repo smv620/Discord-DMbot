@@ -2762,6 +2762,15 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    # Importing older sessions (#2105): each is held to a DM of the campaign.
+    ("dmbot_import_agreed", "dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)"),
+    (
+        "dmbot_import_store",
+        "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)",
+    ),
+    ("dmbot_import_members", "dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)"),
+    ("dmbot_import_progress", "dmbot_import_progress(BIGINT, TEXT, TEXT)"),
+    ("dmbot_import_mapping", "dmbot_import_mapping(BIGINT, TEXT, JSONB)"),
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
@@ -6775,6 +6784,241 @@ MORE_HOMEBREW_KINDS = """
 """
 
 
+SESSION_IMPORTS = (
+    f"""
+    -- Sessions a DM loaded from a file instead of recording them (#2105). The transcript itself is
+    -- an ordinary stored session (transcript_sessions and transcript_lines, from people who agreed
+    -- now); this row says where it came from and how far its cleaning has got. The uploaded file
+    -- is never kept. Deleted with the session and the campaign.
+    CREATE TABLE session_imports (
+        {_memory_scope()}
+        session_id  TEXT NOT NULL,
+        import_id   TEXT NOT NULL CHECK (import_id ~ '^[0-9a-f]{{32}}$'),
+        file_name   TEXT NOT NULL CHECK (char_length(file_name) BETWEEN 1 AND 200),
+        imported_by BIGINT NOT NULL CHECK (imported_by > 0),
+        imported_at BIGINT NOT NULL,
+        -- waiting: stored, not cleaned yet; working: the bot is cleaning it; done; failed.
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        reason      TEXT NOT NULL DEFAULT '' CHECK (char_length(reason) <= 40),
+        PRIMARY KEY (guild_id, session_id),
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE INDEX session_imports_open ON session_imports (state)
+        WHERE state IN ('waiting', 'working');
+    CREATE INDEX session_imports_batch ON session_imports (guild_id, campaign_id, import_id);
+    """
+    + _isolate("session_imports")
+    + f"""
+    -- Who a label in an import file was, remembered per campaign so the next file's "Cerric" is
+    -- suggested as the same member (#2105). Only a label (as written in a file) and an account.
+    CREATE TABLE import_speakers (
+        {_memory_scope()}
+        label       TEXT NOT NULL CHECK (char_length(label) BETWEEN 1 AND 80),
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        updated_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, label)
+    );
+    """
+    + _isolate("import_speakers")
+    + """
+    -- The doors the website's role stores an import through. It has no grant on the transcript or
+    -- consent tables, so each door checks the caller is a DM of the campaign in a server on the
+    -- session's list, and the store door keeps only lines of members who have agreed under the
+    -- terms and outside engine the caller passes (the bot's own rule, consent._select).
+
+    -- dmbot_import_agreed: the members recorded now and the campaign's owner (for the plan rule),
+    -- for the preview and the check. NULL unless a DM.
+    CREATE FUNCTION dmbot_import_agreed(g BIGINT, c TEXT, terms INT, outside TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'agreed', COALESCE((
+                SELECT jsonb_agg(x.user_id::TEXT) FROM consent x
+                WHERE x.guild_id = g AND x.terms_version = terms
+                  AND (outside IS NULL OR x.outside_to = outside)), '[]'::jsonb),
+            'owner', (SELECT k.owner_user_id::TEXT FROM campaigns k
+                      WHERE k.guild_id = g AND k.id = c));
+    END
+    $fn$;
+
+    -- dmbot_import_store: one file as one stored session. `lines` is a JSON list of
+    -- {ms, user, text, dur}; lines of anyone not recorded now are dropped here, whatever the
+    -- caller sent. The start time moves forward a second at a time past an existing session of the
+    -- campaign. Returns {session, kept, dropped} or NULL unless a DM.
+    CREATE FUNCTION dmbot_import_store(
+        g BIGINT, c TEXT, imp TEXT, fname TEXT, started BIGINT, lines JSONB, terms INT,
+        outside TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        sid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        at_ BIGINT := started;
+        total INT;
+        kept INT;
+        keep JSONB;
+        who BIGINT := dmbot_current_user();
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = who) THEN
+            RETURN NULL;
+        END IF;
+        total := jsonb_array_length(lines);
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
+                   'ms', l.ms, 'user', l."user", 'text', l.text, 'dur', l.dur)
+                   ORDER BY l.ms), '[]'),
+               count(*)
+            INTO keep, kept
+            FROM jsonb_to_recordset(lines) AS l(ms BIGINT, "user" BIGINT, text TEXT, dur INT)
+            WHERE l.text IS NOT NULL AND length(l.text) > 0 AND l.ms >= 0 AND l.dur >= 0
+              AND EXISTS (SELECT 1 FROM consent x
+                          WHERE x.guild_id = g AND x.user_id = l."user"
+                            AND x.terms_version = terms
+                            AND (outside IS NULL OR x.outside_to = outside));
+        IF kept = 0 THEN
+            RETURN jsonb_build_object('session', NULL, 'kept', 0, 'dropped', total);
+        END IF;
+        WHILE EXISTS (SELECT 1 FROM transcript_sessions t
+                      WHERE t.guild_id = g AND t.campaign_id = c AND t.started_at = at_) LOOP
+            at_ := at_ + 1;
+        END LOOP;
+        INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, ended_at)
+            VALUES (sid, g, c, at_,
+                    at_ + (SELECT coalesce(max(k.ms + k.dur), 0) / 1000
+                           FROM jsonb_to_recordset(keep)
+                                AS k(ms BIGINT, "user" BIGINT, text TEXT, dur INT)));
+        INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard, duration_ms)
+            SELECT g, sid, at_ * 1000 + k.ms, k."user", k.text, k.dur
+            FROM jsonb_to_recordset(keep) AS k(ms BIGINT, "user" BIGINT, text TEXT, dur INT);
+        UPDATE transcript_sessions SET line_count = kept,
+            speakers = ARRAY(SELECT DISTINCT k."user"
+                             FROM jsonb_to_recordset(keep)
+                                  AS k(ms BIGINT, "user" BIGINT, text TEXT, dur INT) ORDER BY 1)
+            WHERE id = sid;
+        INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,
+                                     imported_by, imported_at)
+            VALUES (g, c, sid, imp, left(fname, 200), who, now_s);
+        RETURN jsonb_build_object('session', sid, 'kept', kept, 'dropped', total - kept);
+    END
+    $fn$;
+
+
+    -- dmbot_import_members: the people of the campaign (its table people, each tied to a Discord
+    -- account), searched by name, at most 25, with whether each is recorded now. NULL unless a DM.
+    CREATE FUNCTION dmbot_import_members(g BIGINT, c TEXT, q TEXT, terms INT, outside TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'userId', m.played_by::TEXT, 'name', m.name,
+                       'agreed', EXISTS (SELECT 1 FROM consent x
+                                         WHERE x.guild_id = g AND x.user_id = m.played_by
+                                           AND x.terms_version = terms
+                                           AND (outside IS NULL OR x.outside_to = outside)))
+                       ORDER BY lower(m.name))
+            FROM (SELECT e.name, e.played_by FROM memory_entities e
+                  WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                    AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                    AND (q = '' OR position(lower(q) IN lower(e.name)) > 0)
+                  ORDER BY lower(e.name) LIMIT 25) m), '[]'::jsonb);
+    END
+    $fn$;
+
+    -- dmbot_import_progress: the sessions of one import and their state. NULL unless a DM.
+    CREATE FUNCTION dmbot_import_progress(g BIGINT, c TEXT, imp TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'file', i.file_name, 'state', i.state, 'reason', i.reason,
+                       'date', t.started_at) ORDER BY t.started_at, i.session_id)
+            FROM session_imports i JOIN transcript_sessions t
+              ON t.guild_id = i.guild_id AND t.id = i.session_id
+            WHERE i.guild_id = g AND i.campaign_id = c AND i.import_id = imp), '[]'::jsonb);
+    END
+    $fn$;
+
+    -- dmbot_import_mapping: the remembered {label: member} of the campaign, and (with `put`) the
+    -- new choices to remember. NULL unless a DM.
+    CREATE FUNCTION dmbot_import_mapping(g BIGINT, c TEXT, put JSONB) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF put IS NOT NULL THEN
+            INSERT INTO import_speakers (guild_id, campaign_id, label, user_id, updated_at)
+                SELECT g, c, left(p.key, 80), p.value::BIGINT, now_s
+                FROM jsonb_each_text(put) AS p(key, value)
+                WHERE p.key <> '' AND p.value ~ '^[0-9]{1,18}$' AND p.value::BIGINT > 0
+                ON CONFLICT (guild_id, campaign_id, label)
+                DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = EXCLUDED.updated_at;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_object_agg(s.label, s.user_id::TEXT)
+            FROM import_speakers s WHERE s.guild_id = g AND s.campaign_id = c), '{}'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_progress(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_import_agreed(BIGINT, TEXT, INT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_store(
+        BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_progress(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB) FROM PUBLIC;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -6924,6 +7168,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # names a recap kept, for the DM to confirm (#2027)
     ("0132_quiet_stop", QUIET_STOP),  # minutes of silence before an automatic stop (#2034)
     ("0133_recap_style", RECAP_STYLE),  # examples a DM gives for how recaps sound (#2075)
+    ("0136_session_imports", SESSION_IMPORTS),  # sessions loaded from a file (#2105)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -6938,6 +7183,8 @@ ISOLATED_TABLES = (
     *_MEMORY_TABLES,
     "transcript_sessions",
     "transcript_lines",
+    "session_imports",
+    "import_speakers",
     "transcript_suggestions",
     "waiting_name_questions",
     "memory_heard",

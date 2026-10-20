@@ -35,6 +35,7 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    imports,
     offers,
     sessions,
     strays,
@@ -558,6 +559,15 @@ def create_app(
         "too_soon": (429, "too_soon"),
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
+        # Importing older sessions (#2105)
+        "not_a_dm": (403, "not_a_dm"),
+        "not_on_a_paid_plan": (402, "not_on_a_paid_plan"),
+        "try_it_campaign": (402, "try_it_campaign"),
+        "too_many_files": (413, "too_many_files"),
+        "bad_files": (422, "bad_files"),
+        "bad_mapping": (422, "bad_mapping"),
+        "bad_date": (422, "bad_date"),
+        "no_lines_kept": (422, "no_lines_kept"),
         "not_in_plan": (409, "not_in_plan"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
@@ -720,6 +730,83 @@ def create_app(
                 db, session, now=clock(), enforce_plans=settings.enforce_plans
             )
         }
+
+    # Importing older sessions (#2105): DMs of the campaign only (the doors check), paid plans only.
+    # The files travel in the JSON body as text ({name, text}); nothing is kept or logged.
+    async def import_body(request: Request) -> dict[str, Any]:
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > imports.MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="too_big")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad_files") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="bad_files")
+        return body
+
+    def import_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.post("/me/campaigns/{ref}/imports/preview")
+    async def me_import_preview(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        body = await import_body(request)
+        try:
+            return await imports.preview(
+                db, session, ref, body.get("files"), outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/members")
+    async def me_import_members(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.search_members(
+                db, session, ref, q, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post("/me/campaigns/{ref}/imports/check")
+    async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        body = await import_body(request)
+        try:
+            return await imports.check(
+                db, session, ref, body.get("files"), body.get("mapping"),
+                outside=settings.outside_engine, now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post("/me/campaigns/{ref}/imports", status_code=202)
+    async def me_import(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        body = await import_body(request)
+        try:
+            return await imports.confirm(
+                db, session, ref, body.get("files"), body.get("plan"),
+                outside=settings.outside_engine, now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/{import_id}")
+    async def me_import_progress(ref: str, import_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.progress(
+                db, session, ref, import_id, outside=settings.outside_engine
+            )
+        except RecapError as err:
+            raise import_refusal(err) from None
 
     @app.get("/me/campaigns/{ref}/transcripts")
     async def me_transcripts(ref: str, signed: Signed) -> dict[str, Any]:
