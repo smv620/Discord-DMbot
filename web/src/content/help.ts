@@ -3,6 +3,7 @@
 // appears in core/src/dmbot, so the page can't drift. Only built features; no game trademarks
 // (CLAUDE.md), so the character-sheet steps name no company.
 import { QA_URL } from "./account";
+import { IMPORT_LIVE, importSteps } from "./import-words";
 import { minimumAge } from "./legal";
 import { price as narrationPrice } from "./recap-audio";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
@@ -89,6 +90,22 @@ export const secretClueSteps: Step[] = [
 // names none of them.
 export const PRESESSION_NOTE_LIVE = false;
 export const SECRET_SAID_LIVE = false;
+
+// The question DMbot asks at once when the game master says a secret name out loud (#2088, #2094;
+// core ui/secret_reveal.py). It is on by default on the server (DMBOT_SECRET_REVEAL_ASK), so it
+// goes live with the deploy. The step is held with the What's new entry "When you say a secret
+// name"; set the switch to true in the same change that moves the entry out of `held`.
+export const SECRET_REVEAL_LIVE = false;
+
+export const secretRevealSteps: Step[] = [
+  {
+    text: "When you say a name you marked secret out loud at the table, DMbot asks you at once on your DM screen whether it is revealed now. If your players can look at your DM screen, it is sent to you as a private message instead. Press Yes, players know now, and DMbot may use the name in answers to players; you can make it secret again from the name's card (in the names list). If DMbot has the name more than once, your answer covers every copy. Press No, keep it secret, and DMbot won't ask about that name again this session. It only asks when you say the name, never when a player does, and it never decides for you. Only the campaign's DMs can answer.",
+    names: [
+      { name: "Yes, players know now", file: "ui/secret_reveal.py" },
+      { name: "No, keep it secret", file: "ui/secret_reveal.py" },
+    ],
+  },
+];
 
 export const presessionNoteSteps: Step[] = [
   {
@@ -822,9 +839,11 @@ export const dmSteps: Step[] = [
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),
   ...(SECRET_SAID_LIVE ? secretSaidSteps : []),
+  ...(SECRET_REVEAL_LIVE ? secretRevealSteps : []),
   ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
+  ...(IMPORT_LIVE ? importSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
