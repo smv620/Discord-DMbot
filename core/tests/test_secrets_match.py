@@ -51,8 +51,20 @@ ROWS = [
     ("Wit", [], "wits", True),
     ("Wit", [], "Wit", True),
     ("Wit", [], "Witness", False),
-    ("Vex", [], "Vexes", True),
-    ("Vex", [], "vexing", True),
+    ("Vex", [], "Vexes", False),  # -es, -ed, -d and -ing only on words of four letters or more
+    ("Vex", [], "vexing", False),
+    ("Vex", [], "Vex's", True),
+    ("Vex", [], "the Vexs", True),
+    ("Rook", [], "Rooks", True),
+    ("Rook", [], "Rooked", False),
+    ("Ghost", [], "Ghosted", True),
+    ("Ghost", [], "Ghosting", True),
+    ("Ghost", [], "Ghosts", True),
+    ("Bran", [], "brand", False),
+    ("Kin", [], "kind", False),
+    ("Lor", [], "lord", False),
+    ("Gen", [], "general", False),
+    ("Bran", [], "Bran's", True),
     ("Vex", [], "Vexation grew", False),
     ("Vex", [], "VEX!", True),
     ("Vex", [], "Vex-the-Younger", True),
@@ -70,6 +82,28 @@ ROWS = [
     ("Silas Vane", ["Silas Brook"], "Silas laughed", False),
     ("Rae", ["Rae Brook"], "Rae Brook laughed", False),
     ("✶✶", [], "a ✶✶ appeared", True),
+    # a title that ends a name takes the endings (a leak if it did not)
+    ("The Lost General", [], "the lost general's", True),
+    ("The Lost General", [], "the lost generals", True),
+    ("The Lost General", [], "the lost gen.", True),
+    ("The Fallen Saint", [], "the fallen saint's", True),
+    ("Mount", [], "mounts", True),
+    ("Mount", [], "Mt", False),  # a name that is only a title word is not swapped
+    # the name run together, with its article and in any spelling of a title
+    ("The White Death", [], "TheWhiteDeath", True),
+    ("The White Death", [], "thewhitedeath", True),
+    ("The White Death", [], "AWhiteDeath's", True),
+    ("Mr. White", [], "MrWhite", True),
+    ("Mr. White", [], "Misterwhite", True),
+    ("Mr. White", [], "misterwhites", True),
+    ("Mr. White", [], "Mrs White", False),
+    # a name that is only a short word is looked for with its article
+    ("The Ox", [], "the ox", True),
+    ("The Ox", [], "an ox", True),
+    ("The Ox", [], "the ox's horn", True),
+    ("The Ox", [], "the oxen", False),
+    ("The Ox", [], "ox", False),
+    ("The Ox", [], "a box", False),
     # a title in the secret but not the text, and the reverse
     ("White", [], "Mr. White", True),
     ("Vex-gate", [], "the Vex gate fell", True),
@@ -121,11 +155,56 @@ class TheOwnersExamples(unittest.TestCase):
         self.assertFalse(sm.names_a_secret("", ["Vex"], []))
 
 
+class Speed(unittest.TestCase):
+    """The callers run it on the event loop: a long draft with many names must stay quick."""
+
+    def test_three_thousand_words_with_many_names_is_fast(self) -> None:
+        import time
+
+        words = [f"word{n}" for n in range(3000)]
+        words[1500:1503] = ["quiet", "plain", "sentence"]
+        text = " ".join(words)
+        secrets = [f"Secret Name{n} Holder" for n in range(30)]
+        allowed = [f"Allowed Place{n} Hall" for n in range(300)]
+        best = min(self.timed(text, secrets, allowed) for _ in range(3))
+        self.assertLess(best, 0.05)
+        self.assertFalse(sm.names_a_secret(text, secrets, allowed))
+        # And with a secret in it, the allowed names are looked at and the answer is still quick.
+        said = text + " Secret Name3 Holder spoke"
+        started = time.perf_counter()
+        self.assertTrue(sm.names_a_secret(said, secrets, allowed))
+        self.assertLess(time.perf_counter() - started, 0.2)
+
+    @staticmethod
+    def timed(text: str, secrets: list[str], allowed: list[str]) -> float:
+        import time
+
+        started = time.perf_counter()
+        sm.names_a_secret(text, secrets, allowed)
+        return time.perf_counter() - started
+
+
 class OneMatcher(unittest.TestCase):
-    def test_no_caller_has_a_word_rule_of_its_own(self) -> None:
-        """The recap text helpers and the narration lock only call the shared matcher."""
+    def test_every_caller_uses_the_shared_matcher_and_none_has_a_word_rule(self) -> None:
+        """The callers named in #2087 reach `dmbot.secrets_match`, directly or through the recap
+        text helpers, and no module keeps a rule of its own for a word of a secret name."""
         root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
+        reaches = {
+            "recaps/text.py": "secrets_match",
+            "recaps/audio/script.py": "secrets_match",
+            "recaps/draft.py": "names_a_secret",
+            "recaps/beats.py": "names_a_secret",
+            "recaps/pipeline.py": "names_a_secret",
+            "transcript/cleaner.py": "secrets_match",
+            "ui/line_fix.py": "text_names_a_secret",
+            "bot.py": "names_a_secret",
+            "devtools/recap_run/__main__.py": "names_a_secret",
+            "devtools/recap_measure/__main__.py": "names_a_secret",
+        }
+        for name, needle in reaches.items():
+            source = (root / name).read_text(encoding="utf-8")
+            self.assertIn(needle, source, name)
         for name in ("recaps/text.py", "recaps/audio/script.py"):
             source = (root / name).read_text(encoding="utf-8")
-            self.assertIn("secrets_match", source, name)
             self.assertNotIn('"word"', source.replace("'word'", '"word"'), name)
+        self.assertNotIn("RUN_MIN", (root / "recaps/audio/script.py").read_text(encoding="utf-8"))

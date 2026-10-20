@@ -18,8 +18,6 @@ _PERFORMANCE = re.compile(r"\(\([^()]{1,60}\)\)")
 _WORD = re.compile(r"[\w'’]+")
 _CAPITAL = re.compile(r"(?<![\w'’-])([A-ZÀ-Þ][\w'’-]*)")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
-# Small words that are part of names ("Son of Ash") and say nothing on their own.
-SMALL_WORDS = frozenset({"the", "and", "for", "son", "von", "van", "der", "del", "los", "las"})
 NOT_NAMES = frozenset({"i", "the", "a", "an", "and", "but", "or", "as", "day", "night"})
 
 CUE = _CUE

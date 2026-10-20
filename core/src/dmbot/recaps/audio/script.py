@@ -219,10 +219,6 @@ class SecretInScript(ValueError):
         self.rule = rule
 
 
-RUN_TOGETHER = "run-together"
-RUN_MIN = 3  # letters; a shorter key is too likely to sit inside an ordinary word
-
-
 def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collection[str]) -> str:
     """Which rule finds a secret name in the text meant for the voice, or "" for none. It is the
     one shared matcher (`dmbot.secrets_match`), the very one the recap text's own check uses, so
