@@ -9,12 +9,26 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   VOICE_MAX_BYTES,
   VOICE_STOP_AT_SECONDS,
+  VOICE_WARN_AT_SECONDS,
   voiceWords as words,
 } from "../content/recap-voice";
 import { ApiError, type AccountApi, type Recap } from "./api";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60; // about two minutes: turning a note into words can take a while
+
+/** Every reason the API gives for a note that could not be used, and the words for it (an unknown
+ * one gets the plain "something went wrong"). */
+const FAILED_KEY: Record<string, string> = {
+  bad_clip: "bad-clip",
+  too_long: "too_long",
+  no_words: "no_words",
+  transcribe_failed: "transcribe_failed",
+  no_consent: "no-consent",
+  not_allowed: "not-allowed",
+  not_editable: "not-editable",
+  too_soon: "too-soon",
+};
 
 /** The first recording format this browser makes that the API reads (webm or ogg). */
 const pickType = (): string | null => {
@@ -46,6 +60,10 @@ export default function RecapVoice({
   const [checks, setChecks] = useState(0);
   const [heard, setHeard] = useState(false);
   const [atLimit, setAtLimit] = useState(false);
+  const [warned, setWarned] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  const [tip, setTip] = useState(false);
+  const throwAway = useRef(false);
   const stopRef = useRef<HTMLButtonElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -101,10 +119,8 @@ export default function RecapVoice({
         if (got.state === "failed") {
           setPhase("idle");
           setRequestId(null);
-          const code = (got.error ?? "").replace("no_consent", "no-consent").replace("bad_clip", "bad-clip");
-          setProblem(
-            Object.hasOwn(words.problem, code) ? words.problem[code]! : words.problem.server,
-          );
+          const key = FAILED_KEY[got.error ?? ""];
+          setProblem((key && words.problem[key]) || words.problem.server);
           return;
         }
         polls += 1;
@@ -163,6 +179,9 @@ export default function RecapVoice({
     setSlow(false);
     setHeard(false);
     setAtLimit(false);
+    setWarned(false);
+    setCancelled(false);
+    throwAway.current = false;
     setSeconds(0);
     setPhase("asking");
     let got: MediaStream;
@@ -203,6 +222,12 @@ export default function RecapVoice({
     };
     rec.onstop = () => {
       release();
+      if (throwAway.current) {
+        // Cancel: the recording is dropped here and nothing is sent.
+        setPhase("idle");
+        setCancelled(true);
+        return;
+      }
       // Sent as plain webm or ogg: the API names the types it reads, without the codec part.
       const clip = new Blob(chunks, { type: type.split(";")[0] as string });
       if (clip.size === 0) {
@@ -231,11 +256,17 @@ export default function RecapVoice({
     ticker.current = setInterval(() => {
       elapsed += 1;
       setSeconds(elapsed);
+      if (elapsed === VOICE_WARN_AT_SECONDS) setWarned(true);
       if (elapsed >= VOICE_STOP_AT_SECONDS) {
         setAtLimit(true);
         stop();
       }
     }, 1000);
+  };
+
+  const cancel = (): void => {
+    throwAway.current = true;
+    stop();
   };
 
   const stop = (): void => {
@@ -247,16 +278,20 @@ export default function RecapVoice({
     phase === "asking"
       ? words.starting
       : phase === "recording"
-        ? words.recordingNow
+        ? warned
+          ? `${words.recordingNow} ${words.warn}`
+          : words.recordingNow
         : phase === "sending"
           ? atLimit
             ? `${words.atLimit} ${words.sending}`
             : words.sending
           : slow
             ? words.slow
-            : heard
-              ? words.heard
-              : "";
+            : cancelled
+              ? words.cancelled
+              : heard
+                ? words.heard
+                : "";
 
   return (
     <div class="stack">
@@ -279,6 +314,14 @@ export default function RecapVoice({
           >
             {words.stop}
           </button>
+          <button
+            type="button"
+            class="button secondary"
+            aria-label={words.cancelLabel}
+            onClick={cancel}
+          >
+            {words.cancel}
+          </button>
           <span class="small" aria-hidden="true">
             {words.timer(seconds)}
           </span>
@@ -293,6 +336,23 @@ export default function RecapVoice({
           {words.speak}
         </button>
       )}
+      <button
+        type="button"
+        class="button secondary"
+        aria-label={words.listeningButton}
+        aria-expanded={tip}
+        aria-describedby={tip ? "recap-voice-tip" : undefined}
+        onClick={() => setTip((open) => !open)}
+        onPointerEnter={(e) => e.pointerType === "mouse" && setTip(true)}
+        onPointerLeave={(e) => e.pointerType === "mouse" && setTip(false)}
+      >
+        ⓘ
+      </button>
+      {tip && (
+        <p class="muted small" id="recap-voice-tip" role="note">
+          {words.listening}
+        </p>
+      )}
       {slow && requestId && (
         <button
           type="button"
@@ -306,7 +366,7 @@ export default function RecapVoice({
           {words.checkAgain}
         </button>
       )}
-      <p class="muted small">{words.privacy}</p>
+      <p class="muted small">{words.hint} {words.privacy}</p>
     </div>
   );
 }

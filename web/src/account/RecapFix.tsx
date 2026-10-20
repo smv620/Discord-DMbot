@@ -13,6 +13,7 @@ import { RECAP_FIX_LIVE, RECAP_VOICE_LIVE, RECAPS_LIVE } from "../content/recap-
 import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
 import { keepFocus } from "./focus";
 import RecapVoice from "./RecapVoice";
+import { voiceWords } from "../content/recap-voice";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60; // about two minutes: a sort can take up to 90 seconds
@@ -48,6 +49,7 @@ export default function RecapFix({
   const inFlight = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [cutOff, setCutOff] = useState(false);
 
   const fail = (error: unknown): string => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -143,6 +145,7 @@ export default function RecapFix({
     setCorrections(new Set());
     setStyle(new Set());
     setStarted(null);
+    setCutOff(false);
     try {
       const { requestId: id } = await api.sendFix(recap.ref, text.trim());
       setSorting(true);
@@ -234,6 +237,11 @@ export default function RecapFix({
       >
         {status}
       </p>
+      {cutOff && (
+        <p class="note" role="status">
+          {voiceWords.cutOff}
+        </p>
+      )}
       {RECAP_VOICE_LIVE && (
         <RecapVoice
           api={api}
@@ -241,7 +249,9 @@ export default function RecapFix({
           onHeard={(heard) => {
             // The words are only put in the box: nothing is sent until the DM presses Send.
             // Words already typed stay: the heard words are added after them.
-            setText((now) => (now.trim() === "" ? heard : `${now.trimEnd()} ${heard}`).slice(0, FIX_MAX_LETTERS));
+            const joined = text.trim() === "" ? heard : `${text.trimEnd()} ${heard}`;
+            setCutOff(joined.length > FIX_MAX_LETTERS);
+            setText(joined.slice(0, FIX_MAX_LETTERS));
             noteRef.current?.focus();
           }}
         />

@@ -7,7 +7,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../src/account/api";
+import { ApiError, httpApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { fixWords as fix } from "../src/content/recap-fix";
@@ -110,9 +110,33 @@ describe("speaking a note", () => {
 
   it("says in plain sight that the recording is deleted, that only the words are kept, and what it costs", async () => {
     await open();
-    expect(screen.getByText(w.privacy)).toBeTruthy();
-    expect(w.privacy).toContain("listening time");
+    expect(screen.getByText(`${w.hint} ${w.privacy}`)).toBeTruthy();
     expect(w.privacy).toContain("We keep only the words");
+    expect(w.hint).toBe("Up to a minute.");
+  });
+
+  it("puts the listening-time cost behind a tappable ⓘ beside the microphone button", async () => {
+    await open();
+    const info = screen.getByRole("button", { name: w.listeningButton });
+    expect(info.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(w.listening)).toBeNull();
+    fireEvent.click(info);
+    expect(info.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(w.listening)).toBeTruthy();
+    expect(info.getAttribute("aria-describedby")).toBe("recap-voice-tip");
+    fireEvent.click(info);
+    expect(screen.queryByText(w.listening)).toBeNull();
+  });
+
+  it("opens the ⓘ on a mouse hover but not on a touch (where the tap does it)", async () => {
+    await open();
+    const info = screen.getByRole("button", { name: w.listeningButton });
+    fireEvent.pointerEnter(info, { pointerType: "touch" });
+    expect(screen.queryByText(w.listening)).toBeNull();
+    fireEvent.pointerEnter(info, { pointerType: "mouse" });
+    expect(screen.getByText(w.listening)).toBeTruthy();
+    fireEvent.pointerLeave(info, { pointerType: "mouse" });
+    expect(screen.queryByText(w.listening)).toBeNull();
   });
 
   it("keeps words already typed and adds the heard words after them", async () => {
@@ -133,7 +157,7 @@ describe("speaking a note", () => {
     const button = await screen.findByRole("button", { name: w.stopLabel });
     await waitFor(() => expect(document.activeElement).toBe(button));
     expect(screen.getByText(w.recordingNow).getAttribute("aria-live")).toBe("polite");
-    expect(screen.getByText(/^0:00 of 2:00$/).getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText(/^0:00 of 1:00$/).getAttribute("aria-hidden")).toBe("true");
   });
 
   it("says what to do when the browser won't let it use the microphone", async () => {
@@ -177,6 +201,82 @@ describe("speaking a note", () => {
     expect(screen.queryByText(/no_consent|no_words/)).toBeNull();
   }, 10000);
 
+  it.each([
+    ["bad_clip", "bad-clip"],
+    ["too_long", "too_long"],
+    ["no_words", "no_words"],
+    ["transcribe_failed", "transcribe_failed"],
+    ["no_consent", "no-consent"],
+    ["not_allowed", "not-allowed"],
+    ["not_editable", "not-editable"],
+    ["too_soon", "too-soon"],
+  ])("a failed run with %s shows its own words, not 'something went wrong'", async (code, key) => {
+    const api = mockApi("table");
+    api.voiceResult = async () => ({ state: "failed" as const, error: code });
+    await open(api);
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    const alert = await screen.findByRole("alert", {}, { timeout: 6000 });
+    expect(alert.textContent).toBe(w.problem[key]);
+    expect(alert.textContent).not.toBe(w.problem.server);
+  }, 10000);
+
+  it("an unknown code gets the plain 'something went wrong'", async () => {
+    const api = mockApi("table");
+    api.voiceResult = async () => ({ state: "failed" as const, error: "constructor" });
+    await open(api);
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    expect((await screen.findByRole("alert", {}, { timeout: 6000 })).textContent).toBe(w.problem.server);
+  }, 10000);
+
+  it("stops by itself after a minute, says so, and sends the clip", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = await open();
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await waitFor(() => expect(api.calls).toContain(`sendVoice:${draft.ref}:audio/webm:100`));
+    expect(screen.getByText(new RegExp(w.atLimit.slice(0, 20)))).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("says '15 seconds left' once, at 45 seconds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await open();
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    await vi.advanceTimersByTimeAsync(44_000);
+    expect(screen.queryByText(new RegExp(w.warn))).toBeNull();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(screen.getByText(new RegExp(w.warn))).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("Cancel throws the recording away and sends nothing", async () => {
+    const api = await open();
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    fireEvent.click(screen.getByRole("button", { name: w.cancelLabel }));
+    expect(await screen.findByText(w.cancelled)).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("sendVoice"))).toBe(false);
+    expect(stopped).toBe(1);
+    expect(screen.getByRole("button", { name: w.speak })).toBeTruthy();
+  });
+
+  it("says when heard words are longer than the box and the end was cut", async () => {
+    const api = mockApi("table");
+    api.voiceResult = async () => ({ state: "done" as const, text: "x".repeat(1200) });
+    await open(api);
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    expect(await screen.findByText(w.cutOff, {}, { timeout: 6000 })).toBeTruthy();
+    expect((screen.getByLabelText(fix.label) as HTMLTextAreaElement).value.length).toBe(1000);
+  }, 10000);
+
   it("shows a no-consent refusal at send time (403) in words, and asks for 32 kbit/s", async () => {
     const seen: unknown[] = [];
     vi.stubGlobal("MediaRecorder", class extends FakeRecorder {
@@ -217,5 +317,37 @@ describe("speaking a note", () => {
     cleanup();
     expect(stopped).toBe(1);
     expect(api.calls.some((c) => c.startsWith("sendVoice"))).toBe(false);
+  });
+});
+
+describe("over the wire", () => {
+  const reply = (status: number, body: unknown, seen: { url: string; init: RequestInit }[] = []) =>
+    httpApi("https://api.example.test", (async (url: string, init: RequestInit) => {
+      seen.push({ url, init });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch);
+
+  it("sends the clip as it is, with its own type, and reads the words", async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const clip = new Blob([new Uint8Array(5)], { type: "audio/webm" });
+    const sent = await reply(202, { requestId: "v1" }, seen).sendVoice!("1.a.5", clip);
+    expect(sent.requestId).toBe("v1");
+    expect(seen[0]?.url).toBe("https://api.example.test/me/recaps/1.a.5/voice");
+    expect(seen[0]?.init.body).toBe(clip);
+    expect((seen[0]?.init.headers as Record<string, string>)["Content-Type"]).toBe("audio/webm");
+    const got = await reply(200, { state: "done", text: "Hello" }, seen).voiceResult!("1.a.5", "v1");
+    expect(got).toEqual({ state: "done", text: "Hello" });
+    expect(seen[1]?.url).toBe("https://api.example.test/me/recaps/1.a.5/voice/v1");
+  });
+
+  it.each([
+    [413, { error: "too_big" }, "too-big"],
+    [415, { error: "bad_type" }, "bad-type"],
+    [429, { error: "too_soon" }, "too-soon"],
+    [403, { error: "no_consent" }, "no-consent"],
+    [422, { error: "bad_clip" }, "bad-clip"],
+  ])("reads a %i answer as %s", async (status, body, kind) => {
+    const clip = new Blob([new Uint8Array(5)], { type: "audio/webm" });
+    await expect(reply(status, body).sendVoice!("r", clip)).rejects.toMatchObject({ kind });
   });
 });
