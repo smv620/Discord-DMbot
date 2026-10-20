@@ -109,6 +109,22 @@ def _allowed(lookup: CampaignLookup) -> dict[str, str]:
     return found
 
 
+def entity_for(lookup: CampaignLookup, label: str) -> str | None:
+    """The one entry a line's label stands for, by the rule that made the label (`_allowed`), or
+    None when none does or the name is shared: any other unmerged entry reading the same (a player
+    character, an item, a duplicate) makes the label ambiguous, and a live heads-up then says
+    nothing rather than point at the wrong one."""
+    key = name_key(label)
+    found = [entity_id for entity_id, name in _allowed(lookup).items() if name_key(name) == key]
+    if len(found) != 1:
+        return None
+    shared = any(
+        e.id != found[0] and e.merged_into is None and name_key(e.name) == key
+        for e in lookup.entities.values()
+    )
+    return None if shared else found[0]
+
+
 def speakers(lookup: CampaignLookup) -> list[str]:
     """Every name a label may take, sorted (see `_allowed`)."""
     return sorted(_allowed(lookup).values(), key=str.casefold)
