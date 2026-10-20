@@ -161,6 +161,71 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
         await secret_posts.hide(G, C, channel=channel, bot_id=9)
         self.assertEqual(reads, 2)
 
+    async def test_a_new_screen_channel_is_read_again(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        reads: list[int] = []
+
+        def channel(channel_id: int) -> Any:
+            async def history(limit: int | None) -> Any:
+                reads.append(channel_id)
+                return
+                yield
+
+            return SimpleNamespace(id=channel_id, history=history)
+
+        await secret_posts.hide(G, C, channel=channel(1), bot_id=9)
+        await secret_posts.hide(G, C, channel=channel(1), bot_id=9)
+        await secret_posts.hide(G, C, channel=channel(2), bot_id=9)  # the screen was remade
+        self.assertEqual(reads, [1, 2])
+
+    async def test_a_question_dropped_during_the_search_leaves_the_campaign_unmarked(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        reads = 0
+
+        async def history(limit: int | None) -> Any:
+            nonlocal reads
+            reads += 1
+            if reads == 1:  # a question is posted while the screen is being read
+                for _ in range(secret_posts.KEPT_PER_CAMPAIGN + 1):
+                    secret_posts.remember(G, C, message())
+            return
+            yield
+
+        channel = SimpleNamespace(history=history)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 2)  # not marked after the first: it was overtaken
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 2)  # and marked once a search ran without a drop
+
+    async def test_a_failed_edit_list_that_overflows_means_the_screen_is_read_again(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        reads = 0
+
+        async def history(limit: int | None) -> Any:
+            nonlocal reads
+            reads += 1
+            return
+            yield
+
+        channel = SimpleNamespace(history=history)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        for _ in range(secret_posts.KEPT_PER_CAMPAIGN):
+            gone = message()
+            gone.edit.side_effect = RuntimeError("deleted")
+            secret_posts.remember(G, C, gone)
+        extra = message()
+        extra.edit.side_effect = RuntimeError("deleted")
+        secret_posts._posts[(G, C)].append(extra)  # one over, as if posted meanwhile
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(secret_posts.pending(G, C), secret_posts.KEPT_PER_CAMPAIGN)
+        self.assertEqual(reads, 1)  # (the kept list is trimmed after this pass)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 2)  # the overflow was dropped, so it was searched again
+
     async def test_a_failed_search_is_tried_again(self) -> None:
         secret_posts._searched.clear()
         reads = 0

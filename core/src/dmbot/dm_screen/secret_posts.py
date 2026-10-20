@@ -36,7 +36,7 @@ def remember(guild_id: int, campaign_id: str, message: Any) -> None:
     kept.append(message)
     if len(kept) > KEPT_PER_CAMPAIGN:
         del kept[:-KEPT_PER_CAMPAIGN]
-        _searched.discard((guild_id, campaign_id))  # one forgotten: the screen must be read again
+        _forgot((guild_id, campaign_id))  # one forgotten: the screen must be read again
 
 
 def pending(guild_id: int, campaign_id: str) -> int:
@@ -66,7 +66,20 @@ BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:")
 # Campaigns whose screen history was searched in this process. Questions posted after that are
 # remembered in `_posts`, so only what a restart forgot needs the search, and it needs it once;
 # a question the list drops (over KEPT_PER_CAMPAIGN) takes the campaign out again.
-_searched: set[tuple[int, str]] = set()
+# The value is the screen channel that was read: a campaign whose screen moved to a new channel is
+# read again.
+_searched: dict[tuple[int, str], Any] = {}
+# How many questions each campaign's list has dropped. A search that began before a drop must not
+# mark the campaign as read, since the dropped question may have been posted after the search
+# passed it (remember() can run at any time; hide() runs under the campaign's lock).
+_drops: dict[tuple[int, str], int] = defaultdict(int)
+_UNSEARCHED = object()
+
+
+def _forgot(key: tuple[int, str]) -> None:
+    """A question fell off the list: the screen must be searched again."""
+    _drops[key] += 1
+    _searched.pop(key, None)
 
 
 async def _scan(channel: Any, bot_id: int) -> tuple[list[Any], bool]:
@@ -99,12 +112,15 @@ async def hide(
     found by their buttons). A message that is gone or can't be edited is skipped (logged as a
     count only). Returns how many were changed."""
     messages = _posts.pop((guild_id, campaign_id), [])
-    if channel is not None and bot_id is not None and (guild_id, campaign_id) not in _searched:
+    key = (guild_id, campaign_id)
+    screen = getattr(channel, "id", None)
+    if channel is not None and bot_id is not None and _searched.get(key, _UNSEARCHED) != screen:
+        drops = _drops[key]
         known = {getattr(m, "id", None) for m in messages}
         older, complete = await _scan(channel, bot_id)
         messages += [m for m in older if getattr(m, "id", None) not in known]
-        if complete:  # a failed read is tried again at the next change
-            _searched.add((guild_id, campaign_id))
+        if complete and _drops[key] == drops:  # a failed or overtaken read is tried again
+            _searched[key] = screen
     changed = 0
     failed: list[Any] = []
     for message in messages:
@@ -123,7 +139,7 @@ async def hide(
         kept.extend(failed)
         if len(kept) > KEPT_PER_CAMPAIGN:
             del kept[:-KEPT_PER_CAMPAIGN]
-            _searched.discard((guild_id, campaign_id))
+            _forgot((guild_id, campaign_id))
     if messages:
         log.info("Secret questions pulled back: %d changed, %d not", changed, len(failed))
     return changed
