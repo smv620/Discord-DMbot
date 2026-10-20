@@ -34,6 +34,11 @@ class TranscriptStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    @property
+    def db(self) -> Database:
+        """The database, for the other stores that work on a session's lines (imports, #2105)."""
+        return self._db
+
     async def open_session(
         self, guild_id: int, campaign_id: str, started_at: int, engine: str = ""
     ) -> str:

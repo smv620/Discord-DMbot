@@ -313,6 +313,8 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_job import ImportJob, ImportStore
+from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
@@ -459,6 +461,7 @@ RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
+IMPORT_ROUND_S = 30
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -1149,6 +1152,12 @@ class DMBot(commands.AutoShardedBot):
         self._clean_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
+        # Cleaning the sessions a DM imported from a file (#2105), in the background.
+        self.import_job: ImportJob | None = (
+            ImportJob(ImportStore(transcripts.db), self.lookup.get, self.topic_ai)
+            if transcripts is not None and self.lookup is not None
+            else None
+        )
         self.tables: dict[int, Table] = {}
         # Channels of any campaign that must never be read as table chat, by server, with when
         # the answer runs out (monotonic seconds) (#1118).
@@ -1337,6 +1346,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_loop(), "recaps")]
                 if self.recap_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._import_loop(), "session-imports")]
+                if self.import_job is not None
                 else []
             ),
             *(
@@ -8263,6 +8277,24 @@ class DMBot(commands.AutoShardedBot):
             return "there"
         return user.display_name
 
+    async def _import_loop(self) -> None:
+        """Every 30 seconds: the sessions a DM imported that wait to be cleaned (#2105). A restart
+        puts one it was in the middle of back in the queue."""
+        assert self.import_job is not None
+        await asyncio.sleep(45)
+        for guild in list(self.guilds):
+            try:
+                await self.import_job.store.resume(guild.id)
+            except Exception:
+                log.exception("Import: couldn't put the unfinished ones back")
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    await self.import_job.run_round(guild.id)
+                except Exception:
+                    log.exception("Import: cleaning failed for a server")
+            await asyncio.sleep(IMPORT_ROUND_S)
+
     async def _recap_audio_loop(self) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
         loop, because one recap's audio is minutes of waiting on the provider and must never
@@ -9582,6 +9614,9 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
+        campaigns.register_section(
+            ImportSpeakersSection()
+        )  # and who its import labels were (#2105)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
