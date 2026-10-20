@@ -419,10 +419,11 @@ def _unquote(raw: str) -> str:
 
 
 def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
-    """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL` and
-    `AI_MODEL_DEEP` (empty: that tier's default). The old `AI_MODEL`, if set, stands for
-    FAST for now; the second value is the line to log about that (or ""). A value that
-    isn't a Claude model name stops start-up, naming the setting (never the value)."""
+    """The model for each AI tier, from `AI_MODEL_FAST`, `AI_MODEL_CAREFUL`, `AI_MODEL_DEEP`,
+    `AI_MODEL_CREATIVE` and `AI_MODEL_FORMATTING` (empty: that tier's default). The old
+    `AI_MODEL`, if set, stands for FAST for now; the second value is the line to log about
+    that (or ""). A value that isn't a Claude model name stops start-up, naming the setting
+    (never the value)."""
     old = get("AI_MODEL")
     notice = ""
     chosen: dict[str, str] = {}
@@ -430,6 +431,8 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
         ("fast", "AI_MODEL_FAST"),
         ("careful", "AI_MODEL_CAREFUL"),
         ("deep", "AI_MODEL_DEEP"),
+        ("creative", "AI_MODEL_CREATIVE"),
+        ("formatting", "AI_MODEL_FORMATTING"),
     ):
         raw, shown = _unquote(get(name)), name  # (a phone adds quotes)
         if tier == "fast":
