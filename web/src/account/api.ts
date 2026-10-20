@@ -229,7 +229,9 @@ export interface CueProblem {
   near: string;
   /** The cue as written. */
   cue: string;
-  kind: "unknown" | "unclosed" | "mismatched" | "empty" | "no_words" | "inside_word";
+  /** One of unknown, unclosed, mismatched, empty, no_words, inside_word today; any other word
+   * gets a plain "this cue is wrong" line (#2083 may add kinds). */
+  kind: string;
   /** The closest allowed word, or null when none is close. */
   suggest: string | null;
 }
@@ -244,8 +246,33 @@ export interface CueWords {
   pacing: string[];
 }
 
+/** Reads the allowed cue words out of a recap as the API sends it. The field is `cueWords` or
+ * `cue_words` (#2083 is not final), and a value of the wrong shape gives undefined, so the help
+ * is simply not shown. */
+export function readCueWords(body: unknown): CueWords | undefined {
+  const raw = (body as { cueWords?: unknown; cue_words?: unknown } | null) ?? {};
+  const w = (raw.cueWords ?? raw.cue_words) as Partial<CueWords> | undefined;
+  if (!w || !Array.isArray(w.moods) || !Array.isArray(w.pacing)) return undefined;
+  const synonyms: Record<string, string> = {};
+  for (const [from, to] of Object.entries(w.synonyms ?? {})) {
+    if (typeof to === "string") synonyms[from] = to;
+  }
+  return {
+    moods: w.moods.map(String),
+    synonyms,
+    pacing: w.pacing.map(String),
+  };
+}
+
+/** A recap as the API sent it, with its cue words in the one spelling the page reads. */
+function recapFrom(body: unknown): Recap {
+  const recap = body as Recap;
+  const cueWords = readCueWords(body);
+  return cueWords ? { ...recap, cueWords } : recap;
+}
+
 /** Reads the cue problems out of a refused save's body. The API's field names are not final
- * (#2083), so both spellings are read here and nowhere else; a body with none gives []. */
+ * (#2083), so both spellings are read here and in `readCueWords`, nowhere else; a body with none gives []. */
 export function readCueProblems(body: unknown): CueProblem[] {
   const raw = (body as { cueProblems?: unknown; cue_problems?: unknown } | null) ?? {};
   const list = raw.cueProblems ?? raw.cue_problems;
@@ -678,9 +705,13 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       } catch {
         // No JSON body: a plain server error.
       }
-      // Cue problems decide the kind whatever the code says: the page's answer is the list.
-      if (cueProblems.length > 0) throw new ApiError("bad-cues", cueProblems);
-      throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
+      const kind = errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server");
+      // Cue problems are the page's answer, unless the recap can't be changed at all: then the
+      // reload that goes with "not-allowed" and "not-editable" matters more.
+      if (cueProblems.length > 0 && kind !== "not-allowed" && kind !== "not-editable") {
+        throw new ApiError("bad-cues", cueProblems);
+      }
+      throw new ApiError(kind);
     }
     if (response.status === 204) return null;
     return asFile ? response.blob() : response.json();
@@ -822,12 +853,14 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         { saidAs },
       );
     },
-    recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
+    recap: async (ref) => recapFrom(await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)),
     saveRecap: async (ref, summary, housekeeping) =>
-      (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
-        summary,
-        housekeeping,
-      })) as Recap,
+      recapFrom(
+        await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
+          summary,
+          housekeeping,
+        }),
+      ),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {

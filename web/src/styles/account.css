@@ -486,10 +486,18 @@
   padding-left: 1.2rem;
 }
 
+/* A long quoted bit of text must wrap on a phone, not push the page sideways. */
+.account .cue-problems li {
+  overflow-wrap: anywhere;
+}
+
 .account .cue-help {
   margin: 0 0 1rem;
 }
 
 .account .cue-help summary {
   cursor: pointer;
+  min-height: 44px;
+  padding: 0.6rem 0;
+  display: list-item;
 }

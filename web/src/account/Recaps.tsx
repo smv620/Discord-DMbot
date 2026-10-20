@@ -2,12 +2,15 @@
 // The DM's recap pages (#1386): the list, and the page to read, change and decide one recap.
 // The API shows a recap only to a DM of its campaign, so a player gets "not found" and nothing
 // is guarded here beyond that; nothing is posted from this page, the bot posts after Post.
+import { forwardRef } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
   againLabel,
   allowanceLines,
   cueProblemLine,
+  cueProblemsHeading,
+  cueProblemsMore,
   cueWords,
   errors,
   sessionDay,
@@ -36,11 +39,11 @@ import RecapPlayer from "./RecapPlayer";
 const POLL_MS = 5000;
 
 /** The words a cue may use, in a small panel the DM can open (#2084). The API says them, so the
- * page shows exactly what it checks; a synonym reads "sad → somber". */
-function CueWordsHelp({ words }: { words: CueWords }) {
-  const synonyms = Object.entries(words.synonyms).map(([from, to]) => `${from} (${to})`);
+ * page shows exactly what it checks. Open by itself after a refused save with an unknown word. */
+function CueWordsHelp({ words, open }: { words: CueWords; open: boolean }) {
+  const synonyms = Object.entries(words.synonyms).map(([from, to]) => `${from} works as ${to}`);
   return (
-    <details class="cue-help">
+    <details class="cue-help" open={open || undefined}>
       <summary>{cueWords.help}</summary>
       <p class="muted small">{cueWords.helpLead}</p>
       <p>
@@ -58,22 +61,26 @@ function CueWordsHelp({ words }: { words: CueWords }) {
   );
 }
 
-/** The cue problems a refused save found, under the text box (#2084). */
-function CueProblems({ problems }: { problems: CueProblem[] }) {
-  return (
-    <div id="recap-cue-problems" class="cue-problems">
-      <p>
-        <strong>{cueWords.problemsHeading}</strong>
-      </p>
-      <ul>
-        {problems.map((problem, i) => (
-          <li key={i}>{cueProblemLine(problem)}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
+/** The cue problems a refused save found, under the text box (#2084): the first few, in the
+ * order the API gave, and focus comes here so a screen reader and a phone land on them. */
+const CueProblems = forwardRef<HTMLDivElement, { problems: CueProblem[]; help: boolean }>(
+  function CueProblems({ problems, help }, ref) {
+    const shown = problems.slice(0, cueWords.maxShown);
+    return (
+      <div id="recap-cue-problems" class="cue-problems" tabIndex={-1} ref={ref}>
+        <p>
+          <strong>{cueProblemsHeading(problems.length)}</strong>
+        </p>
+        <ul>
+          {shown.map((problem, i) => (
+            <li key={i}>{cueProblemLine(problem, help)}</li>
+          ))}
+        </ul>
+        {problems.length > shown.length && <p>{cueProblemsMore(problems.length - shown.length)}</p>}
+      </div>
+    );
+  },
+);
 
 type Load =
   | { kind: "loading" }
@@ -417,6 +424,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   // Where focus goes when the button that was pressed is disabled or gone (#1466).
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const problemsRef = useRef<HTMLDivElement>(null);
   const [note, setNote] = useState<{ ok: boolean; message: string } | null>(
     null,
   );
@@ -524,15 +532,20 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       setNote({ ok: true, message: text.saved });
     } catch (error) {
       // The API decides what is wrong with a cue; the edit stays open and unsaved (#2084).
-      if (error instanceof ApiError && error.kind === "bad-cues") {
-        setCueProblems(error.cueProblems);
-      }
-      setNote({ ok: false, message: messageFor(error) });
+      const badCues = error instanceof ApiError && error.kind === "bad-cues";
+      if (badCues) setCueProblems(error.cueProblems);
+      setNote({
+        ok: false,
+        message:
+          badCues && error.cueProblems.length === 0 ? cueWords.noteEmpty : messageFor(error),
+      });
       await refresh(error);
     } finally {
       inFlight.current = false;
       setBusy(null);
-      keepFocus(() => headingRef.current);
+      // After a refused save the problems are what the DM needs next; anything else goes to the
+      // heading as before (#1466).
+      keepFocus(() => problemsRef.current ?? headingRef.current);
     }
   };
 
@@ -621,8 +634,22 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             aria-describedby={cueProblems.length > 0 ? "recap-cue-problems" : undefined}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
           />
-          {cueProblems.length > 0 && <CueProblems problems={cueProblems} />}
-          {RECAP_AUDIO_LIVE && recap.cueWords && <CueWordsHelp words={recap.cueWords} />}
+          {/* The list is shown whenever the API refused with problems, narration live or not: the
+              API decides what is wrong. It and aria-invalid stay until the next save, which
+              clears them. */}
+          {cueProblems.length > 0 && (
+            <CueProblems
+              ref={problemsRef}
+              problems={cueProblems}
+              help={RECAP_AUDIO_LIVE && !!recap.cueWords}
+            />
+          )}
+          {RECAP_AUDIO_LIVE && recap.cueWords && (
+            <CueWordsHelp
+              words={recap.cueWords}
+              open={cueProblems.some((p) => p.kind === "unknown")}
+            />
+          )}
           <label for="recap-housekeeping">{text.housekeepingLabel}</label>
           <textarea
             id="recap-housekeeping"

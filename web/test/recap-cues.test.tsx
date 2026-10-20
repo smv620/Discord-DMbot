@@ -4,13 +4,26 @@
 // box and stays unsaved; a clean save works as before; the cue words help shows the words the API
 // sends. The API decides what is wrong, so the page is only shown what it says. The cue parts
 // show only while RECAP_AUDIO_LIVE is true (false today), so these tests switch it on.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, readCueProblems, type CueProblem, type CueWords } from "../src/account/api";
+import {
+  ApiError,
+  httpApi,
+  readCueProblems,
+  readCueWords,
+  type CueProblem,
+  type CueWords,
+} from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
-import { cueProblemLine, cueWords, text } from "../src/content/recaps";
+import {
+  cueProblemLine,
+  cueProblemsHeading,
+  cueProblemsMore,
+  cueWords,
+  text,
+} from "../src/content/recaps";
 
 const live = vi.hoisted(() => ({ audio: false }));
 vi.mock("../src/content/recap-words", async (original) => {
@@ -64,9 +77,9 @@ describe("a save with cue problems", () => {
     await openEditor(a);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Some cues in the text need fixing. They are listed under the text box. Nothing was saved.",
+      "Nothing was saved. Some cues need fixing. See the list under the text box.",
     );
-    expect(screen.getByText(cueWords.problemsHeading)).toBeTruthy();
+    expect(screen.getByText(cueProblemsHeading(2))).toBeTruthy();
     expect(screen.getByText(cueProblemLine(problems[0]!))).toBeTruthy();
     expect(screen.getByText(cueProblemLine(problems[1]!))).toBeTruthy();
     const box = screen.getByLabelText(text.editLabel);
@@ -91,10 +104,10 @@ describe("a save with cue problems", () => {
     };
     await openEditor(a);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
-    await screen.findByText(cueWords.problemsHeading);
+    await screen.findByText(cueProblemsHeading(2));
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     expect(await screen.findByText(text.saved)).toBeTruthy();
-    expect(screen.queryByText(cueWords.problemsHeading)).toBeNull();
+    expect(screen.queryByText(cueProblemsHeading(2))).toBeNull();
   });
 
   it("saves a clean edit as before, with no problems shown", async () => {
@@ -103,7 +116,7 @@ describe("a save with cue problems", () => {
     await openEditor(a);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     expect(await screen.findByText(text.saved)).toBeTruthy();
-    expect(screen.queryByText(cueWords.problemsHeading)).toBeNull();
+    expect(screen.queryByText(cueProblemsHeading(2))).toBeNull();
     expect(a.calls).toContain(`saveRecap:${ready.ref}`);
   });
 });
@@ -114,7 +127,7 @@ describe("the cue words help", () => {
     await openEditor(api());
     expect(screen.getByText(cueWords.help)).toBeTruthy();
     expect(screen.getByText("calm, tense, somber")).toBeTruthy();
-    expect(screen.getByText("sad (somber)")).toBeTruthy();
+    expect(screen.getByText("sad works as somber")).toBeTruthy();
     expect(screen.getByText("pause, long pause")).toBeTruthy();
   });
 
@@ -138,7 +151,6 @@ describe("what the API sends", () => {
   });
 
   it("makes a refused save with cue problems a 'bad-cues' error, whatever the code says", async () => {
-    const { httpApi } = await import("../src/account/api");
     const fetcher = vi.fn(async () =>
       new Response(JSON.stringify({ error: "something_new", cueProblems: problems }), { status: 422 }),
     );
@@ -152,13 +164,122 @@ describe("what the API sends", () => {
 
 describe("the words for each problem", () => {
   it("say where it is and what to do, in plain words", () => {
-    const kinds: CueProblem["kind"][] = ["unknown", "unclosed", "mismatched", "empty", "no_words", "inside_word"];
+    const kinds: string[] = ["unknown", "unclosed", "mismatched", "empty", "no_words", "inside_word"];
     for (const kind of kinds) {
       const line = cueProblemLine({ paragraph: 4, near: "by the well", cue: "《x》", kind, suggest: null });
-      expect(line.startsWith("Paragraph 4: "), kind).toBe(true);
+      expect(line.startsWith("Near “by the well” (paragraph 4): "), kind).toBe(true);
+      expect(line, kind).toMatch(/\b(Change|Pick|Add|Type|Use|Move|Check)\b/);
       expect(line, kind).not.toMatch(/syntax|tag|bracket|parse|token|regex|enum/i);
     }
-    expect(cueProblemLine(problems[0]!)).toContain("Did you mean “gloom”?");
-    expect(cueProblemLine({ ...problems[0]!, suggest: null })).not.toContain("Did you mean");
+    expect(cueProblemLine(problems[0]!)).toContain("Change it to “gloom”");
+    expect(cueProblemLine({ ...problems[0]!, suggest: null })).not.toContain("Change it to");
+  });
+});
+
+describe("more of what the page and the API do", () => {
+  it("keeps the typed text in the box after a refused save, and clears aria-invalid after a good one", async () => {
+    live.audio = true;
+    const a = api();
+    const save = a.saveRecap!.bind(a);
+    let first = true;
+    a.saveRecap = async (...args) => {
+      if (first) {
+        first = false;
+        throw new ApiError("bad-cues", problems);
+      }
+      return save(...args);
+    };
+    await openEditor(a);
+    const box = screen.getByLabelText(text.editLabel) as HTMLTextAreaElement;
+    fireEvent.input(box, { target: { value: "My edit 《glumm》." } });
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    await screen.findByText(cueProblemsHeading(2));
+    expect((screen.getByLabelText(text.editLabel) as HTMLTextAreaElement).value).toBe("My edit 《glumm》.");
+    await waitFor(() => expect(document.activeElement?.id).toBe("recap-cue-problems"));
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    await screen.findByText(text.saved);
+    expect(screen.queryByLabelText(text.editLabel)).toBeNull();
+  });
+
+  it("opens the cue words help by itself when a word is not known", async () => {
+    live.audio = true;
+    const a = api();
+    a.saveRecap = async () => {
+      throw new ApiError("bad-cues", problems);
+    };
+    await openEditor(a);
+    expect(document.querySelector("details.cue-help")?.hasAttribute("open")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    await screen.findByText(cueProblemsHeading(2));
+    expect(document.querySelector("details.cue-help")?.hasAttribute("open")).toBe(true);
+  });
+
+  it("shows the first five and says how many more, and says 'this cue' for one", async () => {
+    live.audio = true;
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...problems[1]!, paragraph: i + 1 }));
+    const a = api();
+    a.saveRecap = async () => {
+      throw new ApiError("bad-cues", many);
+    };
+    await openEditor(a);
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    await screen.findByText(cueProblemsHeading(7));
+    expect(document.querySelectorAll(".cue-problems li")).toHaveLength(5);
+    expect(screen.getByText(cueProblemsMore(2))).toBeTruthy();
+    expect(cueProblemsHeading(1)).toContain("this cue");
+    expect(cueProblemsHeading(1)).toContain(text.save);
+  });
+
+  it("falls back to a plain note when 'bad-cues' comes with no details", async () => {
+    live.audio = true;
+    const a = api();
+    a.saveRecap = async () => {
+      throw new ApiError("bad-cues");
+    };
+    await openEditor(a);
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    expect((await screen.findByRole("alert")).textContent).toBe(cueWords.noteEmpty);
+    expect(screen.queryByText(/Nothing was saved, and your edits/)).toBeNull();
+  });
+
+  it("leaves a refusal without cue problems as it was", async () => {
+    live.audio = true;
+    const a = api();
+    a.saveRecap = async () => {
+      throw new ApiError("bad-text");
+    };
+    await openEditor(a);
+    fireEvent.click(screen.getByRole("button", { name: text.save }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/too long/);
+    expect(screen.getByLabelText(text.editLabel).getAttribute("aria-invalid")).toBeNull();
+    expect(document.querySelector(".cue-problems")).toBeNull();
+  });
+
+  it("keeps 'bad_text' as it was over the wire, and a 'not editable' refusal as it was", async () => {
+    const send = (status: number, body: unknown) =>
+      httpApi("https://api.example.test", (async () =>
+        new Response(JSON.stringify(body), { status })) as unknown as typeof fetch);
+    await expect(send(400, { error: "bad_text" }).saveRecap!("a.b.1", "t", [])).rejects.toMatchObject({
+      kind: "bad-text",
+    });
+    await expect(
+      send(403, { error: "not_allowed", cueProblems: problems }).saveRecap!("a.b.1", "t", []),
+    ).rejects.toMatchObject({ kind: "not-allowed", cueProblems: [] });
+  });
+
+  it("reads the cue words in either spelling, and ignores a wrong shape", async () => {
+    expect(readCueWords({ cue_words: words })).toEqual(words);
+    expect(readCueWords({ cueWords: words })).toEqual(words);
+    expect(readCueWords({ cueWords: { moods: "calm" } })).toBeUndefined();
+    expect(readCueWords({})).toBeUndefined();
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ ref: "a.b.1", cue_words: words }), { status: 200 })) as unknown as typeof fetch;
+    const got = await httpApi("https://api.example.test", fetcher).recap!("a.b.1");
+    expect(got.cueWords).toEqual(words);
+  });
+
+  it("gives a kind it does not know a plain line with a next step", () => {
+    const line = cueProblemLine({ paragraph: 2, near: "by the well", cue: "《x》", kind: "brand_new", suggest: null });
+    expect(line).toBe("Near “by the well” (paragraph 2): “《x》” is wrong. Check it against the cue words.");
   });
 });
