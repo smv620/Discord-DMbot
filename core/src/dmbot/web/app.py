@@ -622,18 +622,27 @@ def create_app(
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
 
+    async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
+        """A small JSON body, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            return json.loads(bytes(data))
+        except ValueError:
+            return None
+
     @app.post("/me/recaps/{ref}/instructions", status_code=202)
     async def me_recap_instructions(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
         if instructions_limit.take(f"instructions:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
-        length = request.headers.get("content-length", "")
-        if length.isdecimal() and int(length) > 8 * 1024:
-            raise HTTPException(status_code=413, detail="too_big")
-        try:
-            body = await request.json()
-        except ValueError:
-            body = None
+        body = await bounded_json(request)
         try:
             return await send_instructions(
                 db, session, ref, body.get("text") if isinstance(body, dict) else None
@@ -656,10 +665,9 @@ def create_app(
     @app.post("/me/recaps/{ref}/rewrite")
     async def me_recap_rewrite(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
-        try:
-            body = await request.json()
-        except ValueError:
-            body = None
+        if instructions_limit.take(f"rewrite:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
         try:
             return await rewrite(db, session, ref, body)
         except RecapError as err:

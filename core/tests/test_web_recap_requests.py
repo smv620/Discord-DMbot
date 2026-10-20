@@ -7,9 +7,11 @@ import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot import schema
 from dmbot.recaps import requests as rq
 from dmbot.recaps.feedback import Sorted
-from dmbot.recaps.store import MAX_TRIES
+from dmbot.recaps.store import MAX_CORRECTIONS, MAX_TRIES
+from dmbot.recaps.style import MAX_NOTES
 from dmbot.web import recap_requests as web
 from dmbot.web import sessions
 from dmbot.web.recaps import RecapError, read_recap
@@ -169,6 +171,56 @@ class TheBot(WithRequests):
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute("UPDATE recap_requests SET created_at = 1")
         self.assertEqual(await self.requests.sweep(THURSDAY.id), 1)
+
+
+class TheCaps(WithRequests):
+    def test_the_doors_caps_are_the_codes_own(self) -> None:
+        sql = schema.RECAP_REQUESTS
+        self.assertIn(f"max_tries CONSTANT INT := {MAX_TRIES};", sql)
+        self.assertIn(f"max_corrections CONSTANT INT := {MAX_CORRECTIONS};", sql)
+        self.assertIn(f"max_notes CONSTANT INT := {MAX_NOTES};", sql)
+
+    async def test_a_second_dm_of_the_campaign_cannot_read_or_use_the_first_dms_request(
+        self,
+    ) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_dms (guild_id, campaign_id, user_id) VALUES (%s, %s, %s)",
+                (THURSDAY.id, self.one.id, BOB.id),
+            )
+        rid = await self.answered()
+        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob = await sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        self.assertEqual(
+            await self.code(web.read_instructions(self.web, bob, self.ref, rid)), "not_found"
+        )
+        body = {"requestId": rid, "corrections": ["c1"]}
+        self.assertEqual(await self.code(web.rewrite(self.web, bob, self.ref, body)), "not_found")
+
+    async def test_a_request_for_one_recap_is_refused_on_another(self) -> None:
+        await self.store.enqueue(THURSDAY.id, self.one.id, 200, dm_user_id=fx.ALICE)
+        await self.store.update(
+            THURSDAY.id, self.one.id, 200, state="ready", title="T", summary=fx.SUMMARY
+        )
+        rid = await self.answered()
+        other = f"{THURSDAY.id}.{self.one.id}.200"
+        self.assertEqual(
+            await self.code(web.read_instructions(self.web, self.session, other, rid)), "not_found"
+        )
+
+    async def test_two_rewrites_of_one_request_give_one_ok(self) -> None:
+        import asyncio
+
+        rid = await self.answered()
+        body = {"requestId": rid, "corrections": ["c1"]}
+        results = await asyncio.gather(
+            web.rewrite(self.web, self.session, self.ref, body),
+            web.rewrite(self.web, self.session, self.ref, body),
+            return_exceptions=True,
+        )
+        self.assertEqual(sum(isinstance(r, dict) for r in results), 1)
+        self.assertEqual((await self.state(self.one.id)).tries, 1)
 
 
 class TheRewrite(WithRequests):

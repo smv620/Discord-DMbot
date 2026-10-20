@@ -6,12 +6,9 @@ at most an hour, never logged, never returned to anyone but the DM who sent them
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.recaps.store import MAX_CORRECTIONS, MAX_TRIES
-from dmbot.recaps.style import MAX_NOTES
 from dmbot.web import recaps
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -95,8 +92,8 @@ async def rewrite(db: Database, session: Session, ref: str, body: object) -> dic
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute(
-            "SELECT dmbot_recap_rewrite(%s, %s, %s, %s, %s, %s, %s, %s, %s) AS r",
-            (gid, cid, at, rid, keep_c, keep_s, MAX_TRIES, MAX_CORRECTIONS, MAX_NOTES),
+            "SELECT dmbot_recap_rewrite(%s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, rid, keep_c, keep_s),
         )
         got = (await cur.fetchone() or {}).get("r")
         if got is None:
@@ -109,8 +106,3 @@ async def rewrite(db: Database, session: Session, ref: str, body: object) -> dic
         "triesLeft": recaps._view(row)["triesLeft"],
         "needsApproval": True,
     }
-
-
-def never_logged(payload: Any) -> str:
-    """For tests: the JSON of an answer, to look for words in a log."""
-    return json.dumps(payload)

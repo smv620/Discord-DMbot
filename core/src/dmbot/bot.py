@@ -8477,12 +8477,15 @@ class DMBot(commands.AutoShardedBot):
         while True:
             try:
                 await self.run_recap_requests()
-                sweeps += 1
-                if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
-                    for guild in list(self.guilds):
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The recap requests failed: %s", type(exc).__name__)
+            sweeps += 1  # counted whatever happened, so the sweep below can't be starved
+            if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
+                for guild in list(self.guilds):
+                    try:
                         await self.recap_requests.sweep(guild.id)
-            except Exception:
-                log.exception("The recap requests failed")
+                    except Exception as exc:
+                        log.warning("The recap request sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
 
     async def run_recap_requests(self) -> None:

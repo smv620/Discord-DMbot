@@ -2977,7 +2977,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
     (
         "dmbot_recap_rewrite",
-        "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[], INT, INT, INT)",
+        "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
     ),
     (
         "dmbot_recap_check_names",
@@ -7018,7 +7018,7 @@ RECAP_REQUESTS = (
         claimed_at  BIGINT NOT NULL DEFAULT 0,
         PRIMARY KEY (guild_id, id)
     );
-    CREATE INDEX recap_requests_open ON recap_requests (state)
+    CREATE INDEX recap_requests_open ON recap_requests (guild_id, created_at)
         WHERE state IN ('waiting', 'working');
     """
     + _isolate("recap_requests")
@@ -7086,11 +7086,15 @@ RECAP_REQUESTS = (
     -- dropped), the recap goes back to the queue with one more try, and the approval ends.
     -- Only a request of the caller's own that is done; ids must be ones it offered.
     CREATE FUNCTION dmbot_recap_rewrite(
-        g BIGINT, c TEXT, at_ BIGINT, rid TEXT, keep_c TEXT[], keep_s TEXT[],
-        max_tries INT, max_corrections INT, max_notes INT
+        g BIGINT, c TEXT, at_ BIGINT, rid TEXT, keep_c TEXT[], keep_s TEXT[]
     ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
+        -- The caps are the code's own (recaps.store MAX_TRIES and MAX_CORRECTIONS, recaps.style
+        -- MAX_NOTES; a test keeps them equal): a caller of this door can't choose them.
+        max_tries CONSTANT INT := 2;
+        max_corrections CONSTANT INT := 10;
+        max_notes CONSTANT INT := 10;
         r recap_requests%ROWTYPE;
         job recap_jobs%ROWTYPE;
         have TEXT[];
@@ -7150,7 +7154,11 @@ RECAP_REQUESTS = (
         IF cardinality(have) > max_corrections THEN
             have := have[cardinality(have) - max_corrections + 1 : cardinality(have)];
         END IF;
+        -- The same lock the Discord path takes before it changes the notes, so two saves at once
+        -- can't both count the room that is left.
+        PERFORM 1 FROM campaigns k WHERE k.guild_id = g AND k.id = c FOR UPDATE;
         FOREACH item IN ARRAY add_s LOOP
+            item := left(item, 300);
             DELETE FROM recap_style_notes n
                 WHERE n.guild_id = g AND n.campaign_id = c AND lower(n.text) = lower(item);
             DELETE FROM recap_style_notes n
@@ -7165,7 +7173,7 @@ RECAP_REQUESTS = (
                 WHERE n.guild_id = g AND n.campaign_id = c;
             INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,
                                            created_at)
-                VALUES (g, c, top, left(item, 300), dmbot_current_user(), now_s);
+                VALUES (g, c, top, item, dmbot_current_user(), now_s);
         END LOOP;
         UPDATE recap_jobs SET corrections = have, tries = tries + 1, state = 'queued',
             approved_by = 0, approved_at = 0, approved_hash = '', audio_choice = ''
@@ -7183,14 +7191,14 @@ RECAP_REQUESTS = (
             'ALTER FUNCTION dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[],'
-            ' INT, INT, INT) SET search_path = pg_catalog, %I, pg_temp', current_schema());
+            'ALTER FUNCTION dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_recap_rewrite(
-        BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[], INT, INT, INT) FROM PUBLIC;
+        BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[]) FROM PUBLIC;
     """
 )
 
@@ -7403,6 +7411,7 @@ ISOLATED_TABLES = (
     "npcs_channel_messages",
     "recap_style_examples",
     "recap_style_notes",
+    "recap_requests",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
