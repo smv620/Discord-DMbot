@@ -97,6 +97,11 @@ describe("Help and the emails list", () => {
     expect(all).toContain("Nothing goes to your players until you press Post to the table");
     expect(all).toContain("if a player has stopped being recorded since it was written");
     expect(all).toContain("or it names something you keep secret");
+    expect(all).toContain("checks each sentence against what was said");
+    expect(all).toContain("If too little is left, there is no recap");
+    expect(all).toContain("It also takes out compass directions");
+    // Says no more than the check does: not "never wrong", and no technical words (#2072).
+    expect(all).not.toMatch(/never wrong|always right|wrong one|every detail|beats?\b|fact check|AI model/i);
     expect(all).not.toMatch(/narrat|music/i); // not built yet (#1383)
     expect(recapEmailStep).toContain("once for each recap");
   });
@@ -114,6 +119,7 @@ describe("the switches and What's new agree", () => {
   it.each([
     ["Choose what recaps do", RECAPS_LIVE],
     ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
+    ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],

@@ -3740,6 +3740,48 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - Knowing the adventure's map (where a town lies, which way the party travels) needs the Shared
     story reader (docs/STORY_MEMORY.md); until a DM shares the adventure, the recap states no
     direction at all.
+  **Two models, and style kept apart from content** (owner, 2026-10-20; details Supervisor's).
+  - **A creative model writes, a small model formats.** The recap is written as plain text by the
+    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). The formatting model
+    (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
+    recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
+    - **The formatter changes no word of the story.** Code compares the narration's words before and
+      after. A mismatch re-runs the formatter once; a second mismatch fails that try.
+    - **Every check still runs on the formatted recap,** unchanged: names, secrets, copying, length,
+      the fact check and compass directions.
+    - Both settings live in `ai.py` with the other model settings. No other file names a model.
+  - **The prompt has two separate parts.** Code keeps them apart, and the content part always wins.
+    - **The content guide** holds the hard rules: only what happened at the table, the beats with
+      their places, no invented fact, name, place or direction, the secret and name rules, and the
+      length. It is fixed in code. Nothing a DM writes changes it.
+    - **The style guide** is how the recap sounds: voice, tone, pacing, sentence length, tense and
+      humour. It is given to the writer in its own tagged block as style only. A fact, a name or an
+      instruction to break a content rule inside it is ignored.
+  - **Style comes from two sources.**
+    1. **Examples of recaps the DM likes.** The writer copies their style and never their content.
+       Code enforces this: a name from an example that isn't from the session fails the draft, and
+       so does a run of `COPY_WORDS` words taken from an example. DMbot ships a few default
+       examples, which go once a DM gives their own. Up to 3 per campaign, kept with the campaign
+       and travelling in its backup. **The defaults are the owner's own writing**, with every name
+       invented before they enter the public repo. No campaign names, and no published text.
+    2. **The DM's feedback.** Once the recap is shown, the campaign's DMs can tell DMbot what they
+       think, typed (a button on the recap) or spoken to DMbot (the DM sidebar). DMbot sorts each
+       point:
+       - **Style** ("shorter sentences", "more humour") becomes a style note. DMbot shows the note
+         before keeping it: [Save] [Edit] [Don't keep]. Notes are listed in Settings → Recaps,
+         where each can be removed. When two notes disagree, the newer one wins.
+       - **Accuracy** (a detail is wrong) and **content** (put this in, leave that out) never go
+         into the style guide. They are the DM's corrections for this recap. A Try again uses them
+         under the content guide, and a correction the DM gives counts as a fact the DM confirmed,
+         for this recap only.
+       - **Asking DMbot to help build the story** ("make up what happens next", "write a better
+         ending") gets a plain answer and is not kept: "DMbot only retells what happened at your
+         table. The story is yours to write."
+     A style note can't loosen a content rule: "make things up for drama" gets the same answer.
+     Feedback never goes to players and never goes into a transcript, except that spoken feedback
+     sits in the raw transcript as a DM sidebar line.
+  - **Order:** first the two models (measured on the owner's test transcript with `recap_run`),
+    then the style guide and examples, then the feedback.
   **Names the recap uses that DMbot doesn't know yet** (owner, 2026-10-19, #2027, after recap test 3
   refused place names from the owner's own names file): the names list can miss a name, most often a
   new one. So an unknown name in a draft is looked at before it fails the draft:
