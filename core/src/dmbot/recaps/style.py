@@ -3,9 +3,9 @@
 A recap's rules (what it may say, the names it may use, the length) are fixed in `draft.py`. This
 module only holds the *style*: up to 3 pasted recaps, each at most 600 words, that the writer reads
 for tone, rhythm and word choice, never for what happens in them. With none of its own a campaign
-gets the defaults shipped in `style_examples/` (open placeholder text; the owner's own examples
-are added there as plain text files). The DM's examples replace the defaults, and removing them
-all brings the defaults back.
+gets the defaults shipped in `style_examples/`: four example recaps from the owner's table, with
+invented names (owner decision, 2026-10-20), as plain text files read in file-name order. The DM's
+examples replace the defaults, and removing them all brings the defaults back.
 
 Per campaign, isolated, deleted with the campaign, and in its backup (CLAUDE.md: campaign
 isolation). The examples go only to the writer's call: never to the beat sheet or the fact check,
