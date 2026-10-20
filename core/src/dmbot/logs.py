@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 from collections.abc import Iterator
@@ -56,6 +57,30 @@ def set_log_context(*, guild_id: int | None = None, campaign_id: str | None = No
         _guild.set(guild_id)
     if campaign_id is not None:
         _campaign.set(campaign_id)
+
+
+# A shared recap's address holds its secret token (#2118); a log line with one is a working link.
+# Any segment after /recaps/ or /r/ that looks like a token is hidden, whichever logger wrote it.
+_TOKEN_IN_PATH = re.compile(r"(/(?:recaps|r)/)[A-Za-z0-9_-]{16,}")
+
+
+def mask_tokens(text: str) -> str:
+    return _TOKEN_IN_PATH.sub(r"\1<token>", text)
+
+
+class TokenMaskFilter(logging.Filter):
+    """Hides shared-recap tokens in the message and in a traceback's text, on every handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        masked = mask_tokens(message)
+        if masked != message:
+            record.msg, record.args = masked, None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = mask_tokens(record.exc_text)
+        return True
 
 
 class ContextFilter(logging.Filter):
@@ -132,6 +157,7 @@ def configure_logging(fmt: str, level: str, shards: ShardSettings) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter() if fmt == "json" else TextFormatter())
     handler.addFilter(ContextFilter(shards))
+    handler.addFilter(TokenMaskFilter())
     root = logging.getLogger()
     for old in list(root.handlers):
         root.removeHandler(old)

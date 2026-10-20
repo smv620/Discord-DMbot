@@ -30,6 +30,7 @@ from dmbot.account_id import from_dmbot_id, to_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
+from dmbot.logs import mask_tokens
 from dmbot.web import (
     admin_api,
     email_signin,
@@ -234,7 +235,7 @@ def create_app(
         except Exception:
             # Any crash is still JSON the website can read, inside the CORS wrapper below
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.
-            log.exception("Request failed: %s %s", request.method, request.url.path)
+            log.exception("Request failed: %s %s", request.method, mask_tokens(request.url.path))
             response = JSONResponse({"error": "server"}, status_code=500)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
