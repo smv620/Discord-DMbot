@@ -2162,10 +2162,13 @@ RECAP_APPROVAL = """
     -- campaign's secret names (a secret alias, or any name of an entry limited to some of the
     -- players) and its confirmed names that are not secret and not someone at the table, so
     -- "Arcane Brotherhood" inside the confirmed "Arcane Brotherhood Hall" is read the way the bot
-    -- reads it, and who is recorded in the server (the website's role sees only a person's own
-    -- consent). Only a DM of the campaign, in a server on the session's list. The API uses them to
+    -- reads it, and who is recorded in the server under the current terms and the outside engine
+    -- in use, as the bot's consent check reads it (the website's role sees only a person's own
+    -- consent).
+    -- Only a DM of the campaign, in a server on the session's list. The API uses them to
     -- check one text and never returns them: the website's role has no grant on the memory tables.
-    CREATE FUNCTION dmbot_recap_check_names(g BIGINT, c TEXT) RETURNS JSONB
+    CREATE FUNCTION dmbot_recap_check_names(g BIGINT, c TEXT, terms INT, outside TEXT)
+    RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
@@ -2193,18 +2196,20 @@ RECAP_APPROVAL = """
                   AND a.status = 'confirmed' AND e.status = 'confirmed'
                   AND e.type <> 'person'), '[]'::jsonb),
             'recorded', COALESCE((
-                SELECT jsonb_agg(c2.user_id) FROM consent c2 WHERE c2.guild_id = g), '[]'::jsonb));
+                SELECT jsonb_agg(c2.user_id) FROM consent c2
+                WHERE c2.guild_id = g AND c2.terms_version = terms
+                  AND (outside IS NULL OR c2.outside_to = outside)), '[]'::jsonb));
     END
     $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_check_names(BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_recap_check_names(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT) FROM PUBLIC;
 
     -- "Make the audio again" needs a current approval (#2083): the audio is only ever made for a
     -- text the DM approved with a choice that makes audio, and it is made as they chose. The same
@@ -2233,7 +2238,7 @@ RECAP_APPROVAL = """
         IF job.audio_choice NOT IN ('voice', 'music', 'both')
            OR job.approved_hash <> encode(
                sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex') THEN
-            RETURN 'not_allowed';
+            RETURN 'needs_approval';
         END IF;
         IF job.audio_asked_at > now_s - 600 THEN
             RETURN 'too_soon';
@@ -2944,7 +2949,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
     # Approving a recap's text and picking its audio (#2083): the only write to those columns.
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
-    ("dmbot_recap_check_names", "dmbot_recap_check_names(BIGINT, TEXT)"),  # its secret check
+    (
+        "dmbot_recap_check_names",
+        "dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)",
+    ),  # its secret check
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),

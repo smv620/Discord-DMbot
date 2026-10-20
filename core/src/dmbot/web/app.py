@@ -561,6 +561,7 @@ def create_app(
         "too_big": (413, "too_big"),
         "not_in_plan": (409, "not_in_plan"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
+        "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
@@ -659,7 +660,12 @@ def create_app(
                 enforce_plans=settings.enforce_plans,
             )  # fmt: skip
             return await approve_recap(
-                db, session, ref, choice, audio_in_plan=bool(facts["canAudio"])
+                db,
+                session,
+                ref,
+                choice,
+                audio_in_plan=bool(facts["canAudio"]),
+                outside_engine=settings.outside_engine,
             )
         except RecapError as err:
             if err.problems is not None:

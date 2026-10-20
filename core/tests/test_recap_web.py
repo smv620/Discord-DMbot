@@ -8,6 +8,7 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +19,7 @@ import httpx
 import psycopg
 
 from dmbot.campaigns.store import CampaignStore
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
@@ -535,6 +537,14 @@ class TheAudio(Base):
                 "convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
             )
 
+    async def test_asking_again_after_the_text_changed_needs_a_new_approval(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET summary = summary || ' More.'")
+        got = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "needs_approval"))
+
     async def test_asking_again_queues_it_and_waits_ten_minutes(self) -> None:
         await self.approved_with_audio()
         await self.store.set_audio(
@@ -619,8 +629,9 @@ class TheApproval(Base):
         self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
         async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
             await conn.execute(
-                "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, %s)",
-                (THURSDAY.id, fx.ALICE, NOW),
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s)",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
             )
 
     async def asyncTearDown(self) -> None:
@@ -827,9 +838,38 @@ class TheApproval(Base):
         async with self.web.user(BOB.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_recap_check_names(%s, %s) AS r", (THURSDAY.id, self.one.id)
+                "SELECT dmbot_recap_check_names(%s, %s, %s, NULL) AS r",
+                (THURSDAY.id, self.one.id, TERMS_VERSION),
             )
             self.assertIsNone((await cur.fetchone() or {})["r"])  # Bob is no DM of One
+
+    async def test_consent_given_under_old_terms_does_not_count(self) -> None:
+        """The website reads consent the way the bot does (`consent._select`): the current terms
+        version, and the outside engine in use when there is one."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s",
+                (TERMS_VERSION - 1, fx.ALICE),
+            )
+        got = await self.approve("text")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s, outside_to = 'cloud' WHERE user_id = %s",
+                (TERMS_VERSION, fx.ALICE),
+            )
+        self.assertEqual((await self.approve("text")).status_code, 200)  # no outside engine
+        other = create_app(
+            replace(settings(), outside_engine="deepgram"), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=other), base_url=API, headers=HEADERS
+        )
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        got = await self.approve("text")  # said yes for another outside company
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
 
     async def test_the_door_has_one_caller(self) -> None:
         self.assertEqual(callers("dmbot_recap_approve"), {"schema.py", "web/recaps.py"})
@@ -891,8 +931,6 @@ class TheEmail(Base):
         self.assertEqual(again, "already_sent")
 
     async def test_a_failed_job_emails_the_reason_in_plain_words(self) -> None:
-        from dataclasses import replace
-
         from dmbot.mail import Mailer
         from tests.test_web_email_signin import LINK_SECRET, SMTP
 
@@ -963,8 +1001,6 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
 
 class ThePostStep(unittest.IsolatedAsyncioTestCase):
     def job(self, **kw: Any) -> Job:
-        from dataclasses import replace
-
         base = Job(
             100, fx.DM, "ready", 0, 0, 0, 0, 3, 0, 0, 3, "", (), [], "The Empty Hall",
             "《Tense》 ((slow)) Dusk fell on Mira.", "《Tense》 Dusk fell.",
@@ -1044,8 +1080,6 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
                 bot.recaps.posted.assert_awaited_once()  # the text is posted either way
 
     async def test_audio_made_from_older_text_is_left_out_and_the_dm_is_told(self) -> None:
-        from dataclasses import replace
-
         job = replace(self.ready(), summary="《Tense》 The DM changed this after the audio.")
         bot = await self.with_files(job)
         await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)

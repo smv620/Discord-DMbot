@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.recaps import cues
 from dmbot.recaps.allowance import month_bounds
@@ -320,13 +321,20 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
 
 
 async def approve_recap(
-    db: Database, session: Session, ref: str, choice: str, *, audio_in_plan: bool
+    db: Database,
+    session: Session,
+    ref: str,
+    choice: str,
+    *,
+    audio_in_plan: bool,
+    outside_engine: str | None = None,
 ) -> dict[str, Any]:
     """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
     database's door (`dmbot_recap_approve`) records who and when and the hash of this very text and
-    queues the audio. The secret names and the plan are checked again by the audio step before
-    any paid call. `audio_in_plan`: from the campaign owner's plan; an audio choice without it is
-    refused ("not_in_plan")."""
+    queues the audio. `outside_engine`: the speech-to-text company in use, so that only consent
+    given for it counts, as in the bot. The secret names and the plan are checked again by the
+    audio step before any paid call. `audio_in_plan`: from the campaign owner's plan; an audio
+    choice without it is refused ("not_in_plan")."""
     if choice not in CHOICES:
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
@@ -338,7 +346,10 @@ async def approve_recap(
         # The same checks as the DM screen's Approve (#2083): no secret name in the text, and
         # everyone whose lines were used still recorded. The names come through a door and are
         # used to check this one text; they are never returned.
-        cur = await conn.execute("SELECT dmbot_recap_check_names(%s, %s) AS r", (gid, cid))
+        cur = await conn.execute(
+            "SELECT dmbot_recap_check_names(%s, %s, %s, %s) AS r",
+            (gid, cid, TERMS_VERSION, outside_engine),
+        )
         names = (await cur.fetchone() or {}).get("r")
         if names is None:
             raise RecapError("not_allowed")
@@ -369,6 +380,8 @@ async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any
         outcome = found["r"] if found else "not_allowed"
         if outcome == "too_soon":
             raise RecapError("too_soon")
+        if outcome == "needs_approval":  # the text changed since it was approved
+            raise RecapError("needs_approval")
         if outcome != "queued":
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
