@@ -378,7 +378,7 @@ export interface FixResult {
   state: FixState;
   /** Only when `done`. */
   points?: FixPoints;
-  /** Only when `failed`: "sort_failed" or "not_allowed". */
+  /** Only when `failed`: "sort_failed", "not_allowed" or "too_soon". */
   error?: string;
 }
 export interface Rewritten {

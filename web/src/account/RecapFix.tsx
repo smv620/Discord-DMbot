@@ -114,8 +114,10 @@ export default function RecapFix({
 
   // The "being written again" line goes when the new draft is ready and can be changed again.
   useEffect(() => {
-    if (started && recap.canEdit) setStarted(null);
-  }, [started, recap.canEdit]);
+    // Also when nothing is being written and it still can't be changed: a failed rewrite must not
+    // leave "writing again" on screen.
+    if (started && (recap.canEdit || !recap.working)) setStarted(null);
+  }, [started, recap.canEdit, recap.working]);
 
   // Once a rewrite has started the recap cannot be changed for a while (it is being written), but
   // the line saying so stays.

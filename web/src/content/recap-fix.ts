@@ -42,7 +42,7 @@ export const fixWords = {
   startedNoApproval: "DMbot is writing the recap again. This page shows it when it is ready.",
   problem: {
     "not-allowed":
-      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings, then Recaps.",
+      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
     "too-big": `That note is too long. Keep it under ${FIX_MAX_LETTERS.toLocaleString("en-US")} letters.`,
     "too-soon": "You sent a note a moment ago. Wait a minute, then press Send.",
     "too-soon-rewrite": "Wait a minute, then press Rewrite with these again.",
