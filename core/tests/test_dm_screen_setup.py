@@ -70,6 +70,20 @@ class SetupTests(DatabaseTest):
         )
         return next(ow for key, ow in overwrites.items() if key.id == target_id)
 
+    async def test_opening_the_screen_pulls_back_questions_that_show_a_secret_name(self) -> None:
+        from dmbot.dm_screen import secret_posts
+
+        secret_posts._posts.clear()
+        asked = MagicMock(edit=AsyncMock())
+        secret_posts.remember(GUILD, self.campaign.id, asked)
+        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
+        asked.edit.assert_not_awaited()  # still private: nothing changes
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
+        asked.edit.assert_not_awaited()  # no visibility change asked for
+        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="peek")
+        asked.edit.assert_awaited_once()
+        self.assertEqual(asked.edit.await_args.kwargs["content"], secret_posts.HIDDEN)
+
     async def test_an_ordinary_saved_channel_is_never_taken_over(self) -> None:
         # A channel saved before DMbot made screens itself, e.g. #general.
         await self.store.set_dm_screen(GUILD, self.campaign.id, GENERAL)

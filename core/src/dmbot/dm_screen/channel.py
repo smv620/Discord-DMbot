@@ -358,8 +358,13 @@ async def setup_dm_screen(
     # The rules archive and the NPC list follow the screen (visibility, DMs, peekers), now that
     # the lock is free. (Imported here: they import this module for the lock and the overwrite
     # helpers.)
-    from dmbot.dm_screen import npcs_channel
+    from dmbot.dm_screen import npcs_channel, secret_posts
     from dmbot.dm_screen.rules_channel import follow_screen
+
+    if visibility is not None and campaign.dm_screen_visibility != "private":
+        # Players may now look at the screen: a question there that shows a secret name must not
+        # (#2097). After the lock is free, since it edits messages.
+        await secret_posts.hide(guild.id, campaign_id)
 
     await follow_screen(guild, campaign, channel)
     await npcs_channel.follow_screen(guild, campaign, channel)

@@ -275,6 +275,9 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.post.await_args.args[0], 55)
         self.assertEqual(bot.post.await_args.args[1], question_text("Auril"))
         self.assertIsNotNone(bot.post.await_args.kwargs["view"])
+        self.assertIsNotNone(
+            bot.post.await_args.kwargs["secret_of"]
+        )  # pulled back if opened (#2097)
 
     async def test_the_dm_alone_saying_it_asks_nothing(self) -> None:
         bot = fake_bot([line(DM_ID, "Auril is the one")], [AURIL], {PLAYER, DM_ID})

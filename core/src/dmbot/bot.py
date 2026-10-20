@@ -95,6 +95,7 @@ from dmbot.dm_screen import (
     pack_update,
     peek_view,
     rules_cards,
+    secret_posts,
     set_suggestion,
     set_update,
     update_notes,
@@ -3729,9 +3730,15 @@ class DMBot(commands.AutoShardedBot):
         view: discord.ui.View | None = None,
         *,
         remember: Hashable | None = None,
+        secret_of: tuple[int, str] | None = None,
     ) -> bool:
-        """Send a message; returns False (and logs) if it could not be posted."""
-        return await self.post_message(channel_id, text, view, remember=remember) is not None
+        """Send a message; returns False (and logs) if it could not be posted. `secret_of`: the
+        (server, campaign) of a question that shows a secret name, remembered so it can be
+        pulled back if the DM screen opens up (#2097)."""
+        sent = await self.post_message(channel_id, text, view, remember=remember)
+        if sent is not None and secret_of is not None:
+            secret_posts.remember(*secret_of, sent)
+        return sent is not None
 
     async def post_message(
         self,
@@ -4446,7 +4453,14 @@ class DMBot(commands.AutoShardedBot):
                         # line naming it doesn't fetch, send and log again for the whole session.
                         closed = sent == "forbidden"
                     else:
-                        posted = bool(await self.post(table.screen_channel_id, text, view=view))
+                        posted = bool(
+                            await self.post(
+                                table.screen_channel_id,
+                                text,
+                                view=view,
+                                secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
+                            )
+                        )
                 finally:
                     if not posted and not closed:
                         reveal.asked.discard(found.key)  # nothing was said: it may ask again
@@ -8167,6 +8181,7 @@ class DMBot(commands.AutoShardedBot):
                     table.screen_channel_id,
                     question_text(said.text, said.entries),
                     view=secret_aloud_view(cid, said.alias_id),
+                    secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
                 )
             if len(every) > len(found):  # the DM should know the rest exist
                 await self.post(table.screen_channel_id, more_text(len(every) - len(found)))

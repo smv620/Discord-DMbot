@@ -122,6 +122,9 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         bot.post.assert_awaited_once()
         self.assertEqual(bot.post.await_args.args[0], 55)
         self.assertEqual(bot.post.await_args.args[1], question_text("Arcane Brotherhood"))
+        self.assertIsNotNone(
+            bot.post.await_args.kwargs["secret_of"]
+        )  # pulled back if opened (#2097)
         labels = [c.item.label for c in bot.post.await_args.kwargs["view"].children]
         self.assertEqual(labels, ["Yes, players know now", "No, keep it secret"])
         await ask(bot, table, "the Arcane Brotherhood again", [BROTHERHOOD])
