@@ -30,7 +30,7 @@ class DocError(Exception):
 
 async def read_doc(link: object) -> str:
     """The doc's text, or a DocError with one of the four codes."""
-    if not isinstance(link, str) or len(link) > 2000 or fetch.google_doc_export(link) is None:
+    if not isinstance(link, str) or len(link) > 4096 or fetch.google_doc_export(link) is None:
         raise DocError(NOT_A_GOOGLE_DOC)
     try:
         got = await fetch.fetch(link, max_bytes=MAX_BYTES, stay_on=STAY_ON)

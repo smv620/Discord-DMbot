@@ -49,7 +49,7 @@ class TheReader(unittest.IsolatedAsyncioTestCase):
             "",
             None,
             7,
-            DOC + "x" * 3000,
+            DOC + "x" * 5000,
         ):
             fake = AsyncMock()
             with patch.object(fetch, "fetch", fake), self.assertRaises(il.DocError) as err:
