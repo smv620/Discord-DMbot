@@ -218,6 +218,8 @@ export interface Recap {
   keepDays?: number | null;
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
+  /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
+  approval?: RecapApproval;
 }
 
 /** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
@@ -244,6 +246,18 @@ export interface CueWords {
   synonyms: Record<string, string>;
   /** Pause and pace words. */
   pacing: string[];
+}
+
+/** What the DM approved a recap's text for (#2083, #2084). `approved` is true only while the text
+ * is what was approved: an edit ends it. `choice` is empty until then. */
+export type ApproveChoice = "voice" | "music" | "both" | "text";
+export interface RecapApproval {
+  approved: boolean;
+  choice: ApproveChoice | "";
+  /** Unix seconds, or null. */
+  approvedAt: number | null;
+  /** The recap is ready and not yet approved. */
+  canApprove: boolean;
 }
 
 /** Reads the allowed cue words out of a recap as the API sends it. The field is `cueWords` or
@@ -551,6 +565,9 @@ export interface AccountApi {
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
+  /** Approve the text and pick what to make: voice-over, music, both or text only (#2083). The
+   * API checks the cues again and refuses with `bad-cues`; any choice but text queues audio. */
+  approveRecap?(ref: string, choice: ApproveChoice): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -861,6 +878,8 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
           housekeeping,
         }),
       ),
+    approveRecap: async (ref, choice) =>
+      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, { choice })),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
