@@ -2979,6 +2979,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_rewrite",
         "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
     ),
+    # A spoken note: the clip is held until the bot has written it down (#2113).
+    ("dmbot_recap_voice_add", "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT)"),
+    ("dmbot_recap_voice_read", "dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)"),
     (
         "dmbot_recap_check_names",
         "dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)",
@@ -7205,6 +7208,107 @@ RECAP_REQUESTS = (
     """
 )
 
+RECAP_VOICE = r"""
+    -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
+    -- until the bot has written it down; the same statement that stores the text sets the clip
+    -- to NULL, and a sweep clears any clip older than ten minutes whatever happened. It is never
+    -- written to disk, never logged, and the table is left out of backups. The words are the
+    -- DM's own and live in the row for an hour at most.
+    ALTER TABLE recap_requests DROP CONSTRAINT recap_requests_kind_check;
+    ALTER TABLE recap_requests ADD CONSTRAINT recap_requests_kind_check
+        CHECK (kind IN ('instructions', 'voice'));
+    ALTER TABLE recap_requests DROP CONSTRAINT recap_requests_body_check;
+    ALTER TABLE recap_requests ADD CONSTRAINT recap_requests_body_check CHECK (
+        (kind = 'instructions' AND char_length(body) BETWEEN 1 AND 1000)
+        OR (kind = 'voice' AND body = ''));
+    ALTER TABLE recap_requests ADD COLUMN clip BYTEA
+        CHECK (clip IS NULL OR octet_length(clip) BETWEEN 1 AND 2097152);
+    ALTER TABLE recap_requests ADD COLUMN clip_type TEXT NOT NULL DEFAULT ''
+        CHECK (clip_type IN ('', 'audio/webm', 'audio/ogg'));
+
+    CREATE FUNCTION dmbot_recap_voice_add(
+        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF ctype IS NULL OR ctype NOT IN ('audio/webm', 'audio/ogg') THEN
+            RETURN jsonb_build_object('status', 'bad_type');
+        END IF;
+        IF data IS NULL OR octet_length(data) = 0 THEN
+            RETURN jsonb_build_object('status', 'bad_clip');
+        END IF;
+        IF octet_length(data) > 2097152 THEN
+            RETURN jsonb_build_object('status', 'too_big');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM recap_jobs j
+                       WHERE j.guild_id = g AND j.campaign_id = c AND j.session_at = at_
+                         AND j.state = 'ready' AND j.status = 'draft') THEN
+            RETURN jsonb_build_object('status', 'not_editable');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
+        -- The promises hold for a server the bot has left too: a clip older than ten minutes
+        -- and any row older than an hour go here.
+        UPDATE recap_requests r SET clip = NULL
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.clip IS NOT NULL
+              AND r.created_at < now_s - 600;
+        DELETE FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.kind = 'voice'
+              AND r.created_at > now_s - 600) >= 3 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind, body,
+                                    clip, clip_type, created_at)
+            VALUES (g, c, rid, at_, dmbot_current_user(), 'voice', '', data, ctype, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- A clip's state and the words written from it, to the DM who sent it and no one else.
+    CREATE FUNCTION dmbot_recap_voice_read(g BIGINT, c TEXT, at_ BIGINT, rid TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r recap_requests%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM recap_requests x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.session_at = at_ AND x.id = rid
+              AND x.kind = 'voice' AND x.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'answer', r.answer);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7357,6 +7461,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0134_recap_style_notes", RECAP_STYLE_NOTES),  # style notes and corrections (#2076)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0139_recap_requests", RECAP_REQUESTS),  # the recap page's notes to DMbot (#2113)
+    ("0140_recap_voice", RECAP_VOICE),  # ... and a short clip it may speak instead (#2113)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

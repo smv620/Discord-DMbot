@@ -24,6 +24,8 @@ STATUS: dict[str, tuple[int, str]] = {
     "bad_choice": (422, "bad_choice"),
     "too_big": (413, "too_big"),
     "too_soon": (429, "too_soon"),
+    "bad_type": (415, "bad_type"),
+    "bad_clip": (422, "bad_clip"),
 }
 
 MAX_TEXT = 1000  # the form limit the Discord path uses too
@@ -79,6 +81,47 @@ async def read_instructions(
         out["points"] = got["answer"]
     if got["state"] == "failed":
         out["error"] = got["error"] or "sort_failed"
+    return out
+
+
+async def send_voice(
+    db: Database, session: Session, ref: str, data: bytes, content_type: str
+) -> dict[str, Any]:
+    """Queue a spoken note for the bot to write down. The clip waits in the request row until the
+    bot has the words (then it is deleted in the same statement), and at the longest ten
+    minutes. It is never written to disk and never logged."""
+    kind = content_type.split(";", 1)[0].strip().lower()
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_voice_add(%s, %s, %s, %s, %s) AS r", (gid, cid, at, data, kind)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")  # not a DM: nothing is said about the recap
+    if got["status"] != "ok":
+        raise RecapError(got["status"])
+    return {"requestId": got["id"]}
+
+
+async def read_voice(
+    db: Database, session: Session, ref: str, request_id: object
+) -> dict[str, Any]:
+    """Where the clip is: waiting, working, done (with the words) or failed (with why)."""
+    rid = _request_id(request_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_voice_read(%s, %s, %s, %s) AS r", (gid, cid, at, rid)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")
+    out: dict[str, Any] = {"state": got["state"]}
+    if got["state"] == "done":
+        out["text"] = (got["answer"] or {}).get("text", "")
+    if got["state"] == "failed":
+        out["error"] = got["error"] or "transcribe_failed"
     return out
 
 
