@@ -594,6 +594,8 @@ export type ApiErrorKind =
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
+  | "too-many-lines" // a file has more lines than one import takes (#2107)
+  | "too-many-speakers" // a file has more different names than one import takes (#2107)
   | "try-it-campaign" // importing is not part of Try It (#2107)
   | "too-many-files" // more than 20 files in one import (#2107)
   | "bad-files" // the files could not be read as sent (#2107)
@@ -808,6 +810,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
   not_a_dm: "not-allowed",
   not_on_a_paid_plan: "no-paid-plan",
+  too_many_lines: "too-many-lines",
+  too_many_speakers: "too-many-speakers",
   try_it_campaign: "try-it-campaign",
   too_many_files: "too-many-files",
   bad_files: "bad-files",

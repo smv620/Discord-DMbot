@@ -224,6 +224,181 @@ describe("the limits", () => {
   });
 });
 
+describe("the Preview button", () => {
+  const previewButton = () =>
+    screen.getByRole("button", { name: w.preview }) as HTMLButtonElement;
+
+  it("is blocked by a bad file, and freed again by choosing a good one", async () => {
+    open();
+    await pick([file("notes.docx", "A: x")]);
+    expect(previewButton().disabled).toBe(true);
+    await pick([file("big.txt", "A: x", 3 * 1024 * 1024)]);
+    expect(previewButton().disabled).toBe(true);
+    await pick([s1]);
+    expect(previewButton().disabled).toBe(false);
+  });
+
+  it("is not locked by an answer from the API, so the DM can press it again", async () => {
+    const api = mockApi("table");
+    let n = 0;
+    api.importPreview = async (ref, files) => {
+      n += 1;
+      if (n === 1) throw new ApiError("too-soon");
+      return mockApi("table").importPreview!(ref, files);
+    };
+    open(api);
+    await pick([s1]);
+    fireEvent.click(previewButton());
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["too-soon"],
+    );
+    expect(previewButton().disabled).toBe(false);
+    fireEvent.click(previewButton());
+    await screen.findByRole("heading", { name: w.matchHeading });
+  });
+});
+
+describe("what the DM is told before importing", () => {
+  it("says that later sessions will be renumbered, and uses the check's own estimate", async () => {
+    const api = mockApi("table");
+    const check = api.importCheck!.bind(api);
+    api.importCheck = async (ref, files, mapping) => ({
+      ...(await check(ref, files, mapping)),
+      estimate: { sessions: 1, fastCalls: 99 },
+    });
+    open(api);
+    await pick([s1]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(await screen.findByText(w.renumberNote)).toBeTruthy();
+    expect(screen.getByText(w.estimate(1, 14))).toBeTruthy(); // the preview's, before Check
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    expect(await screen.findByText(w.estimate(1, 99))).toBeTruthy(); // the check's, after
+  });
+
+  it("shows a remembered person with no name as the label, not a blank option", async () => {
+    const api = mockApi("table");
+    const preview = api.importPreview!.bind(api);
+    api.importPreview = async (ref, files) => {
+      const found = await preview(ref, files);
+      return {
+        ...found,
+        files: found.files.map((f) => ({
+          ...f,
+          speakers: f.speakers.map((x) =>
+            x.label === "Cerric"
+              ? {
+                  ...x,
+                  suggested: { userId: "9", name: "", why: "remembered" },
+                }
+              : x,
+          ),
+        })),
+      };
+    };
+    api.importMembers = async () => [];
+    open(api);
+    await pick([s1]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    const cerric = (await screen.findByLabelText(
+      `Cerric: ${w.matchHeading}`,
+    )) as HTMLSelectElement;
+    expect(cerric.selectedOptions[0]?.textContent).toBe("Cerric");
+  });
+});
+
+describe("progress reasons", () => {
+  it("shows the reason on a session that is done but not perfect, and a plain line for a failure with no reason", async () => {
+    const api = mockApi("table");
+    api.importStart = async () => ({
+      importId: "x",
+      sessions: [],
+      estimate: { sessions: 2, fastCalls: 1 },
+    });
+    api.importProgress = async () => ({
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done",
+          reason: "partly_labelled",
+        },
+        { file: "b.txt", date: "2026-09-21", state: "failed", reason: null },
+      ],
+    });
+    open(api);
+    await pick([s1]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.click(await screen.findByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    expect(
+      await screen.findByText(new RegExp(w.failedReason.partly_labelled ?? "")),
+    ).toBeTruthy();
+    expect(screen.getByText(new RegExp(w.failedFallback))).toBeTruthy();
+  });
+});
+
+describe("more refusals", () => {
+  it("has words for a file with too many lines or names, in the file list and as a refusal", async () => {
+    const api = mockApi("table");
+    api.importPreview = async () => ({
+      files: [
+        {
+          name: "a.txt",
+          format: "plain",
+          error: "too_many_lines",
+          suggestedDate: null,
+          lineCount: 0,
+          leftOut: 0,
+          speakers: [],
+        },
+        {
+          name: "b.txt",
+          format: "plain",
+          error: "too_many_speakers",
+          suggestedDate: null,
+          lineCount: 0,
+          leftOut: 0,
+          speakers: [],
+        },
+      ],
+      estimate: { sessions: 0, fastCalls: 0 },
+    });
+    open(api);
+    await pick([s1, s2]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(
+      await screen.findByText(w.fileError.too_many_lines ?? ""),
+    ).toBeTruthy();
+    expect(screen.getByText(w.fileError.too_many_speakers ?? "")).toBeTruthy();
+    expect(w.problem["too-soon"]).toBe(
+      "Wait a minute, then press Check again.",
+    );
+    for (const kind of ["too-many-lines", "too-many-speakers"])
+      expect(w.problem[kind], kind).toBeTruthy();
+  });
+
+  it("reads the new codes over the wire", async () => {
+    const real = (status: number, detail: string) =>
+      httpApi(
+        "https://api.example.test",
+        (async () =>
+          new Response(JSON.stringify({ detail }), {
+            status,
+          })) as unknown as typeof fetch,
+      ).importPreview!("100.cmp1", []);
+    await expect(real(429, "too_soon")).rejects.toMatchObject({
+      kind: "too-soon",
+    });
+    await expect(real(413, "too_many_lines")).rejects.toMatchObject({
+      kind: "too-many-lines",
+    });
+    await expect(real(413, "too_many_speakers")).rejects.toMatchObject({
+      kind: "too-many-speakers",
+    });
+  });
+});
+
 describe("a refusal", () => {
   async function refused(error: ApiError) {
     const api = mockApi("table");

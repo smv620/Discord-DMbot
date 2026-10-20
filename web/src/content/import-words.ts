@@ -45,6 +45,8 @@ export const importPage = {
     unreadable: "DMbot couldn't read this file.",
     too_big: `This file is over ${IMPORT_MAX_MB} MB.`,
     not_txt: "This isn't a .txt file.",
+    too_many_lines: "This file has too many lines. Split it into smaller files.",
+    too_many_speakers: "This file has too many different names. Check it is one session, or split it.",
     empty: "This file is empty.",
   } as Record<string, string>,
   fileErrorOther: "DMbot couldn't use this file.",
@@ -86,6 +88,7 @@ export const importPage = {
   checkAgain: "Check again",
   estimate: (sessions: number, calls: number): string =>
     `DMbot will tidy up and read ${sessions} ${sessions === 1 ? "session" : "sessions"}. This will use about ${calls} quick AI ${calls === 1 ? "request" : "requests"}.`,
+  renumberNote: "Sessions after these will be renumbered.",
   confirmNote:
     "Only lines from players who have agreed are kept. Everyone in your server can read the imported sessions. The files themselves are not kept. Nothing becomes a fact without your say, and DMbot will ask you about any new names on your DM screen.",
   importButton: "Import",
@@ -98,6 +101,7 @@ export const importPage = {
   } as Record<string, string>,
   failedReason: {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
+    partly_labelled: "Done, but DMbot couldn't sort every line, so the rest count as game talk.",
   } as Record<string, string>,
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
@@ -107,6 +111,9 @@ export const importPage = {
   problem: {
     "not-allowed": "Only a game master of this campaign can import sessions. Ask them to do it.",
     "no-paid-plan": "Importing is part of the paid plans.",
+    "too-soon": "Wait a minute, then press Check again.",
+    "too-many-lines": "A file has too many lines. Split it into smaller files, then try again.",
+    "too-many-speakers": "A file has too many different names. Check it is one session, or split it, then try again.",
     "try-it-campaign": "Importing isn't part of Try It. A paid plan has it.",
     "too-many-files": `That is more than ${IMPORT_MAX_FILES} files. Choose fewer.`,
     "too-big": `One of the files is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,

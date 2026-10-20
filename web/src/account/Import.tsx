@@ -118,7 +118,7 @@ export default function Import({
             lines: s.lines,
             suggested: s.suggested?.userId ?? null,
             why: s.suggested?.why ?? null,
-            suggestedName: s.suggested?.name ?? null,
+            suggestedName: s.suggested?.name.trim() || s.label,
           });
       }
     }
@@ -214,7 +214,13 @@ export default function Import({
         f.speakers.flatMap((s) =>
           // `agreed` is not invented: only the members list and Check know it (consent is theirs to say).
           s.suggested
-            ? [{ userId: s.suggested.userId, name: s.suggested.name }]
+            ? [
+                // A remembered suggestion with no name shows as the label, not a blank option.
+                {
+                  userId: s.suggested.userId,
+                  name: s.suggested.name.trim() || s.label,
+                },
+              ]
             : [],
         ),
       );
@@ -334,8 +340,9 @@ export default function Import({
               <span class="campaign-name">{s.file}</span>
               <span class="small">
                 {s.date} · {words.state[s.state] ?? s.state}
-                {s.state === "failed"
-                  ? ` · ${(s.reason && words.failedReason[s.reason]) || words.failedFallback}`
+                {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
+                {s.reason || s.state === "failed"
+                  ? ` · ${(s.reason && words.failedReason[s.reason]) || (s.state === "failed" ? words.failedFallback : "")}`
                   : ""}
               </span>
             </li>
@@ -387,7 +394,9 @@ export default function Import({
             busy ||
             picked.length === 0 ||
             picked.length > IMPORT_MAX_FILES ||
-            problem !== null
+            // Only a problem with the chosen files blocks Preview. An answer from the API (a busy
+            // moment, a refusal) must not leave it locked: the DM can press it again.
+            pickProblem !== null
           }
           onClick={() => void lookAtFiles()}
         >
@@ -604,9 +613,14 @@ export default function Import({
               <section class="panel" aria-labelledby="import-confirm">
                 <h2 id="import-confirm">{words.confirmHeading}</h2>
                 <p>
-                  {words.estimate(order.length, preview.estimate.fastCalls)}
+                  {words.estimate(
+                    order.length,
+                    // Once Check has run, its estimate is for the same choices; use it.
+                    (check?.estimate ?? preview.estimate).fastCalls,
+                  )}
                 </p>
                 <p class="small">{words.confirmNote}</p>
+                <p class="small">{words.renumberNote}</p>
                 <button
                   type="button"
                   class="button"
