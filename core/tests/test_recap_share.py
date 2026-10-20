@@ -49,6 +49,10 @@ def make(user: int = DM_ID, *, recent: Any = None, link: Any = (TOKEN, "")) -> A
     return bot, interaction, channel
 
 
+def labels_of(view: Any) -> list[str]:
+    return [str(cast(Any, b).label) for b in view.children]
+
+
 def said(interaction: Any) -> str:
     return str(interaction.response.send_message.await_args.args[0])
 
@@ -123,14 +127,16 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         view = interaction.response.send_message.await_args.kwargs["view"]
         self.assertEqual(view.select.options[0].description, "Not posted yet")
         self.assertEqual(
-            [b.label for b in rs.HowView(CID, 200, draft=True).children],
+            labels_of(rs.HowView(CID, 200, draft=True)),
             ["Post and copy link", "Post and send"],
         )
         self.assertEqual(
-            [b.label for b in rs.HowView(CID, 100).children],
+            labels_of(rs.HowView(CID, 100)),
             ["Copy the link", "Send to the players"],
         )
-        self.assertTrue(all(len(b.label) <= 25 for b in rs.HowView(CID, 200, draft=True).children))
+        self.assertTrue(
+            all(len(label) <= 25 for label in labels_of(rs.HowView(CID, 200, draft=True)))
+        )
 
     async def test_one_recap_goes_straight_to_how_and_a_second_send_posts_nothing(self) -> None:
         _bot, interaction, channel = make()
