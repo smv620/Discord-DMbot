@@ -15,6 +15,7 @@ from dmbot.config import Settings
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.secret_aloud import SecretName, secret_names
 from dmbot.memory.secret_reveal import RevealSession, revealed_in
+from dmbot.transcript.topics import GAME, OFF_TOPIC
 from dmbot.ui.secret_reveal import (
     PRIVATE_NOTE,
     RevealButton,
@@ -151,6 +152,15 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(text.endswith(PRIVATE_NOTE))
             self.assertEqual(len(view.children), 2)
 
+    async def test_consent_withdrawn_between_the_waits_asks_nothing(self) -> None:
+        table = fake_table()
+        bot = fake_bot(table)
+        answers = iter([True, False, False, False])  # recorded at the start, stopped by the end
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: next(answers, False))
+        await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
+        bot.post.assert_not_awaited()
+        bot.sidebar_send_dm.assert_not_awaited()
+
     async def test_a_dm_who_stopped_being_recorded_is_not_asked(self) -> None:
         table = fake_table()
         bot = fake_bot(table, consenting=False)
@@ -195,6 +205,61 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         bot.tables = {}
         await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
         bot.post.assert_not_awaited()
+
+
+class AHeldLine(unittest.IsolatedAsyncioTestCase):
+    """A DM line the off-topic filter held is asked about once the filter calls it game talk
+    (#2101), and only then."""
+
+    async def label(self, topic: str, *, user: int = DM_ID, consenting: bool = True) -> list[str]:
+        from unittest import mock
+
+        from dmbot.ai import Reply
+        from dmbot.transcript.topics import Waiting
+
+        table = fake_table()
+        table.held = {(user, 5): "the Arcane Brotherhood"}
+        table.topic_calls, table.topic_failures, table.heard = 0, 0, []
+        table.topic_tokens = [0, 0]
+        table.vocabulary = MagicMock()
+        names: list[str] = []
+        bot = MagicMock()
+        bot.topic_ai = object()
+        bot.settings = SimpleNamespace(secret_reveal_ask=True)
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: consenting)
+
+        def track(coro: Any, name: str) -> None:
+            names.append(name)
+            coro.close()
+
+        bot._track = track
+        bot._save_topic = AsyncMock()
+        bot._hide_lines = AsyncMock()
+        answer = ([topic], Reply("x", False, 1, 1, "m"))
+        with mock.patch("dmbot.bot.classify", AsyncMock(return_value=answer)):
+            await DMBot._label_topics(bot, table, [Waiting(user, 5, "the Arcane Brotherhood")])
+        return names
+
+    async def test_game_talk_by_the_dm_asks(self) -> None:
+        self.assertIn("secret-reveal-ask", await self.label(GAME))
+
+    async def test_off_topic_talk_does_not_ask(self) -> None:
+        self.assertNotIn("secret-reveal-ask", await self.label(OFF_TOPIC))
+
+    async def test_a_player_or_a_stopped_dm_does_not_ask(self) -> None:
+        self.assertNotIn("secret-reveal-ask", await self.label(GAME, user=PLAYER))
+        self.assertNotIn("secret-reveal-ask", await self.label(GAME, consenting=False))
+
+
+class TheSwitch(unittest.TestCase):
+    def test_zero_turns_it_off_and_a_bad_value_is_refused(self) -> None:
+        from dmbot.config import ConfigError, load_settings
+        from tests.test_ai_tiers import BASE
+
+        self.assertFalse(load_settings({**BASE, "DMBOT_SECRET_REVEAL_ASK": "0"}).secret_reveal_ask)
+        self.assertTrue(load_settings(BASE).secret_reveal_ask)
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_SECRET_REVEAL_ASK": "maybe"})
 
 
 class TheHook(unittest.TestCase):
@@ -330,3 +395,55 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         before = await secret_names(self.memory, GUILD_A, self.c)
         revealed_in("the hooded one", before, [], RevealSession())
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), before)
+
+    async def test_two_entries_sharing_a_spelling_are_both_cleared_and_both_come_back(self) -> None:
+        aliases = []
+        for name in ("Mira", "Mara"):
+            entry = await self.add(
+                name, campaign=self.c, type="character", role="npc", status="confirmed"
+            )
+            aliases.append(
+                await self.memory.add_alias(
+                    GUILD_A, self.c, entry, "The Hooded One", kind="nickname", source="dm",
+                    status="confirmed", secret=True,
+                )
+            )  # fmt: skip
+        found = await secret_names(self.memory, GUILD_A, self.c)
+        got = revealed_in("then the hooded one spoke", found, [], RevealSession())
+        assert got is not None
+        done = await self.memory.make_name_not_secret(GUILD_A, self.c, got.alias_id, source=DM)
+        self.assertEqual(len(done.value), 2)  # both entries
+        self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)  # one undo brings both back
+        again = await secret_names(self.memory, GUILD_A, self.c)
+        self.assertEqual(sum(len(n.entries) if hasattr(n, "entries") else 1 for n in again), 2)
+
+    async def test_pressing_no_writes_nothing(self) -> None:
+        mira = await self.add(
+            "Mira", campaign=self.c, type="character", role="npc", status="confirmed"
+        )
+        alias = await self.memory.add_alias(
+            GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
+            status="confirmed", secret=True,
+        )  # fmt: skip
+        before = await secret_names(self.memory, GUILD_A, self.c)
+        campaign = SimpleNamespace(guild_id=GUILD_A, id=self.c, dm_user_ids=frozenset({DM_ID}))
+        bot = SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            memory=self.memory,
+            lookup=SimpleNamespace(drop=MagicMock()),
+        )
+        interaction = SimpleNamespace(
+            client=bot,
+            guild=SimpleNamespace(id=GUILD_A),
+            user=SimpleNamespace(id=DM_ID),
+            message=SimpleNamespace(content=question_text("The Hooded One")),
+            response=SimpleNamespace(
+                is_done=lambda: False, send_message=AsyncMock(), edit_message=AsyncMock()
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )  # fmt: skip
+        await RevealButton("n", self.c, alias.value.id, GUILD_A).callback(interaction)
+        self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), before)
+        bot.lookup.drop.assert_not_called()  # nothing changed, so nothing to refresh
