@@ -21,10 +21,11 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.recaps.approval import text_hash
-from dmbot.recaps.audio.files import KINDS, AudioFiles
+from dmbot.recaps.audio.files import MUSIC, VOICE, AudioFiles
 from dmbot.recaps.text import names_a_secret, strip_cues
 
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
+PUBLIC_KINDS = (VOICE, MUSIC)  # never the mix: it is the DM's own copy
 
 
 async def _find(db: Database, token: str) -> dict[str, Any] | None:
@@ -46,7 +47,8 @@ def _audio_ok(found: dict[str, Any]) -> bool:
     """The audio may be offered only while it is the audio of this very text: made, with audio
     chosen, and from the title and story as they are now (an edit or a leftover file is not)."""
     return (
-        found["audio"] == "ready"
+        found["audioOn"]  # the campaign still has narrated recaps on
+        and found["audio"] == "ready"
         and found["audioChoice"] in ("voice", "music", "both")
         and found["audioHash"] == text_hash(found["title"], found["summary"])
     )
@@ -67,7 +69,7 @@ async def read_shared(
             present = {}
         audio = {
             kind: f"{api_url.rstrip('/')}/recaps/{token}/audio/{kind}"
-            for kind in KINDS
+            for kind in PUBLIC_KINDS
             if kind in present
         }
     return {
@@ -80,7 +82,7 @@ async def read_shared(
 
 async def audio_for(db: Database, files: AudioFiles | None, token: str, kind: str) -> Path | None:
     """The audio file a token names (the same checks as the page), or None."""
-    if files is None or kind not in KINDS:
+    if files is None or kind not in PUBLIC_KINDS:
         return None
     found = await _find(db, token)
     if found is None or not _audio_ok(found):

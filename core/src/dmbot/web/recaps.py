@@ -329,6 +329,36 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
     return _view(row)
 
 
+async def post_checks(
+    conn: Conn,
+    gid: int,
+    cid: str,
+    row: dict[str, Any],
+    outside_engine: str | None,
+    *,
+    must_be_posted: bool = False,
+) -> None:
+    """The checks Post makes, for approving a text and for sharing it (#2083, #2118): no secret
+    name in the text (the whole name, as the bot reads it) and everyone whose lines were used
+    still recorded. The names come through a door and are used to check this one text; they are
+    never returned. Raises `names_secret` or `stopped_recording`."""
+    cur = await conn.execute(
+        "SELECT dmbot_recap_check_names(%s, %s, %s, %s) AS r",
+        (gid, cid, TERMS_VERSION, outside_engine),
+    )
+    names = (await cur.fetchone() or {}).get("r")
+    if names is None:  # not a DM of the campaign: nothing is said about the recap
+        raise RecapError("not_found" if must_be_posted else "not_allowed")
+    if must_be_posted and row["status"] != "posted":
+        raise RecapError("not_posted")
+    text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])
+    if names_a_secret(text, names["secret"], names["allowed"]):
+        raise RecapError("names_secret")
+    agreed = {int(u) for u in names["recorded"]}
+    if not {int(u) for u in row["speakers"]} <= agreed:
+        raise RecapError("stopped_recording")
+
+
 async def approve_recap(
     db: Database,
     session: Session,
@@ -352,22 +382,7 @@ async def approve_recap(
         gid, cid, at, row = await _one(conn, ref, session, marks=False)
         if refusal := cue_refusal(row["summary"]):
             raise refusal
-        # The same checks as the DM screen's Approve (#2083): no secret name in the text, and
-        # everyone whose lines were used still recorded. The names come through a door and are
-        # used to check this one text; they are never returned.
-        cur = await conn.execute(
-            "SELECT dmbot_recap_check_names(%s, %s, %s, %s) AS r",
-            (gid, cid, TERMS_VERSION, outside_engine),
-        )
-        names = (await cur.fetchone() or {}).get("r")
-        if names is None:
-            raise RecapError("not_allowed")
-        text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])
-        if names_a_secret(text, names["secret"], names["allowed"]):
-            raise RecapError("names_secret")
-        agreed = {int(u) for u in names["recorded"]}
-        if not {int(u) for u in row["speakers"]} <= agreed:
-            raise RecapError("stopped_recording")
+        await post_checks(conn, gid, cid, row, outside_engine)
         cur = await conn.execute(
             "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
             (gid, cid, at, choice, text_hash(row["title"], row["summary"])),
@@ -382,14 +397,19 @@ async def approve_recap(
 SHARE_ACTIONS = ("on", "off", "new")
 
 
-async def share_recap(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
+async def share_recap(
+    db: Database, session: Session, ref: str, action: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """Turn a posted recap's public link on, off, or make a new one (#2118). Only through the
     database's door, which holds it to a DM of the campaign. The token is made here (256 random
     bits, URL-safe) and is stored only with the recap. A draft or skipped recap has no link."""
     if action not in SHARE_ACTIONS:
         raise RecapError("bad_action")
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        gid, cid, at, row = await _one(conn, ref, session, marks=False)
+        if action != "off":
+            # Sharing a recap makes it public, so it must pass what Post checks (#2118).
+            await post_checks(conn, gid, cid, row, outside_engine, must_be_posted=True)
         cur = await conn.execute(
             "SELECT dmbot_recap_share(%s, %s, %s, %s, %s) AS r",
             (gid, cid, at, action, secrets.token_urlsafe(32)),

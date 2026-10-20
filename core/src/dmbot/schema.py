@@ -6998,6 +6998,10 @@ RECAP_SHARE = (
                 USING (guild_id = dmbot_recap_share_guild()
                        AND campaign_id = dmbot_recap_share_campaign())', current_user);
         EXECUTE format(
+            'CREATE POLICY recap_share_read ON campaigns FOR SELECT TO %I
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND id = dmbot_recap_share_campaign())', current_user);
+        EXECUTE format(
             'CREATE POLICY recap_share_read ON memory_entities FOR SELECT TO %I
                 USING (guild_id = dmbot_recap_share_guild()
                        AND campaign_id = dmbot_recap_share_campaign())', current_user);
@@ -7029,6 +7033,9 @@ RECAP_SHARE = (
             'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
             'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
             'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
             'secret', COALESCE((
                 SELECT jsonb_agg(DISTINCT a.text)
                 FROM memory_aliases a JOIN memory_entities e
@@ -7081,7 +7088,8 @@ RECAP_SHARE = (
         IF job.status <> 'posted' THEN
             RETURN jsonb_build_object('status', 'not_posted', 'token', NULL);
         END IF;
-        IF (act = 'new' OR job.share_token IS NULL) AND tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+        IF (act = 'new' OR job.share_token IS NULL)
+           AND (tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$') THEN
             RETURN NULL;  -- the API always passes a good one
         END IF;
         IF act = 'new' OR job.share_token IS NULL THEN

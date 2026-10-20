@@ -9,11 +9,13 @@ from typing import Any, cast
 import httpx
 import psycopg
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
+from tests import recap_fixtures as fx
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
 
@@ -35,6 +37,12 @@ class Shared(Base):
             transport=httpx.ASGITransport(app=self.app), base_url=API, headers={}
         )  # no cookie, no header: anyone
         self.files = AudioFiles(Path(self.dir.name))
+        async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s)",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
+            )
 
     def client_for(self, token: str) -> httpx.AsyncClient:
         client = httpx.AsyncClient(
@@ -162,6 +170,23 @@ class TheLink(Shared):
             401,
         )
 
+    async def test_on_and_new_run_the_checks_post_makes(self) -> None:
+        await self.post_it()
+        await self.make_secret("Mira")
+        for action in ("on", "new"):
+            got = await self.share(action)
+            self.assertEqual((got.status_code, got.json()["error"]), (409, "names_secret"), action)
+        self.assertEqual(
+            (await self.share("off")).status_code, 200
+        )  # turning off is always allowed
+
+    async def test_a_player_who_stopped_being_recorded_stops_the_sharing(self) -> None:
+        await self.post_it()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM consent WHERE user_id = %s", (fx.ALICE,))
+        got = await self.share("on")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
+
     async def test_a_bad_action_is_refused(self) -> None:
         await self.post_it()
         got = await self.share("sideways")
@@ -272,7 +297,7 @@ class TheAudio(Shared):
         await self.make_audio()
         token = await self.token()
         audio: dict[str, Any] = (await self.public.get(f"/recaps/{token}")).json()["audio"]
-        self.assertEqual(set(audio), set(KINDS))
+        self.assertEqual(set(audio), {"voice", "music"})
         for kind, url in audio.items():
             got = await self.public.get(url.removeprefix(API))
             self.assertEqual((got.status_code, got.content), (200, f"audio-{kind}".encode()))
@@ -307,6 +332,27 @@ class TheAudio(Shared):
             self.assertEqual(
                 (await self.public.get(f"/recaps/{token}/audio/{KINDS[0]}")).status_code, 404, kw
             )
+
+    async def test_the_mix_is_never_public_and_audio_off_withdraws_the_rest(self) -> None:
+        await self.post_it()
+        await self.make_audio()
+        token = await self.token()
+        audio = (await self.public.get(f"/recaps/{token}")).json()["audio"]
+        self.assertEqual(set(audio), {"voice", "music"})
+        self.assertEqual((await self.public.get(f"/recaps/{token}/audio/mix")).status_code, 404)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE campaigns SET recaps_audio = false")
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).json()["audio"], {})
+        self.assertEqual((await self.public.get(f"/recaps/{token}/audio/voice")).status_code, 404)
+
+    async def test_the_share_door_refuses_a_missing_token(self) -> None:
+        await self.post_it()
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_recap_share(%s, %s, 100, 'on', NULL) AS r", (THURSDAY.id, self.one.id)
+            )
+            self.assertIsNone((await cur.fetchone() or {})["r"])
 
     async def test_an_unknown_kind_or_token_is_not_found(self) -> None:
         await self.post_it()

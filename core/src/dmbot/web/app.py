@@ -729,7 +729,10 @@ def create_app(
             body = None
         action = body.get("action") if isinstance(body, dict) else None
         try:
-            return await share_recap(db, session, ref, action if isinstance(action, str) else "")
+            return await share_recap(
+                db, session, ref, action if isinstance(action, str) else "",
+                outside_engine=settings.outside_engine,
+            )  # fmt: skip
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
