@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from dmbot.ai import Reply
@@ -122,11 +122,28 @@ GRADE_ANSWER = '{"in_world":5,"no_quotes":5,"tension":4,"ending":4,"cues":4}'
 WEAK_GRADE = '{"in_world":5,"no_quotes":5,"tension":2,"ending":4,"cues":4}'
 
 
+CLEAN_FACTS = '{"unsupported":[],"missing":[]}'
+
+
+def facts_answer(unsupported: Sequence[tuple[int, str]] = (), missing: Sequence[int] = ()) -> str:
+    return json.dumps(
+        {
+            "unsupported": [{"sentence": n, "kind": k} for n, k in unsupported],
+            "missing": list(missing),
+        }
+    )
+
+
 class Canned:
     """An AI that returns the answers it was given, in order, and records what it was sent."""
 
-    def __init__(self, *answers: str | Exception | Reply) -> None:
+    def __init__(self, *answers: str | Exception | Reply, facts: Sequence[str] = ()) -> None:
         self.answers = list(answers)
+        # The fact check (#2064) is a call of its own: it takes the next of `facts`, or finds
+        # nothing wrong, and is kept apart from `sent` so the tests that count the writer's calls
+        # need not know about it.
+        self.facts = list(facts)
+        self.fact_sent: list[str] = []
         self.tokens: list[int] = []  # the room each call was given
         self.sent: list[str] = []
         self.systems: list[str] = []
@@ -142,6 +159,9 @@ class Canned:
         max_tokens: int = 0,
         schema: dict[str, Any] | None = None,
     ) -> Reply:
+        if system == rd.FACTS_SYSTEM:
+            self.fact_sent.append(text)
+            return Reply(self.facts.pop(0) if self.facts else CLEAN_FACTS, False, 10, 10, "m")
         self.sent.append(text)
         self.systems.append(system)
         self.schemas.append(schema)

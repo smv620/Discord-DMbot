@@ -19,6 +19,7 @@ STAGE_OF_STATE = {"queued": "beats", "beats": "beats", "checked": "prose", "pros
 # checks wrote; the kind is the fixed word the report shows instead of it.
 # (the order matters: the first that fits wins, so a sentence about the word count is "length")
 _KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("facts", ("the beats do not say", "leaves out beat")),  # (first: it holds the draft's words)
     ("declined", ("was declined",)),
     ("cut off", ("was cut off",)),
     ("shape", ("answer with", "answer in the ")),
@@ -60,7 +61,7 @@ class CallEvent:
     """One AI call. The worker makes it when the call returns and fills in the rest as the
     answer is checked, so an observer holding it sees the whole story."""
 
-    stage: str  # beats, prose, grade or title
+    stage: str  # beats, prose, facts, grade or title
     attempt: int  # the try, from 1
     tier: str  # fast or careful
     tokens_in: int
@@ -70,6 +71,7 @@ class CallEvent:
     words: int | None = None  # the narration's words, for a prose answer that could be read
     checks: list[str] | None = None  # None: not checked; []: passed; else the kinds that failed
     grade: dict[str, int] = field(default_factory=dict)
+    facts: dict[str, int] = field(default_factory=dict)  # the fact check: kind -> how many (#2064)
     outcome: str = ""  # on the prose call whose draft became the recap
 
 
@@ -85,6 +87,9 @@ def line(event: CallEvent) -> str:
         parts.append(f"{event.words} words")
     if event.checks is not None:
         parts.append("checks: " + (", ".join(event.checks) if event.checks else "passed"))
+    if event.stage == "facts":
+        found = ", ".join(f"{k} {n}" for k, n in event.facts.items())
+        parts.append("flagged: " + (found or "nothing"))
     if event.grade:
         parts.append("grade " + " ".join(f"{k} {v}" for k, v in event.grade.items()))
     return ", ".join(parts)
