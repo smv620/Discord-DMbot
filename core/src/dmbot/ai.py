@@ -405,7 +405,7 @@ class AnthropicClient:
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
         chain = self._chain(tier)
-        unavailable: list[str] = []  # refused on this call: only noted once a lower tier answers
+        unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
         for position, (step, model) in enumerate(chain):
             lower = chain[position + 1] if position + 1 < len(chain) else None
             try:
@@ -424,13 +424,13 @@ class AnthropicClient:
             except _ModelRefused as refused:
                 if lower is None:
                     raise AIError(FAILED) from None
-                unavailable.append(model)
+                unavailable.append((step, model))
                 log.debug("Model %s was refused (HTTP %s)", model, refused.status)
                 continue
             self._refused.pop(model, None)  # it works (again)
             # A lower tier answering proves the key is fine, so the model above it really
             # isn't available to it. Said once for each model.
-            for gone in unavailable:
+            for gone_tier, gone in unavailable:
                 if gone not in self._said:
                     self._said.add(gone)
                     log.warning(
@@ -438,10 +438,10 @@ class AnthropicClient:
                         "for now; it is tried again in %d minutes. To fix it, check %s in .env "
                         "or your Anthropic access.",
                         gone,
-                        step_of(self.models, gone),
+                        gone_tier.value,
                         model,
                         REFUSED_RETRY_S // 60,
-                        TIER_SETTINGS[step_of_tier(self.models, gone)],
+                        TIER_SETTINGS[gone_tier],
                     )
                 self._refused[gone] = self._clock()
             return reply

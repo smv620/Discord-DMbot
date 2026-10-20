@@ -180,6 +180,9 @@ class RecapWorker:
         # just runs again.
         self._flags: dict[tuple[int, str, int], rd.Facts] = {}
         self._revised: set[tuple[int, str, int]] = set()
+        # The writer's text, kept while the formatter's call failed and the job waits (#2074), so
+        # the expensive write is not paid for twice.
+        self._written: dict[tuple[int, str, int], str] = {}
         self._store = store
         self._fast = fast
         self._careful = careful
@@ -321,7 +324,11 @@ class RecapWorker:
     ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
-        await self._store.update(gid, cid, job.session_at, calls=job.calls + 1, spent=job.spent + 1)
+        # Counted from the stored job, not the one handed in: a try can make several calls (the
+        # writer, then the formatter and its re-run, #2074), and each one must count.
+        now = await self._store.get(gid, cid, job.session_at) or job
+        calls, spent = now.calls + 1, now.spent + 1
+        await self._store.update(gid, cid, job.session_at, calls=calls, spent=spent)
         try:
             if schema is None:
                 reply = await client.complete(system, text, max_tokens=max_tokens)
@@ -337,8 +344,8 @@ class RecapWorker:
                 cid,
                 job,
                 SERVICE,
-                calls=job.calls + 1,
-                spent=job.spent + 1,
+                calls=calls,
+                spent=spent,
                 error=type(exc).__name__,
             )
             return None
@@ -527,33 +534,45 @@ class RecapWorker:
                 job.problems, self._rejected_prose.get(key), length, plain=self._two
             )
         stage = self._draft_stage
-        raw = await self._call(
-            gid,
-            cid,
-            job,
-            self._creative if self._creative is not None and self._two else self._client(job),
-            rd.prose_system(inputs.setting, length, plain=self._two),
-            message,
-            more_room(length.max_tokens, job.attempt),
-            schema=None if self._two else rd.prose_schema(),
-            stage=stage if self._two else "",
-        )
-        if raw is None:
-            return await self._store.get(gid, cid, job.session_at)
+        kept = self._written.pop(key, None) if self._two else None  # the writer's text, kept
+        raw: Reply | None = None
+        if kept is None:
+            raw = await self._call(
+                gid,
+                cid,
+                job,
+                self._creative if self._creative is not None and self._two else self._client(job),
+                rd.prose_system(inputs.setting, length, plain=self._two),
+                message,
+                more_room(length.max_tokens, job.attempt),
+                schema=None if self._two else rd.prose_schema(),
+                stage=stage if self._two else "",
+            )
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
-        if why := unusable(raw):
+        if raw is not None and (why := unusable(raw)):
             self._annotate(gid, cid, job, stage, checks=cl.kinds([why]))
             return await self._prose_failed(gid, cid, job, [why], inputs, sheet, length)
         if self._two:
-            shaped = await self._shape(gid, cid, job, raw.text, length)
+            written = kept if kept is not None else (raw.text if raw is not None else "")
+            # Nothing to shape (no narration at all) fails the try without paying the formatter.
+            shaped: rd.Prose | str = (
+                await self._shape(gid, cid, job, written, length)
+                if rd.written_tokens(written)
+                else SHAPE_FAILED
+            )
             if isinstance(shaped, str):  # why it failed ("" : the call failed, the job is waiting)
                 if not shaped:
+                    self._written[key] = written  # the next round shapes it, without a new write
                     return await self._store.get(gid, cid, job.session_at)
+                self._rejected_prose.pop(key, None)  # an older draft does not go with this problem
                 self._annotate(gid, cid, job, stage, checks=cl.kinds([shaped]))
                 return await self._prose_failed(gid, cid, job, [shaped], inputs, sheet, length)
             prose: rd.Prose | None = shaped
         else:
+            assert raw is not None
             prose = rd.parse_prose(raw.text)
         if prose is None:
             self._annotate(gid, cid, job, stage, checks=["shape"])
@@ -1128,6 +1147,7 @@ class RecapWorker:
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))
+        self._written.pop((gid, cid, job.session_at), None)
         for stage in ("beats", "prose", "write", "format", "facts", "grade", "title"):
             self._last.pop((gid, cid, job.session_at, stage), None)
 

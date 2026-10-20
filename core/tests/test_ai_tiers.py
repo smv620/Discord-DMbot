@@ -300,6 +300,24 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Using claude-careful-1 instead", line)
             self.assertIn("AI_MODEL_DEEP", line)  # what to check, in the owner's words
 
+    async def test_a_refused_creative_model_that_is_also_the_deep_one_names_its_own_setting(
+        self,
+    ) -> None:
+        # With the defaults both read claude-opus-5-5: the warning must send the owner to
+        # AI_MODEL_CREATIVE, the tier that asked, not to AI_MODEL_DEEP (#2074).
+        shared = "claude-shared-1"
+        models = AIModels("claude-fast-1", "claude-careful-1", shared, shared, "claude-fmt-1")
+        service = Service({shared: GONE})
+        session: Any = service
+        client = AnthropicClient("sk-secret", models, session=session, clock=Clock())
+        with self.assertLogs("dmbot.ai", "WARNING") as logged:
+            reply = await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertEqual(reply.model, "claude-careful-1")
+        (line,) = logged.output
+        self.assertIn("(creative jobs)", line)
+        self.assertIn("AI_MODEL_CREATIVE", line)
+        self.assertNotIn("AI_MODEL_DEEP", line)
+
     async def test_it_goes_all_the_way_down_if_it_must(self) -> None:
         client, service = self.make({MODELS.deep: GONE, MODELS.careful: DENIED})
         with self.assertLogs("dmbot.ai", "WARNING") as logged:
