@@ -354,7 +354,8 @@ describe("fresh starts and out-of-date points", () => {
   it("says that a kept style note is saved for later recaps, and where to remove it", async () => {
     await sortedOnce();
     const lead = screen.getByText(/saved for this campaign's later recaps too/);
-    expect(lead.textContent).toContain("⚙️ Settings, then Recaps");
+    expect(lead.textContent).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+    expect(lead.textContent).toContain("newest 10");
   }, 10000);
 
   it("asks to send again when the rewrite's request has been swept away (404)", async () => {
