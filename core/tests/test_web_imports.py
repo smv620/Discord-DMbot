@@ -14,6 +14,7 @@ import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
+from dmbot.transcript import import_link
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import sessions as web_sessions
@@ -77,14 +78,14 @@ class TheLinks(WithImports):
 
     DOC = "https://docs.google.com/document/d/" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
 
-    def reader(self, texts: dict[str, str | imports.import_link.DocError]) -> Any:
+    def reader(self, texts: dict[str, str | import_link.DocError]) -> Any:
         async def read(link: object) -> str:
             got = texts[str(link)]
             if isinstance(got, Exception):
                 raise got
             return got
 
-        return unittest.mock.patch.object(imports.import_link, "read_doc", read)
+        return unittest.mock.patch.object(import_link, "read_doc", read)
 
     async def test_a_shared_doc_previews_and_imports_like_a_file(self) -> None:
         with self.reader({self.DOC: CRAIG}):
@@ -107,7 +108,7 @@ class TheLinks(WithImports):
         self.assertEqual(await self.sessions(), 1)
 
     async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
-        err = imports.import_link.DocError
+        err = import_link.DocError
         other = self.DOC + "x"
         with self.reader({self.DOC: err("doc_not_shared"), other: CRAIG}):
             got = await imports.preview(
@@ -152,7 +153,7 @@ class TheLinks(WithImports):
             ([{"name": "a.txt", "text": ""}, {"name": "a.txt", "text": ""}], [self.DOC]),
             ([{"text": "no name"}], [self.DOC]),
         )
-        with unittest.mock.patch.object(imports.import_link, "read_doc", fake):
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
             for files_, links in bad:
                 with self.assertRaises(RecapError):
                     await imports.preview(
@@ -162,7 +163,7 @@ class TheLinks(WithImports):
 
     async def test_the_same_link_is_read_once(self) -> None:
         fake = unittest.mock.AsyncMock(return_value=CRAIG)
-        with unittest.mock.patch.object(imports.import_link, "read_doc", fake):
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
             got = await imports.preview(
                 self.web, self.session, self.ref_c, None, links=[self.DOC, self.DOC], **self.kw
             )
@@ -177,7 +178,7 @@ class TheLinks(WithImports):
             return CRAIG
 
         with (
-            unittest.mock.patch.object(imports.import_link, "read_doc", slow),
+            unittest.mock.patch.object(import_link, "read_doc", slow),
             unittest.mock.patch.object(imports, "LINKS_DEADLINE_S", 0.05),
         ):
             got = await imports.preview(
@@ -193,7 +194,7 @@ class TheLinks(WithImports):
         assert bob is not None
         fake = unittest.mock.AsyncMock(return_value=CRAIG)
         with (
-            unittest.mock.patch.object(imports.import_link, "read_doc", fake),
+            unittest.mock.patch.object(import_link, "read_doc", fake),
             self.assertRaises(RecapError),
         ):
             await imports.preview(self.web, bob, self.ref_c, None, links=[self.DOC], **self.kw)

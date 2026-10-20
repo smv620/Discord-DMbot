@@ -23,7 +23,7 @@ class TheReader(unittest.IsolatedAsyncioTestCase):
             if isinstance(result, Exception)
             else AsyncMock(return_value=result or got(TEXT.encode()))
         )
-        with patch.object(il.fetch, "fetch", fake):
+        with patch.object(fetch, "fetch", fake):
             return await il.read_doc(link)
 
     async def test_a_shared_doc_gives_its_text(self) -> None:
@@ -33,8 +33,9 @@ class TheReader(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         fake = AsyncMock(return_value=got(TEXT.encode()))
-        with patch.object(il.fetch, "fetch", fake):
+        with patch.object(fetch, "fetch", fake):
             await il.read_doc(DOC)
+        assert fake.await_args is not None
         kw = fake.await_args.kwargs
         self.assertEqual(kw["max_bytes"], 2 * 1024 * 1024)
         self.assertIn("docs.google.com", kw["stay_on"])
@@ -51,7 +52,7 @@ class TheReader(unittest.IsolatedAsyncioTestCase):
             DOC + "x" * 3000,
         ):
             fake = AsyncMock()
-            with patch.object(il.fetch, "fetch", fake), self.assertRaises(il.DocError) as err:
+            with patch.object(fetch, "fetch", fake), self.assertRaises(il.DocError) as err:
                 await il.read_doc(link)
             self.assertEqual(err.exception.code, il.NOT_A_GOOGLE_DOC, link)
             fake.assert_not_awaited()
