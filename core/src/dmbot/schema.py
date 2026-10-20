@@ -2074,6 +2074,29 @@ RECAP_STYLE = f"""
     );
     """ + _isolate("recap_style_examples")
 
+RECAP_STYLE_NOTES = (
+    f"""
+    -- The standing notes a DM keeps about how recaps should sound (#2076), sorted out of their
+    -- feedback and saved only when they press Save. At most 10 a campaign (the store drops the
+    -- oldest). Per campaign, isolated, deleted with the campaign, and in its backup.
+    CREATE TABLE recap_style_notes (
+        {_memory_scope()}
+        id          BIGINT GENERATED ALWAYS AS IDENTITY,
+        position    INTEGER NOT NULL CHECK (position >= 0),
+        text        TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 300),
+        created_by  BIGINT NOT NULL CHECK (created_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """
+    + _isolate("recap_style_notes")
+    + """
+    -- What the DM said was wrong in one recap or should change in it (#2076): given to the writer
+    -- on Try again as facts the DM confirmed, for that recap only. A defaulted column changes no
+    -- rows, so no row-level-security policy is needed.
+    ALTER TABLE recap_jobs ADD COLUMN corrections TEXT[] NOT NULL DEFAULT '{}';
+    """
+)
 RECAP_APPROVAL = """
     -- The DM approves a recap's text before any audio is made, and picks what to make (#2083).
     -- approved_hash is a fingerprint of the title and summary the DM approved (sha256 of
@@ -7115,6 +7138,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # names a recap kept, for the DM to confirm (#2027)
     ("0132_quiet_stop", QUIET_STOP),  # minutes of silence before an automatic stop (#2034)
     ("0133_recap_style", RECAP_STYLE),  # examples a DM gives for how recaps sound (#2075)
+    ("0134_recap_style_notes", RECAP_STYLE_NOTES),  # style notes and corrections (#2076)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
 )
 
@@ -7172,6 +7196,7 @@ ISOLATED_TABLES = (
     "plan_position",
     "npcs_channel_messages",
     "recap_style_examples",
+    "recap_style_notes",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
