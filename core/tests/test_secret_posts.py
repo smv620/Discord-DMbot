@@ -20,6 +20,7 @@ def message(answered: bool = False) -> SimpleNamespace:
 class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         secret_posts._posts.clear()
+        secret_posts._searched.clear()
 
     async def test_every_open_question_is_edited_to_the_plain_line_with_no_buttons(self) -> None:
         a, b = message(), message()
@@ -81,6 +82,7 @@ class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
 class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
     async def test_open_questions_are_found_on_the_screen_by_their_buttons(self) -> None:
         secret_posts._posts.clear()
+        secret_posts._searched.clear()
 
         def msg(author: int, custom_id: str | None) -> SimpleNamespace:
             children = [SimpleNamespace(custom_id=custom_id)] if custom_id else []
@@ -91,12 +93,13 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
 
         keep = msg(9, "dmbot:secret:keep:" + "c" * 32 + ":" + "a" * 32)
         reveal = msg(9, "dmbot:rv:y:" + "c" * 32 + ":" + "a" * 32 + ":5")
+        asked = msg(9, "dmbot:sa:k:" + "c" * 32 + ":" + "a" * 32 + ":5")  # the newer secret id
         other_button = msg(9, "dmbot:recap:read:x")
         players = msg(8, "dmbot:secret:keep:x")  # not the bot's own
         plain = msg(9, None)
 
         async def history(limit: int) -> Any:
-            for m in (keep, reveal, other_button, players, plain):
+            for m in (keep, reveal, asked, other_button, players, plain):
                 yield m
 
         # The whole history is searched, not only the last few: nothing limits the read.
@@ -109,12 +112,47 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
 
         await secret_posts.hide(G, C, channel=SimpleNamespace(history=history_all), bot_id=9)
         self.assertEqual(seen, [None])
+        secret_posts._searched.clear()  # the search above found nothing to remember
         channel = SimpleNamespace(history=history)
-        self.assertEqual(await secret_posts.hide(G, C, channel=channel, bot_id=9), 2)
+        self.assertEqual(await secret_posts.hide(G, C, channel=channel, bot_id=9), 3)
         keep.edit.assert_awaited_once()
+        asked.edit.assert_awaited_once()
         reveal.edit.assert_awaited_once()
         other_button.edit.assert_not_awaited()
         players.edit.assert_not_awaited()
+
+    async def test_the_history_is_searched_once_per_campaign_per_process(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        reads = 0
+
+        async def history(limit: int | None) -> Any:
+            nonlocal reads
+            reads += 1
+            return
+            yield
+
+        channel = SimpleNamespace(history=history)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)  # the second set-up
+        self.assertEqual(reads, 1)
+        await secret_posts.hide(G + 1, C, channel=channel, bot_id=9)  # another server
+        self.assertEqual(reads, 2)
+
+    async def test_a_failed_search_is_tried_again(self) -> None:
+        secret_posts._searched.clear()
+        reads = 0
+
+        async def broken(limit: int | None) -> Any:
+            nonlocal reads
+            reads += 1
+            raise RuntimeError("no")
+            yield
+
+        channel = SimpleNamespace(history=broken)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 2)
 
     def test_a_question_is_exposed_only_in_a_server_channel_with_players_able_to_look(self) -> None:
         self.assertTrue(secret_posts.is_exposed("peek", True))
@@ -128,6 +166,7 @@ class TheBotsPost(unittest.IsolatedAsyncioTestCase):
         from dmbot.bot import DMBot
 
         secret_posts._posts.clear()
+        secret_posts._searched.clear()
         sent = message()
         fake = SimpleNamespace(
             post_message=AsyncMock(return_value=sent),

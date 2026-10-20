@@ -57,12 +57,18 @@ def is_exposed(visibility: str, in_server_channel: bool) -> bool:
 
 
 # What a question's buttons start with: the keep-it-secret question and the reveal question.
-BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:rv:")
+# "dmbot:sa:" is the secret question's newer id (the server on it); the old one still parses.
+BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:")
+
+# Campaigns whose screen history was searched in this process. Questions posted after that are
+# remembered in `_posts`, so only what a restart forgot needs the search, and it needs it once.
+_searched: set[tuple[int, str]] = set()
 
 
-async def _scan(channel: Any, bot_id: int) -> list[Any]:
+async def _scan(channel: Any, bot_id: int) -> tuple[list[Any], bool]:
     """The bot's own recent messages on the screen that carry a secret question's buttons: what a
-    restart forgot. Matched by the buttons' ids, since the text alone can't be told apart."""
+    restart forgot. Matched by the buttons' ids, since the text alone can't be told apart. The
+    flag says the whole history was read."""
     found: list[Any] = []
     try:
         async for message in channel.history(limit=None):
@@ -77,7 +83,8 @@ async def _scan(channel: Any, bot_id: int) -> list[Any]:
                 found.append(message)
     except Exception:
         log.warning("Could not look through the DM screen for secret questions")
-    return found
+        return found, False
+    return found, True
 
 
 async def hide(
@@ -88,9 +95,12 @@ async def hide(
     found by their buttons). A message that is gone or can't be edited is skipped (logged as a
     count only). Returns how many were changed."""
     messages = _posts.pop((guild_id, campaign_id), [])
-    if channel is not None and bot_id is not None:
+    if channel is not None and bot_id is not None and (guild_id, campaign_id) not in _searched:
         known = {getattr(m, "id", None) for m in messages}
-        messages += [m for m in await _scan(channel, bot_id) if getattr(m, "id", None) not in known]
+        older, complete = await _scan(channel, bot_id)
+        messages += [m for m in older if getattr(m, "id", None) not in known]
+        if complete:  # a failed read is tried again at the next change
+            _searched.add((guild_id, campaign_id))
     changed = 0
     failed: list[Any] = []
     for message in messages:

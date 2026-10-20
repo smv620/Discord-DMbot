@@ -431,7 +431,7 @@ class InAPrivateMessage(unittest.IsolatedAsyncioTestCase):
 
         from dmbot.ui.secret_aloud import SecretAloudButton as Button
 
-        new = Button("keep", "c" * 32, "a" * 32, 5).item.custom_id
+        new = Button("keep", "c" * 32, "a" * 32, 5).item.custom_id or ""
         self.assertEqual(new, f"dmbot:sa:k:{'c' * 32}:{'a' * 32}:5")
         longest = Button("open", "c" * 32, "a" * 32, 10**19 - 1).item.custom_id
         self.assertLessEqual(len(longest or ""), 100)  # a 19-digit server id still fits
@@ -558,7 +558,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     def test_the_view_has_the_two_buttons_with_ids_that_survive_a_restart(self) -> None:
         view = secret_aloud_view("c" * 32, "a" * 32)
-        ids = [cast(Any, item).custom_id for item in view.children]
+        ids = [cast(Any, item).custom_id or "" for item in view.children]
         self.assertEqual(
             ids,
             [
