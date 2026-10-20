@@ -633,3 +633,76 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class TheMemberDirectory(WithImports):
+    """The server's recorded members who never signed in to the website (#2141)."""
+
+    async def find(self, q: str) -> list[tuple[str, bool]]:
+        got = await imports.search_members(self.web, self.session, self.ref_c, q, **self.kw)
+        return [(m["name"], m["agreed"]) for m in got["members"]]
+
+    async def test_a_recorded_member_who_never_signed_in_can_be_found_by_name_or_username(
+        self,
+    ) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9201
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        self.assertEqual(await self.find("_a"), [("Quill Ardent", True)])  # the username too
+        self.assertEqual(await self.find("nobody"), [])
+
+    async def test_a_member_who_withdrew_or_has_old_consent_is_not_offered(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9202
+        directory = MemberDirectory(self.db)
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await directory.remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION - 1,))
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s", (TERMS_VERSION, MIRA)
+            )
+        self.assertEqual(await self.find("quill"), [])  # a stale row is never offered
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION,))
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        await directory.forget(THURSDAY.id, who)
+        self.assertEqual(await self.find("quill"), [])
+
+    async def test_another_servers_members_never_show(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9203
+        await ConsentStore(self.db).grant(555, who)
+        await MemberDirectory(self.db).remember(555, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [])
+        async with self.db.guild(THURSDAY.id) as conn:  # and the table itself is per server
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_the_campaigns_own_person_comes_first_and_is_not_listed_twice(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
+        got = await self.find("")
+        self.assertEqual([n for n, _ in got].count("Player 0"), 1)  # MIRA is "Player 0" here
+        self.assertNotIn("Mira Real", [n for n, _ in got])
+
+    async def test_empty_names_keep_no_row_and_a_name_is_cut_to_a_sane_length(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        await directory.remember(THURSDAY.id, 9204, "", None)
+        await directory.remember(THURSDAY.id, 9205, "x" * 500, "  ")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, char_length(display_name) AS n FROM member_directory"
+            )
+            rows = await cur.fetchall()
+        self.assertEqual([(r["user_id"], r["n"]) for r in rows], [(9205, 100)])
