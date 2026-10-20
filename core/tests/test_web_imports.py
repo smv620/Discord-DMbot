@@ -695,6 +695,20 @@ class TheMemberDirectory(WithImports):
             self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
             self.assertNotIn("Mira Real", names, q)
 
+    async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        for who in (9301, 9302):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+            await directory.remember(THURSDAY.id, who, f"Name {who}", f"u{who}")
+        async with self.db.guild(THURSDAY.id) as conn:  # 9301 stopped on the website, bot down
+            await conn.execute("DELETE FROM consent WHERE user_id = 9301")
+        await directory.forget(THURSDAY.id, 9999)  # any stop in the server tidies the rest
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id FROM member_directory")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [9302])
+
     async def test_nothing_is_kept_for_someone_with_no_consent_row(self) -> None:
         from dmbot.members import MemberDirectory
 

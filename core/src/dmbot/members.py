@@ -42,9 +42,13 @@ class MemberDirectory:
             )
 
     async def forget(self, guild_id: int, user_id: int) -> None:
-        """Drop one member: they stopped being recorded."""
+        """Drop one member: they stopped being recorded. Also drops any row in this server whose
+        person has no consent row any more (a stop made on the website while the bot was down),
+        so the directory keeps no one who isn't recorded."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "DELETE FROM member_directory WHERE guild_id = %s AND user_id = %s",
+                "DELETE FROM member_directory d WHERE d.guild_id = %s AND (d.user_id = %s OR"
+                " NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = d.guild_id"
+                " AND x.user_id = d.user_id))",
                 (guild_id, user_id),
             )

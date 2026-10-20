@@ -1860,8 +1860,11 @@ class DMBot(commands.AutoShardedBot):
                 try:
                     async with asyncio.timeout(FORGET_TIMEOUT_S):
                         await self.members.forget(guild_id, user_id)
-                except Exception:
-                    log.exception("Could not remove a stopped speaker from the member directory")
+                except Exception as exc:  # the type only: a database error can quote a row
+                    log.warning(
+                        "Could not remove a stopped speaker from the member directory: %s",
+                        type(exc).__name__,
+                    )
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
