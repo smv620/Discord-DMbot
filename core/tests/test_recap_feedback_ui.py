@@ -404,7 +404,9 @@ class GateRules(unittest.IsolatedAsyncioTestCase):
 
     async def gate(self, host: Any) -> Any:
         campaign = SimpleNamespace(guild_id=GUILD, id=CID)
-        return await DMBot.recap_feedback_gate(host, campaign, SimpleNamespace())
+        return await DMBot.recap_feedback_gate(
+            host, cast(Any, campaign), cast(Any, SimpleNamespace())
+        )
 
     async def test_refuses_when_recaps_are_off_or_not_in_the_plan(self) -> None:
         self.assertEqual(await self.gate(self.host(allowed=False)), screen.NO_RECAPS)
