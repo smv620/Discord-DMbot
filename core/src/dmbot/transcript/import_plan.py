@@ -27,6 +27,7 @@ NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT = "not_matched", "not_agreed", "bot", "le
 REASONS = (NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT)
 WORD_MS = 3_600_000 // SPOKEN_WORDS_PER_HOUR  # one spoken word, in milliseconds
 MAX_LINE_MS = 120_000  # a single line is never counted as longer than two minutes
+MAX_LINE_CHARS = 2_000  # a longer line is stored as several, so one can't carry a whole file
 
 
 def spoken_ms(text: str) -> int:
@@ -84,6 +85,28 @@ def timed(transcript: Transcript) -> list[tuple[int, int]]:
     return out
 
 
+def _pieces(text: str) -> list[str]:
+    """The words of one line, in pieces of at most `MAX_LINE_CHARS` cut between words (a single
+    word longer than that is cut where it stands)."""
+    out: list[str] = []
+    current = ""
+    for word in text.split():
+        while len(word) > MAX_LINE_CHARS:
+            if current:
+                out.append(current)
+                current = ""
+            out.append(word[:MAX_LINE_CHARS])
+            word = word[MAX_LINE_CHARS:]
+        if current and len(current) + 1 + len(word) > MAX_LINE_CHARS:
+            out.append(current)
+            current = word
+        else:
+            current = f"{current} {word}" if current else word
+    if current:
+        out.append(current)
+    return out or [text[:MAX_LINE_CHARS]]
+
+
 def make_plan(
     transcript: Transcript,
     mapping: Mapping[str, int | str | None],
@@ -111,5 +134,10 @@ def make_plan(
             report.dropped[NOT_AGREED] += 1
         else:
             report.kept += 1
-            kept.append(Line(base_ms + start, member, u.text, u.text, duration_ms=length))
+            pieces = _pieces(u.text) if len(u.text) > MAX_LINE_CHARS else [u.text]
+            share = max(length // len(pieces), 1)
+            for n, piece in enumerate(pieces):
+                kept.append(
+                    Line(base_ms + start + n * share, member, piece, piece, duration_ms=share)
+                )
     return Plan(tuple(kept), tuple(reports.values()), transcript.cut_out)

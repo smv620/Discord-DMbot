@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -31,11 +32,14 @@ PER_ROUND = 3  # sessions cleaned in one round for one server
 TOPIC_CALL_TIMEOUT_S = 30.0
 FAILED_NAMES = "names_failed"  # the campaign's names couldn't be read
 FAILED_ERROR = "error"  # anything else that stopped it
+PARTLY = "partly_labelled"  # done, but the AI was not asked about every line
+RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped; it is taken again
 CHUNK_LINES = 120  # lines cleaned between two yields to the bot's other work, and between saves
-MAX_WINDOWS = 400  # AI windows (WINDOW_LINES lines each) for one session; the rest stays game talk
+MAX_WINDOWS = 1_200  # AI windows (WINDOW_LINES lines each) for one session, about 7,200 lines
 TOPIC_FAILURES_BEFORE_REST = 3  # windows failing one after another before the AI is left alone
 
 Lookup = Callable[[int, str], Awaitable[CampaignLookup]]
+Consenting = Callable[[int], Awaitable[frozenset[int]]]  # who is recorded now, in a server
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +47,6 @@ class Row:
     id: int
     user_id: int
     heard: str
-    agreed: bool = True  # still recorded now; a line of someone who stopped is left as heard
 
 
 class ImportStore:
@@ -64,40 +67,39 @@ class ImportStore:
         """Take a waiting import. False when someone else has (or it is gone)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE session_imports SET state = 'working', reason = ''"
+                "UPDATE session_imports SET state = 'working', reason = '', claimed_at = %s"
                 " WHERE session_id = %s AND state = 'waiting'",
-                (session_id,),
+                (int(time.time()), session_id),
             )
             return bool(cur.rowcount)
 
     async def finish(self, guild_id: int, session_id: str, *, ok: bool, reason: str = "") -> None:
+        """The end of the work: `done` (with a reason when it was only partly done) or `failed`."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE session_imports SET state = %s, reason = %s WHERE session_id = %s",
                 ("done" if ok else "failed", reason[:40], session_id),
             )
 
-    async def resume(self, guild_id: int) -> int:
-        """After a restart: an import left `working` goes back to `waiting`."""
+    async def resume(self, guild_id: int, *, older_than_s: int = RETAKE_AFTER_S) -> int:
+        """An import left `working` by a bot that stopped goes back to `waiting`: one whose claim
+        is older than `older_than_s` (0: every one, for the start of the bot)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE session_imports SET state = 'waiting' WHERE state = 'working'"
+                " AND claimed_at <= %s",
+                (int(time.time()) - older_than_s,),
             )
             return int(cur.rowcount)
 
     async def rows(self, guild_id: int, session_id: str) -> list[Row]:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT l.id, l.user_id, l.heard, EXISTS (SELECT 1 FROM consent c"
-                " WHERE c.guild_id = l.guild_id AND c.user_id = l.user_id) AS agreed"
-                " FROM transcript_lines l WHERE l.session_id = %s AND l.sidebar IS NULL"
-                " ORDER BY l.started_ms, l.id",
+                "SELECT id, user_id, heard FROM transcript_lines"
+                " WHERE session_id = %s AND sidebar IS NULL ORDER BY started_ms, id",
                 (session_id,),
             )
-            return [
-                Row(int(r["id"]), int(r["user_id"]), r["heard"], bool(r["agreed"]))
-                for r in await cur.fetchall()
-            ]
+            return [Row(int(r["id"]), int(r["user_id"]), r["heard"]) for r in await cur.fetchall()]
 
     async def back_to_waiting(self, guild_id: int, session_id: str) -> None:
         async with self._db.guild(guild_id) as conn:
@@ -128,11 +130,23 @@ class ImportStore:
 
 
 class ImportJob:
-    def __init__(self, store: ImportStore, lookup: Lookup, topic_ai: Completes | None) -> None:
+    def __init__(
+        self,
+        store: ImportStore,
+        lookup: Lookup,
+        topic_ai: Completes | None,
+        consenting: Consenting,
+    ) -> None:
+        """`consenting`: who is recorded now in a server (`ConsentStore.consenting`: the current
+        terms, the outside engine and the stops held back). Asked before every chunk and every AI
+        call, because a person can stop at any moment during a long job."""
         self.store, self.lookup, self.topic_ai = store, lookup, topic_ai
+        self.consenting = consenting
 
     async def run_round(self, guild_id: int) -> int:
-        """Clean the waiting imports of one server. How many were done."""
+        """Clean the waiting imports of one server (first taking back any a stopped bot left
+        half done). How many were done."""
+        await self.store.resume(guild_id)
         done = 0
         for cid, sid in await self.store.waiting(guild_id):
             if await self.store.claim(guild_id, sid):
@@ -162,12 +176,14 @@ class ImportJob:
         rows = await self.store.rows(guild_id, session_id)
         windows_left = MAX_WINDOWS
         failures = 0
+        partly = False
         for start in range(0, len(rows), CHUNK_LINES):
             chunk = rows[start : start + CHUNK_LINES]
+            agreed = await self.consenting(guild_id)  # asked again for every chunk
             texts: list[str | None] = []
             for row in chunk:
                 fixed = row.heard
-                if row.agreed:  # someone who stopped being recorded is not worked on at all
+                if row.user_id in agreed:  # someone who stopped being recorded is not worked on
                     try:
                         fixed = clean(lookup, row.heard, unsure=False).text
                     except Exception:
@@ -175,39 +191,46 @@ class ImportJob:
                 texts.append(None if fixed == row.heard else fixed)
             topics = [GAME] * len(chunk)
             if self.topic_ai is not None:
-                topics, windows_left, failures = await self._topics(
-                    [
-                        (t or r.heard) if r.agreed else None
-                        for t, r in zip(texts, chunk, strict=True)
-                    ],
+                topics, windows_left, failures, skipped = await self._topics(
+                    guild_id,
+                    [(r.user_id, t or r.heard) for t, r in zip(texts, chunk, strict=True)],
                     windows_left,
                     failures,
                 )
+                partly = partly or skipped
             await self.store.apply(
                 guild_id,
                 session_id,
                 [(r.id, t, topic) for r, t, topic in zip(chunk, texts, topics, strict=True)],
             )
             await asyncio.sleep(0)  # the live table's work goes first between chunks
-        await self.store.finish(guild_id, session_id, ok=True)
+        await self.store.finish(guild_id, session_id, ok=True, reason=PARTLY if partly else "")
         log.info("Import: cleaned a session of %d lines", len(rows))  # counts only
 
     async def _topics(
-        self, lines: Sequence[str | None], windows_left: int, failures: int
-    ) -> tuple[list[str], int, int]:
-        """The topics of these lines, a window at a time (a line that is None is not sent). A
-        window that fails, a session out of windows, or an AI that failed several windows in a row
-        leaves its lines as game talk: nothing is left out on a guess. Returns the topics and the
-        windows and failures left over."""
+        self,
+        guild_id: int,
+        lines: Sequence[tuple[int, str]],
+        windows_left: int,
+        failures: int,
+    ) -> tuple[list[str], int, int, bool]:
+        """The topics of these (speaker, words) lines, a window at a time. Who is recorded is asked
+        again right before every AI call, and a line of someone who stopped is not sent. A window
+        that fails, a session out of windows, or an AI that failed several windows in a row leaves
+        its lines as game talk: nothing is left out on a guess. Returns the topics, the windows and
+        failures left over, and whether the AI was not asked about some line it could have been."""
         out = [GAME] * len(lines)
         ai = self.topic_ai
         if ai is None:
-            return out, windows_left, failures
+            return out, windows_left, failures, False
+        skipped = False
         for start in range(0, len(lines), WINDOW_LINES):
             if windows_left <= 0 or failures >= TOPIC_FAILURES_BEFORE_REST:
+                skipped = True
                 break
+            agreed = await self.consenting(guild_id)
             window = lines[start : start + WINDOW_LINES]
-            sent = [(i, t) for i, t in enumerate(window) if t is not None]
+            sent = [(i, text) for i, (user, text) in enumerate(window) if user in agreed]
             if not sent:
                 continue
             windows_left -= 1
@@ -224,4 +247,4 @@ class ImportJob:
                 continue
             for (i, _), topic in zip(sent, topics, strict=True):
                 out[start + i] = topic
-        return out, windows_left, failures
+        return out, windows_left, failures, skipped

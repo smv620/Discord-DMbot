@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
+
+import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
+from dmbot.web import sessions as web_sessions
+from dmbot.web.app import create_app
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import THURSDAY
+from tests.test_recap_web import BOB, HEADERS, NOW, Base
+from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
 
 MIRA, TOMAS, NOBODY = 7001, 7002, 7003
 CRAIG = """Craig Recording of Tuesday
@@ -172,20 +177,32 @@ class TheStore(WithImports):
         self.assertLessEqual(schema.IMPORT_TERMS_FLOOR, TERMS_VERSION)
         self.assertIn(f"terms < {schema.IMPORT_TERMS_FLOOR} OR", schema.SESSION_IMPORTS)
 
-    async def test_words_can_only_be_given_to_the_campaigns_own_people(self) -> None:
-        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
-            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
-            await ConsentStore(self.db).grant(
-                THURSDAY.id, NOBODY
-            )  # agreed, but not in this campaign
-            cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
-                (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
-                 json.dumps([{"ms": 0, "user": NOBODY, "text": "stranger", "dur": 1},
-                             {"ms": 1, "user": MIRA, "text": "mine", "dur": 1}]), TERMS_VERSION),
-            )  # fmt: skip
-            got = (await cur.fetchone() or {})["r"]
-        self.assertEqual((got["kept"], got["dropped"]), (1, 1))
+    async def test_any_member_who_agreed_can_be_mapped_even_in_a_new_campaign(self) -> None:
+        stranger = 8_000_000_000_000_000_001  # 19 digits, newer than the old 18
+        await ConsentStore(self.db).grant(THURSDAY.id, stranger)
+        done = await self.confirm(
+            {
+                "mapping": {"Mira (mira_v)": str(stranger)},
+                "sessions": [{"file": "a.txt", "date": "2026-09-14"}],
+            },
+            ("a.txt", CRAIG),
+        )
+        self.assertEqual(done["sessions"][0]["state"], "waiting")
+        (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
+        self.assertEqual(stored.speakers, (stranger,))
+        got = await imports.preview(
+            self.web, self.session, self.ref_c, files(("b.txt", CRAIG)), **self.kw
+        )
+        remembered = {s["label"]: s["suggested"] for s in got["files"][0]["speakers"]}
+        self.assertEqual(remembered["Mira (mira_v)"]["userId"], str(stranger))  # remembered whole
+
+    async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
+        await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 0}]},
+            ("a.txt", CRAIG),
+        )
+        (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
+        self.assertEqual(stored.started_at % 86400, 12 * 3600)
 
     async def test_a_list_of_sessions_longer_than_the_files_or_repeating_one_is_refused(
         self,
@@ -285,6 +302,149 @@ class TheStore(WithImports):
         self.assertEqual(await self.sessions(), 0)
 
 
+class TheRetention(WithImports):
+    async def test_an_imported_session_is_kept_from_the_day_it_was_imported(self) -> None:
+        await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2024-03-02"}]},
+            ("a.txt", CRAIG),
+        )
+        old = await self.transcripts.open_session(THURSDAY.id, self.one.id, 1_700_000_000)
+        from dmbot.transcript.models import Line
+
+        await self.transcripts.add_lines(
+            THURSDAY.id, old, [Line(1_700_000_000_000, MIRA, "hello", "hello")]
+        )
+        await self.transcripts.end_session(THURSDAY.id, old, 1_700_000_100)
+        cutoff = int(time.time()) - 30 * 86400  # "keep transcripts for 30 days"
+        listed = await self.transcripts.expired_sessions(THURSDAY.id, self.one.id, cutoff)
+        self.assertEqual(
+            listed, [old]
+        )  # the plain old session goes; the 2024 game just loaded stays
+
+
+class TheOutsideEngine(WithImports):
+    async def test_consent_given_for_another_outside_company_does_not_count(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET outside_to = 'cloud'")
+        kw = {**self.kw, "outside": "deepgram"}
+        with self.assertRaises(RecapError) as refused:
+            await imports.confirm(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+                **kw,
+            )  # fmt: skip
+        self.assertEqual(refused.exception.code, "no_lines_kept")
+        kw["outside"] = "cloud"
+        done = await imports.confirm(
+            self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            **kw,
+        )  # fmt: skip
+        self.assertEqual(done["sessions"][0]["state"], "waiting")
+
+
+class TheRoutes(WithImports):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        self.clients = []
+        for who in (ALICE, BOB):
+            token = await web_sessions.sign_in(
+                self.web, cast(Any, who), [THURSDAY], now=NOW, days=30
+            )
+            client = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            )
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            self.clients.append(client)
+        self.dm, self.bob = self.clients
+
+    async def asyncTearDown(self) -> None:
+        for client in self.clients:
+            await client.aclose()
+        await super().asyncTearDown()
+
+    async def test_preview_over_http(self) -> None:
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview", json={"files": files(("a.txt", CRAIG))}
+        )
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["files"][0]["speakers"][0]["label"], "Mira (mira_v)")
+
+    async def test_a_person_who_is_not_a_dm_is_refused_before_the_body_is_read(self) -> None:
+        got = await self.bob.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview",
+            content=b"{not even json",
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (403, "not_a_dm"))
+
+    async def test_a_body_over_the_limit_is_refused_with_413(self) -> None:
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview",
+            content=b"x" * (imports.MAX_BODY_BYTES + 10),
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (413, "too_big"))
+
+    async def test_too_many_requests_get_too_soon(self) -> None:
+        codes = []
+        for _ in range(8):
+            got = await self.dm.post(
+                f"/me/campaigns/{self.ref_c}/imports/preview", json={"files": []}
+            )
+            codes.append((got.status_code, got.json().get("error")))
+        self.assertEqual(codes[-1], (429, "too_soon"))
+
+    async def test_the_error_codes_of_a_confirm(self) -> None:
+        for body, status, code in (
+            (
+                {
+                    "files": files(("a.txt", CRAIG)),
+                    "plan": {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "x"}]},
+                },
+                422,
+                "bad_date",
+            ),
+            (
+                {
+                    "files": files(("a.txt", CRAIG)),
+                    "plan": {"mapping": {"Mira (mira_v)": "nope"}, "sessions": []},
+                },
+                422,
+                "bad_mapping",
+            ),
+            (
+                {
+                    "files": [],
+                    "plan": {
+                        "mapping": MAPPING,
+                        "sessions": [{"file": "a.txt", "date": "2026-09-14"}],
+                    },
+                },
+                422,
+                "bad_files",
+            ),
+        ):
+            got = await self.dm.post(f"/me/campaigns/{self.ref_c}/imports", json=body)
+            self.assertEqual((got.status_code, got.json()["error"]), (status, code))
+
+    async def test_a_confirm_over_http_is_accepted_and_can_be_followed(self) -> None:
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports",
+            json={
+                "files": files(("a.txt", CRAIG)),
+                "plan": {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            },
+        )
+        self.assertEqual(got.status_code, 202, got.text)
+        seen = await self.dm.get(f"/me/campaigns/{self.ref_c}/imports/{got.json()['importId']}")
+        self.assertEqual(seen.json()["sessions"][0]["state"], "waiting")
+
+
 class TheProgress(WithImports):
     async def test_a_stored_session_is_waiting_until_it_is_cleaned(self) -> None:
         done = await self.confirm(
@@ -344,6 +504,27 @@ class TheGuards(WithImports):
                 outside=None, now=int(time.time()), enforce_plans=True,
             )  # fmt: skip
         self.assertIn(refused.exception.code, ("not_on_a_paid_plan", "try_it_campaign"))
+
+    async def test_a_try_it_campaign_is_refused_with_its_own_code(self) -> None:
+        async with self.db.plan_writer(self.session.user_id) as conn:
+            await conn.execute(
+                "DELETE FROM entitlements WHERE user_id = %s",
+                (self.session.user_id,),
+            )
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, grace_ends_at, lapsed_at,"
+                " plan_changed_at, provider, provider_subscription_id, last_event_at, updated_at)"
+                " VALUES (%s, 'try-it', 'active', 3, 0, 1, %s, %s, NULL, NULL, 0, 'fake',"
+                " 'sub_1', 0, 0)",
+                (self.session.user_id, NOW - 100, NOW + 86400),
+            )
+        with self.assertRaises(RecapError) as refused:
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                outside=None, now=NOW, enforce_plans=True,
+            )  # fmt: skip
+        self.assertEqual(refused.exception.code, "try_it_campaign")
 
     async def test_the_members_door_has_one_caller(self) -> None:
         from tests.test_recap_web import callers

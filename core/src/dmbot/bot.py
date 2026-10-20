@@ -1155,7 +1155,9 @@ class DMBot(commands.AutoShardedBot):
         self.transcripts = transcripts
         # Cleaning the sessions a DM imported from a file (#2105), in the background.
         self.import_job: ImportJob | None = (
-            ImportJob(ImportStore(transcripts.db), self.lookup.get, self.topic_ai)
+            ImportJob(
+                ImportStore(transcripts.db), self.lookup.get, self.topic_ai, consent.consenting
+            )
             if transcripts is not None and self.lookup is not None
             else None
         )
@@ -8304,7 +8306,7 @@ class DMBot(commands.AutoShardedBot):
         await asyncio.sleep(45)
         for guild in list(self.guilds):
             try:
-                await self.import_job.store.resume(guild.id)
+                await self.import_job.store.resume(guild.id, older_than_s=0)
             except Exception:
                 log.exception("Import: couldn't put the unfinished ones back")
         while True:

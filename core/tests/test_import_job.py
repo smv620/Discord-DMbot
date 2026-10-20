@@ -66,11 +66,15 @@ class TheJob(DatabaseTest):
         assert row is not None
         return row["state"], row["reason"]
 
-    def job(self, ai: Any | None, names: Any = None) -> ImportJob:
+    def job(self, ai: Any | None, names: Any = None, consenting: Any = None) -> ImportJob:
         async def get(_g: int, _c: str) -> Any:
             return names if names is not None else names_with()
 
-        return ImportJob(self.store, get, ai)
+        async def now(guild_id: int) -> frozenset[int]:
+            # a fresh store each time, so a change made straight in the database shows
+            return await ConsentStore(self.db).consenting(guild_id)
+
+        return ImportJob(self.store, get, ai, consenting or now)
 
     async def test_a_waiting_session_is_cleaned_labelled_and_marked_done(self) -> None:
         ai = FakeAI("1. game\n2. other")
@@ -108,13 +112,15 @@ class TheJob(DatabaseTest):
         async def broken(_g: int, _c: str) -> Any:
             raise RuntimeError("no names")
 
-        await ImportJob(self.store, broken, None).run_round(GUILD)
+        job = self.job(None)
+        job.lookup = broken
+        await job.run_round(GUILD)
         self.assertEqual(await self.state(), ("failed", FAILED_NAMES))
 
     async def test_a_restart_puts_a_working_session_back_in_the_queue(self) -> None:
         self.assertTrue(await self.store.claim(GUILD, self.session))
         self.assertFalse(await self.store.claim(GUILD, self.session))
-        self.assertEqual(await self.store.resume(GUILD), 1)
+        self.assertEqual(await self.store.resume(GUILD, older_than_s=0), 1)
         self.assertEqual(await self.state(), ("waiting", ""))
 
     async def test_someone_who_stopped_being_recorded_is_not_cleaned_or_sent_to_the_ai(
@@ -154,13 +160,34 @@ class TheJob(DatabaseTest):
         ai = FakeAI(fail=True)
         await self.job(ai).run_round(GUILD)
         self.assertEqual(ai.calls, TOPIC_FAILURES_BEFORE_REST)
+        self.assertEqual(await self.state(), ("done", "partly_labelled"))  # and it says so
+
+    async def test_a_session_that_ran_out_of_windows_says_it_is_partly_labelled(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.transcript import import_job as ij
+
+        with patch.object(ij, "MAX_WINDOWS", 1), patch.object(ij, "WINDOW_LINES", 1):
+            await self.job(FakeAI("1. game")).run_round(GUILD)
+        self.assertEqual(await self.state(), ("done", ij.PARTLY))
+
+    async def test_an_old_claim_is_taken_again_in_the_next_round(self) -> None:
+        self.assertTrue(await self.store.claim(GUILD, self.session))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE session_imports SET claimed_at = 1")
+        self.assertEqual(await self.job(None).run_round(GUILD), 1)
         self.assertEqual(await self.state(), ("done", ""))
+
+    async def test_a_fresh_claim_is_left_to_the_bot_that_holds_it(self) -> None:
+        self.assertTrue(await self.store.claim(GUILD, self.session))
+        self.assertEqual(await self.job(None).run_round(GUILD), 0)
+        self.assertEqual(await self.state(), ("working", ""))
 
     async def test_a_session_gets_at_most_so_many_ai_windows(self) -> None:
 
         job = self.job(FakeAI("1. game"))
-        topics, left, _failures = await job._topics(["a line"] * 30, 2, 0)
-        self.assertEqual((len(topics), left), (30, 0))
+        topics, left, _failures, skipped = await job._topics(GUILD, [(MIRA, "a line")] * 30, 2, 0)
+        self.assertEqual((len(topics), left, skipped), (30, 0, True))
 
     async def test_nothing_of_the_transcript_is_logged(self) -> None:
         with self.assertLogs("dmbot.transcript.import_job", level="INFO") as logs:

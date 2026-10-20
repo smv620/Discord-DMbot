@@ -115,6 +115,24 @@ class TheConsentMapping(unittest.TestCase):
         self.assertEqual(plan.lines, ())
 
 
+class TheLineLength(unittest.TestCase):
+    def test_one_very_long_line_is_stored_as_several(self) -> None:
+        words = " ".join(["word"] * 1_500)  # 7,499 characters
+        t = importer.parse(f"Mira: {words}\nTomas: short line here\n")
+        plan = ip.make_plan(t, {"Mira": ALICE, "Tomas": BOB}, agreed={ALICE, BOB})
+        mira = [line for line in plan.lines if line.user_id == ALICE]
+        self.assertGreaterEqual(len(mira), 4)
+        self.assertTrue(all(len(line.text) <= ip.MAX_LINE_CHARS for line in mira))
+        self.assertEqual(" ".join(line.text for line in mira), words)  # nothing lost
+        starts = [line.started_ms for line in plan.lines]
+        self.assertEqual(starts, sorted(starts))
+        self.assertEqual(next(r for r in plan.speakers if r.label == "Mira").kept, 1)  # one line
+
+    def test_a_word_longer_than_the_limit_is_cut_where_it_stands(self) -> None:
+        pieces = ip._pieces("x" * 4_500)
+        self.assertEqual([len(p) for p in pieces], [2_000, 2_000, 500])
+
+
 class TheTimes(unittest.TestCase):
     def test_a_file_without_times_gets_them_from_the_words(self) -> None:
         t = importer.parse(CRAIG)

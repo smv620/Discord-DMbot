@@ -32,6 +32,7 @@ from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
 from dmbot.transcript import import_plan as ip
 from dmbot.transcript import importer
+from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -122,8 +123,7 @@ async def read_files_off_loop(raw: object) -> list[File]:
 class Campaign:
     guild_id: int
     campaign_id: str
-    agreed: frozenset[int]  # the campaign's people who are recorded now
-    members: frozenset[int]  # the campaign's people: the only ones words may be given to
+    agreed: frozenset[int]  # the server's members who are recorded now (current terms)
     owner: int | None
 
 
@@ -150,7 +150,6 @@ async def _open(conn: Conn, session: Session, ref: str, *, outside: str | None) 
         gid,
         cid,
         frozenset(int(u) for u in found["agreed"]),
-        frozenset(int(u) for u in found["members"]),
         int(owner) if isinstance(owner, str) and owner.isdecimal() else None,
     )
 
@@ -181,7 +180,7 @@ def estimate(files: Sequence[File], kept: Mapping[str, int] | None = None) -> di
         lines = len(f.transcript.utterances) if kept is None else kept.get(f.name, 0)
         if lines:
             sessions += 1
-            calls += math.ceil(lines / WINDOW_LINES)
+            calls += min(math.ceil(lines / WINDOW_LINES), MAX_WINDOWS)
     return {"sessions": sessions, "fastCalls": calls}
 
 
@@ -197,6 +196,16 @@ async def _members(conn: Conn, c: Campaign, q: str, outside: str | None) -> list
     )
     found = (await cur.fetchone() or {}).get("r")
     return list(found or [])
+
+
+async def authorize(
+    db: Database, session: Session, ref: str, *, outside: str | None, now: int, enforce_plans: bool
+) -> None:
+    """The DM and the plan, from the address alone: asked before a request's body is read, so a
+    person who may not import never makes the API read or decode 40 MB."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
 
 
 async def search_members(
@@ -299,7 +308,13 @@ def mapping_of(raw: object) -> dict[str, int | str | None]:
             raise RecapError("bad_mapping")
         if who == ip.DROP or who is None:
             out[label] = ip.DROP
-        elif isinstance(who, str) and who.isascii() and who.isdecimal() and 0 < int(who) < 2**63:
+        elif (
+            isinstance(who, str)
+            and who.isascii()
+            and who.isdecimal()
+            and len(who) <= 19
+            and 0 < int(who) < 2**63
+        ):
             out[label] = int(who)
         else:
             raise RecapError("bad_mapping")
@@ -310,7 +325,7 @@ def _plans(
     files: Sequence[File], mapping: Mapping[str, int | str | None], c: Campaign
 ) -> dict[str, ip.Plan]:
     return {
-        f.name: ip.make_plan(f.transcript, mapping, agreed=c.agreed, members=c.members)
+        f.name: ip.make_plan(f.transcript, mapping, agreed=c.agreed)
         for f in files
         if f.transcript is not None
     }
@@ -352,8 +367,9 @@ async def check(
 
 
 def _started_at(date: object, order: object) -> int:
-    """The session's start (Unix seconds) from the DM's date: midnight UTC of that day, plus the
-    order within the day in seconds, so two files on one day stay in the DM's order."""
+    """The session's start (Unix seconds) from the DM's date: 12:00 UTC of that day (so a DM
+    anywhere on earth sees the day they meant), plus the order within the day in seconds, so two
+    files on one day stay in the DM's order."""
     if not isinstance(date, str):
         raise RecapError("bad_date")
     try:
@@ -365,8 +381,8 @@ def _started_at(date: object, order: object) -> int:
     extra = (
         order if isinstance(order, int) and not isinstance(order, bool) and 0 <= order < 3600 else 0
     )
-    midnight = dt.datetime(day.year, day.month, day.day, tzinfo=dt.UTC)
-    return int(midnight.timestamp()) + extra
+    noon = dt.datetime(day.year, day.month, day.day, 12, tzinfo=dt.UTC)
+    return int(noon.timestamp()) + extra
 
 
 async def confirm(

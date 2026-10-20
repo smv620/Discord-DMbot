@@ -6996,6 +6996,7 @@ SESSION_IMPORTS = (
         state       TEXT NOT NULL DEFAULT 'waiting'
             CHECK (state IN ('waiting', 'working', 'done', 'failed')),
         reason      TEXT NOT NULL DEFAULT '' CHECK (char_length(reason) <= 40),
+        claimed_at  BIGINT NOT NULL DEFAULT 0,  -- when the bot took it; an old claim is retaken
         PRIMARY KEY (guild_id, session_id),
         FOREIGN KEY (session_id, guild_id)
             REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE
@@ -7023,9 +7024,8 @@ SESSION_IMPORTS = (
     -- session's list, and the store door keeps only lines of members who have agreed under the
     -- terms and outside engine the caller passes (the bot's own rule, consent._select).
 
-    -- dmbot_import_agreed: the campaign's people (the only ones words may be given to: its
-    -- confirmed table people and whoever spoke in an earlier session), which of them are recorded
-    -- now, and the campaign's owner (for the plan rule). NULL unless a DM.
+    -- dmbot_import_agreed: the members of the server who are recorded now (under the terms and
+    -- outside engine passed) and the campaign's owner (for the plan rule). NULL unless a DM.
     CREATE FUNCTION dmbot_import_agreed(g BIGINT, c TEXT, terms INT, outside TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -7037,24 +7037,10 @@ SESSION_IMPORTS = (
             RETURN NULL;
         END IF;
         RETURN jsonb_build_object(
-            'members', COALESCE((SELECT jsonb_agg(m::TEXT) FROM (
-                SELECT e.played_by AS m FROM memory_entities e
-                WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
-                  AND e.status = 'confirmed' AND e.played_by IS NOT NULL
-                UNION
-                SELECT unnest(t.speakers) FROM transcript_sessions t
-                WHERE t.guild_id = g AND t.campaign_id = c) u), '[]'::jsonb),
             'agreed', COALESCE((
                 SELECT jsonb_agg(x.user_id::TEXT) FROM consent x
                 WHERE x.guild_id = g AND x.terms_version = terms
-                  AND (outside IS NULL OR x.outside_to = outside)
-                  AND (x.user_id IN (SELECT e.played_by FROM memory_entities e
-                                     WHERE e.guild_id = g AND e.campaign_id = c
-                                       AND e.type = 'person' AND e.status = 'confirmed'
-                                       AND e.played_by IS NOT NULL)
-                       OR x.user_id IN (SELECT unnest(t.speakers) FROM transcript_sessions t
-                                        WHERE t.guild_id = g AND t.campaign_id = c))
-                ), '[]'::jsonb),
+                  AND (outside IS NULL OR x.outside_to = outside)), '[]'::jsonb),
             'owner', (SELECT k.owner_user_id::TEXT FROM campaigns k
                       WHERE k.guild_id = g AND k.id = c));
     END
@@ -7100,13 +7086,7 @@ SESSION_IMPORTS = (
               AND EXISTS (SELECT 1 FROM consent x
                           WHERE x.guild_id = g AND x.user_id = l."user"
                             AND x.terms_version = terms
-                            AND (outside IS NULL OR x.outside_to = outside))
-              AND (l."user" IN (SELECT e.played_by FROM memory_entities e
-                                WHERE e.guild_id = g AND e.campaign_id = c
-                                  AND e.type = 'person' AND e.status = 'confirmed'
-                                  AND e.played_by IS NOT NULL)
-                   OR l."user" IN (SELECT unnest(t.speakers) FROM transcript_sessions t
-                                   WHERE t.guild_id = g AND t.campaign_id = c));
+                            AND (outside IS NULL OR x.outside_to = outside));
         IF kept = 0 THEN
             RETURN jsonb_build_object('session', NULL, 'kept', 0, 'dropped', total);
         END IF;
@@ -7204,7 +7184,9 @@ SESSION_IMPORTS = (
             INSERT INTO import_speakers (guild_id, campaign_id, label, user_id, updated_at)
                 SELECT g, c, left(p.key, 80), p.value::BIGINT, now_s
                 FROM jsonb_each_text(put) AS p(key, value)
-                WHERE p.key <> '' AND p.value ~ '^[0-9]{1,18}$' AND p.value::BIGINT > 0
+                WHERE p.key <> '' AND p.value ~ '^[0-9]{1,19}$'
+                  AND (length(p.value) < 19 OR p.value <= '9223372036854775807')
+                  AND p.value::BIGINT > 0
                   AND (SELECT count(*) FROM import_speakers s2
                        WHERE s2.guild_id = g AND s2.campaign_id = c) < 200
                 ON CONFLICT (guild_id, campaign_id, label)

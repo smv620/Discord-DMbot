@@ -785,7 +785,7 @@ def create_app(
         parsed away from the event loop. Counted per account before anything is read."""
         key = f"import:{session.user_id}"
         if import_limit.take(key) != "ok":
-            raise HTTPException(status_code=429, detail="slow_down")
+            raise HTTPException(status_code=429, detail="too_soon")
         length = request.headers.get("content-length", "")
         if length.isdecimal() and int(length) > imports.MAX_BODY_BYTES:
             raise HTTPException(status_code=413, detail="too_big")
@@ -811,6 +811,13 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports/preview")
     async def me_import_preview(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
         body = await import_body(request, session)
         try:
             return await imports.preview(
@@ -834,6 +841,13 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports/check")
     async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
         body = await import_body(request, session)
         try:
             return await imports.check(
@@ -847,6 +861,13 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports", status_code=202)
     async def me_import(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
         body = await import_body(request, session)
         try:
             return await imports.confirm(
