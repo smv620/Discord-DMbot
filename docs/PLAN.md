@@ -4031,6 +4031,27 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
      - **Explain**: the DM types a short note on who or what it is, kept with the name.
 
      Answering on either the page or Discord answers both.
+- **Recaps on the website, and only two buttons in Discord** (owner, 2026-10-20; this replaces
+  the buttons below).
+  - **[Recaps]**, one button, opens the campaign's recap list on the website, newest session
+    first. Each entry opens that recap's page, where the DM views, listens, edits, fixes and
+    approves it.
+  - **[Share a recap]**, for the campaign's DMs, picks a recap and offers **Copy the link** or
+    **Send the link to the players**, which posts it in the campaign's `dmb-chat`.
+  - **Signing in:** editing and approving need the website sign-in, by Discord or by email, as now.
+  - **Viewing and listening need no sign-in** (owner): anyone with a recap's link can read it and
+    play its audio. The rules that keep this safe:
+    - **Only posted recaps:** a link works only after the DM has approved the text and posted or
+      shared the recap. A draft stays visible to the campaign's signed-in DMs only.
+    - **Only the table's version:** the shared page shows the posted text and audio and nothing
+      else. No "Facts to be confirmed", no housekeeping, no secret name (checked again at share
+      time, as at post time).
+    - **An unguessable link:** each recap has its own random address, never the campaign's or
+      the server's ids. The DM can turn a link off, or make a new one, which ends the old one.
+    - **Not in search engines:** shared pages carry `noindex`.
+    - **The privacy page** says that a shared recap can be read by anyone who has its link.
+  - **Disk:** reserve 1 GB of recap audio per campaign. That covers 100 sessions of recaps up to
+    3 minutes in today's encoding. See docs/costs.md, "Disk space for recap audio".
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
