@@ -293,7 +293,7 @@ export const held: Held[] = [
     date: "2026-10-20",
     title: "Recaps stick to what happened",
     what: "Before you see a recap, DMbot checks each sentence against what was said at the table, including the place and the people. If a sentence doesn't match, DMbot has the recap written again once, then cuts any sentence that still doesn't match. If too little is left, you get no recap at all. It also takes out any compass direction (north, south, east or west). The checking can miss things, so you still read the recap first.",
-    reason: "Held with recaps (RECAPS_LIVE, #2064, #2067).",
+    reason: "Held with recaps (RECAPS_LIVE, #2064, #2067). The compass rule is #2071: merge it before this goes live.",
   },
   {
     date: "2026-10-19",
