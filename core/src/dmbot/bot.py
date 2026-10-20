@@ -8502,11 +8502,10 @@ class DMBot(commands.AutoShardedBot):
             # not recaps are on: this runs before that is looked at, about once a minute.
             self._clip_sweep_rounds += 1
             if self._clip_sweep_rounds % CLIP_SWEEP_EVERY == 1:
-                for guild in list(self.guilds):
-                    try:
-                        await store.sweep_clips(guild.id)
-                    except Exception as exc:
-                        log.warning("The clip sweep failed: %s", type(exc).__name__)
+                try:  # every server, the ones the bot has left included
+                    await store.sweep_clips()
+                except Exception as exc:
+                    log.warning("The clip sweep failed: %s", type(exc).__name__)
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
         for guild in list(self.guilds):

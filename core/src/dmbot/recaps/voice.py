@@ -42,10 +42,14 @@ def seconds(pcm: bytes) -> float:
     return len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
 
 
+METER_GRACE_S = 2.0  # the browser stops at 60 s but the file decodes to a hair over
+
+
 def meter_minutes(clip_seconds: float) -> int:
-    """What a clip adds to the hours meter: its length rounded up to the next whole minute, at
-    least one (the meter stores whole minutes, so it never counts less than was heard)."""
-    return max(1, math.ceil(clip_seconds / 60))
+    """What a clip adds to the hours meter: its length rounded up to a whole minute, at least
+    one, after a 2 second grace (the meter stores whole minutes). A clip never costs a minute it
+    did not use: a full 60 second note, which decodes to a little over 60, costs one."""
+    return max(1, math.ceil(max(0.0, clip_seconds - METER_GRACE_S) / 60))
 
 
 # The only containers read, by the type the page sent: ffmpeg would probe any format it knows on

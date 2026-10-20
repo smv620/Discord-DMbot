@@ -7293,6 +7293,17 @@ RECAP_VOICE = r"""
     END
     $fn$;
 
+    -- Emptying old clips in every server, the ones the bot has left included: the bot's
+    -- cleanup transaction (Database.cleanup("old-clips")) may see and empty a clip that is
+    -- older than ten minutes, and do nothing else with a request.
+    -- (An UPDATE's new row must pass the SELECT rule too, so this one cannot ask for the clip.)
+    CREATE POLICY old_clips_seen ON recap_requests FOR SELECT
+        USING (dmbot_cleanup() = 'old-clips' AND created_at < dmbot_now() - 600);
+    CREATE POLICY old_clips_emptied ON recap_requests FOR UPDATE
+        USING (dmbot_cleanup() = 'old-clips' AND clip IS NOT NULL
+               AND created_at < dmbot_now() - 600)
+        WITH CHECK (dmbot_cleanup() = 'old-clips' AND clip IS NULL);
+
     -- A clip's state and the words written from it, to the DM who sent it and no one else.
     CREATE FUNCTION dmbot_recap_voice_read(g BIGINT, c TEXT, at_ BIGINT, rid TEXT)
     RETURNS JSONB

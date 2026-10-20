@@ -92,7 +92,8 @@ async def send_voice(
     ref: str,
     data: bytes,
     content_type: str,
-    outside: str | None = None,
+    *,
+    outside: str | None,
 ) -> dict[str, Any]:
     """Queue a spoken note for the bot to write down. The clip waits in the request row until the
     bot has the words (then it is deleted in the same statement), and at the longest ten

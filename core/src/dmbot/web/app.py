@@ -694,7 +694,9 @@ def create_app(
             if len(data) > voice_max:
                 raise HTTPException(status_code=413, detail="too_big")
         try:
-            return await send_voice(db, session, ref, bytes(data), kind, settings.outside_engine)
+            return await send_voice(
+                db, session, ref, bytes(data), kind, outside=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

@@ -5,6 +5,7 @@ fixtures only; the clips are generated tones, no real speech."""
 from __future__ import annotations
 
 import io
+import time
 import unittest
 from collections import defaultdict
 from types import SimpleNamespace
@@ -54,7 +55,7 @@ class WithClips(WithRequests):
         await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
 
     async def send_clip(self, data: bytes = CLIP, kind: str = "audio/webm;codecs=opus") -> str:
-        got = await web.send_voice(self.web, self.session, self.ref, data, kind)
+        got = await web.send_voice(self.web, self.session, self.ref, data, kind, outside=None)
         return str(got["requestId"])
 
     async def clip_in_row(self, rid: str) -> bytes | None:
@@ -122,6 +123,31 @@ class TheDoors(WithClips):
             "no_consent",
         )
 
+    async def test_consent_that_names_no_company_does_not_count_while_an_engine_is_set(
+        self,
+    ) -> None:
+        # (the setUp consent has outside_to NULL: given before an outside engine was in use)
+        self.assertEqual(
+            await self.code(
+                web.send_voice(
+                    self.web, self.session, self.ref, CLIP, "audio/webm", outside="deepgram"
+                )
+            ),
+            "no_consent",
+        )
+        got = await web.send_voice(
+            self.web, self.session, self.ref, CLIP, "audio/webm", outside=None
+        )  # with no outside engine in use, the wording version is all that is asked
+        self.assertRegex(got["requestId"], r"^[0-9a-f]{32}$")
+
+    async def test_consent_under_older_wording_does_not_count(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = terms_version - 1 WHERE user_id = %s",
+                (ALICE.id,),
+            )
+        self.assertEqual(await self.code(self.send_clip()), "no_consent")
+
     async def test_a_server_the_bot_has_left_keeps_no_clips(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(
@@ -164,7 +190,9 @@ class TheDoors(WithClips):
         bob = await sessions.find(self.web, bob_token, now=NOW)
         assert bob is not None
         self.assertEqual(
-            await self.code(web.send_voice(self.web, bob, self.ref, CLIP, "audio/webm")),
+            await self.code(
+                web.send_voice(self.web, bob, self.ref, CLIP, "audio/webm", outside=None)
+            ),
             "not_found",
         )
         rid = await self.send_clip()
@@ -263,7 +291,7 @@ class TheBot(WithClips):
             await conn.execute(
                 "UPDATE recap_requests SET created_at = created_at - 601 WHERE id = %s", (rid,)
             )
-        await self.requests.sweep_clips(THURSDAY.id)
+        await self.requests.sweep_clips()
         self.assertIsNone(await self.clip_in_row(rid))  # the row stays for its hour; the audio
         # does not
         async with self.db.guild(THURSDAY.id) as conn:
@@ -320,8 +348,8 @@ class TheClip(WithClips):
         self.assertEqual(err.exception.code, voice.TOO_LONG)
 
     def test_the_meter_rounds_up_to_a_whole_minute_and_never_less_than_one(self) -> None:
-        got = [voice.meter_minutes(s) for s in (0.5, 59, 60, 61, 90, 120, 121)]
-        self.assertEqual(got, [1, 1, 1, 2, 2, 2, 3])
+        got = [voice.meter_minutes(s) for s in (0.5, 59, 60, 60.5, 62, 62.5, 90, 120, 122, 122.5)]
+        self.assertEqual(got, [1, 1, 1, 1, 1, 2, 2, 2, 2, 3])  # never a minute it did not use
 
     def test_nothing_is_left_on_disk(self) -> None:
         import os
@@ -507,7 +535,31 @@ class TheLoop(WithClips):
             await DMBot.run_recap_requests(cast(Any, bot))
         v.assert_awaited_once()
         sorted_.assert_not_awaited()  # never the AI sort
-        store.sweep_clips.assert_awaited_once_with(THURSDAY.id)  # swept in the same round
+        store.sweep_clips.assert_awaited_once_with()  # every server, in the same round
+
+    async def test_a_clip_in_a_server_the_bot_is_not_in_is_cleared_too(self) -> None:
+        from dmbot.campaigns.store import CampaignStore
+
+        elsewhere = 987_654_321
+        other = await CampaignStore(self.db).create(elsewhere, "Elsewhere", 5)
+        async with self.db.guild(elsewhere) as conn:
+            await conn.execute(
+                "INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind,"
+                " body, clip, clip_type, created_at) VALUES (%s, %s, %s, 1, 5, 'voice', '',"
+                " %s, 'audio/webm', %s)",
+                (elsewhere, other.id, "e" * 32, CLIP, int(time.time()) - 700),
+            )
+            await conn.execute(
+                "INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind,"
+                " body, clip, clip_type, created_at) VALUES (%s, %s, %s, 1, 5, 'voice', '',"
+                " %s, 'audio/webm', %s)",
+                (elsewhere, other.id, "f" * 32, CLIP, int(time.time())),
+            )
+        self.assertEqual(await self.requests.sweep_clips(), 1)  # only the old one
+        async with self.db.guild(elsewhere) as conn:
+            cur = await conn.execute("SELECT id, clip IS NULL AS gone FROM recap_requests")
+            rows = {r["id"]: r["gone"] for r in await cur.fetchall()}
+        self.assertEqual(rows, {"e" * 32: True, "f" * 32: False})
 
     async def test_the_sweep_clears_only_old_clips(self) -> None:
         old, fresh = await self.send_clip(), None
@@ -516,7 +568,7 @@ class TheLoop(WithClips):
                 "UPDATE recap_requests SET created_at = created_at - 601 WHERE id = %s", (old,)
             )
         fresh = await self.send_clip()
-        await self.requests.sweep_clips(THURSDAY.id)
+        await self.requests.sweep_clips()
         self.assertIsNone(await self.clip_in_row(old))
         self.assertEqual(await self.clip_in_row(fresh), CLIP)
 
@@ -587,13 +639,46 @@ class TheRoutes(WithClips):
         no = await self.client.post(self.url, content=CLIP, headers={"content-type": "audio/webm"})
         self.assertEqual((no.status_code, no.json()["error"]), (403, "no_consent"))
         await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
-        codes = []
-        for _ in range(8):
+        for _ in range(3):
             got = await self.client.post(
                 self.url, content=CLIP, headers={"content-type": "audio/webm"}
             )
-            codes.append(got.status_code)
-        self.assertIn(429, codes)  # the per-person limit or the campaign's three
+            self.assertEqual(got.status_code, 202)
+        fourth = await self.client.post(
+            self.url, content=CLIP, headers={"content-type": "audio/webm"}
+        )
+        self.assertEqual((fourth.status_code, fourth.json()["error"]), (429, "too_soon"))
+
+    async def test_the_route_passes_the_engine_in_use_to_the_consent_check(self) -> None:
+        import dataclasses
+
+        import httpx
+
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+        from tests.test_recap_web import HEADERS
+        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_recap_requests import fx_alice
+
+        app = create_app(
+            dataclasses.replace(settings(), outside_engine="deepgram"), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(
+            self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            asked = await client.post(
+                self.url, content=CLIP, headers={"content-type": "audio/webm"}
+            )
+            # The setUp consent names no company, and the engine in use is Deepgram.
+            self.assertEqual((asked.status_code, asked.json()["error"]), (403, "no_consent"))
+            await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id, outside_to="deepgram")
+            ok = await client.post(self.url, content=CLIP, headers={"content-type": "audio/webm"})
+            self.assertEqual(ok.status_code, 202, ok.text)
 
 
 class TheDeepgramTimeout(unittest.TestCase):
@@ -642,7 +727,7 @@ class TheDeepgramSession(unittest.IsolatedAsyncioTestCase):
 
         from dmbot.audio.segmenter import Utterance
         from dmbot.transcription.config import TranscriptionSettings
-        from dmbot.transcription.deepgram import DeepgramTranscriber
+        from dmbot.transcription.deepgram import DeepgramTranscriber, request_timeout_s
 
         seen: list[aiohttp.ClientTimeout] = []
 
@@ -670,10 +755,10 @@ class TheDeepgramSession(unittest.IsolatedAsyncioTestCase):
             TranscriptionSettings(engine="deepgram", deepgram_api_key="dg-test"),
             cast(Any, Session()),
         )
-        short = Utterance(1, 2, 0, 0, bytes(3200))
+        short = Utterance(1, 2, 0, 0, bytes(32_000 * 3))  # a real 3 second line
         long = Utterance(1, 2, 0, 0, bytes(32_000 * 90))  # 90 seconds of 16 kHz audio
         await engine.transcribe(short, [])
         await engine.transcribe(long, [])
         self.assertEqual(seen[0].total, 4)  # a live line keeps the session's limit
-        assert seen[1].total is not None
-        self.assertGreater(seen[1].total, 30)  # a long clip is given time
+        self.assertEqual(seen[1].total, request_timeout_s(90.0))  # a long clip is given time
+        self.assertGreater(request_timeout_s(90.0), 30)
