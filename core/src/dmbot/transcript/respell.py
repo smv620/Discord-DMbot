@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,3 +105,21 @@ def undone_note(old: str, lines: int, sessions: int) -> str:
         f"{_count(lines, 'line', 'lines')} of {_count(sessions, 'past session', 'past sessions')}"
     )
     return f"Put {old} back in {where}."
+
+
+def recaps_note(old: str, new: str, done: Any) -> str:
+    """What the DM is told about recaps after a fixed spelling (#2170): counts and what stays.
+    `done` is a `dmbot.recaps.store.RecapRespelled`."""
+    parts = []
+    if done.waiting:
+        parts.append(_count(done.waiting, "recap that is waiting", "recaps that are waiting"))
+    if done.posted:
+        parts.append(_count(done.posted, "posted recap", "posted recaps"))
+    note = f"Also changed {old} to {new} in {' and '.join(parts)}."
+    if done.approvals_kept:
+        note += " An approval stays: a spelling fix is not a change of story."
+    if done.posted:
+        note += " Posts already in Discord are not changed."
+    if done.audio_old:
+        note += f" Audio already made still says {old}; make it again on the website."
+    return note

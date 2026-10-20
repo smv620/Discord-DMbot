@@ -26,6 +26,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
+from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -46,6 +47,16 @@ COLUMNS = (
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
     " approved_by, approved_at, approved_hash, audio_choice"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RecapRespelled:
+    """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
+
+    waiting: int = 0  # drafts and approved ones not yet posted
+    posted: int = 0
+    approvals_kept: int = 0
+    audio_old: int = 0  # recaps whose finished audio still says the old spelling
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,6 +473,67 @@ class RecapStore:
                 (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
             return bool(cur.rowcount)
+
+    async def respell(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        old: str,
+        new: str,
+        longer: Sequence[str],
+    ) -> RecapRespelled:
+        """A fixed spelling reaches this campaign's recaps (#2170): the written ones that are not
+        in the middle of being posted or dropped get `new` where they say `old` as a whole name
+        (never inside a longer name in `longer`), in title, text and the kept original. A waiting
+        recap the DM already approved stays approved: a spelling fix is not a change of story, so
+        its approval follows the new text. Finished audio is left as it is; it no longer matches
+        the text, which is how the page already knows to offer making it again. A posted recap's
+        Discord message is not touched; its stored text is, and `respelled_at` lets the page say
+        so. One transaction. Counts only."""
+        waiting = posted = kept = audio = 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, status, title, summary, original, approved_hash, audio,"
+                " audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status IN ('draft', 'posted')"
+                " AND (title ILIKE %s OR summary ILIKE %s OR original ILIKE %s) FOR UPDATE",
+                (guild_id, campaign_id, *([f"%{max(old.split(), key=len, default='')}%"] * 3)),
+            )
+            for row in await cur.fetchall():
+                title, summary, original = row["title"], row["summary"], row["original"]
+                changed = {
+                    name: found.text
+                    for name, text in (
+                        ("title", title),
+                        ("summary", summary),
+                        ("original", original),
+                    )
+                    if (found := respell(text, old, new, longer)) is not None
+                }
+                if not changed:
+                    continue
+                before = text_hash(title, summary)
+                after = text_hash(changed.get("title", title), changed.get("summary", summary))
+                sets = [f"{name} = %s" for name in changed]
+                values: list[Any] = list(changed.values())
+                if row["approved_hash"] and row["approved_hash"] == before:
+                    sets.append("approved_hash = %s")
+                    values.append(after)
+                    kept += 1
+                sets.append("respelled_at = %s")
+                values.append(int(self._now()))
+                await conn.execute(
+                    f"UPDATE recap_jobs SET {', '.join(sets)} WHERE guild_id = %s"
+                    " AND campaign_id = %s AND session_at = %s",
+                    (*values, guild_id, campaign_id, row["session_at"]),
+                )
+                if row["status"] == "posted":
+                    posted += 1
+                else:
+                    waiting += 1
+                if row["audio"] == "ready" and row["audio_text_hash"] == before:
+                    audio += 1
+        return RecapRespelled(waiting, posted, kept, audio)
 
     async def reset_audio(self, guild_id: int, campaign_id: str, session_at: int) -> None:
         """A new recap is being written (Try again): the old audio is no longer its audio."""

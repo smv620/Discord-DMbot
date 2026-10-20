@@ -43,7 +43,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import CORE_TYPES, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
-from dmbot.transcript.respell import contains, done_note, undone_note
+from dmbot.transcript.respell import contains, done_note, recaps_note, undone_note
 from dmbot.transcript.store import MAX_RESPELLED
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -1029,15 +1029,17 @@ async def _respell_past(
     old: str,
     written: Written[Entity],
 ) -> str:
-    """After a spelling fix: the cleaned transcripts of this campaign's past sessions follow
-    (#2170), in the same Undo. Only when the old spelling was kept as an old spelling (a clash
-    with another name or a secret one drops it, and nothing is rewritten). The DM is told the
-    counts. A failure here never undoes the fix; the DM is told, and can fix it again."""
+    """After a spelling fix: the cleaned transcripts of this campaign's past sessions and its
+    recaps follow (#2170); the transcripts in the same Undo. Only when the old spelling was kept as
+    an old spelling (a clash with another name or a secret one drops it, and nothing is
+    rewritten). The DM is told the counts. A failure here never undoes the fix; the DM is told,
+    and can fix it again."""
     new = written.value.name
-    store = _bot(interaction).transcripts
-    if store is None or written.batch is None or not renamed_key(old, new):
+    bot = _bot(interaction)
+    if written.batch is None or not renamed_key(old, new):
         return ""
     old_key = name_key(old)
+    notes: list[str] = []
     try:
         everyone = await memory.aliases(campaign.guild_id, campaign.id, include_secret=True)
         if not any(
@@ -1047,25 +1049,44 @@ async def _respell_past(
         # Names that hold the old spelling as whole words ("Branok Hall"): never rewritten
         # inside. Secret ones count too; they only stop a change, nothing is written from them.
         longer = [a.text for a in everyone if a.key != old_key and contains(a.text, old)]
-        now = int(time.time())
-        lines, sessions = await store.respell_names(
-            campaign.guild_id,
-            campaign.id,
-            written.batch,
-            old,
-            new,
-            longer,
-            now=now,
-            forget_before=now - int(memory.keep_days * 86400),
-        )
     except Exception:
-        log.exception("Fix spelling: couldn't carry it into the past transcripts")
-        return "The past transcripts were not changed; fix the spelling again to try once more."
-    log.info("Fix spelling: %d lines of %d past sessions", lines, sessions)  # counts only
-    if not lines:
+        log.exception("Fix spelling: couldn't read the names")
         return ""
-    more = " That is the most it changes at once; fix the spelling again for the rest."
-    return done_note(_md(old), _md(new), lines, sessions) + (more if lines >= MAX_RESPELLED else "")
+    if bot.transcripts is not None:
+        try:
+            now = int(time.time())
+            lines, sessions = await bot.transcripts.respell_names(
+                campaign.guild_id,
+                campaign.id,
+                written.batch,
+                old,
+                new,
+                longer,
+                now=now,
+                forget_before=now - int(memory.keep_days * 86400),
+            )
+            log.info("Fix spelling: %d lines of %d past sessions", lines, sessions)  # counts only
+            if lines:
+                more = " That is the most it changes at once; fix the spelling again for the rest."
+                notes.append(
+                    done_note(_md(old), _md(new), lines, sessions)
+                    + (more if lines >= MAX_RESPELLED else "")
+                )
+        except Exception:
+            log.exception("Fix spelling: couldn't carry it into the past transcripts")
+            notes.append("The past transcripts were not changed; fix the spelling again to retry.")
+    if bot.recaps is not None:
+        try:
+            done = await bot.recaps.respell(campaign.guild_id, campaign.id, old, new, longer)
+            log.info(
+                "Fix spelling: %d waiting and %d posted recaps", done.waiting, done.posted
+            )  # counts only
+            if done.waiting or done.posted:
+                notes.append(recaps_note(_md(old), _md(new), done))
+        except Exception:
+            log.exception("Fix spelling: couldn't carry it into the recaps")
+            notes.append("The recaps were not changed; fix the spelling again to retry.")
+    return " ".join(notes)
 
 
 class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
