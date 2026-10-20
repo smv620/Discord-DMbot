@@ -18,6 +18,7 @@ import discord
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.notify import page_link
+from dmbot.ui import recap_feedback
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
 
@@ -32,12 +33,14 @@ NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
 
 _TEMPLATE = (
-    r"dmbot:recap:(?P<act>read|post|yes|no|drop):(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
+    r"dmbot:recap:(?P<act>read|post|yes|no|drop|tell):"
+    r"(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
 )
 _LABELS = {
     "read": ("Read it", discord.ButtonStyle.primary),
     "post": ("Post to the table", discord.ButtonStyle.success),
     "drop": ("Not this one", discord.ButtonStyle.secondary),
+    "tell": ("Tell DMbot what you think", discord.ButtonStyle.secondary),
     "yes": ("Yes", discord.ButtonStyle.success),
     "no": ("Not now", discord.ButtonStyle.secondary),
 }
@@ -109,6 +112,12 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             return
         if job.state != "ready":
             await _tell(interaction, NOT_READY)
+            return
+        if self.act == "tell":  # the DM's feedback on it (#2076); the form checks the DM again
+            if job.status != "draft":
+                await _tell(interaction, DECIDED)
+                return
+            await recap_feedback.open_form(interaction, self.campaign_id, self.session_at)
             return
         if self.act == "read":
             await self._read(interaction, bot, campaign, job)
@@ -190,7 +199,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
 
 def ready_view(campaign_id: str, session_at: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for act in ("read", "post", "drop"):
+    for act in ("read", "post", "drop", "tell"):
         view.add_item(RecapButton(act, campaign_id, session_at))
     return view
 

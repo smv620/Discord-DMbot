@@ -83,6 +83,9 @@ class Inputs:
     # The campaign's example recaps, for the writer's tone only (#2075): the writer's call and the
     # copy check read them; the beats and the fact check never do.
     style: Sequence[str] = ()
+    notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
+    # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
+    corrections: Sequence[str] = ()
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -504,7 +507,7 @@ class RecapWorker:
             cid,
             job,
             self._client(job),
-            rd.prose_system(inputs.setting, length, inputs.style),
+            rd.prose_system(inputs.setting, length, inputs.style, inputs.notes, inputs.corrections),
             message,
             more_room(length.max_tokens, job.attempt),
             schema=rd.prose_schema(),
@@ -561,6 +564,7 @@ class RecapWorker:
                 last=last_try,
                 refused=refused,
                 style=inputs.style,
+                corrections=inputs.corrections,
             )
 
         problems = checked(False)
@@ -584,6 +588,7 @@ class RecapWorker:
             facts, asked = await self._facts(
                 gid, cid, job, rd.pick_beats(sheet, length.beats), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
+                inputs.corrections,
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
@@ -687,6 +692,7 @@ class RecapWorker:
                 last=True,
                 refused=refused,
                 style=inputs.style,
+                corrections=inputs.corrections,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -777,6 +783,7 @@ class RecapWorker:
         shown: Sequence[bt.Beat],
         prose: rd.Prose,
         names: Collection[str] = (),
+        corrections: Sequence[str] = (),
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -784,14 +791,20 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose)
+        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections)
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
         return facts, asked is not None
 
     async def _ask_facts(
-        self, gid: int, cid: str, job: Job, shown: Sequence[bt.Beat], prose: rd.Prose
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        shown: Sequence[bt.Beat],
+        prose: rd.Prose,
+        corrections: Sequence[str] = (),
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
@@ -806,7 +819,7 @@ class RecapWorker:
         try:
             reply = await self._careful.complete(
                 rd.FACTS_SYSTEM,
-                rd.facts_message(shown, prose.summary),
+                rd.facts_message(shown, prose.summary, corrections),
                 max_tokens=FACTS_TOKENS,
                 schema=rd.facts_schema(),
             )
@@ -857,6 +870,7 @@ class RecapWorker:
             last=True,
             refused=[],
             style=inputs.style,
+            corrections=inputs.corrections,
         ):
             return None
         return cut

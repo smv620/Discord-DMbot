@@ -70,6 +70,7 @@ class Feature(enum.StrEnum):
     FIGHTBOT = "fightbot"  # a short reminder of a player's own options in combat (#1129)
     RECAP = "recap"  # the cinematic recap after a session (#1382); off by default
     RECAP_RETRY = "recap_retry"  # its one more try, when the first draft fails the checks
+    RECAP_FEEDBACK = "recap_feedback"  # the DM's feedback on a recap, sorted into points (#2076)
     EXTRACTOR = "extractor"  # the story extractor after a session (#1363); off by default
     SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
     PLAN_READER = "plan_reader"  # the story plan read from an adventure (#1714); the DM's press
@@ -96,6 +97,7 @@ FEATURE_TIERS = {
     Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
+    Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # one small answer a DM waits for
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

@@ -33,6 +33,7 @@ from dmbot.ai import AIError
 from dmbot.audio.segmenter import Utterance
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.mentions import NO_PINGS
+from dmbot.recaps import feedback as recap_feedback
 from dmbot.rules import house_voice
 from dmbot.sidebar import guide_phrase, looked, memo, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
@@ -164,6 +165,8 @@ class Host(Protocol):
     def sidebar_save(self, table: Table, line: Line) -> None: ...
     def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
+    # The DM's spoken feedback on a waiting recap (#2076); False when there is none to talk about.
+    async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool: ...
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str: ...
     # The table's DMbot chat (#1187): post there; how to name someone (their character's name
     # if one is linked, else their nickname); the links this campaign (and only it) may show;
@@ -669,6 +672,13 @@ class SidebarService:
             and await self._guide_answer(table, user_id, heard, question, asked_ms, via)
         ):
             return  # (else the usual sidebar answer: Guide me is off, or can't be given)
+        if (
+            via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+            and _is_dm(table, user_id)
+            and recap_feedback.is_recap_feedback(question)
+            and await self._recap_feedback(table, user_id, heard, question, asked_ms, via)
+        ):
+            return  # (else the usual sidebar answer: no recap is waiting, or it can't be sorted)
         answerer = self.answerer
         if answerer is None:
             # No engine: only Guide me, above, could be answered. A typed message is told so
@@ -816,6 +826,34 @@ class SidebarService:
                 else:
                     self._note_later(user_id, "guide", FAILED)  # (never the text)
                 return True
+        if self._still(table, user_id, dm=True):
+            self._save_lines(
+                table, user_id, heard, question, asked_ms, _Private(), PRIVATE_NOTE, via, False
+            )
+        return True
+
+    async def _recap_feedback(
+        self,
+        table: Table,
+        user_id: int,
+        heard: str,
+        question: str,
+        asked_ms: int,
+        via: str,
+    ) -> bool:
+        """The DM's spoken feedback on the recap waiting for them (#2076): sorted and answered in
+        their private messages with the same Save / Try again buttons as the typed form. True when
+        it was handled; False (nothing sent) when no recap is waiting, so it goes the usual way.
+
+        What is said is the DM's own opinion of a draft nobody else has seen, so, like Guide me, it
+        is logged as the question and "(answered privately)" and nothing more."""
+        try:
+            handled = await self.host.sidebar_recap_feedback(table, user_id, question)
+        except Exception:
+            log.exception("The sidebar couldn't handle spoken recap feedback")
+            return False
+        if not handled:
+            return False
         if self._still(table, user_id, dm=True):
             self._save_lines(
                 table, user_id, heard, question, asked_ms, _Private(), PRIVATE_NOTE, via, False

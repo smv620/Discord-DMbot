@@ -28,6 +28,7 @@ from dmbot.recaps.allowance import Usage, month_bounds
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
+MAX_CORRECTIONS = 10  # corrections kept for one recap (#2076)
 MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
 AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
@@ -41,7 +42,7 @@ COLUMNS = (
     " window_done, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
-    " audio_credits, audio_error, audio_text_hash, to_confirm, names_state"
+    " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections"
 )
 
 
@@ -84,6 +85,7 @@ class Job:
     names_state: int = (
         0  # 0 none, 1 the DM was told of the names to confirm, 2 and reminded (#2027)
     )
+    corrections: tuple[str, ...] = ()  # the DM's corrections for this recap's next try (#2076)
 
     @property
     def finished(self) -> bool:
@@ -127,6 +129,7 @@ def _job(r: dict[str, Any]) -> Job:
         r["audio_text_hash"],
         tuple(r["to_confirm"]),
         int(r["names_state"]),
+        tuple(r["corrections"]),
     )
 
 
@@ -562,6 +565,53 @@ class RecapStore:
                 f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s",
                 (guild_id, campaign_id, session_at),
+            )
+            return bool(cur.rowcount)
+
+    async def latest_draft(self, guild_id: int, campaign_id: str) -> Job | None:
+        """The newest recap that is ready and not yet posted or skipped: the one a DM's spoken
+        feedback is about (#2076)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status = 'draft' ORDER BY session_at DESC LIMIT 1",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _job(row)
+
+    async def add_corrections(
+        self, guild_id: int, campaign_id: str, session_at: int, items: Sequence[str]
+    ) -> bool:
+        """Keep what the DM corrected in this recap, for its next try only (#2076). Newest
+        `MAX_CORRECTIONS` kept. False: the recap is gone or already posted or skipped."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT corrections FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND status = 'draft' FOR UPDATE",
+                (guild_id, campaign_id, session_at),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return False
+            kept = [*row["corrections"], *items][-MAX_CORRECTIONS:]
+            await conn.execute(
+                "UPDATE recap_jobs SET corrections = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s",
+                (kept, guild_id, campaign_id, session_at),
+            )
+            return True
+
+    async def try_again(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """The website's Try again from the DM screen (#2076): the same move (one more try, back
+        to the queue), at most `MAX_TRIES` times. False: not allowed now. The worker checks the
+        month's allowance and gives the try back when it is refused."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET tries = tries + 1, state = 'queued' WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = %s AND status = 'draft'"
+                " AND state IN ('ready', 'failed') AND tries < %s",
+                (guild_id, campaign_id, session_at, MAX_TRIES),
             )
             return bool(cur.rowcount)
 

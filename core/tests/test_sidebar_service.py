@@ -156,6 +156,11 @@ class FakeHost:
     async def sidebar_nudge_chat(self, table: Any, user_id: int) -> None:
         self.nudged.append(user_id)
 
+    async def sidebar_recap_feedback(self, table: Any, user_id: int, text: str) -> bool:
+        asked = self.__dict__.setdefault("feedback_asked", [])
+        asked.append((user_id, text))
+        return bool(self.__dict__.get("feedback_handled", False))
+
     async def sidebar_guide(self, table: Any, user_id: int) -> str | None:
         self.guide_asked.append(user_id)
         if self.guide_raises:
@@ -1281,6 +1286,57 @@ class SaidAsAnNpc(SaidAtTheTable):
         self.assertFalse(voiced_by_npc(""))
         self.assertFalse(voiced_by_npc(NARRATING))
         self.assertTrue(voiced_by_npc("Innkeeper Orla"))
+
+
+class RecapFeedback(unittest.IsolatedAsyncioTestCase):
+    """ "Hey DMbot, the recap was too long-winded" from the DM (#2076): handled privately, never
+    answered by the engine, and the transcript holds the question and a private note only."""
+
+    SAID = "Hey DMbot, the recap was too long-winded"
+
+    def setUp(self) -> None:
+        self.host = FakeHost(
+            tables={GUILD: make_table(chat=555)}, agreed={(GUILD, DM), (GUILD, PLAYER)}
+        )
+        self.host.feedback_handled = True  # type: ignore[attr-defined]
+        self.answerer = FakeAnswerer()
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
+        self.table = self.host.tables[GUILD]
+
+    async def settle(self) -> None:
+        await asyncio.sleep(0)
+        await asyncio.gather(*self.sidebar._tasks)
+
+    async def test_the_dms_feedback_goes_to_the_recap_handler_and_not_the_engine(self) -> None:
+        self.assertTrue(self.sidebar.ask_at_table(self.table, DM, self.SAID))
+        await self.settle()
+        self.assertEqual(len(self.host.feedback_asked), 1)  # type: ignore[attr-defined]
+        self.assertEqual(self.answerer.asked, [])
+        self.assertEqual(self.host.chat, [])  # nothing for the table
+
+    async def test_the_transcript_holds_the_question_and_a_private_note_only(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        question, answer = self.host.saved
+        self.assertEqual(question.sidebar, SIDEBAR_QUESTION)
+        self.assertEqual((answer.sidebar, answer.text), (SIDEBAR_ANSWER, service.PRIVATE_NOTE))
+
+    async def test_a_player_saying_it_goes_the_normal_way(self) -> None:
+        self.sidebar.ask_at_table(self.table, PLAYER, self.SAID)
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
+
+    async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
+        self.host.feedback_handled = False  # type: ignore[attr-defined]
+        self.sidebar.ask_at_table(self.table, DM, self.SAID)
+        await self.settle()
+        self.assertEqual(len(self.answerer.asked), 1)
+
+    async def test_a_question_about_the_recap_is_an_ordinary_question(self) -> None:
+        self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what was in the recap?")
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
 
 
 class GuideMe(unittest.IsolatedAsyncioTestCase):

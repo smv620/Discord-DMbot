@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import inspect
 import logging
 import os
@@ -249,6 +250,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
+from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
@@ -258,7 +260,7 @@ from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
-from dmbot.recaps.style import StyleSection, StyleStore
+from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, retire_channels
@@ -342,6 +344,7 @@ from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, s
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import looked_at, rule_card
+from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
@@ -834,6 +837,7 @@ class DMBot(commands.AutoShardedBot):
         plan: PlanStore | None = None,
         npcs_messages: MessageMap | None = None,
         recap_styles: StyleStore | None = None,
+        recap_notes: NoteStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -886,6 +890,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
@@ -1060,6 +1065,12 @@ class DMBot(commands.AutoShardedBot):
         )
         self.recap_retry_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_RETRY], Feature.RECAP_RETRY)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        # Sorts a DM's feedback on a recap (#2076): one small fast-tier call a DM presses for.
+        self.recap_feedback_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_FEEDBACK], Feature.RECAP_FEEDBACK)
             if self.ai_client and settings.recaps_on
             else None
         )
@@ -4093,6 +4104,34 @@ class DMBot(commands.AutoShardedBot):
 
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)
+
+    async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool:
+        """The DM said what they thought of the recap that is waiting for them (#2076): sort it
+        and answer in their private messages. False when no recap is waiting or the feedback
+        can't be handled (the question then goes the usual way)."""
+        if (
+            self.recaps is None
+            or self.recap_feedback_ai is None
+            or table.campaign_id is None
+            or not self.settings.recaps_on
+        ):
+            return False
+        campaign = await self.campaigns.get(table.guild_id, table.campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            return False
+        job = await self.recaps.latest_draft(table.guild_id, campaign.id)
+        if job is None:
+            return False
+        sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
+        if sorted_ is None:
+            await self.sidebar_send_dm(user_id, recap_feedback.BROKEN)
+            return True
+
+        async def send(message: str, view: discord.ui.View | None) -> None:
+            await self.sidebar_send_dm(user_id, message, view)
+
+        await recap_feedback_screen.present(send, sorted_, self.recaps, campaign, job.session_at)
+        return True
 
     def sidebar_stt(self) -> str:
         return self.settings.transcription.source
@@ -7347,7 +7386,7 @@ class DMBot(commands.AutoShardedBot):
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
         if self.transcripts is None or self.lookup is None or self.recaps is None:
             return None
-        return await load_inputs(
+        found = await load_inputs(
             campaigns=self.campaigns,
             lookup=self.lookup,
             transcripts=self.transcripts,
@@ -7357,7 +7396,10 @@ class DMBot(commands.AutoShardedBot):
             campaign_id=cid,
             session_at=job.session_at,
             styles=self.recap_styles,
+            notes=self.recap_notes,
         )
+        # What the DM corrected in this one recap, for this try only (#2076).
+        return None if found is None else dataclasses.replace(found, corrections=job.corrections)
 
     async def recap_allowed(self, gid: int, cid: str, job: Job) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
@@ -9395,6 +9437,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
+        campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -9432,6 +9475,7 @@ async def run(settings: Settings) -> None:
             PlanStore(db),
             npcs_messages=NpcMessageStore(db),
             recap_styles=StyleStore(db),
+            recap_notes=NoteStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
