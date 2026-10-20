@@ -7589,14 +7589,22 @@ class DMBot(commands.AutoShardedBot):
                 campaign, session.id, session.started_at, table.screen_channel_id, dm
             )
 
-    async def _open_name_questions(self, gid: int, cid: str, session_id: str, began: int) -> int:
+    async def _open_name_questions(
+        self, gid: int, cid: str, session_id: str, began: int, until: int | None = None
+    ) -> int:
         """How many name questions from this session still wait for the DM (#2169): names the name
-        scan proposed since it began and nobody has checked, and its unanswered "Did they mean…?"
-        questions. Counts only; nothing is read aloud or logged."""
+        scan proposed from `began` (the session's start) to `until` (when the recap was held; now
+        if None, so a later session's names never keep an earlier recap waiting) and nobody has
+        checked, and its unanswered "Did they mean…?" questions. Counts only; nothing is read
+        aloud or logged."""
         total = 0
         if self.memory is not None:
             proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
-            total += sum(1 for e in proposed if e.created_at >= began)
+            total += sum(
+                1
+                for e in proposed
+                if e.created_at >= began and (until is None or e.created_at <= until)
+            )
         if self.heard_questions is not None:
             total += await self.heard_questions.count_for_session(gid, session_id)
         return total
@@ -7605,51 +7613,71 @@ class DMBot(commands.AutoShardedBot):
         self, campaign: Campaign, session_id: str, session_at: int, channel_id: int, dm: int
     ) -> None:
         """Queue the recap, unless the session left name questions open: then hold it and ask the
-        DM (#2169). A failure to count or hold never loses the recap: it is queued as before."""
+        DM (#2169). The recap is never lost: if counting, holding or asking fails, the hold is
+        released into a queued recap (or the recap is queued as before when nothing was held)."""
         gid, cid = campaign.guild_id, campaign.id
-        if self.recap_holds is not None:
+        store = self.recap_holds
+        if store is not None:
+            held = False
             try:
                 waiting = await self._open_name_questions(gid, cid, session_id, session_at)
                 if waiting > 0:
-                    if not await self.recap_holds.hold(
+                    if not await store.hold(
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
                         channel_id=channel_id,
                     ):  # fmt: skip
                         return  # held already, or a job exists: a repeat of the end of the session
-                    await self.post(
+                    held = True
+                    sent = await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
                         view=hold_view(cid, session_at),
                     )
-                    log.info("Recap: held for %d name question(s)", waiting)  # a count
-                    return
+                    if sent:
+                        log.info("Recap: held for %d name question(s)", waiting)  # a count
+                        return
+                    log.warning("Recap: couldn't ask about the name questions; writing it now")
             except Exception:
                 log.exception("Recap: couldn't hold it for name questions; writing it now")
+            if held:  # the DM was not told: a wait nobody knows about is no wait
+                try:
+                    if await store.release(gid, cid, session_at) == recap_hold.QUEUED:
+                        await self._say_writing(campaign, channel_id, session_at)
+                        return
+                except Exception:
+                    log.exception("Recap: couldn't release a hold nobody was told about")
         await self._queue_recap(campaign, session_at, channel_id, dm)
 
     async def release_recap_holds(self, gid: int) -> None:
         """A round's check: a held recap whose questions are all answered is written (#2169). The
         hold and the job are made in one transaction, so answering never writes a recap twice.
-        Recaps switched off meanwhile drop the hold and write nothing."""
+        A campaign that is gone, or whose DM switched recaps off, drops the hold and writes
+        nothing; a plan that cannot be checked right now only waits for the next round."""
         store = self.recap_holds
         if store is None:
             return
         for held in await store.held(gid):
-            campaign = await self.campaigns.get(gid, held.campaign_id)
-            if campaign is None:
-                await store.release(gid, held.campaign_id, held.session_at, queue=False)
-                continue
-            with log_context(guild_id=gid, campaign_id=held.campaign_id):
-                if await self._open_name_questions(
-                    gid, held.campaign_id, held.session_id, held.session_at
-                ):
-                    continue
-                if not await self.recap_allowed(gid, held.campaign_id, None):
-                    await store.release(gid, held.campaign_id, held.session_at, queue=False)
-                    continue
-                result = await store.release(gid, held.campaign_id, held.session_at)
-                if result == recap_hold.QUEUED:
-                    await self._say_writing(campaign, held.channel_id, held.session_at)
+            try:
+                await self._release_one(store, gid, held)
+            except Exception:  # one campaign's trouble does not hold up the others
+                log.exception("Recap: couldn't check a held recap")
+
+    async def _release_one(
+        self, store: recap_hold.HoldStore, gid: int, held: recap_hold.Hold
+    ) -> None:
+        campaign = await self.campaigns.get(gid, held.campaign_id)
+        if campaign is None or not campaign.recaps_text:  # the DM's own choice: no recap
+            await store.release(gid, held.campaign_id, held.session_at, queue=False)
+            return
+        with log_context(guild_id=gid, campaign_id=held.campaign_id):
+            if await self._open_name_questions(
+                gid, held.campaign_id, held.session_id, held.session_at, until=held.created_at
+            ):
+                return
+            if not await self.recap_allowed(gid, held.campaign_id, None):
+                return  # the plan could not be checked, or lacks it: kept, asked again next round
+            if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                await self._say_writing(campaign, held.channel_id, held.session_at)
 
     async def recap_hold_write_now(
         self, gid: int, cid: str, session_at: int, channel_id: int

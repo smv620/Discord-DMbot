@@ -132,11 +132,11 @@ def fake_bot(*, proposed: int = 0, did_they_mean: int = 0, holds: Any = "default
         recap_worker=object(),
         recap_holds=store if holds == "default" else holds,
         recap_allowed=AsyncMock(return_value=True),
-        post=AsyncMock(),
+        post=AsyncMock(return_value=True),
     )
     for name in (
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
-        "release_recap_holds", "recap_hold_write_now",
+        "release_recap_holds", "_release_one", "recap_hold_write_now",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -172,6 +172,28 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         bot.post.assert_not_awaited()
         bot.recaps.enqueue.assert_not_awaited()
 
+    async def test_a_question_that_could_not_be_posted_releases_the_hold_into_a_recap(
+        self,
+    ) -> None:
+        bot = fake_bot(proposed=2)
+        bot.post = AsyncMock(side_effect=[False, True])  # the question fails, the line works
+        await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)  # no stranded wait
+        self.assertIn("Writing a recap", bot.post.await_args.args[1])
+
+    async def test_a_failure_after_the_hold_releases_it_too(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.post = AsyncMock(side_effect=[RuntimeError("discord"), True])
+        await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
+
+    async def test_counting_that_fails_still_queues_the_recap(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.memory.entities = AsyncMock(side_effect=RuntimeError("db"))
+        await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)
+        bot.recap_holds.hold.assert_not_awaited()
+        bot.recaps.enqueue.assert_awaited_once()
+
     async def test_a_failure_to_hold_never_loses_the_recap(self) -> None:
         bot = fake_bot(proposed=2)
         bot.recap_holds.hold = AsyncMock(side_effect=RuntimeError("db"))
@@ -202,13 +224,48 @@ class EachRound(IsolatedAsyncioTestCase):
         bot.recap_holds.release.assert_not_awaited()
         bot.post.assert_not_awaited()
 
-    async def test_recaps_switched_off_meanwhile_drop_the_hold_and_write_nothing(self) -> None:
+    async def test_recaps_the_dm_switched_off_drop_the_hold_and_write_nothing(self) -> None:
         bot = fake_bot()
         bot.recap_holds.held = AsyncMock(return_value=[self.held()])
-        bot.recap_allowed = AsyncMock(return_value=False)
+        off = campaign()
+        off.recaps_text = False
+        bot.campaigns.get = AsyncMock(return_value=off)
         await bot.release_recap_holds(GUILD)
         bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT, queue=False)
         bot.post.assert_not_awaited()
+
+    async def test_a_plan_that_cannot_be_checked_keeps_the_hold_for_the_next_round(self) -> None:
+        bot = fake_bot()
+        bot.recap_holds.held = AsyncMock(return_value=[self.held()])
+        bot.recap_allowed = AsyncMock(return_value=False)  # a blip, or the plan lacks it
+        await bot.release_recap_holds(GUILD)
+        bot.recap_holds.release.assert_not_awaited()  # nothing is destroyed
+        bot.post.assert_not_awaited()
+
+    async def test_one_campaigns_trouble_does_not_hold_up_the_next(self) -> None:
+        bot = fake_bot()
+        second = hold.Hold("d" * 32, AT, "s2", DM, 67, 1)
+        bot.recap_holds.held = AsyncMock(return_value=[self.held(), second])
+        calls = {"n": 0}
+        real = bot._open_name_questions
+
+        async def flaky(*args: Any, **kwargs: Any) -> int:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("database")
+            return await real(*args, **kwargs)
+
+        bot._open_name_questions = flaky
+        await bot.release_recap_holds(GUILD)
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "d" * 32, AT)
+
+    async def test_names_proposed_after_the_hold_do_not_keep_it_waiting(self) -> None:
+        bot = fake_bot()
+        bot.memory.entities = AsyncMock(return_value=[entity(AT + 10), entity(AT + 500)])
+        self.assertEqual(await bot._open_name_questions(GUILD, "c" * 32, "s1", AT), 2)
+        self.assertEqual(
+            await bot._open_name_questions(GUILD, "c" * 32, "s1", AT, until=AT + 100), 1
+        )  # a later session's names are not this session's
 
     async def test_a_campaign_that_is_gone_drops_its_hold(self) -> None:
         bot = fake_bot()
