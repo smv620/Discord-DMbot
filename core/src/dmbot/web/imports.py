@@ -37,7 +37,6 @@ from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-FIRST_DAY = dt.date.fromisoformat("1990-01-01")  # a session date earlier than this is a typo
 MAX_FILES = 20
 MAX_BYTES = 2 * 1024 * 1024
 # All the files as JSON text: a quote or newline takes two bytes and a control character six, so
@@ -382,7 +381,7 @@ def _started_at(date: object, order: object) -> int:
         day = dt.date.fromisoformat(date)
     except ValueError:
         raise RecapError("bad_date") from None
-    if not FIRST_DAY <= day <= dt.date(2100, 1, 1):
+    if not dt.date(2000, 1, 1) <= day <= dt.date(2100, 1, 1):
         raise RecapError("bad_date")
     extra = (
         order if isinstance(order, int) and not isinstance(order, bool) and 0 <= order < 3600 else 0
