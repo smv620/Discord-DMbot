@@ -9,6 +9,7 @@ button, because the replies are private but the messages can be found by anyone.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -16,6 +17,8 @@ import discord
 
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
+
+log = logging.getLogger(__name__)
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was shared."
@@ -31,6 +34,7 @@ NO_CHAT = (
     "You can copy the link instead."
 )
 SENT = "✅ Sent the link to the players in your chat channel."
+FAILED = "Something went wrong, so nothing was shared. Try again in a moment."
 SENT_ALREADY = "The link was already sent. Nothing more was posted."
 SEND_FAILED = (
     "I couldn't write in your chat channel, so the link wasn't sent. Let DMbot post there, "
@@ -206,7 +210,12 @@ class HowView(discord.ui.View):
             return None
         bot = _bot(interaction)
         await interaction.response.defer(ephemeral=True, thinking=False)
-        token, why = await bot.recap_share_link(campaign, self.session_at)
+        try:
+            token, why = await bot.recap_share_link(campaign, self.session_at)
+        except Exception as exc:  # the deferred reply must always be answered
+            log.warning("Share a recap failed: %s", type(exc).__name__)  # never the link
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return None
         if token is None:
             await interaction.followup.send(why, ephemeral=True, allowed_mentions=NO_PINGS)
             return None

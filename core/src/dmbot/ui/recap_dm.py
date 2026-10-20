@@ -290,9 +290,12 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
 def ready_view(campaign_id: str, session_at: int, site: str = "") -> discord.ui.View:
     """The two buttons left on a new recap line (#2118): the recap list on the website, where
     reading, editing, approving and posting now happen, and Share a recap. The older buttons
-    (read, approve, post, skip, tell) still work on messages already sent, so nothing breaks."""
+    (read, approve, post, skip, tell) still work on messages already sent, so nothing breaks, and
+    they stay on a new line when the website's address isn't set."""
     view = discord.ui.View(timeout=None)
-    if not site:  # no link to open and none to share: no dead buttons
+    if not site:  # no website address: nothing to open or share, so the Discord buttons stay
+        for act in ("read", "approve", "post", "drop", "tell"):
+            view.add_item(RecapButton(act, campaign_id, session_at))
         return view
     view.add_item(
         discord.ui.Button(label="Open recaps", emoji="📜", url=f"{site.rstrip('/')}/account/recaps")

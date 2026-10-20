@@ -274,7 +274,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             [b.item.custom_id for b in old],
             [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
         )
-        self.assertEqual(ready_view(CID, AT).children, [])  # no site: no dead buttons
+        self.assertEqual(len(ready_view(CID, AT).children), 5)  # no site: the Discord buttons stay
         new = ready_view(CID, AT, "https://site.example.com").children
         self.assertEqual(
             [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new],

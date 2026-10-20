@@ -639,9 +639,8 @@ class RecapStore:
             cur = await conn.execute(
                 "SELECT * FROM (SELECT session_at, title, status, state,"
                 " row_number() OVER (ORDER BY session_at) AS n FROM recap_jobs"
-                " WHERE guild_id = %s AND campaign_id = %s) j"
-                " WHERE state = 'ready' AND status IN ('draft', 'posted')"
-                " ORDER BY session_at DESC LIMIT %s",
+                " WHERE guild_id = %s AND campaign_id = %s AND state = 'ready'"
+                " AND status IN ('draft', 'posted')) j ORDER BY session_at DESC LIMIT %s",
                 (guild_id, campaign_id, max(1, min(limit, 25))),
             )
             return [
@@ -650,11 +649,12 @@ class RecapStore:
             ]
 
     async def number_of(self, guild_id: int, campaign_id: str, session_at: int) -> int:
-        """Which session of the campaign this recap is (1 for the first), by its start time."""
+        """Which recap of the campaign this is (1 for the first): ready ones that were not skipped,
+        the same number the picker shows."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_at <= %s",
+                " AND state = 'ready' AND status IN ('draft', 'posted') AND session_at <= %s",
                 (guild_id, campaign_id, session_at),
             )
             row = await cur.fetchone()

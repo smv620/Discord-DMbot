@@ -7692,6 +7692,8 @@ class DMBot(commands.AutoShardedBot):
                     None,
                     f"Not posted: {why} Nothing was shared. Try again, or check your recap page.",
                 )
+        elif job.status == "posting":
+            return None, "It's being posted right now. Try again in a moment."
         elif job.status != "posted":
             return None, "You skipped this recap, so it can't be shared."
         secrets = await self.recap_secret_names(campaign)

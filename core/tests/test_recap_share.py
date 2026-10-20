@@ -144,10 +144,6 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callable(DMBot.recap_share_link))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheStoreSide(Base):
     async def finished(self, at: int, title: str = "T") -> None:
         await self.store.add_finished(
@@ -165,7 +161,9 @@ class TheStoreSide(Base):
         self.assertEqual(
             [(a, n, s) for a, n, _t, s in got], [(200, 2, "draft"), (100, 1, "posted")]
         )
-        self.assertEqual(await self.store.number_of(1, self.one.id, 300), 3)  # a skipped one counts
+        self.assertEqual(
+            await self.store.number_of(1, self.one.id, 200), 2
+        )  # a skipped one does not count
         self.assertEqual(await self.store.recent(1, self.two.id), [])  # per campaign
 
     async def test_a_token_is_made_only_for_a_posted_recap_and_new_replaces_it(self) -> None:
@@ -180,3 +178,85 @@ class TheStoreSide(Base):
         self.assertEqual(await self.store.share_token(1, self.one.id, 100), first)
         fresh = await self.store.share_token(1, self.one.id, 100, new=True)
         self.assertNotEqual(fresh, first)
+
+
+class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
+    """DMBot.recap_share_link itself: every failing case hands out no token."""
+
+    def bot(self, job: Any, **kw: Any) -> tuple[Any, Any]:
+        store = SimpleNamespace(
+            get=AsyncMock(side_effect=[job, kw.get("after", job)]),
+            decide=AsyncMock(return_value=kw.get("decide", True)),
+            share_token=AsyncMock(return_value=TOKEN),
+        )
+        bot = SimpleNamespace(
+            recaps=store,
+            settings=SimpleNamespace(site_url="https://site.example.com"),
+            post_recaps=AsyncMock(),
+            recap_secret_names=AsyncMock(return_value=kw.get("secrets", [])),
+            recap_allowed_names=AsyncMock(return_value=[]),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value=kw.get("agreed", {1, 2}))),
+        )
+        return bot, store
+
+    def job(self, **kw: Any) -> Any:
+        base = dict(
+            state="ready", status="posted", approved=True, title="The Silver Lock",
+            summary="Mira drew her blade.", housekeeping=("Mira has 4 HP.",), speakers=(1, 2),
+            last_error="",
+        )  # fmt: skip
+        return SimpleNamespace(**{**base, **kw})
+
+    async def run_it(self, bot: Any) -> tuple[Any, str]:
+        campaign = SimpleNamespace(guild_id=GUILD, id=CID)
+        return await DMBot.recap_share_link(bot, campaign, 100)
+
+    async def test_a_posted_recap_that_passes_gets_its_token(self) -> None:
+        bot, store = self.bot(self.job())
+        self.assertEqual(await self.run_it(bot), (TOKEN, ""))
+        store.decide.assert_not_awaited()
+
+    async def test_each_failing_case_hands_out_no_token(self) -> None:
+        cases = {
+            "not ready": self.bot(self.job(state="beats")),
+            "skipped": self.bot(self.job(status="dropped")),
+            "being posted": self.bot(self.job(status="posting")),
+            "unapproved draft": self.bot(self.job(status="draft", approved=False)),
+            "lost the race": self.bot(self.job(status="draft"), decide=False),
+            "the post check put it back": self.bot(
+                self.job(status="draft"), after=self.job(status="draft", last_error="Nope.")
+            ),
+            "a secret name": self.bot(self.job(), secrets=["Mira"]),
+            "secrets unreadable": self.bot(self.job(), secrets=None),
+            "a player stopped": self.bot(self.job(), agreed={1}),
+        }
+        for name, (bot, store) in cases.items():
+            token, why = await self.run_it(bot)
+            self.assertIsNone(token, name)
+            self.assertTrue(why, name)
+            store.share_token.assert_not_awaited()
+
+    async def test_an_unapproved_draft_is_never_posted_by_sharing(self) -> None:
+        bot, store = self.bot(self.job(status="draft", approved=False))
+        await self.run_it(bot)
+        store.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_an_approved_draft_is_posted_by_the_same_checks_then_shared(self) -> None:
+        bot, store = self.bot(self.job(status="draft"), after=self.job(status="posted"))
+        self.assertEqual(await self.run_it(bot), (TOKEN, ""))
+        store.decide.assert_awaited_once_with(GUILD, CID, 100, "post")
+        bot.post_recaps.assert_awaited_once_with(GUILD)
+
+
+class ThePicker(unittest.IsolatedAsyncioTestCase):
+    async def test_a_player_cannot_choose_from_the_menu(self) -> None:
+        _bot, interaction, _ = make(PLAYER)
+        view = rs.PickView(CID, [(100, 1, "T", "posted"), (200, 2, "U", "posted")])
+        view.select._values = ["100"]  # what Discord sends when something is chosen
+        await view._picked(interaction)
+        self.assertEqual(said(interaction), rs.NOT_YOURS)
+
+
+if __name__ == "__main__":
+    unittest.main()
