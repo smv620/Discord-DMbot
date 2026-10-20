@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.web import recaps
 from dmbot.web.recaps import RecapError
@@ -26,6 +27,7 @@ STATUS: dict[str, tuple[int, str]] = {
     "too_soon": (429, "too_soon"),
     "bad_type": (415, "bad_type"),
     "bad_clip": (422, "bad_clip"),
+    "no_consent": (403, "no_consent"),  # the DM has not agreed to be recorded in Discord
 }
 
 MAX_TEXT = 1000  # the form limit the Discord path uses too
@@ -94,7 +96,8 @@ async def send_voice(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute(
-            "SELECT dmbot_recap_voice_add(%s, %s, %s, %s, %s) AS r", (gid, cid, at, data, kind)
+            "SELECT dmbot_recap_voice_add(%s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, data, kind, TERMS_VERSION),
         )
         got = (await cur.fetchone() or {}).get("r")
     if got is None:

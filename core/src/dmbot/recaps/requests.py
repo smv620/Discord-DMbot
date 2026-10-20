@@ -123,15 +123,20 @@ class RequestStore:
             )
             return bool(cur.rowcount)
 
-    async def sweep(self, guild_id: int) -> int:
-        """Delete requests older than `KEEP_FOR_S`, whatever their state, and any clip older than
-        `CLIP_KEEP_S` first (the audio never outlives ten minutes, whatever happened)."""
+    async def sweep_clips(self, guild_id: int) -> None:
+        """Clear every clip older than `CLIP_KEEP_S` (the rows stay for their hour). One cheap
+        statement, run every round, so no audio outlives about ten minutes."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE recap_requests SET clip = NULL WHERE guild_id = %s AND clip IS NOT NULL"
                 " AND created_at < %s",
                 (guild_id, int(self._now()) - CLIP_KEEP_S),
             )
+
+    async def sweep(self, guild_id: int) -> int:
+        """Delete requests older than `KEEP_FOR_S`, whatever their state (their clips went long
+        before, `sweep_clips`)."""
+        async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM recap_requests WHERE guild_id = %s AND created_at < %s",
                 (guild_id, int(self._now()) - KEEP_FOR_S),

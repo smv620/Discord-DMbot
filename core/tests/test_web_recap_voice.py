@@ -5,22 +5,24 @@ fixtures only; the clips are generated tones, no real speech."""
 from __future__ import annotations
 
 import io
+import unittest
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import av
 import numpy as np
 
 from dmbot.bot import DMBot
+from dmbot.consent import ConsentStore
 from dmbot.recaps import requests as rq
 from dmbot.recaps import voice
 from dmbot.web import recap_requests as web
 from dmbot.web import sessions
 from tests.test_recap_web import BOB, NOW
 from tests.test_transcript_cleaner import alias, entity, lookup
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_recap_requests import WithRequests
 
 CLIP = b"\x1a\x45\xdf\xa3 not really audio, the doors do not decode it"
@@ -46,6 +48,11 @@ def tone(fmt: str = "webm", seconds: float = 1.5) -> bytes:
 
 
 class WithClips(WithRequests):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # The DM has agreed to be recorded (the door asks before it stores a clip).
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+
     async def send_clip(self, data: bytes = CLIP, kind: str = "audio/webm;codecs=opus") -> str:
         got = await web.send_voice(self.web, self.session, self.ref, data, kind)
         return str(got["requestId"])
@@ -91,8 +98,37 @@ class TheDoors(WithClips):
         await self.store.decide(THURSDAY.id, self.one.id, 100, "drop")
         self.assertEqual(await self.code(self.send_clip()), "not_editable")
 
+    async def test_a_dm_who_has_not_agreed_to_be_recorded_stores_nothing(self) -> None:
+        await ConsentStore(self.db).revoke(THURSDAY.id, ALICE.id)
+        self.assertEqual(await self.code(self.send_clip()), "no_consent")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM recap_requests")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # not even the clip's row
+
+    async def test_failed_clips_do_not_count_against_the_limit(self) -> None:
+        for _ in range(3):
+            rid = await self.send_clip()
+            request = await self.requests.claim_next(THURSDAY.id)
+            assert request is not None
+            await self.requests.finish(THURSDAY.id, request, answer=None, error=voice.BAD_CLIP)
+            assert rid
+        await self.send_clip()  # three misclicks did not lock the DM out
+        for _ in range(2):
+            await self.send_clip()
+        self.assertEqual(await self.code(self.send_clip()), "too_soon")  # three held: now it does
+
+    async def test_typed_notes_do_not_count_against_the_clips(self) -> None:
+        for _ in range(3):
+            await self.send()
+        await self.send_clip()
+
     async def test_the_types_with_parameters_are_read_by_their_base(self) -> None:
-        await self.send_clip(CLIP, "Audio/OGG; codecs=opus")
+        rid = await self.send_clip(CLIP, "Audio/OGG; codecs=opus")
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None and request.id == rid
+        self.assertEqual((request.kind, request.clip_type), ("voice", "audio/ogg"))
 
     async def test_a_person_who_is_not_a_dm_is_told_nothing(self) -> None:
         bob_token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
@@ -131,6 +167,7 @@ class TheBot(WithClips):
         meter = AsyncMock()
         rid, outcome = await self.work(write, meter=meter)
         meter.assert_awaited_once()
+        assert meter.await_args is not None
         self.assertEqual(meter.await_args.args[1], 90.0)
         self.assertEqual(outcome, "done")
         self.assertIsNone(await self.clip_in_row(rid))
@@ -197,7 +234,7 @@ class TheBot(WithClips):
             await conn.execute(
                 "UPDATE recap_requests SET created_at = created_at - 601 WHERE id = %s", (rid,)
             )
-        await self.requests.sweep(THURSDAY.id)
+        await self.requests.sweep_clips(THURSDAY.id)
         self.assertIsNone(await self.clip_in_row(rid))  # the row stays for its hour; the audio
         # does not
         async with self.db.guild(THURSDAY.id) as conn:
@@ -269,11 +306,25 @@ class TheClip(WithClips):
 KNOWN = "m" * 32
 
 
+def agreed(*answers: bool, cache_loaded: bool = False) -> Any:
+    """A consent store stand-in. `consenting` is the real question (it loads the server's rows
+    when they are not loaded yet); `has_consent` is the cache-only one, which says no until the
+    cache is loaded (after a restart). The answers are given one per question, the last one
+    repeating."""
+    queue = list(answers) or [True]
+
+    async def consenting(guild: int) -> frozenset[int]:
+        answer = queue.pop(0) if len(queue) > 1 else queue[0]
+        return frozenset({7}) if answer else frozenset()
+
+    return SimpleNamespace(consenting=consenting, has_consent=lambda g, u: cache_loaded)
+
+
 def fake_bot(*, consent: bool = True, heard: str = "we met Cara Dinval today") -> Any:
     names = lookup(more=(entity(KNOWN, "Caradinval"),), more_aliases=(alias(KNOWN, "Caradinval"),))
     transcribe = AsyncMock(return_value=heard)
     bot = SimpleNamespace(
-        consent=SimpleNamespace(has_consent=lambda g, u: consent),
+        consent=agreed(consent),
         pipeline=SimpleNamespace(
             transcriber=SimpleNamespace(transcribe=transcribe), sent_s_in=defaultdict(float)
         ),
@@ -298,6 +349,12 @@ class TheEngineSide(WithClips):
         hints = bot.transcribe.await_args.args[1]
         self.assertEqual(hints, ["Caradinval"])  # the name hints a live session would send
 
+    async def test_after_a_restart_a_consenting_dm_is_not_refused(self) -> None:
+        bot = fake_bot()  # the cache-only has_consent says no: nothing is loaded yet
+        self.assertFalse(bot.consent.has_consent(THURSDAY.id, 7))
+        text, _ = await DMBot.recap_voice_text(bot, THURSDAY.id, self.request(tone("webm", 1.5)))
+        self.assertTrue(text)
+
     async def test_without_agreement_nothing_is_decoded_or_sent(self) -> None:
         bot = fake_bot(consent=False)
         with self.assertRaises(voice.ClipError) as err:
@@ -306,9 +363,8 @@ class TheEngineSide(WithClips):
         bot.transcribe.assert_not_awaited()
 
     async def test_consent_withdrawn_while_it_was_written_down_keeps_nothing(self) -> None:
-        answers = iter([True, True, False])
         bot = fake_bot()
-        bot.consent = SimpleNamespace(has_consent=lambda g, u: next(answers, False))
+        bot.consent = agreed(True, True, True, False)  # stopped while it was written down
         with self.assertRaises(voice.ClipError) as err:
             await DMBot.recap_voice_text(bot, THURSDAY.id, self.request(tone("webm", 1.5)))
         self.assertEqual(err.exception.code, voice.NO_CONSENT)
@@ -316,7 +372,11 @@ class TheEngineSide(WithClips):
     async def test_consent_withdrawn_while_the_names_load_sends_no_audio(self) -> None:
         state = {"agreed": True}
         bot = fake_bot()
-        bot.consent = SimpleNamespace(has_consent=lambda g, u: state["agreed"])
+
+        async def consenting(guild: int) -> frozenset[int]:
+            return frozenset({7}) if state["agreed"] else frozenset()
+
+        bot.consent = SimpleNamespace(consenting=consenting, has_consent=lambda g, u: False)
 
         async def hints(*_: Any) -> Any:
             state["agreed"] = False  # "Stop recording me" pressed during the wait
@@ -385,3 +445,139 @@ class TheBackups(WithClips):
         self.assertTrue(files)  # the backup code is found
         for path in files:
             self.assertNotIn("recap_requests", path.read_text(), path.name)
+
+
+class TheLoop(WithClips):
+    """A voice request goes to the voice path and never to the AI sort; clips are swept every
+    round."""
+
+    async def test_a_voice_request_is_written_down_not_sorted(self) -> None:
+        from unittest import mock
+
+        voice_request = rq.Request("a" * 32, "c" * 32, 100, 7, "", 1, "voice", CLIP, "audio/webm")
+        claims = [voice_request, None]
+        store = SimpleNamespace(
+            claim_next=AsyncMock(side_effect=lambda gid: claims.pop(0)),
+            sweep_clips=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            recap_requests=store,
+            recap_feedback_ai=object(),
+            recaps=object(),
+            settings=SimpleNamespace(recaps_on=True),
+            guilds=[SimpleNamespace(id=THURSDAY.id)],
+            _voice_gate=MagicMock(),
+            recap_voice_text=MagicMock(),
+            _meter_voice=MagicMock(),
+        )
+        with (
+            mock.patch("dmbot.bot.recap_requests.run_voice", AsyncMock(return_value="done")) as v,
+            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
+        ):
+            await DMBot.run_recap_requests(cast(Any, bot))
+        v.assert_awaited_once()
+        sorted_.assert_not_awaited()  # never the AI sort
+        store.sweep_clips.assert_awaited_once_with(THURSDAY.id)  # swept in the same round
+
+    async def test_the_sweep_clears_only_old_clips(self) -> None:
+        old, fresh = await self.send_clip(), None
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_requests SET created_at = created_at - 601 WHERE id = %s", (old,)
+            )
+        fresh = await self.send_clip()
+        await self.requests.sweep_clips(THURSDAY.id)
+        self.assertIsNone(await self.clip_in_row(old))
+        self.assertEqual(await self.clip_in_row(fresh), CLIP)
+
+
+class TheRoutes(WithClips):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        import httpx
+
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+        from tests.test_recap_web import HEADERS
+        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_recap_requests import fx_alice
+
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(
+            self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.url = f"/me/recaps/{self.ref}/voice"
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+        await super().asyncTearDown()
+
+    async def test_a_clip_is_accepted_with_202_and_polled(self) -> None:
+        got = await self.client.post(
+            self.url, content=CLIP, headers={"content-type": "audio/webm;codecs=opus"}
+        )
+        self.assertEqual(got.status_code, 202, got.text)
+        poll = await self.client.get(f"{self.url}/{got.json()['requestId']}")
+        self.assertEqual((poll.status_code, poll.json()), (200, {"state": "waiting"}))
+
+    async def test_the_content_type_decides(self) -> None:
+        for kind in ("audio/mpeg", "application/json", ""):
+            got = await self.client.post(self.url, content=CLIP, headers={"content-type": kind})
+            self.assertEqual((got.status_code, got.json()["error"]), (415, "bad_type"), kind)
+
+    async def test_the_size_is_capped_by_its_declared_length_and_while_streaming(self) -> None:
+        big = b"x" * (voice.MAX_CLIP_BYTES + 1)
+        declared = await self.client.post(
+            self.url, content=big, headers={"content-type": "audio/ogg"}
+        )
+        self.assertEqual((declared.status_code, declared.json()["error"]), (413, "too_big"))
+
+        async def chunks() -> Any:
+            for _ in range(3):
+                yield b"x" * (1024 * 1024)  # no length up front
+
+        streamed = await self.client.post(
+            self.url, content=chunks(), headers={"content-type": "audio/ogg"}
+        )
+        self.assertEqual((streamed.status_code, streamed.json()["error"]), (413, "too_big"))
+
+    async def test_an_empty_body_a_dm_who_has_not_agreed_and_too_many(self) -> None:
+        empty = await self.client.post(
+            self.url, content=b"", headers={"content-type": "audio/webm"}
+        )
+        self.assertEqual((empty.status_code, empty.json()["error"]), (422, "bad_clip"))
+        await ConsentStore(self.db).revoke(THURSDAY.id, ALICE.id)
+        no = await self.client.post(self.url, content=CLIP, headers={"content-type": "audio/webm"})
+        self.assertEqual((no.status_code, no.json()["error"]), (403, "no_consent"))
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+        codes = []
+        for _ in range(8):
+            got = await self.client.post(
+                self.url, content=CLIP, headers={"content-type": "audio/webm"}
+            )
+            codes.append(got.status_code)
+        self.assertIn(429, codes)  # the per-person limit or the campaign's three
+
+
+class TheDeepgramTimeout(unittest.TestCase):
+    def test_a_live_line_keeps_the_short_limit_and_a_long_clip_gets_time(self) -> None:
+        from dmbot.transcription import deepgram
+
+        self.assertEqual(deepgram.request_timeout_s(3.0), deepgram.REQUEST_TIMEOUT_S)
+        self.assertEqual(deepgram.request_timeout_s(20.0), deepgram.REQUEST_TIMEOUT_S)
+        self.assertGreater(deepgram.request_timeout_s(60.0), 20)
+        self.assertGreaterEqual(deepgram.request_timeout_s(120.0), 50)
+        self.assertEqual(deepgram.request_timeout_s(10_000.0), deepgram.LONG_REQUEST_MAX_S)
+        # inside the time the whole job is given (decode, hints, request, name fixing)
+        from dmbot.bot import VOICE_TRANSCRIBE_S
+        from dmbot.recaps.requests import VOICE_TIMEOUT_S
+
+        self.assertLess(deepgram.LONG_REQUEST_MAX_S, VOICE_TRANSCRIBE_S)
+        self.assertLess(VOICE_TRANSCRIBE_S, VOICE_TIMEOUT_S)

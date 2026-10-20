@@ -428,6 +428,7 @@ PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought 
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
+VOICE_TRANSCRIBE_S = 65.0  # a spoken note is up to two minutes: far longer than a live line
 # The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
@@ -8495,6 +8496,10 @@ class DMBot(commands.AutoShardedBot):
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
         for guild in list(self.guilds):
+            try:  # no clip outlives ten minutes, whatever happened to its request
+                await store.sweep_clips(guild.id)
+            except Exception as exc:
+                log.warning("The clip sweep failed: %s", type(exc).__name__)
             for _ in range(RECAP_REQUESTS_PER_ROUND):
                 request = await store.claim_next(guild.id)
                 if request is None:
@@ -8563,28 +8568,30 @@ class DMBot(commands.AutoShardedBot):
         to the meter once its own claim has finished the row. Returns the words and the clip's
         length. Raises `voice.ClipError` for a clip it can't use."""
         gid, cid, user = guild_id, request.campaign_id, request.user_id
-        if not self.consent.has_consent(gid, user):
+        # `consenting` loads the server's consent when it is not loaded yet (after a restart);
+        # the cache-only `has_consent` would refuse a DM who did agree.
+        if user not in await self.consent.consenting(gid):
             raise voice.ClipError(voice.NO_CONSENT)
         pcm = await asyncio.to_thread(voice.decode, request.clip, request.clip_type)
         seconds = voice.seconds(pcm)
-        if not self.consent.has_consent(gid, user):
+        if user not in await self.consent.consenting(gid):
             raise voice.ClipError(voice.NO_CONSENT)
         hints, lookup, people = await self._recap_voice_hints(gid, cid)
-        if not self.consent.has_consent(gid, user):  # asked again right before the audio leaves
+        if user not in await self.consent.consenting(
+            gid
+        ):  # asked again right before the audio leaves
             raise voice.ClipError(voice.NO_CONSENT)
         now_ms = int(time.time() * 1000)
         utterance = Utterance(gid, user, now_ms - int(seconds * 1000), now_ms, pcm, 0)
-        if self.settings.transcription.sends_audio_out:  # billed by the outside company
-            self.pipeline.sent_s_in[0] += seconds
         try:
             heard = await asyncio.wait_for(
-                self.pipeline.transcriber.transcribe(utterance, hints), clip_budget_s(seconds)
+                self.pipeline.transcriber.transcribe(utterance, hints), VOICE_TRANSCRIBE_S
             )
         except (TranscriptionProblem, TimeoutError) as exc:
             raise voice.ClipError(voice.TRANSCRIBE_FAILED) from exc
         finally:
             del pcm, utterance  # the audio goes as soon as it is written down
-        if not self.consent.has_consent(gid, user):
+        if user not in await self.consent.consenting(gid):
             raise voice.ClipError(voice.NO_CONSENT)  # they stopped meanwhile: nothing is kept
         text = str(heard).strip() if heard else ""
         if not text:

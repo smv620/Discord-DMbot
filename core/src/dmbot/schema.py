@@ -2980,7 +2980,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
     ),
     # A spoken note: the clip is held until the bot has written it down (#2113).
-    ("dmbot_recap_voice_add", "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT)"),
+    ("dmbot_recap_voice_add", "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT)"),
     ("dmbot_recap_voice_read", "dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)"),
     (
         "dmbot_recap_check_names",
@@ -7227,7 +7227,7 @@ RECAP_VOICE = r"""
         CHECK (clip_type IN ('', 'audio/webm', 'audio/ogg'));
 
     CREATE FUNCTION dmbot_recap_voice_add(
-        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT
+        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT, terms INT
     ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -7240,6 +7240,13 @@ RECAP_VOICE = r"""
                           WHERE d.guild_id = g AND d.campaign_id = c
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
+        END IF;
+        -- Audio DMbot holds, even for minutes, needs the speaker's agreement to be recorded under
+        -- the current wording (`terms` is the code's TERMS_VERSION). The bot checks again.
+        IF NOT EXISTS (SELECT 1 FROM consent k
+                       WHERE k.guild_id = g AND k.user_id = dmbot_current_user()
+                         AND k.terms_version = terms) THEN
+            RETURN jsonb_build_object('status', 'no_consent');
         END IF;
         IF ctype IS NULL OR ctype NOT IN ('audio/webm', 'audio/ogg') THEN
             RETURN jsonb_build_object('status', 'bad_type');
@@ -7265,6 +7272,7 @@ RECAP_VOICE = r"""
             WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
         IF (SELECT count(*) FROM recap_requests r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.kind = 'voice'
+              AND r.state IN ('waiting', 'working', 'done')  -- not a failed one
               AND r.created_at > now_s - 600) >= 3 THEN
             RETURN jsonb_build_object('status', 'too_soon');
         END IF;
@@ -7303,14 +7311,15 @@ RECAP_VOICE = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT)'
+            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_voice_add(
+        BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
     """
 
