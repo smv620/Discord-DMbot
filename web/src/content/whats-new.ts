@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "Share a recap with a link",
+    what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
+    reason: "Waiting for review (#2132) and for dev1 to deploy it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Bring in older sessions",
     what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
