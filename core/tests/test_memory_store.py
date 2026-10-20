@@ -1945,6 +1945,17 @@ class Renaming(MemoryTest):
         )
         self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "nickname"})
 
+    async def test_making_an_old_spelling_the_main_name_listens_for_it_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        old = next(x for x in await self.memory.aliases(GUILD_A, self.c) if x.key == "beleros")
+        await self.memory.set_main_name(GUILD_A, self.c, a, old.id, source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "full"})
+        self.assertFalse(old.secret)
+
     async def test_fixing_it_again_keeps_each_old_spelling(self) -> None:
         a = await self.add("Beleros", status=CONFIRMED)
         await self.memory.add_alias(

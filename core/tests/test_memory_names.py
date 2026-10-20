@@ -344,6 +344,7 @@ class NameCards(NamesTest):
         text = it.response.edited[0][0]  # the card, redrawn in place, read fresh
         self.assertIn("Now spelled **Bellaros**", text)
         self.assertIn("🪪 **Bellaros**", text)
+        self.assertIn("Belleros (old spelling)", text)  # the card says what it is
         keys = {a.key for a in await self.memory.aliases(GUILD, self.campaign.id)}
         self.assertIn("bellaros", keys)
         self.assertIn("belleros", keys)  # kept as an "old spelling" (#2170)
