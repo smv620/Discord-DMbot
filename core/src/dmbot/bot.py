@@ -253,7 +253,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues
+from dmbot.recaps import cues, short
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.approval import text_hash
@@ -389,6 +389,7 @@ from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (register
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
 from dmbot.ui.recap_share import ShareButton
+from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -921,6 +922,7 @@ class DMBot(commands.AutoShardedBot):
         self.heard_questions = heard_questions
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
+        self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # The rules archive channel (#1752) hears about every change to a campaign's house rules
@@ -1297,6 +1299,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
+        self.add_dynamic_items(
+            ShortRecapButton
+        )  # "write a recap anyway?" for a short session (#2104)
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
@@ -2118,6 +2123,7 @@ class DMBot(commands.AutoShardedBot):
         self._track(self._fight_left_over(table), "fight-left-over")  # #1173
         self._track(self._pre_session_note(table), "pre-session-note")  # #1403
         self._track(self._waiting_recaps(table), "waiting-recaps")  # #1474
+        self._track(self._expire_short_asks(table), "expire-short-asks")  # #2104
         self._track(self._waiting_recap_names(table), "waiting-recap-names")  # #2027
         self._track(self._waiting_suggestions(table), "waiting-suggestions")  # #1504
         table.watch_task = self._track_loop(sheet_reread.run(self, table), "sheet-watch")  # #1128
@@ -7557,19 +7563,85 @@ class DMBot(commands.AutoShardedBot):
             dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
             if dm <= 0:
                 return
-            if await self.recaps.enqueue(gid, cid, session.started_at, dm_user_id=dm):
-                link = page_link(self.settings.site_url, gid, cid, session.started_at)
-                where = f"\nYour recap page: {link}" if self.settings.site_url else ""
-                ready = (
-                    "You'll get an email when it's ready."
-                    if campaign.recaps_email
-                    else "Find it on your recap page when it's ready."
-                )
-                await self.post(
+            # A short session asks first (#2104): what the recap would read is not changed.
+            lines = await self.transcripts.lines(gid, session.id)
+            span = short.span_minutes(lines)
+            talk = short.talk_minutes(lines, await self.consent.consenting(gid))
+            if short.is_short(span, talk):
+                if await self.recaps.get(gid, cid, session.started_at) is not None:
+                    return  # a repeat of the end of session, or already decided: ask once only
+                sent = await self.post_message(
                     table.screen_channel_id,
-                    f"📜 Writing a recap of this session. {ready} "
-                    f"Nothing goes to the table until you say so.{where}",
+                    short.question(span, talk),
+                    ask_view(cid, session.started_at),
+                    remember=ask_key(cid, session.started_at),
                 )
+                if sent is None:
+                    log.warning("Recap: couldn't ask about a short session")
+                    return
+                self._short_asks[cid] = session.started_at
+                log.info("Recap: asked first (a short session)")  # no numbers of the table's
+                return
+            await self._queue_recap(campaign, session.started_at, table.screen_channel_id, dm)
+
+    async def _queue_recap(
+        self, campaign: Campaign, session_at: int, channel_id: int, dm: int
+    ) -> bool:
+        """Queue the recap of a session and say so on the DM screen. False when there already is
+        one (a restart, or the session ended twice)."""
+        if self.recaps is None:
+            return False
+        gid, cid = campaign.guild_id, campaign.id
+        if not await self.recaps.enqueue(gid, cid, session_at, dm_user_id=dm):
+            return False
+        link = page_link(self.settings.site_url, gid, cid, session_at)
+        where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+        ready = (
+            "You'll get an email when it's ready."
+            if campaign.recaps_email
+            else "Find it on your recap page when it's ready."
+        )
+        await self.post(
+            channel_id,
+            f"📜 Writing a recap of this session. {ready} "
+            f"Nothing goes to the table until you say so.{where}",
+        )
+        return True
+
+    async def recap_short_expired(self, gid: int, cid: str, session_at: int) -> bool:
+        """True once a newer session of the campaign has started or been stored (#2104): the
+        question about a short session is then out of date. Checked on every press, so it holds
+        after a restart too."""
+        if self.transcripts is None:
+            return False
+        newest = await self.transcripts.sessions(gid, cid, limit=1)
+        return bool(newest) and newest[0].started_at > session_at
+
+    async def recap_write_anyway(self, gid: int, cid: str, session_at: int, channel_id: int) -> str:
+        """The DM said to write the recap of a short session. The same gates as after any session:
+        the switch and the plan (closed when they can't be checked). "queued", "already" (there
+        is a recap job for it) or "refused"."""
+        if self.recap_worker is None or self.recaps is None or self.transcripts is None:
+            return "refused"
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.recap_allowed(gid, cid, None):
+            return "refused"
+        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        if dm <= 0:
+            return "refused"
+        if await self._queue_recap(campaign, session_at, channel_id, dm):
+            return "queued"
+        return "already"
+
+    async def _expire_short_asks(self, table: Table) -> None:
+        """A new session of the campaign has started: the open question about its last short
+        session says it expired and loses its buttons (#2104). Memory only; after a restart the
+        press itself finds it out of date."""
+        if table.campaign_id is None:
+            return
+        asked = self._short_asks.pop(table.campaign_id, None)
+        if asked is not None:
+            await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
     async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
         """Every secret name of the campaign, read fresh (a name may have been made secret since
