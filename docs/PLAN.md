@@ -3882,6 +3882,39 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   *Built, recap name fixes (2026-10-19, #2026):* a name passes when every word of it is known, so a hyphenated name from the names file ("Dun-Varra's") is no longer refused; a retry sends the rejected draft (`<previous_draft>`, `<previous_answer>` for the title) with the target and the form and asks for a revision, never resending a draft that names a secret; an answer that only lost its SUMMARY or TITLE label is read leniently and still checked.
   *Built, names the recap kept (2026-10-19, #2027):* `recaps/unknown_names.py` respells a near miss to the known name (same word count and first letter, one letter off, two for names over eight letters, plain English words never), and refuses a word whose closest name is secret; `draft.kept_names` finds the names said in the session that no list has; they are stored in `recap_jobs.to_confirm` (migration 0131, at most 10), shown as **Facts to be confirmed** on the DM's recap page and in `recap_run`'s files, queued as proposed suggestions (source `scan`), and told to the DM once on the DM screen and in a private message with the check's button; a reminder follows once at the next session start.
   *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
+- **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
+  liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
+  recaps) is where the DM reviews a recap before any voice-over or music. It already has the text,
+  the edit box with the cue check, and Approve with the four choices. It gains:
+  1. **Edit it directly** (built): the edit box, as now.
+  2. **Tell DMbot what to change, by typing:** a box, "Tell DMbot what to fix", for example: "The
+     weapons were taken at the keep's gate, not the tavern. Shorter opening."
+     - **The sort:** it goes through the same sort as the Discord feedback (#2076).
+       - **Accuracy and content** become this recap's corrections, and the DM gets **Rewrite with
+         these**, which uses one of the recap's tries.
+       - **Style** becomes a note the DM approves.
+       - **Asking DMbot to build the story** gets the plain no.
+     - **The new draft** replaces the old one only when it passes every check, and it needs
+       approval again. The DM sees each point as DMbot understood it before anything runs.
+  3. **Tell DMbot by voice:** a 🎤 button records the DM in the browser. The site asks the browser
+     for the microphone only on this page, only when pressed, and only for this site.
+     - **On release:** the clip goes to DMbot's speech-to-text and comes back as text in the same
+       box, "Here's what I heard", for the DM to read, correct and send. It's the typed path from
+       then on.
+     - **Privacy:** the clip is the DM's own voice, given by pressing. It is transcribed and thrown
+       away, never stored, never in any transcript, and only the campaign's DMs can use it. A clip
+       is at most 2 minutes.
+     - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
+       for the recap page only.
+  4. **Names to check, answered on the page:** the recap's **Facts to be confirmed** list (#2027) is
+     shown under the recap with an answer for each name, the same answers as Discord's
+     📝 Check new names:
+     - **Yes, it's right**: confirm it, picking what it is (a person, a place, a thing…);
+     - **It's actually…**: pick a known name it should be, or fix the spelling;
+     - **Not a name**: deny it;
+     - **Explain**: the DM types a short note on who or what it is, kept with the name.
+
+     Answering on either the page or Discord answers both.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
