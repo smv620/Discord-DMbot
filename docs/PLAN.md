@@ -3957,6 +3957,50 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     aren't kept after the import, only the stored sessions.
   - **Order:** the importer and its storage with the consent mapping (core and API), then the
     website page, then building the campaign and the optional recaps.
+- **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
+  liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
+  recaps) is where the DM reviews a recap before any voice-over or music. **Discord opens it** (owner,
+  2026-10-20): the recap's line on the DM screen and its private message carry a **📝 Review the
+  recap** link button that opens this page. The richer tools live on the website, not in Discord
+  forms; editing inside Discord was dropped (#2110, closed). The page already has the text,
+  the edit box with the cue check, and Approve with the four choices. It gains:
+  1. **Edit it directly** (built): the edit box, as now.
+  2. **Tell DMbot what to change, by typing:** a box, "Tell DMbot what to fix", for example: "The
+     weapons were taken at the keep's gate, not the tavern. Shorter opening."
+     - **The sort:** it goes through the same sort as the Discord feedback (#2076).
+       - **Accuracy and content** become this recap's corrections, and the DM gets **Rewrite with
+         these**, which uses one of the recap's tries.
+       - **Style** becomes a note the DM approves.
+       - **Asking DMbot to build the story** gets the plain no.
+     - **The new draft** replaces the old one only when it passes every check, and it needs
+       approval again. The DM sees each point as DMbot understood it before anything runs.
+  3. **Tell DMbot by voice:** a 🎤 button records the DM in the browser. The site asks the browser
+     for the microphone only on this page, only when pressed, and only for this site.
+     - **On release:** the clip goes to DMbot's speech-to-text and comes back as text in the same
+       box, "Here's what I heard", for the DM to read, correct and send. It's the typed path from
+       then on.
+     - **Privacy:** the clip is the DM's own voice, given by pressing. It is transcribed and thrown
+       away, never stored, never in any transcript, and only the campaign's DMs can use it. A clip
+       is at most 2 minutes.
+     - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
+       for the recap page only.
+     - **Names help, as in a live session** (owner, 2026-10-20): the clip is transcribed with the
+       same campaign name hints a live session sends (Deepgram's keyterms, under the same rules about
+       which names may go), and the text goes through the Cleaner's name fixing, as a DM's live line
+       does. So "care Dinval" comes back as the known name. This costs almost nothing extra.
+     - **It counts as listening time** (owner, 2026-10-20). Each clip's length is added to the
+       campaign's listening minutes for the month, the same hours meter as a session in Discord.
+       The site's words about hours say DMbot listens both in Discord and on the website: "the time
+       DMbot is listening to you, in Discord or on the website".
+  4. **Names to check, answered on the page:** the recap's **Facts to be confirmed** list (#2027) is
+     shown under the recap with an answer for each name, the same answers as Discord's
+     📝 Check new names:
+     - **Yes, it's right**: confirm it, picking what it is (a person, a place, a thing…);
+     - **It's actually…**: pick a known name it should be, or fix the spelling;
+     - **Not a name**: deny it;
+     - **Explain**: the DM types a short note on who or what it is, kept with the name.
+
+     Answering on either the page or Discord answers both.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
