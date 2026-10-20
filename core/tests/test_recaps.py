@@ -833,7 +833,7 @@ class TheOpeningWords(unittest.TestCase):
 
 class TheWords(unittest.TestCase):
     def test_a_secret_is_found_in_every_form(self) -> None:
-        for text in ("Vex waits", "Vex's blade", "the Vexes came", "Vex-the-Younger", "VEX!"):
+        for text in ("Vex waits", "Vex's blade", "the Vexs came", "Vex-the-Younger", "VEX!"):
             self.assertTrue(names_a_secret(text, ["Vex"], []), text)
         self.assertFalse(names_a_secret("Vexation grew", ["Vex"], []))
         self.assertTrue(names_a_secret("Lord Malgrave the Pale rose", ["Malgrave the Pale"], []))

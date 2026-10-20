@@ -654,6 +654,45 @@ class TheRealSecretCheck(unittest.TestCase):
         for words in ("the hooded stranger waits", "then I met Silas Vane today", "silas vane"):
             self.assertTrue(text_names_a_secret(self.names(), words), words)
 
+    def test_the_shared_matcher_catches_a_title_swap_a_plural_and_run_together(self) -> None:
+        """#2087: "Mister White" for the secret "Mr. White", "the White Deaths" for "The White
+        Death", and the name run together are secret names too, in a suggested line."""
+        from dmbot.transcript.cleaner import text_names_a_secret
+
+        lookup = names_with(
+            more_aliases=(
+                alias(BELLEROS, "Mr. White", secret=True),
+                alias(BELLEROS, "The White Death", secret=True),
+            )
+        )
+        for words in (
+            "I met Mister White today",
+            "the White Deaths came",
+            "WhiteDeath rides",
+            "mr white's cellar",
+        ):
+            self.assertTrue(text_names_a_secret(lookup, words), words)
+        for words in ("Mr. Weaton waits", "an icy death", "white lady"):
+            self.assertFalse(text_names_a_secret(lookup, words), words)
+
+    def test_a_fix_that_writes_a_new_secret_is_taken_back_though_the_line_names_another(
+        self,
+    ) -> None:
+        """#2087: the heard line already says one secret; a fix that adds a different one is still
+        taken back (compared secret by secret, not "does the heard line name any")."""
+        from dmbot.transcript.cleaner import SPELLING, Fix, _SecretChecks, _without_secrets
+
+        lookup = names_with(
+            more_aliases=(
+                alias(BELLEROS, "Silas Vane", secret=True),
+                alias(BELLEROS, "Mr. White", secret=True),
+            )
+        )
+        heard = "Silas Vane met Mister Bright"
+        fix = Fix(15, 28, "Mister Bright", "Mister White", "x", SPELLING)
+        text, kept = _without_secrets(lookup, heard, [fix], _SecretChecks())
+        self.assertEqual((text, kept), (heard, []))
+
     def test_a_sound_alike_of_a_secret_name_inside_a_longer_line(self) -> None:
         from dmbot.transcript.cleaner import text_names_a_secret
 

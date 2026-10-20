@@ -38,7 +38,8 @@ class ShortSecretsInOrdinaryWords(unittest.TestCase):
     def test_the_name_as_a_word_its_possessive_and_plural_do_block(self) -> None:
         self.assertEqual(refused("Rae walked in.", [RAE]), "whole-name")
         self.assertEqual(refused("It was Vex's blade.", [VEX]), "whole-name")
-        self.assertEqual(refused("The Vexes arrived.", [VEX]), "whole-name")
+        self.assertEqual(refused("The Vexs arrived.", [VEX]), "whole-name")  # (s on any word)
+        self.assertEqual(refused("The Vexes arrived.", [VEX]), "whole-name")  # -es after an x
 
     def test_hyphen_and_spaced_spellings_block(self) -> None:
         self.assertEqual(refused("Dun-Varra rose.", [DUN]), "whole-name")
@@ -76,7 +77,7 @@ class SpellingsOfShortNames(unittest.TestCase):
 
     def test_a_short_secret_joined_to_other_letters_is_the_accepted_gap(self) -> None:
         self.assertEqual(refused("The vexation road.", [VEX]), "")
-        self.assertEqual(refused("The vexing road.", [VEX]), "whole-name")  # a verb ending
+        self.assertEqual(refused("The vexing road.", [VEX]), "")  # (endings need five letters)
 
 
 class TheTwoLocksAgree(unittest.TestCase):
