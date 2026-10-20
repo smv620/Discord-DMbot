@@ -28,6 +28,11 @@
 /account/recaps*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
+  # The one page that may ask for the microphone: "Speak instead" on a recap (#2114). Cloudflare
+  # adds a matching rule's headers to the ones from /*, so the sitewide value is detached first;
+  # every other page keeps microphone=(). A test pins this.
+  ! Permissions-Policy
+  Permissions-Policy: camera=(), microphone=(self), geolocation=(), payment=()
 
 /account/house-rules*
   Cache-Control: no-store
