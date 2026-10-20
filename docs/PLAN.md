@@ -3945,15 +3945,22 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     Others are added on request.
   - **Or a Google Doc link** (owner, 2026-10-20): instead of uploading, the DM may paste the share
     link of a Google Doc that holds a transcript, one link per session.
-    - **How it's read:** DMbot reads it once, through the guarded link reader `dmbot.fetch` that
-      house rules and name lists already use: Google Docs only, the plain-text export, the same
-      size limit and time-out.
+    - **How it's read:** DMbot reads it through the guarded link reader `dmbot.fetch` that house
+      rules and name lists already use: Google Docs only, the plain-text export, the same size
+      limit and time-out. It reads the doc again at Preview, Check and Import (Supervisor,
+      2026-10-20, #2143), so the DM keeps it shared until Import has started, and the page says
+      why a doc that stopped opening between steps failed. Pinning the text read at Preview is a
+      follow-up.
     - **From there,** it is exactly like an uploaded file: the same formats, consent mapping and
       checks, and the text isn't kept.
     - **Who can read the doc:** it must be shared as "Anyone with the link can view". DMbot never
       asks for access to the DM's Google account for this. If the doc isn't shared that way, the
       page says so plainly and how to change it. Reading private docs through Google's narrowest
       `drive.file` access waits for Phase 7.
+  - **From Discord** (owner, 2026-10-20, #2154): an **📥 Import sessions** button under the DM
+    screen's ⚙️ Settings, and `/dmbot import`, both open the website's Import sessions page with a
+    link button, for the campaign's DMs only. Nothing is imported in Discord: matching speakers,
+    dates and checks need the page.
   - **Consent is the hard rule, as everywhere.** Before anything is stored, the DM matches each
     speaker name in a file to a member of the server.
     - A speaker who matches a member who has agreed to be recorded (the current consent wording)
