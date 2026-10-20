@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import psycopg
@@ -29,7 +29,7 @@ class Shared(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.dm = self.client_for(token)
-        bob = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         self.bob = self.client_for(bob)
         self.public = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url=API, headers={}
@@ -302,7 +302,7 @@ class TheAudio(Shared):
         await self.post_it()
         token = await self.token()
         for kw in ({"current": False}, {"choice": "text"}):
-            await self.make_audio(**kw)  # type: ignore[arg-type]
+            await self.make_audio(**kw)
             self.assertEqual((await self.public.get(f"/recaps/{token}")).json()["audio"], {}, kw)
             self.assertEqual(
                 (await self.public.get(f"/recaps/{token}/audio/{KINDS[0]}")).status_code, 404, kw

@@ -39,7 +39,7 @@ async def _find(db: Database, token: str) -> dict[str, Any] | None:
     text = "\n".join([found["title"], strip_cues(found["summary"])])
     if names_a_secret(text, found["secret"], found["allowed"]):
         return None
-    return found
+    return dict(found)
 
 
 def _audio_ok(found: dict[str, Any]) -> bool:
