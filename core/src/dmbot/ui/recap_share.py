@@ -48,6 +48,19 @@ TIMEOUT_S = 840  # a private reply's buttons stop working after 15 minutes
 _TEMPLATE = r"dmbot:recapshare:(?P<campaign>[0-9a-f]{32})"
 
 
+async def session_numbers(bot: Any, campaign: Any) -> dict[int, int]:
+    """The campaign's real session numbers, by when each started: the same ones the transcript
+    and the continuity pages say. Empty when they can't be read; then no number is shown."""
+    transcripts = getattr(bot, "transcripts", None)
+    if transcripts is None:
+        return {}
+    try:
+        sessions = await transcripts.sessions(campaign.guild_id, campaign.id, limit=1000)
+    except Exception:
+        return {}
+    return {s.started_at: s.number for s in sessions}
+
+
 def public_link(site: str, token: str) -> str:
     """The recap page anyone with the link can read. The token is a secret: never logged."""
     return f"{site.rstrip('/')}/r/{token}"
@@ -102,31 +115,41 @@ class ShareButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             await _tell(interaction, NO_RECAPS)
             return
         if len(recent) == 1:  # nothing to pick from: straight to how
-            at, _n, _title, status = recent[0]
+            at, _title, status = recent[0]
             await _tell(
                 interaction,
                 HOW_DRAFT if status == "draft" else HOW,
                 view=HowView(campaign.id, at, draft=status == "draft"),
             )
             return
-        await _tell(interaction, PICK, view=PickView(campaign.id, recent))
+        await _tell(
+            interaction,
+            PICK,
+            view=PickView(campaign.id, recent, await session_numbers(bot, campaign)),
+        )
 
 
 class PickView(discord.ui.View):
     """The recaps to choose from, newest first, at most 25 (Discord's limit for a menu)."""
 
-    def __init__(self, campaign_id: str, recent: list[tuple[int, int, str, str]]) -> None:
+    def __init__(
+        self, campaign_id: str, recent: list[tuple[int, str, str]], numbers: dict[int, int]
+    ) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id = campaign_id
-        self.status = {str(at): status for at, _n, _t, status in recent}
+        self.status = {str(at): status for at, _t, status in recent}
         # The session number first, so two similar titles differ on a phone's short menu.
         options = [
             discord.SelectOption(
-                label=f"Session {n}: {title or 'A recap'}"[:100],
+                label=(
+                    f"Session {numbers[at]}: {title or 'A recap'}"
+                    if at in numbers
+                    else title or "A recap"
+                )[:100],
                 value=str(at),
                 description="Not posted yet" if status == "draft" else None,
             )
-            for at, n, title, status in recent[:25]
+            for at, title, status in recent[:25]
         ]
         select: discord.ui.Select[discord.ui.View] = discord.ui.Select(
             placeholder="Choose a recap", options=options
@@ -192,10 +215,13 @@ class HowView(discord.ui.View):
         link = await self._link(interaction, campaign)
         if link is None:
             return
-        number = await bot.recaps.number_of(campaign.guild_id, campaign.id, self.session_at)
         try:
-            await channel.send(f"📜 Recap of session {number}: {link}", allowed_mentions=NO_PINGS)
-        except Exception:
+            numbers = await session_numbers(bot, campaign)
+            number = numbers.get(self.session_at)
+            lead = f"📜 Recap of session {number}" if number is not None else "📜 A recap"
+            await channel.send(f"{lead}: {link}", allowed_mentions=NO_PINGS)
+        except Exception as exc:  # the deferred reply must always be answered
+            log.warning("Share a recap: the send failed: %s", type(exc).__name__)  # never the link
             await interaction.followup.send(SEND_FAILED, ephemeral=True)
             return
         self.sent = True

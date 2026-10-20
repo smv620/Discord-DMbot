@@ -7669,33 +7669,33 @@ class DMBot(commands.AutoShardedBot):
         )
         if job is None or job.state != "ready":
             return None, "This recap isn't ready yet. Try again in a minute."
-        if job.status == "draft":
+        was_draft = job.status == "draft"
+        if was_draft:
             if not job.approved:  # a draft that was never approved is never shared
                 return (
                     None,
                     f"Read and approve this recap on your recap page first{where}. "
                     "Nothing was shared.",
                 )
-            if not await store.decide(gid, cid, session_at, "post"):
-                return (
-                    None,
-                    "This recap changed while you were choosing. "
-                    "Nothing was shared. Pick it again.",
-                )
-            await self.post_recaps(gid)  # its own checks; a failed one puts it back as a draft
+            # The approval is checked again in SQL, in the same statement that moves it on, so a
+            # text edited since the check above cannot slip through; of two presses, one wins.
+            if await store.decide(gid, cid, session_at, "post", require_approved=True):
+                await self.post_recaps(gid)  # its own checks; a failed one puts it back as a draft
             job = await store.get(gid, cid, session_at)
-            if job is None or job.status != "posted":
-                why = (
-                    job.last_error if job is not None else ""
-                ) or "It couldn't be posted just now."
+            if job is None or job.status == "posting":
+                return None, "It's being posted right now. Try again in a moment."
+            if job.status == "draft":
+                why = job.last_error or "It couldn't be posted just now."
                 return (
                     None,
                     f"Not posted: {why} Nothing was shared. Try again, or check your recap page.",
                 )
-        elif job.status == "posting":
+        if job.status == "posting":
             return None, "It's being posted right now. Try again in a moment."
-        elif job.status != "posted":
+        if job.status != "posted":
             return None, "You skipped this recap, so it can't be shared."
+        if was_draft:  # it is posted now: the old line's Post and Skip buttons would mislead
+            await self.decision_lines.close(("recap", cid, session_at), "Posted.")
         secrets = await self.recap_secret_names(campaign)
         if secrets is None:
             return None, "DMbot couldn't check your secret names just now. Try again."

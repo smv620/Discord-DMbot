@@ -27,9 +27,11 @@ def make(user: int = DM_ID, *, recent: Any = None, link: Any = (TOKEN, "")) -> A
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=SimpleNamespace(
             recent=AsyncMock(
-                return_value=[(100, 1, "The Silver Lock", "posted")] if recent is None else recent
+                return_value=[(100, "The Silver Lock", "posted")] if recent is None else recent
             ),
-            number_of=AsyncMock(return_value=3),
+        ),
+        transcripts=SimpleNamespace(
+            sessions=AsyncMock(return_value=[SimpleNamespace(started_at=100, number=3)])
         ),
         settings=SimpleNamespace(site_url="https://site.example.com"),
         recap_share_link=AsyncMock(return_value=link),
@@ -64,12 +66,12 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
             channel.send.assert_not_awaited()
 
     async def test_the_dm_gets_a_menu_of_the_recaps_newest_first(self) -> None:
-        recent = [(300 - n, 30 - n, f"Recap {n}", "posted") for n in range(30)]
+        recent = [(300 - n, f"Recap {n}", "posted") for n in range(30)]
         _bot, interaction, _ = make(recent=recent)
         await rs.ShareButton(CID).callback(interaction)
         view = interaction.response.send_message.await_args.kwargs["view"]
         self.assertEqual(len(view.select.options), 25)  # Discord's limit for a menu
-        self.assertEqual(view.select.options[0].label, "Session 30: Recap 0")
+        self.assertEqual(view.select.options[0].label, "Recap 0")  # no number known for it
 
     async def test_no_recaps_or_no_site_says_so(self) -> None:
         bot, interaction, _ = make(recent=[])
@@ -115,7 +117,7 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         bot.recap_share_link.assert_not_awaited()
 
     async def test_a_draft_says_sharing_posts_it_and_the_buttons_say_so(self) -> None:
-        recent = [(200, 2, "New", "draft"), (100, 1, "Old", "posted")]
+        recent = [(200, "New", "draft"), (100, "Old", "posted")]
         _bot, interaction, _ = make(recent=recent)
         await rs.ShareButton(CID).callback(interaction)
         view = interaction.response.send_message.await_args.kwargs["view"]
@@ -158,13 +160,29 @@ class TheStoreSide(Base):
         await self.store.decide(1, self.one.id, 100, "post")
         await self.store.posted(1, self.one.id, 100)
         got = await self.store.recent(1, self.one.id)
-        self.assertEqual(
-            [(a, n, s) for a, n, _t, s in got], [(200, 2, "draft"), (100, 1, "posted")]
-        )
-        self.assertEqual(
-            await self.store.number_of(1, self.one.id, 200), 2
-        )  # a skipped one does not count
+        self.assertEqual([(a, s) for a, _t, s in got], [(200, "draft"), (100, "posted")])
         self.assertEqual(await self.store.recent(1, self.two.id), [])  # per campaign
+
+    async def test_post_can_require_the_approval_to_match_the_text_in_sql(self) -> None:
+        from dmbot.recaps.approval import text_hash
+
+        await self.finished(100)
+        self.assertFalse(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )
+        ok = await self.store.approve(
+            1, self.one.id, 100, fx.DM, "text", expected=text_hash("T", "s")
+        )
+        self.assertTrue(ok)
+        await self.store.update(1, self.one.id, 100, summary="changed after approval")
+        self.assertFalse(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )
+        await self.store.update(1, self.one.id, 100, summary="s")  # back to what was approved
+        self.assertTrue(await self.store.decide(1, self.one.id, 100, "post", require_approved=True))
+        self.assertFalse(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )
 
     async def test_a_token_is_made_only_for_a_posted_recap_and_new_replaces_it(self) -> None:
         await self.finished(100)
@@ -196,6 +214,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
             recap_secret_names=AsyncMock(return_value=kw.get("secrets", [])),
             recap_allowed_names=AsyncMock(return_value=[]),
             consent=SimpleNamespace(consenting=AsyncMock(return_value=kw.get("agreed", {1, 2}))),
+            decision_lines=SimpleNamespace(close=AsyncMock()),
         )
         return bot, store
 
@@ -245,14 +264,30 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
     async def test_an_approved_draft_is_posted_by_the_same_checks_then_shared(self) -> None:
         bot, store = self.bot(self.job(status="draft"), after=self.job(status="posted"))
         self.assertEqual(await self.run_it(bot), (TOKEN, ""))
-        store.decide.assert_awaited_once_with(GUILD, CID, 100, "post")
+        store.decide.assert_awaited_once_with(GUILD, CID, 100, "post", require_approved=True)
         bot.post_recaps.assert_awaited_once_with(GUILD)
+        bot.decision_lines.close.assert_awaited_once_with(("recap", CID, 100), "Posted.")
+
+    async def test_the_loser_of_a_double_tap_shares_once_the_other_press_has_posted(self) -> None:
+        bot, _store = self.bot(
+            self.job(status="draft"), decide=False, after=self.job(status="posted")
+        )
+        self.assertEqual(await self.run_it(bot), (TOKEN, ""))
+        bot.post_recaps.assert_not_awaited()  # the other press does the posting
+
+    async def test_the_loser_is_told_to_wait_while_the_other_press_is_posting(self) -> None:
+        bot, _store = self.bot(
+            self.job(status="draft"), decide=False, after=self.job(status="posting")
+        )
+        token, why = await self.run_it(bot)
+        self.assertIsNone(token)
+        self.assertIn("being posted", why)
 
 
 class ThePicker(unittest.IsolatedAsyncioTestCase):
     async def test_a_player_cannot_choose_from_the_menu(self) -> None:
         _bot, interaction, _ = make(PLAYER)
-        view = rs.PickView(CID, [(100, 1, "T", "posted"), (200, 2, "U", "posted")])
+        view = rs.PickView(CID, [(100, "T", "posted"), (200, "U", "posted")], {})
         view.select._values = ["100"]  # what Discord sends when something is chosen
         await view._picked(interaction)
         self.assertEqual(said(interaction), rs.NOT_YOURS)

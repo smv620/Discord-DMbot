@@ -610,12 +610,25 @@ class RecapStore:
             )
             return bool(cur.rowcount)
 
-    async def decide(self, guild_id: int, campaign_id: str, session_at: int, action: str) -> bool:
+    async def decide(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        action: str,
+        *,
+        require_approved: bool = False,
+    ) -> bool:
         """The DM's choice made on the DM screen (#1455), the same two moves the website's page
         makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
         checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
         if action == "post":
             sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            if require_approved:  # the text as it is now is the text the DM approved, in SQL
+                sql += (
+                    " AND approved_hash = encode(sha256(convert_to("
+                    "title || E'\\n' || summary, 'UTF8')), 'hex')"
+                )
         elif action == "drop":
             sql = "status = 'dropped' WHERE status = 'draft'"
         else:
@@ -630,35 +643,18 @@ class RecapStore:
 
     async def recent(
         self, guild_id: int, campaign_id: str, limit: int = 25
-    ) -> list[tuple[int, int, str, str]]:
-        """(session_at, session number, title, status) of the campaign's ready recaps, newest
-        first: the list "Share a recap" picks from (#2118). Dropped ones are left out; drafts are
-        listed because sharing one counts as posting it. The number counts every recap of the
-        campaign, so it is the same one the players see in the chat line."""
+    ) -> list[tuple[int, str, str]]:
+        """(session_at, title, status) of the campaign's ready recaps, newest first: the list
+        "Share a recap" picks from (#2118). Dropped ones are left out; drafts are listed because
+        sharing one counts as posting it."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT * FROM (SELECT session_at, title, status, state,"
-                " row_number() OVER (ORDER BY session_at) AS n FROM recap_jobs"
-                " WHERE guild_id = %s AND campaign_id = %s AND state = 'ready'"
-                " AND status IN ('draft', 'posted')) j ORDER BY session_at DESC LIMIT %s",
+                "SELECT session_at, title, status FROM recap_jobs WHERE guild_id = %s"
+                " AND campaign_id = %s AND state = 'ready' AND status IN ('draft', 'posted')"
+                " ORDER BY session_at DESC LIMIT %s",
                 (guild_id, campaign_id, max(1, min(limit, 25))),
             )
-            return [
-                (int(r["session_at"]), int(r["n"]), r["title"], r["status"])
-                for r in await cur.fetchall()
-            ]
-
-    async def number_of(self, guild_id: int, campaign_id: str, session_at: int) -> int:
-        """Which recap of the campaign this is (1 for the first): ready ones that were not skipped,
-        the same number the picker shows."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                " AND state = 'ready' AND status IN ('draft', 'posted') AND session_at <= %s",
-                (guild_id, campaign_id, session_at),
-            )
-            row = await cur.fetchone()
-        return int(row["n"]) if row else 1
+            return [(int(r["session_at"]), r["title"], r["status"]) for r in await cur.fetchall()]
 
     async def share_token(
         self, guild_id: int, campaign_id: str, session_at: int, *, new: bool = False
