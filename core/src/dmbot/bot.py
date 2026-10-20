@@ -252,11 +252,13 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
+from dmbot.recaps import cues
 from dmbot.recaps import post as recap_post
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
-from dmbot.recaps.audio.worker import AudioInputs, AudioWorker, text_hash
+from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
@@ -1093,7 +1095,6 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda gid: lambda: self.consent.consenting(gid),
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
-                audio_wanted=self.recap_audio_wanted,
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
@@ -7556,6 +7557,25 @@ class DMBot(commands.AutoShardedBot):
             and campaign.recaps_text  # the DM's choice can only turn it off (#1421)
             and await self.plan_allows("recap", gid, campaign, fail_open=False)
         )
+
+    async def recap_approval_problems(self, campaign: Campaign, job: Job) -> list[str]:
+        """What stops the DM approving this text (#2083), in plain words: a cue that is wrong,
+        a secret name in it, or a player no longer recorded. The checks run again at every
+        press, as at post time. Empty: the text may be approved. Counts only in the log."""
+        problems = [p.words() for p in cues.cue_problems(job.summary)]
+        secrets = await self.recap_secret_names(campaign)
+        if secrets is None:
+            problems.append("DMbot couldn't check your secret names just now. Try again.")
+        elif names_a_secret(
+            recap_post.to_the_table(job), secrets, await self.recap_allowed_names(campaign)
+        ):
+            problems.append("It names something you keep secret. Change the text first.")
+        if not set(job.speakers) <= set(await self.consent.consenting(campaign.guild_id)):
+            problems.append(
+                "A player stopped being recorded since this was written, so it can't go ahead."
+            )
+        log.info("Recap approval: %d problem(s)", len(problems))
+        return problems
 
     async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:
         """Whether the audio is to be made for a recap that has just become ready: the switch,

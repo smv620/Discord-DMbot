@@ -28,6 +28,7 @@ export const panelWords = {
     "The audio was made from the earlier text. Make it again after you save.",
   again: "Make the audio again",
   asked: "Making the audio again. This page shows it when it is ready.",
+  needsApproval: "Approve the new text first.",
   tooSoon: "You asked a few minutes ago. Try again in a little while.",
   expired: "The audio link ran out. Reload the page to play it.",
 };

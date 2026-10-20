@@ -97,6 +97,9 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
         {
           text: "A recap can also come with a narrator's voice and music, as two audio files you play together.",
         },
+        {
+          text: "DMbot makes no audio by itself. Read the recap, then press Approve the text, on the DM screen or on your recap page, and pick voice-over, background music, both, or text only (no audio). You only see what your plan includes. If you change the text later, you approve it again. If a mood or pause mark in the text is wrong, DMbot shows what to fix, and nothing is approved until you fix it.",
+        },
       ]
     : []),
   {
