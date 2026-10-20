@@ -89,10 +89,11 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         post_message=AsyncMock(return_value=SimpleNamespace(id=1, content="q")),
         decision_lines=MagicMock(close=AsyncMock(), remember_pressed=MagicMock()),
         _short_asks={},
+        recap_holds=None,
     )
     for name in (
         "recap_session", "_queue_recap", "recap_allowed", "recap_short_expired",
-        "recap_write_anyway", "_expire_short_asks",
+        "recap_write_anyway", "_expire_short_asks", "_hold_or_queue", "_say_writing",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
