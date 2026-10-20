@@ -18,7 +18,7 @@ export const IMPORT_MAX_MB = 2;
 /** The Help step. Written from PLAN; check it against #2105's code before IMPORT_LIVE is true. */
 export const importSteps: { text: string }[] = [
   {
-    text: `Importing is for game masters on paid plans. To bring in sessions DMbot didn't record, such as a written-out Craig recording (Craig is a Discord recording bot), open your campaign's session transcripts on the website and press Import sessions. Pick up to ${IMPORT_MAX_FILES} text files, each up to ${IMPORT_MAX_MB} MB, and press Preview. You can also paste the link of a Google Doc that is shared so anyone with the link can view it; files and links count together, up to ${IMPORT_MAX_FILES} in all. For each name in a file, pick the server member it is, or Leave out. DMbot suggests a person for a name it has seen in an earlier import or that matches a member's name; you decide. DMbot keeps a player's lines only if they have agreed to be recorded in Discord, the same as for a live session. Your word that everyone agreed is not enough. Everyone else's lines (a person you left out, a person who has not agreed, and bots) are dropped before anything is saved and are never stored, and the page shows how many lines each choice keeps or drops. Then set each file's date and order, check how much work it will take, and press Import. Imported sessions can be read by everyone in your server, like any transcript.`,
+    text: `Importing is for game masters on paid plans. To bring in sessions DMbot didn't record, such as a written-out Craig recording (Craig is a Discord recording bot), open your campaign's session transcripts on the website and press Import sessions. Pick up to ${IMPORT_MAX_FILES} text files, each up to ${IMPORT_MAX_MB} MB, and press Preview. You can also paste the link of a Google Doc (Share, then General access, then Anyone with the link, then Viewer); DMbot reads it without signing in to your Google account, only when you press Preview, Check or Import; files and links count together, up to ${IMPORT_MAX_FILES} in all. For each name in a file, pick the server member it is, or Leave out. DMbot suggests a person for a name it has seen in an earlier import or that matches a member's name; you decide. DMbot keeps a player's lines only if they have agreed to be recorded in Discord, the same as for a live session. Your word that everyone agreed is not enough. Everyone else's lines (a person you left out, a person who has not agreed, and bots) are dropped before anything is saved and are never stored, and the page shows how many lines each choice keeps or drops. Then set each file's date and order, check how much work it will take, and press Import. Imported sessions can be read by everyone in your server, like any transcript.`,
   },
   {
     text: "After an import, DMbot goes through the imported sessions in date order, as it does after a live session, and asks you about any new names. Nothing becomes a fact without your say. The files themselves are not kept after the import.",
@@ -30,11 +30,11 @@ export const importSteps: { text: string }[] = [
 export const importPage = {
   heading: "Import sessions",
   back: "Back to the sessions",
-  lead: `Bring in sessions DMbot didn't record, from text files. DMbot keeps only the lines of players who have agreed to be recorded. Imported sessions can be read by everyone in your server, like any transcript.`,
+  lead: `Bring in sessions DMbot didn't record, from text files or Google Docs. DMbot keeps only the lines of players who have agreed to be recorded. Imported sessions can be read by everyone in your server, like any transcript.`,
   loading: "Loading…",
   signedOut: "Sign in to import sessions. You will need to choose your files again.",
   signIn: "Sign in with Discord",
-  pickLabel: `Choose up to ${IMPORT_MAX_FILES} text files (.txt), each up to ${IMPORT_MAX_MB} MB`,
+  pickLabel: `Choose up to ${IMPORT_MAX_FILES} text files (.txt), each up to ${IMPORT_MAX_MB} MB, or paste Google Doc links below`,
   chosen: (n: number): string => `${n} ${n === 1 ? "file" : "files"} chosen`,
   preview: "Preview",
   working: "Working…",
@@ -45,27 +45,47 @@ export const importPage = {
     unreadable: "DMbot couldn't read this file.",
     too_big: `This file is over ${IMPORT_MAX_MB} MB.`,
     not_txt: "This isn't a .txt file.",
-    not_a_google_doc: "This isn't a Google Doc link. Copy the link from the Share button of a Google Doc.",
+    not_a_google_doc:
+      "This isn't a Google Doc link. Open the doc, press Share, then Copy link, and paste that here. Or remove it.",
     doc_not_shared:
-      "DMbot couldn't open this Google Doc. Open the doc, press Share, and under General access choose Anyone with the link, set to Viewer. Then add the link again.",
-    doc_too_big: `This Google Doc is over ${IMPORT_MAX_MB} MB. Split it into smaller documents.`,
-    doc_unreachable: "DMbot couldn't reach this Google Doc just now. Try again in a minute.",
-    repeated_link: "You added the same document twice. Remove one, then try again.",
+      "This doc isn't shared yet. In the doc, press Share. Under General access choose Anyone with the link, set to Viewer. Then press Preview again.",
+    doc_too_big: `This doc is over ${IMPORT_MAX_MB} MB of text. Split it into smaller docs, or paste the part you need into a new one.`,
+    doc_unreachable: "Google didn't answer just now. Press Preview again in a minute.",
+    repeated_link: "You added this doc twice. Remove one of them, then press Preview again.",
     too_many_lines: "This file has too many lines. Split it into smaller files.",
     too_many_speakers: "This file has too many different names. Check it is one session, or split it.",
     empty: "This file is empty.",
   } as Record<string, string>,
   fileErrorOther: "DMbot couldn't use this file.",
   linkLabel: "Or paste a Google Doc link",
-  linkHelp:
-    "The doc must be shared so anyone with the link can view it: open it, press Share, under General access choose Anyone with the link, and set it to Viewer. DMbot reads the doc with no sign-in to your Google account, only while you import.",
+  linkHelp: "Share the doc first:",
+  linkSteps: [
+    "Open the doc.",
+    "Press Share.",
+    "Scroll down to General access and choose Anyone with the link.",
+    "Set it to Viewer.",
+  ],
+  linkHelpAfter:
+    "DMbot reads the doc without signing in to your Google account, and only when you press Preview, Check or Import. It never changes the doc. Anyone with the link can open it, so you can switch sharing off again afterwards.",
+  linkPlaceholder: "https://docs.google.com/document/d/…",
+  notAGoogleDocLink: "That doesn't look like a Google Doc link. It starts with docs.google.com/document.",
+  linkAlreadyAdded: "You already added this doc.",
+  tooManyToAdd: `That is ${IMPORT_MAX_FILES} already, the most DMbot takes. Remove one first.`,
+  added: (name: string, total: number): string => `Added ${name}. ${total} ${total === 1 ? "item" : "items"} chosen.`,
+  removed: (name: string, total: number): string => `Removed ${name}. ${total} ${total === 1 ? "item" : "items"} chosen.`,
+  /** A link is shown without the ".txt" the API puts on its name. */
+  shownName: (name: string): string => name.replace(/^(Google Doc \d+)\.txt$/, "$1"),
+  shortLink: (link: string): string => {
+    const id = /\/d\/([\w-]+)/.exec(link)?.[1];
+    return id ? `docs.google.com/…/d/${id.slice(0, 8)}…` : link;
+  },
   addLink: "Add link",
   remove: "Remove",
   removeLink: (n: number): string => `Remove Google Doc ${n}`,
   linkName: (n: number): string => `Google Doc ${n}`,
   chosenItems: (files: number, links: number): string =>
     `${files} ${files === 1 ? "file" : "files"} and ${links} ${links === 1 ? "link" : "links"} chosen`,
-  noUsableFiles: "None of these files can be used. Choose others.",
+  noUsableFiles: "None of these files or links can be used. Fix the notes above, or choose others.",
   matchHeading: "Who is who?",
   matchLead:
     "For each name in your files, pick the server member it is, or Leave out. A player's lines are kept only if they have agreed to be recorded. A player agrees in Discord, the same as for a live session.",
@@ -130,8 +150,8 @@ export const importPage = {
     "too-many-lines": "A file has too many lines. Split it into smaller files, then try again.",
     "too-many-speakers": "A file has too many different names. Check it is one session, or split it, then try again.",
     "try-it-campaign": "Importing isn't part of Try It. A paid plan has it.",
-    "too-many-files": `That is more than ${IMPORT_MAX_FILES} files. Choose fewer.`,
-    "too-big": `One of the files is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
+    "too-many-files": `That is more than ${IMPORT_MAX_FILES} files and links together. Choose fewer.`,
+    "too-big": `One of the files or links is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
     "bad-files": "DMbot couldn't read the files as sent. Choose them again.",
     "bad-mapping": "One of the choices of who is who doesn't fit. Check them and try again.",
     "bad-date": "One of the dates isn't a date. Check them and try again.",

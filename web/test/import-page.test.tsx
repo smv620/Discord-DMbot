@@ -212,11 +212,9 @@ describe("Google Doc links", () => {
 
   it("says how to share a doc, before anything is sent", () => {
     open();
-    expect(
-      screen.getByText(
-        /General access choose Anyone with the link, and set it to Viewer/,
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(/Scroll down to General access/)).toBeTruthy();
+    expect(screen.getByText(/Anyone with the link can open it/)).toBeTruthy();
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThanOrEqual(4);
   });
 
   it("previews with only a link, and sends the links with the files", async () => {
@@ -235,42 +233,50 @@ describe("Google Doc links", () => {
       ),
     );
     add(docUrl("one-too-many"));
-    expect(screen.getByRole("alert").textContent).toBe(w.tooManyFiles);
-    expect(
-      (screen.getByRole("button", { name: w.preview }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    // The 21st is refused, so the list stays at the most.
+    expect(screen.getByRole("alert").textContent).toBe(w.tooManyToAdd);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
     expect(api.calls.some((c) => c.startsWith("importPreview"))).toBe(false);
   });
 
-  it.each([
-    ["https://example.com/notadoc", "not_a_google_doc"],
-    [docUrl("private-one"), "doc_not_shared"],
-  ])(
-    "says plainly what is wrong with %s and how to fix it",
-    async (url, code) => {
-      open();
-      add(url);
-      fireEvent.click(screen.getByRole("button", { name: w.preview }));
-      expect(await screen.findByText(w.fileError[code] ?? "")).toBeTruthy();
-      expect(screen.queryByText(code)).toBeNull(); // the code is never shown raw
-      if (code === "doc_not_shared")
-        expect(w.fileError[code]).toContain("Anyone with the link");
-    },
-  );
+  it("says in words when a doc is not shared, never the raw code", async () => {
+    open();
+    add(docUrl("private-one"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(
+      await screen.findByText(w.fileError.doc_not_shared ?? ""),
+    ).toBeTruthy();
+    expect(screen.queryByText("doc_not_shared")).toBeNull();
+    expect(w.fileError.doc_not_shared).toContain("Anyone with the link");
+    // Shown as "Google Doc 1", without the ".txt" the API puts on its name.
+    expect(screen.queryByText("Google Doc 1.txt")).toBeNull();
+  });
 
-  it("says the same document twice is a mistake, in words, never as the raw code", async () => {
+  it("refuses a link that is not a Google Doc, before anything is sent", () => {
+    const api = open();
+    add("https://example.com/notadoc");
+    expect(screen.getByRole("alert").textContent).toBe(w.notAGoogleDocLink);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("importPreview"))).toBe(false);
+  });
+
+  it("does not add the same doc twice", () => {
     open();
     add(docUrl("same"));
     add(docUrl("same"));
-    fireEvent.click(screen.getByRole("button", { name: w.preview }));
-    expect(
-      await screen.findByText(w.fileError.repeated_link ?? ""),
-    ).toBeTruthy();
-    expect(screen.queryByText("repeated_link")).toBeNull();
-    expect(w.fileError.repeated_link).toBe(
-      "You added the same document twice. Remove one, then try again.",
+    expect(screen.getByRole("alert").textContent).toBe(w.linkAlreadyAdded);
+    expect(screen.queryByText(w.linkName(2))).toBeNull();
+  });
+
+  it("adds on Enter, announces it, and gives the box focus back", () => {
+    open();
+    link(docUrl("abc"));
+    fireEvent.submit(screen.getByLabelText(w.linkLabel).closest("form")!);
+    expect(screen.getByText(w.linkName(1))).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(
+      w.added(w.linkName(1), 1),
     );
+    expect(document.activeElement).toBe(screen.getByLabelText(w.linkLabel));
   });
 
   it("sends only the links that opened, renamed by place, and keeps their dates", async () => {

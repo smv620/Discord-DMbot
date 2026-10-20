@@ -62,6 +62,9 @@ export default function Import({
   // Google Doc links (#2140) sit in the same list as the files, 20 items in all.
   const [links, setLinks] = useState<string[]>([]);
   const [linkText, setLinkText] = useState("");
+  const [linkProblem, setLinkProblem] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const linkBox = useRef<HTMLInputElement>(null);
   // The links that opened, in the order they are sent from here on, and what each one is called
   // there: the API names a link by its place in the list it is sent, so dropping a bad link renames the rest.
   const [sentLinks, setSentLinks] = useState<string[]>([]);
@@ -219,18 +222,41 @@ export default function Import({
   const addLink = (): void => {
     const link = linkText.trim();
     if (link === "") return;
+    // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
+    if (!/^https:\/\/docs\.google\.com\/document\//i.test(link)) {
+      setLinkProblem(words.notAGoogleDocLink);
+      return;
+    }
+    if (links.includes(link)) {
+      setLinkProblem(words.linkAlreadyAdded);
+      return;
+    }
+    if (picked.length + links.length >= IMPORT_MAX_FILES) {
+      setLinkProblem(words.tooManyToAdd);
+      return;
+    }
     const next = [...links, link];
     setLinks(next);
     setLinkText("");
+    setLinkProblem(null);
     forgetPreview();
     checkPicked(picked, next);
+    setAnnounce(words.added(words.linkName(next.length), picked.length + next.length));
+    linkBox.current?.focus();
   };
 
   const removeLink = (at: number): void => {
     const next = links.filter((_, i) => i !== at);
     setLinks(next);
+    setLinkProblem(null);
     forgetPreview();
     checkPicked(picked, next);
+    setAnnounce(words.removed(words.linkName(at + 1), picked.length + next.length));
+    // The button that was pressed is gone, so focus goes to the next Remove, or to the box.
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>("[data-remove-link]");
+      (buttons[Math.min(at, buttons.length - 1)] ?? linkBox.current)?.focus();
+    });
   };
 
   const lookAtFiles = (): Promise<void> =>
@@ -451,36 +477,59 @@ export default function Import({
           onChange={choose}
           aria-label={words.pickLabel}
         />
-        <label class="field">
-          {words.linkLabel}
-          <input
-            type="url"
-            value={linkText}
-            autoComplete="off"
-            spellcheck={false}
-            aria-describedby="import-link-help"
-            onInput={(e) => setLinkText((e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <button
-          type="button"
-          class="button secondary"
-          disabled={linkText.trim() === ""}
-          onClick={addLink}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            addLink();
+          }}
         >
-          {words.addLink}
-        </button>
-        <p class="muted small" id="import-link-help">
-          {words.linkHelp}
+          <label class="field">
+            {words.linkLabel}
+            <input
+              ref={linkBox}
+              type="url"
+              value={linkText}
+              placeholder={words.linkPlaceholder}
+              autoComplete="off"
+              spellcheck={false}
+              aria-describedby="import-link-help"
+              onInput={(e) => setLinkText((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          <button
+            type="submit"
+            class="button secondary"
+            disabled={linkText.trim() === ""}
+          >
+            {words.addLink}
+          </button>
+        </form>
+        {linkProblem && (
+          <p class="note bad" role="alert">
+            {linkProblem}
+          </p>
+        )}
+        <div class="muted small" id="import-link-help">
+          <p>{words.linkHelp}</p>
+          <ol>
+            {words.linkSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p>{words.linkHelpAfter}</p>
+        </div>
+        <p class="sr-only" role="status">
+          {announce}
         </p>
         {links.length > 0 && (
           <ul class="campaigns">
             {links.map((link, i) => (
               <li key={`${i}-${link}`}>
                 <span class="campaign-name">{words.linkName(i + 1)}</span>
-                <span class="small">{link}</span>
+                <span class="small">{words.shortLink(link)}</span>
                 <button
                   type="button"
+                  data-remove-link
                   class="button secondary"
                   aria-label={words.removeLink(i + 1)}
                   onClick={() => removeLink(i)}
@@ -522,7 +571,7 @@ export default function Import({
               .filter((f) => f.error !== null)
               .map((f) => (
                 <li key={f.name}>
-                  <span class="campaign-name">{f.name}</span>
+                  <span class="campaign-name">{words.shownName(f.name)}</span>
                   <span class="small">
                     {words.fileError[f.error ?? ""] ?? words.fileErrorOther}
                   </span>
@@ -629,7 +678,7 @@ export default function Import({
                       <ul class="campaigns">
                         {check.files.map((f) => (
                           <li key={f.name}>
-                            <span class="campaign-name">{f.name}</span>
+                            <span class="campaign-name">{words.shownName(f.name)}</span>
                             {f.leftOut > 0 && (
                               <span class="small">
                                 {words.leftOutFile(f.leftOut)}
