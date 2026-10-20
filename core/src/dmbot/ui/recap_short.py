@@ -19,11 +19,12 @@ from dmbot.ui.dmbot_commands import _bot, _tell
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was changed."
-EXPIRED = "Expired."
+EXPIRED = "Expired: a newer session started."
 EXPIRED_TELL = "This question has expired: a newer session has started. Nothing was changed."
-NOT_NOW = "I can't write a recap now. Recaps may be off, or not in your plan."
-WRITING = "Writing it."
-NONE_WRITTEN = "No recap."
+NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
+WRITING = "Writing the recap."
+ALREADY = "Already being written."
+NONE_WRITTEN = "No recap written."
 
 _TEMPLATE = r"dmbot:recapask:(?P<act>go|skip):(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
 _LABELS = {
@@ -81,11 +82,16 @@ class ShortRecapButton(
             )
             return
         if self.act == "go":
-            channel_id = interaction.channel_id or 0
-            if not await bot.recap_write_anyway(guild.id, campaign.id, self.session_at, channel_id):
+            if interaction.channel_id is None:
                 await _tell(interaction, NOT_NOW)
                 return
-            outcome = WRITING
+            result = await bot.recap_write_anyway(
+                guild.id, campaign.id, self.session_at, interaction.channel_id
+            )
+            if result == "refused":
+                await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
+                return
+            outcome = WRITING if result == "queued" else ALREADY
         else:
             outcome = NONE_WRITTEN  # nothing is written and nothing is counted
         await self._close(interaction, outcome)

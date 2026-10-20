@@ -47,13 +47,14 @@ class TheNumbers(unittest.TestCase):
         lines = [said(0, 40), said(40, 40, BOB), said(80, 40, sidebar="question")]
         self.assertEqual(short.talk_minutes(lines, {ALICE}), 40)
 
-    def test_the_question_is_plain(self) -> None:
+    def test_the_question_is_plain_and_says_what_no_answer_means(self) -> None:
         self.assertEqual(
             short.question(22, 9),
-            "This session was short (22 minutes, 9 minutes of game talk after the chat was left "
-            "out). Write a recap anyway?",
+            "Short session: 22 minutes long, 9 minutes of game talk (off-topic chat not "
+            "counted). Write a recap?\nNo answer means no recap.",
         )
-        self.assertIn("1 minute,", short.question(1, 0))
+        self.assertIn("1 minute long", short.question(1, 0))
+        self.assertIn("under a minute of game talk", short.question(1, 0))
 
 
 def campaign() -> Any:
@@ -73,7 +74,9 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
         plan_allows=plan_allows,
         recap_worker=object(),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True), get=AsyncMock(return_value=None)
+        ),
         transcripts=SimpleNamespace(
             session=AsyncMock(
                 return_value=SimpleNamespace(id="s", started_at=AT, lines=len(lines))
@@ -124,11 +127,29 @@ class WhenTheSessionEnds(unittest.IsolatedAsyncioTestCase):
         bot.recaps.enqueue.assert_awaited_once()
         bot.post_message.assert_not_awaited()
 
+    async def test_asking_twice_is_asking_once(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.recaps.get = AsyncMock(return_value=SimpleNamespace())  # a job (or decision) exists
+        await bot.recap_session(table())
+        bot.post_message.assert_not_awaited()
+
+    async def test_a_question_that_could_not_be_posted_is_not_remembered(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.post_message = AsyncMock(return_value=None)
+        await bot.recap_session(table())
+        self.assertEqual(bot._short_asks, {})
+
+    def test_the_start_of_a_session_expires_the_question(self) -> None:
+        import inspect
+
+        source = inspect.getsource(DMBot)
+        self.assertIn('self._track(self._expire_short_asks(table), "expire-short-asks")', source)
+
     async def test_the_next_session_expires_the_open_question(self) -> None:
         bot = fake_bot([said(0, 10)])
         await bot.recap_session(table())
         await bot._expire_short_asks(table())
-        bot.decision_lines.close.assert_awaited_once_with(screen.ask_key(CID, AT), "Expired.")
+        bot.decision_lines.close.assert_awaited_once_with(screen.ask_key(CID, AT), screen.EXPIRED)
         self.assertEqual(bot._short_asks, {})
 
 
@@ -158,7 +179,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Writing a recap", bot.post.await_args.args[1])
         self.assertEqual(bot.post.await_args.args[0], 66)
         self.assertIsNone(i.response.edit_message.await_args.kwargs["view"])
-        self.assertIn("Writing it.", i.response.edit_message.await_args.kwargs["content"])
+        self.assertIn("Writing the recap.", i.response.edit_message.await_args.kwargs["content"])
 
     async def test_no_recap_writes_nothing(self) -> None:
         bot = fake_bot([said(0, 10)])
@@ -166,7 +187,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
         bot.post.assert_not_awaited()
-        self.assertIn("No recap.", i.response.edit_message.await_args.kwargs["content"])
+        self.assertIn("No recap written.", i.response.edit_message.await_args.kwargs["content"])
 
     async def test_a_player_who_is_not_a_dm_is_refused(self) -> None:
         bot = fake_bot([said(0, 10)])
@@ -182,7 +203,10 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         button, i = press_on(bot, "go")
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
-        self.assertIn("Expired.", i.response.edit_message.await_args.kwargs["content"])
+        self.assertIn(
+            "Expired: a newer session started.",
+            i.response.edit_message.await_args.kwargs["content"],
+        )
 
     async def test_a_plan_that_lost_recaps_refuses_politely(self) -> None:
         bot = fake_bot([said(0, 10)])
@@ -195,6 +219,15 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
         self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_NOW)
+        i.response.edit_message.assert_not_awaited()  # the buttons stay on
+
+    async def test_a_second_press_when_it_is_already_queued_says_so(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.recaps.enqueue = AsyncMock(return_value=False)
+        button, i = press_on(bot, "go")
+        await button.callback(i)
+        self.assertIn(screen.ALREADY, i.response.edit_message.await_args.kwargs["content"])
+        bot.post.assert_not_awaited()
 
 
 if __name__ == "__main__":

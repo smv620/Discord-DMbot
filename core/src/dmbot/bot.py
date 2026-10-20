@@ -382,7 +382,7 @@ from dmbot.ui.names import (
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
-from dmbot.ui.recap_short import ShortRecapButton, ask_key, ask_view
+from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -7427,14 +7427,18 @@ class DMBot(commands.AutoShardedBot):
             span = short.span_minutes(lines)
             talk = short.talk_minutes(lines, await self.consent.consenting(gid))
             if short.is_short(span, talk):
+                if await self.recaps.get(gid, cid, session.started_at) is not None:
+                    return  # a repeat of the end of session, or already decided: ask once only
                 sent = await self.post_message(
                     table.screen_channel_id,
                     short.question(span, talk),
                     ask_view(cid, session.started_at),
                     remember=ask_key(cid, session.started_at),
                 )
-                if sent is not None:
-                    self._short_asks[cid] = session.started_at
+                if sent is None:
+                    log.warning("Recap: couldn't ask about a short session")
+                    return
+                self._short_asks[cid] = session.started_at
                 log.info("Recap: asked first (a short session)")  # no numbers of the table's
                 return
             await self._queue_recap(campaign, session.started_at, table.screen_channel_id, dm)
@@ -7472,31 +7476,31 @@ class DMBot(commands.AutoShardedBot):
         newest = await self.transcripts.sessions(gid, cid, limit=1)
         return bool(newest) and newest[0].started_at > session_at
 
-    async def recap_write_anyway(
-        self, gid: int, cid: str, session_at: int, channel_id: int
-    ) -> bool:
+    async def recap_write_anyway(self, gid: int, cid: str, session_at: int, channel_id: int) -> str:
         """The DM said to write the recap of a short session. The same gates as after any session:
-        the switch and the plan (closed when they can't be checked). False when it can't be
-        queued, or already is."""
+        the switch and the plan (closed when they can't be checked). "queued", "already" (there
+        is a recap job for it) or "refused"."""
         if self.recap_worker is None or self.recaps is None or self.transcripts is None:
-            return False
+            return "refused"
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.recap_allowed(gid, cid, None):
-            return False
+            return "refused"
         dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
         if dm <= 0:
-            return False
-        return await self._queue_recap(campaign, session_at, channel_id, dm)
+            return "refused"
+        if await self._queue_recap(campaign, session_at, channel_id, dm):
+            return "queued"
+        return "already"
 
     async def _expire_short_asks(self, table: Table) -> None:
         """A new session of the campaign has started: the open question about its last short
-        session says "Expired." and loses its buttons (#2104). Memory only; after a restart the
+        session says it expired and loses its buttons (#2104). Memory only; after a restart the
         press itself finds it out of date."""
         if table.campaign_id is None:
             return
         asked = self._short_asks.pop(table.campaign_id, None)
         if asked is not None:
-            await self.decision_lines.close(ask_key(table.campaign_id, asked), "Expired.")
+            await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
     async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
         """Every secret name of the campaign, read fresh (a name may have been made secret since

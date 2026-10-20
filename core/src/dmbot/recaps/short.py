@@ -43,12 +43,14 @@ def is_short(span: int, talk: int) -> bool:
 
 
 def _minutes(n: int) -> str:
+    if n < 1:
+        return "under a minute"
     return f"{n} minute" if n == 1 else f"{n} minutes"
 
 
 def question(span: int, talk: int) -> str:
     """The question on the DM screen, in plain words."""
     return (
-        f"This session was short ({_minutes(span)}, {_minutes(talk)} of game talk after the chat "
-        "was left out). Write a recap anyway?"
+        f"Short session: {_minutes(span)} long, {_minutes(talk)} of game talk (off-topic chat "
+        "not counted). Write a recap?\nNo answer means no recap."
     )
