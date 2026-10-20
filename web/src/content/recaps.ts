@@ -3,7 +3,7 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
-import type { ApiErrorKind, Recap, RecapMonth } from "../account/api";
+import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -137,5 +137,57 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
+    "bad-cues": "Nothing was saved. Some cues need fixing. See the list under the text box.",
     other: "Something went wrong on our side. Try again in a minute.",
   };
+
+// The cue checks on save (#2084). The API says where each problem is and what kind it is; these
+// are the words for it. A cue is the 《mood》 or ((pause)) marker in the text, so each line says
+// "cue", never "tag" or "syntax", and each says what to do next. The kinds and the paragraph
+// counting (a blank line starts a new paragraph) are #2083's, from core/src/dmbot/recaps/cues.py;
+// "no_words" there is a mood cue with no story after it before the next mood.
+export const cueWords = {
+  help: "Cue words",
+  helpLead:
+    "A mood cue looks like 《calm》. A pause or pace cue looks like ((long pause)). Only the words below are cue words.",
+  moods: "Moods",
+  synonyms: "Other words that work for a mood",
+  pacing: "Pauses and pace",
+  /** What a paragraph is, since the box shows no numbers. */
+  paragraphs: "Paragraphs are counted from the top; a blank line starts a new one.",
+  /** Nothing was saved, and the edit is still in the box. */
+  noteEmpty:
+    "Nothing was saved. A cue in the text is wrong. Check each 《 》 and (( )), then save again.",
+  maxShown: 5,
+} as const;
+
+/** The heading over the list: how many, and what happens next. */
+export function cueProblemsHeading(count: number): string {
+  return `Nothing was saved, and your edits are still in the box. Fix ${
+    count === 1 ? "this cue" : `these ${count} cues`
+  }, then press ${text.save}.`;
+}
+
+/** "And 2 more. Fix these and save to see the rest." for a list cut at `maxShown`. */
+export function cueProblemsMore(hidden: number): string {
+  return `And ${hidden} more. Fix these and save to see the rest.`;
+}
+
+/** One cue problem as a plain sentence: where it is, what is wrong, what to do. `help` is true
+ * when the "Cue words" panel is on the page, so a line only points at it when it is there. */
+export function cueProblemLine(problem: CueProblem, help = true): string {
+  const where = `Near “${problem.near}” (paragraph ${problem.paragraph})`;
+  const cue = `“${problem.cue}”`;
+  const pick = help ? " Pick one from Cue words." : "";
+  const said: Record<string, string> = {
+    unknown: problem.suggest
+      ? `${cue} is not a cue word. Change it to “${problem.suggest}”.${pick}`
+      : `${cue} is not a cue word.${pick}`,
+    unclosed: `${cue} has no ending. Add the closing mark after it.`,
+    mismatched: `${cue} starts with one mark and ends with another. Use 《 》 at both ends, or (( )) at both ends.`,
+    empty: `${cue} has nothing inside. Type a word between the marks, or delete it.`,
+    no_words: `${cue} has no story after it before the next mood. Put the words it goes with after it, or delete it.`,
+    inside_word: `${cue} is inside a word. Move it to a space between words.`,
+  };
+  return `${where}: ${said[problem.kind] ?? `${cue} is wrong. Check it against the cue words.`}`;
+}

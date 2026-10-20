@@ -216,6 +216,80 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** The words a cue may use (#2084). Missing from an API older than #2083. */
+  cueWords?: CueWords;
+}
+
+/** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
+ * refused save says it (#2084, #2083). The API decides what is wrong; the page only shows it. */
+export interface CueProblem {
+  /** Which paragraph, counting from 1. */
+  paragraph: number;
+  /** A few words around the cue, so the DM can find it. */
+  near: string;
+  /** The cue as written. */
+  cue: string;
+  /** One of unknown, unclosed, mismatched, empty, no_words, inside_word today; any other word
+   * gets a plain "this cue is wrong" line (#2083 may add kinds). */
+  kind: string;
+  /** The closest allowed word, or null when none is close. */
+  suggest: string | null;
+}
+
+/** The words a cue may use, as the API checks them (#2084, #2083): the page shows these and
+ * never keeps a list of its own. */
+export interface CueWords {
+  moods: string[];
+  /** Other words that stand for a mood: `{ sad: "somber" }`. */
+  synonyms: Record<string, string>;
+  /** Pause and pace words. */
+  pacing: string[];
+}
+
+/** Reads the allowed cue words out of a recap as the API sends it. The field is `cueWords` or
+ * `cue_words` (#2083 is not final), and a value of the wrong shape gives undefined, so the help
+ * is simply not shown. */
+export function readCueWords(body: unknown): CueWords | undefined {
+  const raw = (body as { cueWords?: unknown; cue_words?: unknown } | null) ?? {};
+  const w = (raw.cueWords ?? raw.cue_words) as Partial<CueWords> | undefined;
+  if (!w || !Array.isArray(w.moods) || !Array.isArray(w.pacing)) return undefined;
+  const synonyms: Record<string, string> = {};
+  for (const [from, to] of Object.entries(w.synonyms ?? {})) {
+    if (typeof to === "string") synonyms[from] = to;
+  }
+  return {
+    moods: w.moods.map(String),
+    synonyms,
+    pacing: w.pacing.map(String),
+  };
+}
+
+/** A recap as the API sent it, with its cue words in the one spelling the page reads. */
+function recapFrom(body: unknown): Recap {
+  const recap = body as Recap;
+  const cueWords = readCueWords(body);
+  return cueWords ? { ...recap, cueWords } : recap;
+}
+
+/** Reads the cue problems out of a refused save's body. The API's field names are not final
+ * (#2083), so both spellings are read here and in `readCueWords`, nowhere else; a body with none gives []. */
+export function readCueProblems(body: unknown): CueProblem[] {
+  const raw = (body as { cueProblems?: unknown; cue_problems?: unknown } | null) ?? {};
+  const list = raw.cueProblems ?? raw.cue_problems;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((item): CueProblem[] => {
+    const p = item as Partial<CueProblem> | null;
+    if (!p || typeof p.paragraph !== "number" || typeof p.kind !== "string") return [];
+    return [
+      {
+        paragraph: p.paragraph,
+        near: String(p.near ?? ""),
+        cue: String(p.cue ?? ""),
+        kind: p.kind,
+        suggest: typeof p.suggest === "string" ? p.suggest : null,
+      },
+    ];
+  });
 }
 
 /** One campaign's recaps used this month, as `GET /me/recaps` says (`recapsThisMonth`, #1428,
@@ -420,6 +494,7 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
+  | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
@@ -428,7 +503,10 @@ export type ApiErrorKind =
   | "server"; // anything else
 
 export class ApiError extends Error {
-  constructor(readonly kind: ApiErrorKind) {
+  constructor(
+    readonly kind: ApiErrorKind,
+    readonly cueProblems: CueProblem[] = [],
+  ) {
     super(kind);
     this.name = "ApiError";
   }
@@ -619,12 +697,21 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     if (response.status === 401) throw new ApiError("signed-out");
     if (!response.ok) {
       let code = "";
+      let cueProblems: CueProblem[] = [];
       try {
-        code = String(((await response.json()) as { error?: unknown }).error ?? "");
+        const body: unknown = await response.json();
+        code = String((body as { error?: unknown }).error ?? "");
+        cueProblems = readCueProblems(body);
       } catch {
         // No JSON body: a plain server error.
       }
-      throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
+      const kind = errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server");
+      // Cue problems are the page's answer, unless the recap can't be changed at all: then the
+      // reload that goes with "not-allowed" and "not-editable" matters more.
+      if (cueProblems.length > 0 && kind !== "not-allowed" && kind !== "not-editable") {
+        throw new ApiError("bad-cues", cueProblems);
+      }
+      throw new ApiError(kind);
     }
     if (response.status === 204) return null;
     return asFile ? response.blob() : response.json();
@@ -766,12 +853,14 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         { saidAs },
       );
     },
-    recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
+    recap: async (ref) => recapFrom(await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)),
     saveRecap: async (ref, summary, housekeeping) =>
-      (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
-        summary,
-        housekeeping,
-      })) as Recap,
+      recapFrom(
+        await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
+          summary,
+          housekeeping,
+        }),
+      ),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
