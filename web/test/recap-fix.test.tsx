@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
+import RecapFix from "../src/account/RecapFix";
 import Recaps from "../src/account/Recaps";
 import { FIX_MAX_LETTERS, fixWords as w } from "../src/content/recap-fix";
 
@@ -50,6 +51,23 @@ async function open(api = mockApi("table"), ref = draft.ref) {
 }
 const type = (value: string) =>
   fireEvent.input(screen.getByLabelText(w.label), { target: { value } });
+
+async function sortedOnce(api = mockApi("table")) {
+  await open(api);
+  type("Fix the name");
+  fireEvent.click(screen.getByRole("button", { name: w.send }));
+  await screen.findByText("Fix the innkeeper's name", {}, { timeout: 5000 });
+  return api as ReturnType<typeof mockApi>;
+}
+
+describe("the switch", () => {
+  it("can only be on together with recaps", async () => {
+    const real = await vi.importActual<
+      typeof import("../src/content/recap-words")
+    >("../src/content/recap-words");
+    expect(!real.RECAP_FIX_LIVE || real.RECAPS_LIVE).toBe(true);
+  });
+});
 
 describe("the box", () => {
   it("is not on the page while it is off", async () => {
@@ -134,15 +152,87 @@ describe("sorting a note", () => {
     );
   });
 
-  it("gives up after about a minute and says to try again", async () => {
+  it("gives up after about two minutes, stops asking, and offers Check again on the same request", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
-    api.fixResult = async () => ({ state: "working" });
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      return asked > 61
+        ? {
+            state: "done",
+            points: {
+              corrections: [{ id: "c1", text: "Late point" }],
+              style: [],
+              replies: [],
+            },
+          }
+        : { state: "working" };
+    };
     await open(api);
     type("anything");
     fireEvent.click(screen.getByRole("button", { name: w.send }));
-    await vi.advanceTimersByTimeAsync(65_000);
+    await vi.advanceTimersByTimeAsync(130_000);
     expect(await screen.findByText(w.slow)).toBeTruthy();
+    const stopped = asked;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(asked).toBe(stopped); // it stopped asking
+    fireEvent.click(screen.getByRole("button", { name: w.checkAgain }));
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(await screen.findByText("Late point")).toBeTruthy();
+  });
+
+  it("stops asking when the page is left", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      return { state: "working" };
+    };
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    cleanup();
+    const before = asked;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(asked).toBe(before);
+  });
+
+  it("looks once more after a dropped connection while sorting", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    let n = 0;
+    api.fixResult = async () => {
+      n += 1;
+      if (n === 1) throw new ApiError("network");
+      return {
+        state: "done",
+        points: {
+          corrections: [{ id: "c1", text: "After the blip" }],
+          style: [],
+          replies: [],
+        },
+      };
+    };
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await screen.findByText("After the blip")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("uses the too-soon words when the bot's note limit fails the request", async () => {
+    const api = mockApi("table");
+    api.fixResult = async () => ({ state: "failed", error: "too_soon" });
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["too-soon"],
+    );
   });
 });
 
@@ -207,14 +297,6 @@ describe("the rewrite", () => {
 });
 
 describe("fresh starts and out-of-date points", () => {
-  async function sortedOnce(api = mockApi("table")) {
-    await open(api);
-    type("Fix the name");
-    fireEvent.click(screen.getByRole("button", { name: w.send }));
-    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 5000 });
-    return api as ReturnType<typeof mockApi>;
-  }
-
   it("lets a removed correction be put back", async () => {
     await sortedOnce();
     fireEvent.click(
@@ -239,11 +321,11 @@ describe("fresh starts and out-of-date points", () => {
     expect(screen.getByText(w.sorted(3))).toBeTruthy();
   }, 10000);
 
-  it("says so when nothing was found to change", async () => {
+  it("says so once when nothing was found to change", async () => {
     const api = mockApi("table");
     api.fixResult = async () => ({
       state: "done",
-      points: { corrections: [], style: [], replies: ["Nothing to do."] },
+      points: { corrections: [], style: [], replies: [] },
     });
     await open(api);
     type("anything");
@@ -251,6 +333,54 @@ describe("fresh starts and out-of-date points", () => {
     expect(await screen.findByText(w.nothing)).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.rewrite })).toBeNull();
   });
+
+  it("shows only the bot's own answer, not a second line, when it has one and nothing to change", async () => {
+    const api = mockApi("table");
+    api.fixResult = async () => ({
+      state: "done",
+      points: {
+        corrections: [],
+        style: [],
+        replies: ["Nothing to change there."],
+      },
+    });
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText("Nothing to change there.")).toBeTruthy();
+    expect(screen.queryByText(w.nothing)).toBeNull();
+  });
+
+  it("says that a kept style note is saved for later recaps, and where to remove it", async () => {
+    await sortedOnce();
+    const lead = screen.getByText(/saved for this campaign's later recaps too/);
+    expect(lead.textContent).toContain("⚙️ Settings, then Recaps");
+  }, 10000);
+
+  it("asks to send again when the rewrite's request has been swept away (404)", async () => {
+    const api = mockApi("table");
+    api.rewriteWith = async () => {
+      throw new ApiError("not-found");
+    };
+    await sortedOnce(api);
+    fireEvent.click(screen.getByRole("button", { name: w.rewrite }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["bad-choice"],
+    );
+    expect(screen.queryByRole("button", { name: w.rewrite })).toBeNull();
+  }, 10000);
+
+  it("uses neutral words for a busy moment on Rewrite", async () => {
+    const api = mockApi("table");
+    api.rewriteWith = async () => {
+      throw new ApiError("too-soon");
+    };
+    await sortedOnce(api);
+    fireEvent.click(screen.getByRole("button", { name: w.rewrite }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["too-soon-rewrite"],
+    );
+  }, 10000);
 
   it("treats a finished request with no points as a fault, not a long wait", async () => {
     const api = mockApi("table");
@@ -317,6 +447,38 @@ describe("fresh starts and out-of-date points", () => {
   }, 10000);
 });
 
+describe("the line after a rewrite starts", () => {
+  it("goes when the new draft is ready and the recap can change again", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const { rerender } = render(
+      <RecapFix api={api} recap={draft} onRecap={() => undefined} />,
+    );
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 5000 });
+    fireEvent.click(screen.getByRole("button", { name: w.rewrite }));
+    // The parent now holds the recap as being written: it cannot be changed yet.
+    rerender(
+      <RecapFix
+        api={api}
+        recap={{ ...draft, canEdit: false, working: true }}
+        onRecap={() => undefined}
+      />,
+    );
+    expect(await screen.findByText(w.started)).toBeTruthy();
+    // The new draft is ready: it can change again, and the old line is gone.
+    rerender(
+      <RecapFix
+        api={api}
+        recap={{ ...draft, canEdit: true }}
+        onRecap={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByText(w.started)).toBeNull());
+  }, 10000);
+});
+
 describe("refusals when sending", () => {
   it.each([
     ["too-big", w.problem["too-big"]],
@@ -380,7 +542,7 @@ describe("over the wire", () => {
 
   it("reads the refusals", async () => {
     await expect(
-      reply(403, { error: "not_a_dm" }).sendFix!("r", "x"),
+      reply(403, { error: "not_allowed" }).sendFix!("r", "x"),
     ).rejects.toMatchObject({ kind: "not-allowed" });
     await expect(
       reply(409, { error: "no_tries" }).rewriteWith!("r", "i", ["c1"], []),

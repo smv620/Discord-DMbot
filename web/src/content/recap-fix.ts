@@ -12,12 +12,14 @@ export const fixWords = {
   send: "Send",
   sending: "Sending…",
   sorting: "Sorting your note…",
-  slow: "This is taking longer than usual. Your note is still here. Press Send to try again.",
+  slow: "This is taking longer than usual. Your note is still being sorted. Press Check again.",
+  checkAgain: "Check again",
   sorted: (n: number): string => `Done. ${n} ${n === 1 ? "point" : "points"} to look at.`,
   nothing: "DMbot found nothing to change. Say it another way and press Send.",
   correctionsHeading: "Changes to make",
   styleHeading: "Style notes",
-  styleLead: "These start not kept. Press Keep on the style notes you want used when the recap is written again.",
+  styleLead:
+    "Style notes you keep are saved for this campaign's later recaps too. You can remove them in ⚙️ Settings, then Recaps. These start not kept: press Keep on the ones you want.",
   repliesHeading: "Answer from DMbot (nothing is changed by this)",
   remove: "Remove",
   removeOne: (text: string): string => `Remove: ${text}`,
@@ -39,9 +41,11 @@ export const fixWords = {
   started: "DMbot is writing the recap again. This page shows it when it is ready, and you approve the new text again.",
   startedNoApproval: "DMbot is writing the recap again. This page shows it when it is ready.",
   problem: {
-    "not-allowed": "Only this campaign's DM can change a recap. Sign in as the DM.",
+    "not-allowed":
+      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings, then Recaps.",
     "too-big": `That note is too long. Keep it under ${FIX_MAX_LETTERS.toLocaleString("en-US")} letters.`,
     "too-soon": "You sent a note a moment ago. Wait a minute, then press Send.",
+    "too-soon-rewrite": "Wait a minute, then press Rewrite with these again.",
     "not-editable":
       "This recap can't change now (it was posted or skipped, or it is being written). Open the recap list to see where it is.",
     "bad-text": "Type what you'd like changed first.",

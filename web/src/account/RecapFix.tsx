@@ -14,7 +14,7 @@ import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
 import { keepFocus } from "./focus";
 
 const POLL_MS = 2000;
-const POLL_LIMIT = 30; // about a minute
+const POLL_LIMIT = 60; // about two minutes: a sort can take up to 90 seconds
 
 const flip = (set: Set<string>, id: string, on: boolean): Set<string> => {
   const next = new Set(set);
@@ -40,6 +40,7 @@ export default function RecapFix({
   const [style, setStyle] = useState<Set<string>>(new Set());
   const [sorting, setSorting] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [checks, setChecks] = useState(0); // "Check again" on the same request after the page gave up
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [started, setStarted] = useState<"approve" | "plain" | null>(null);
@@ -60,6 +61,7 @@ export default function RecapFix({
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polls = 0;
+    let retried = false;
     const tick = async (): Promise<void> => {
       try {
         const got = await read(recap.ref, requestId);
@@ -74,11 +76,14 @@ export default function RecapFix({
         }
         if (got.state === "failed") {
           setSorting(false);
-          setProblem(
-            words.problem[
-              got.error === "not_allowed" ? "not-allowed" : "sort-failed"
-            ] ?? words.problem.server,
-          );
+          // The bot says why: recaps off for this campaign, the campaign's note limit, or a plain failure.
+          const kind =
+            got.error === "not_allowed"
+              ? "not-allowed"
+              : got.error === "too_soon"
+                ? "too-soon"
+                : "sort-failed";
+          setProblem(words.problem[kind] ?? words.problem.server);
           return;
         }
         polls += 1;
@@ -90,6 +95,12 @@ export default function RecapFix({
         timer = setTimeout(() => void tick(), POLL_MS);
       } catch (error) {
         if (!live) return;
+        // One dropped connection is not the end of a sort that is still running: look once more.
+        if (error instanceof ApiError && error.kind === "network" && !retried) {
+          retried = true;
+          timer = setTimeout(() => void tick(), POLL_MS);
+          return;
+        }
         setSorting(false);
         fail(error);
       }
@@ -99,7 +110,12 @@ export default function RecapFix({
       live = false;
       if (timer) clearTimeout(timer);
     };
-  }, [api, recap.ref, requestId]);
+  }, [api, recap.ref, requestId, checks]);
+
+  // The "being written again" line goes when the new draft is ready and can be changed again.
+  useEffect(() => {
+    if (started && recap.canEdit) setStarted(null);
+  }, [started, recap.canEdit]);
 
   // Once a rewrite has started the recap cannot be changed for a while (it is being written), but
   // the line saying so stays.
@@ -164,10 +180,15 @@ export default function RecapFix({
       setStarted(done.needsApproval ? "approve" : "plain");
       keepFocus(() => statusRef.current);
     } catch (error) {
-      if (fail(error) === "bad-choice") {
-        // The points are out of date: take them away so they can't be sent again.
+      const kind = fail(error);
+      if (kind === "bad-choice" || kind === "not-found") {
+        // The points are out of date (or the request was swept): take them away so they can't be
+        // sent again, and say to send the note again. A missing recap is found by the page itself.
+        setProblem(words.problem["bad-choice"] ?? words.problem.server);
         setRequestId(null);
         setPoints(null);
+      } else if (kind === "too-soon") {
+        setProblem(words.problem["too-soon-rewrite"] ?? words.problem.server);
       }
     } finally {
       inFlight.current = false;
@@ -185,7 +206,9 @@ export default function RecapFix({
           ? words.startedNoApproval
           : points
             ? points.corrections.length + points.style.length === 0
-              ? words.nothing
+              ? points.replies.length > 0
+                ? "" // the answer below says it; one line is enough
+                : words.nothing
               : words.sorted(points.corrections.length + points.style.length)
             : "";
 
@@ -229,6 +252,20 @@ export default function RecapFix({
       >
         {busy && !sorting ? words.sending : words.send}
       </button>
+      {slow && requestId && (
+        <button
+          type="button"
+          class="button secondary"
+          onClick={() => {
+            // Look again at the same request: the bot may still finish it, and a new Send counts toward the limit.
+            setSlow(false);
+            setSorting(true);
+            setChecks((n) => n + 1);
+          }}
+        >
+          {words.checkAgain}
+        </button>
+      )}
 
       {points && (
         <div>
@@ -303,13 +340,7 @@ export default function RecapFix({
           )}
           {points.corrections.length + points.style.length > 0 && (
             <>
-              <p>
-                {noTries
-                  ? words.noTriesLeft
-                  : recap.triesLeft > 0
-                    ? words.cost(recap.triesLeft)
-                    : words.costNoCount}
-              </p>
+              <p>{noTries ? words.noTriesLeft : words.cost(recap.triesLeft)}</p>
               {keptCount === 0 && <p class="small">{words.nothingKept}</p>}
               <button
                 type="button"
