@@ -3814,6 +3814,49 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     - ElevenLabs' Music v2 can take a short reference track, and it screens each one for copyright.
       Using one is a later, separate decision, and only with audio we own or that is public domain
       or CC0.
+  **A secret name is matched as a whole name only** (owner, 2026-10-20; this replaces the
+  word-by-word rule, under which any word of three letters or more of a secret name blocked a text).
+  One shared matcher is used everywhere a secret name is looked for in text DMbot writes or sends:
+  the recap's checks, the narration's second lock, the transcript cleaner's and line fixes'
+  checks, and any later one. The voice lock and the text check can never disagree.
+  - **Blocked:** the whole name with these differences:
+    - **Case.**
+    - **A leading article** added, dropped or swapped (a, an, the).
+    - **A possessive or plural on any of its words** ('s, s', s, es).
+    - **A verb ending on any of its words** (-ed, -d, -ing).
+    - **Common title abbreviations**, with or without the full stop: Mr/Mister, Mrs/Missus,
+      Ms, Dr/Doctor, St/Saint, Mt/Mount, Capt/Captain, Lt/Lieutenant, Sgt/Sergeant,
+      Gen/General, Prof/Professor.
+    - **Accents, apostrophes and hyphens** ignored (`name_key`).
+    - **The name run together** ("WhiteDeath").
+  - **Not blocked:** any part of the name on its own. Each owner example:
+
+    | Secret | Blocks | Does not block |
+    |---|---|---|
+    | "The White Death" | "a white death", "the white death" | "the white lady", "an icy death" |
+    | "Mr. White" | "Mr. White's", "Mister White" | "Mr. Weaton" |
+    | "Arcane Brotherhood" | "the arcane brotherhood", "arcane's brotherhood", "arcane brotherhood's" | "the brotherhood" |
+  - **A one-word secret** blocks that word with the same differences ("Wit" still blocks "wits";
+    the DM can keep it or not). A one-word secret under three letters is not looked for, as now.
+  - **An allowed name that contains the secret:** a match that lies inside a longer allowed name
+    doesn't count. "Arcane Brotherhood" inside an allowed "Arcane Brotherhood Hall" is the
+    hall's name.
+  **When a secret is revealed** (owner question, 2026-10-20). Three ways, all the DM's choice:
+  1. **On the name's card, any time:** the DM presses 🤫 on that name to turn the secret off.
+     This is built, and it can be undone from the card.
+  2. **A player says it at the table:** after the session the DM is asked privately: "Keep it
+     secret" or "Not secret any more" (#1407, built). Up to five names a session.
+  3. **The DM says it at the table (new):** when the DM's own line holds a secret name, by the
+     whole-name matcher, DMbot asks the DM at once on the DM screen: "You just said **<name>**
+     out loud. Is it revealed now?" with [Yes, players know now] and [No, keep it secret].
+     - Yes turns the secret off, through the same change path as the card, so it can be undone.
+     - No keeps it, and DMbot doesn't ask about that name again this session.
+     - It asks once per name per session, never on Quiet (the after-session question covers it
+       then), and only the campaign's DMs can answer.
+     - STORY_MEMORY's "who learned it" step (`knows` for some characters) comes with the
+       knowledge slice later. For now, Yes means everyone at the table.
+
+     DMbot never assumes a reveal: a DM may say a secret name in an aside.
   **Names the recap uses that DMbot doesn't know yet** (owner, 2026-10-19, #2027, after recap test 3
   refused place names from the owner's own names file): the names list can miss a name, most often a
   new one. So an unknown name in a draft is looked at before it fails the draft:
