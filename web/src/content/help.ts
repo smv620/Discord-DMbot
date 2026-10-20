@@ -80,6 +80,32 @@ export const secretClueSteps: Step[] = [
   },
 ];
 
+// The note before each session (#1403; core memory/presession.py) and the question about a secret
+// name a player said (#1407; core ui/secret_aloud.py) are built and waiting for the owner's live
+// checks, so their steps are held with the What's new entries "A note before tonight's session"
+// and "When a player says a secret name" (whats-new.ts, `held`). Set each switch to true in the
+// same change that moves its entry out of `held`; a test keeps each pair in step. The note's
+// story-thread lines and buttons sit behind STORY_THREADS_LIVE and the guide switch, so the step
+// names none of them.
+export const PRESESSION_NOTE_LIVE = false;
+export const SECRET_SAID_LIVE = false;
+
+export const presessionNoteSteps: Step[] = [
+  {
+    text: "When a session starts, DMbot can post a short note on your DM screen, for you alone. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. If you have confirmed nothing yet, there is no note. It comes once a session, not again if DMbot restarts mid-game. Players never see it, and it is not in the transcript.",
+  },
+];
+
+export const secretSaidSteps: Step[] = [
+  {
+    text: "If a player says a name you keep secret, it lands in the transcript, which anyone in your server can read. After the session, DMbot asks you privately, one name at a time and five at most, whether it stays secret. Press Keep it secret and nothing changes, and DMbot asks again if a player says it in a later session. Press Not secret any more and DMbot may use the name in answers to players. To make it secret again, use the name's card. Only you can answer, and DMbot never decides for you.",
+    names: [
+      { name: "Keep it secret", file: "ui/secret_aloud.py" },
+      { name: "Not secret any more", file: "ui/secret_aloud.py" },
+    ],
+  },
+];
+
 // Who is alive or dead and who carries the one-of-a-kind things (#1284; core memory/states.py,
 // ui/claims_review.py). The facts come from lines the game master says yes to after a session,
 // and those lines come from the story extractor, which stays off until its prompt passes the
@@ -794,6 +820,8 @@ export const dmSteps: Step[] = [
   ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
+  ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),
+  ...(SECRET_SAID_LIVE ? secretSaidSteps : []),
   ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
