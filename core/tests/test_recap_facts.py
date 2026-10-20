@@ -14,6 +14,7 @@ from dmbot.recaps import draft as rd
 from tests import recap_fixtures as fx
 from tests.test_recap_calls import calls_section, inputs
 
+LINES = {1: "Mira gave up her sword at the keep's gate"}
 TEXT = (
     "《Tense》 ((slow)) The party reached the old tower at dusk. They went north. "
     "《Calm》 A fire was lit. Everyone gave up a blade."
@@ -45,6 +46,28 @@ class Sentences(unittest.TestCase):
 
     def test_a_number_that_names_no_sentence_cuts_nothing(self) -> None:
         self.assertEqual(rd.cut_sentences(rd.Prose(TEXT, ("a", "b")), [0, 9]).summary, TEXT)
+
+
+class TheSplit(unittest.TestCase):
+    def test_a_title_or_a_number_does_not_end_a_sentence(self) -> None:
+        text = "《Tense》 Mr. Hale spoke at 3.5 bells. Dr. Vex nodded! Then it ended."
+        self.assertEqual(
+            rd.sentences_of(text),
+            ["Mr. Hale spoke at 3.5 bells.", "Dr. Vex nodded!", "Then it ended."],
+        )
+
+    def test_a_stop_inside_a_cue_does_not_split_it_and_a_cut_keeps_it_whole(self) -> None:
+        text = "《Tense》 One thing. ((slow. very)) Two things. Three things."
+        self.assertEqual(len(rd.sentences_of(text)), 3)
+        cut = rd.cut_sentences(rd.Prose(text, ("m",)), [3])
+        self.assertIn("((slow. very)) Two things.", cut.summary)
+        self.assertNotIn("Three things", cut.summary)
+
+    def test_an_empty_summary_has_no_sentences_and_no_flag_survives(self) -> None:
+        self.assertEqual(rd.sentences_of("《Calm》"), [])
+        facts = rd.parse_facts(fx.facts_answer([(1, "place")]), 0, {1})
+        assert facts is not None
+        self.assertTrue(facts.clean)
 
 
 class TheAnswer(unittest.TestCase):
@@ -97,7 +120,7 @@ class ThePlace(unittest.TestCase):
     def check(self, **extra: object) -> list[bt.Beat]:
         raws = [{**self.RAW, **extra}] * 3
         kept, _ = bt.check(
-            raws, lines={1: "Mira gave up her sword"}, speakers={1: fx.DM}, allowed_names=["Mira"],
+            raws, lines=LINES, speakers={1: fx.DM}, allowed_names=["Mira"],
             secret_names=[],
         )  # fmt: skip
         return kept
@@ -113,11 +136,21 @@ class ThePlace(unittest.TestCase):
         self.assertNotIn("Where", bt.sheet([beat]))
 
     def test_a_long_place_is_cut_and_a_stored_beat_without_one_still_loads(self) -> None:
-        self.assertEqual(len(self.check(where="x" * 500)[0].where), bt.WHERE_MAX)
+        self.assertEqual(len(self.check(where="gate " * 100)[0].where), bt.WHERE_MAX)
         old = [{"what": "w", "who": [], "lines": [1], "kind": "event"}]
         self.assertEqual(bt.from_json(old)[0].where, "")
         kept = self.check(where="the gate")
         self.assertEqual(bt.from_json(bt.as_json(kept)), kept)
+
+    def test_a_place_that_is_secret_or_never_said_is_dropped_and_the_beat_stays(self) -> None:
+        kept, _ = bt.check(
+            [{**self.RAW, "where": "the Hidden Vault"}] * 3,
+            lines=LINES, speakers={1: fx.DM}, allowed_names=["Mira"],
+            secret_names=["Hidden Vault"],
+        )  # fmt: skip
+        self.assertEqual([b.where for b in kept], ["", "", ""])
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(self.check(where="a tavern in the north")[0].where, "")  # never said
 
     def test_the_beat_prompt_asks_for_the_place_and_the_writer_may_not_move_it(self) -> None:
         self.assertIn('"where"', bt.system())

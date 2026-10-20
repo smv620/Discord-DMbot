@@ -25,7 +25,7 @@ MAX_WINDOWS = 12  # a longer session gets bigger windows, not more calls
 WINDOW_BEATS = 30  # most beats asked for in one window
 MAX_BEATS = 120  # most beats in the whole sheet
 MIN_BEATS = 3  # fewer real beats than this is not a session worth a recap
-MAX_TOKENS = 3000
+MAX_TOKENS = 3600  # (the place on each beat added to the answer, #2064)
 BEAT_MAX = 240  # characters of one beat
 MIN_LINES_FOR_A_PLAYER = 8  # a player with this many lines must appear in some beat
 KINDS = ("event", "moment", "state")
@@ -243,6 +243,13 @@ def check(
             continue
         kind = str(raw.get("kind", "event"))
         where = " ".join(str(raw.get("where") or "").split())[:WHERE_MAX]
+        # A place is held to the same rules as a name: said in the session, never a secret. One
+        # that is not is dropped and the beat stays, with no place.
+        if where and (
+            unsaid_names([where], said_words, allowed_names, transcript_words)
+            or names_a_secret(where, secret_names, allowed_names)
+        ):
+            where = ""
         kept.append(
             Beat(len(kept) + 1, what, who, numbers, kind if kind in KINDS else "event", where)
         )

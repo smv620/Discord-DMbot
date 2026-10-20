@@ -35,6 +35,7 @@ from dmbot.recaps.text import (
     CUE,
     NOT_NAMES,
     OPENERS,
+    PERFORMANCE,
     names_a_secret,
     narration_of,
     proper_nouns,
@@ -879,18 +880,34 @@ def facts_schema() -> dict[str, Any]:
     }
 
 
-_SENTENCE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
+_END = re.compile(r"[.!?]+[\"'”’)]*(?=\s+[A-Z《(“\"]|\s*$)")
+_ABBREVIATIONS = frozenset({"mr", "mrs", "ms", "dr", "st", "mt", "sir", "lord", "lady", "capt"})
 
 
 def sentence_spans(summary: str) -> list[tuple[int, int]]:
     """Where each sentence of the narration is in the summary, as (start, end), cues left out of
     the sentence's own words. Numbered in code so the checker can answer with numbers and never
-    with text (#2064). A cue sits in the span that follows it; it is never a sentence alone."""
+    with text (#2064). A sentence ends at . ! or ? followed by a capital, a cue or the end; a
+    title ("Mr. Hale") does not end one, and a cue is masked first so a stop inside it does not.
+    A cue sits in the span that follows it; it is never a sentence alone."""
+
+    def mask(
+        m: re.Match[str],
+    ) -> str:  # (its first mark stays: a cue after a stop starts a sentence)
+        return m.group()[0] + "x" * (len(m.group()) - 1)
+
+    masked = PERFORMANCE.sub(mask, CUE.sub(mask, summary))
     spans: list[tuple[int, int]] = []
-    for match in _SENTENCE.finditer(summary):
-        if narration_of(match.group()).strip(" \n\t.!?"):
-            spans.append((match.start(), match.end()))
-    return spans
+    start = 0
+    for match in _END.finditer(masked):
+        before = re.search(r"([A-Za-z]+)\.$", masked[start : match.end()])
+        if before and before.group(1).lower() in _ABBREVIATIONS:
+            continue
+        spans.append((start, match.end()))
+        start = match.end()
+    if start < len(summary):
+        spans.append((start, len(summary)))
+    return [(a, b) for a, b in spans if narration_of(summary[a:b]).strip(" \n\t.!?\"'”’)")]
 
 
 def sentences_of(summary: str) -> list[str]:
@@ -924,12 +941,14 @@ def parse_facts(raw: str, sentences: int, beats: Collection[int]) -> Facts | Non
     return Facts(tuple(sorted(flagged.items())), tuple(missing))
 
 
-def facts_problems(facts: Facts, summary: str) -> list[str]:
+def facts_problems(facts: Facts, summary: str, *, with_text: bool = True) -> list[str]:
     """The flags as instructions for the one revision: sentence numbers with their kinds and the
-    sentence's own text (the draft's), and the missing beats by number."""
+    sentence's own text (the draft's), and the missing beats by number. `with_text` off gives the
+    form a test report may show: numbers and kinds only, never a sentence of the recap."""
     texts = sentences_of(summary)
     out = [
-        f"sentence {n} says something the beats do not say ({kind}): {texts[n - 1]}"
+        f"sentence {n} says something the beats do not say ({kind})"
+        + (f": {texts[n - 1]}" if with_text else "")
         for n, kind in facts.unsupported
     ]
     if facts.missing:

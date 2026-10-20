@@ -930,3 +930,37 @@ class Working(Base):
             ["say only what the beats say, in the place they say it"],
         )
         self.assertEqual(rd.weak({**GOOD_GRADE, "faithful": 4}), [])
+
+    async def test_a_revision_whose_check_cannot_be_read_is_not_shipped_unchecked(self) -> None:
+        n = self.sentence("The torch burned")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[fx.facts_answer([(n, "place")]), "not json"]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("The torch burned down a little", job.summary)  # first draft, cut
+
+    async def test_the_fact_check_leaves_the_last_call_for_the_title(self) -> None:
+        await self.setUpWorker(self.happy())
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        await self.store.update(1, self.one.id, 100, calls=pl.MAX_CALLS - 1)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        sheet = [rd.Beat(1, "x", (), (1,), "event")]  # type: ignore[attr-defined]
+        self.assertIsNone(
+            await self.worker._facts(1, self.one.id, job, sheet, rd.Prose("A b.", ()))
+        )
+        self.assertEqual(self.worker._careful.fact_sent, [])  # type: ignore[attr-defined]
+
+    async def test_the_test_report_gets_no_sentence_of_the_recap(self) -> None:
+        n = self.sentence("The torch burned")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[fx.facts_answer([(n, "place")]), fx.CLEAN_FACTS]),
+        )
+        shown: list[str] = []
+        self.worker._on_problems = lambda state, attempt, problems: shown.extend(problems)
+        await self.go()
+        self.assertEqual(shown, [f"sentence {n} says something the beats do not say (place)"])

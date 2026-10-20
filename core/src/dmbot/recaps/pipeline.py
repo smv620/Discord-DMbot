@@ -37,7 +37,7 @@ from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-MAX_CALLS = 12  # AI calls for one recap: three stages, a retry each (two for the prose), the checks
+MAX_CALLS = 13  # AI calls for one recap: three stages, a retry each (two for the prose), the checks
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
 DAILY_CALLS = 40  # AI calls for one campaign's recaps in a day (a Try again is a new recap)
 BACKOFF_S = (60, 240, 960)
@@ -580,12 +580,20 @@ class RecapWorker:
             facts = await self._facts(gid, cid, job, rd.pick_beats(sheet, length.beats), prose)
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
+        if facts is None and key in self._flags:
+            # The revision cannot be checked (the call failed or was unreadable): do not ship it
+            # unverified; the first draft stands with its flagged sentences cut.
+            return await self._prose_failed(
+                gid, cid, job, ["the fact check of the revision could not be had"],
+                inputs, sheet, length,
+            )  # fmt: skip
         if facts is not None and not facts.clean:
             if key in self._fallback and key not in self._flags:
                 # an earlier clean draft stands; this revision, flagged, does not
                 return await self._prose_failed(
-                    gid, cid, job, rd.facts_problems(facts, prose.summary), inputs, sheet, length
-                )
+                    gid, cid, job, rd.facts_problems(facts, prose.summary, with_text=False),
+                    inputs, sheet, length,
+                )  # fmt: skip
             if key not in self._revised and job.attempt < PROSE_LAST_ATTEMPT:
                 # One revision, told which sentences and which beats (#2064); the draft is kept
                 # so that, if the revision fails its checks, this one stands with the flagged
@@ -595,8 +603,12 @@ class RecapWorker:
                 self._flags[key] = facts
                 self._fallback[key] = (prose, {}, self._last.get((*key, "prose")))
                 self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-                if self._on_problems is not None:
-                    self._on_problems(job.state, job.attempt, problems)
+                if self._on_problems is not None:  # (a test report never shows the draft's words)
+                    self._on_problems(
+                        job.state,
+                        job.attempt,
+                        rd.facts_problems(facts, prose.summary, with_text=False),
+                    )
                 await self._store.update(
                     gid, cid, job.session_at, attempt=job.attempt + 1, problems=problems
                 )
@@ -690,7 +702,12 @@ class RecapWorker:
                     weak = ", ".join(rd.weak(grade)) or "a score"
                     self._on_note(
                         "The revised recap failed a check, so the first draft stands: it passed "
-                        f"every check, and the grader scored it below the bar ({weak})."
+                        "every check, and "
+                        + (
+                            "the fact check flagged sentences in it (cut)."
+                            if flags is not None
+                            else f"the grader scored it below the bar ({weak})."
+                        )
                     )
                 return await self._accept_prose(
                     gid, cid, job, key, prose, grade, inputs, sheet, transcript, kept_event,
@@ -752,7 +769,7 @@ class RecapWorker:
         it cannot be had (a failed or unreadable call): like the grader, it never stops a recap
         that passed every check."""
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= self._ceiling(fresh):
+        if fresh.calls >= self._ceiling(fresh) - 1:  # the last call is the title's: keep it
             return None
         await self._store.update(
             gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
@@ -794,7 +811,7 @@ class RecapWorker:
         """The draft without the sentences still flagged, done in code. None when what is left
         no longer meets the checks (the minimum length above all): then there is no recap."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
-        if self._on_note is not None:
+        if self._on_note is not None and facts.unsupported:
             self._on_note(
                 f"Cut {len(facts.unsupported)} sentence(s) the fact check still flagged "
                 "after the one revision."
