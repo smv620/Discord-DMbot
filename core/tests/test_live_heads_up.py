@@ -14,7 +14,20 @@ from dmbot import bot as botmod
 from dmbot.dm_screen import levels
 from dmbot.memory import live_heads_up as lhu
 from dmbot.memory.live_heads_up import LiveSession
-from dmbot.memory.models import ALIVE, CONFIRMED, DEAD, DM, NPC, PROPOSED, Entity, State
+from dmbot.memory.lookup import CampaignLookup, LookupData
+from dmbot.memory.models import (
+    ALIVE,
+    CONFIRMED,
+    DEAD,
+    DM,
+    NPC,
+    PLAYER_CHARACTER,
+    PROPOSED,
+    Alias,
+    Entity,
+    State,
+    name_key,
+)
 from dmbot.transcript.models import NARRATING
 from dmbot.ui import live_heads_up as ui
 
@@ -88,7 +101,24 @@ class TheRule(unittest.TestCase):
 
 
 def lookup_with(*entities: Entity) -> Any:
-    return SimpleNamespace(entities={e.id: e for e in entities})
+    """A real lookup, so the label is resolved by the same rule that made it."""
+    aliases = tuple(
+        Alias(
+            e.id[:16] + "k" * 16,
+            e.id,
+            e.name,
+            name_key(e.name),
+            "full",
+            None,
+            False,
+            e.status,
+            (),
+            DM,
+            0,
+        )
+        for e in entities
+    )
+    return CampaignLookup.build(LookupData(1, entities, aliases, (), ()))
 
 
 class Wiring(unittest.IsolatedAsyncioTestCase):
@@ -186,6 +216,34 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
         bot2.memory.states = states_then_stop
         await self.assertNothing(bot2, table2)
 
+    async def test_none_when_another_entry_shares_the_name(self) -> None:
+        bot, table = self.make()
+        table.name_lookup = lookup_with(rook(), rook(id="b" * 32, role=PLAYER_CHARACTER))
+        await self.assertNothing(bot, table)  # which Rook was talking? DMbot does not guess
+        bot2, table2 = self.make()
+        table2.name_lookup = lookup_with(rook(), rook(id="c" * 32, status=PROPOSED))
+        await self.assertNothing(bot2, table2)
+
+    async def test_a_post_that_fails_does_not_use_up_the_cooldown(self) -> None:
+        bot, table = self.make(post=AsyncMock(return_value=False))
+        await self.run_it(bot, table)
+        bot.post.assert_awaited_once()
+        self.assertIsNone(table.live_heads_up.last_at)
+        bot.post = AsyncMock(return_value=True)
+        await self.run_it(bot, table)  # the next try can still say it
+        bot.post.assert_awaited_once()
+
+    async def test_a_level_turned_to_quiet_while_it_works_stops_the_post(self) -> None:
+        bot, table = self.make()
+
+        async def states_then_quiet(*a: Any) -> Any:
+            table.screen_level = "quiet"
+            return {ROOK_ID: condition()}
+
+        bot.memory.states = states_then_quiet
+        await self.assertNothing(bot, table)
+        self.assertIsNone(table.live_heads_up.last_at)
+
     async def test_none_when_the_session_has_ended(self) -> None:
         bot, table = self.make()
         bot.tables.clear()
@@ -210,7 +268,11 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
     def make(self, user: int = DM_USER) -> tuple[Any, Any, Any]:
         live = LiveSession()
         table = SimpleNamespace(campaign_id=CAMPAIGN, live_heads_up=live, started_at=5000)
-        memory = SimpleNamespace(entity=AsyncMock(return_value=rook()), set_condition=AsyncMock())
+        memory = SimpleNamespace(
+            entity=AsyncMock(return_value=rook()),
+            set_condition=AsyncMock(),
+            states=AsyncMock(return_value={ROOK_ID: condition()}),
+        )
         bot = SimpleNamespace(
             memory=memory,
             tables={GUILD: table},
@@ -218,12 +280,18 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
                 get=AsyncMock(return_value=SimpleNamespace(id=CAMPAIGN, dm_user_ids=[DM_USER]))
             ),
         )
+        done = {"now": False}
+
+        async def defer(*a: Any, **k: Any) -> None:
+            done["now"] = True
+
         response = SimpleNamespace(
-            is_done=lambda: False, send_message=AsyncMock(), edit_message=AsyncMock()
+            is_done=lambda: done["now"], send_message=AsyncMock(), defer=defer
         )
         interaction = SimpleNamespace(
             client=bot, guild=SimpleNamespace(id=GUILD), user=SimpleNamespace(id=user),
-            response=response,
+            response=response, type=None, edit_original_response=AsyncMock(),
+            followup=SimpleNamespace(send=AsyncMock()),
         )  # fmt: skip
         return interaction, bot, live
 
@@ -233,9 +301,32 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
         bot.memory.set_condition.assert_awaited_once_with(
             GUILD, CAMPAIGN, ROOK_ID, ALIVE, source=DM, from_session_at=5000
         )
-        text = interaction.response.edit_message.await_args.kwargs["content"]
+        text = interaction.edit_original_response.await_args.kwargs["content"]
         self.assertIn("Captain Rook", text)
-        self.assertIsNone(interaction.response.edit_message.await_args.kwargs["view"])
+        self.assertIsNone(interaction.edit_original_response.await_args.kwargs["view"])
+
+    async def test_a_stale_button_never_overwrites_a_newer_word_of_the_dms(self) -> None:
+        interaction, bot, _live = self.make()
+        bot.memory.states = AsyncMock(return_value={ROOK_ID: condition("missing")})
+        await ui.answer(interaction, ui.ALIVE_AFTER_ALL, CAMPAIGN, ROOK_ID)
+        bot.memory.set_condition.assert_not_awaited()
+        text = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("Nothing changed", text)
+
+    async def test_a_button_from_another_campaigns_session_dates_nothing_with_it(self) -> None:
+        interaction, bot, _live = self.make()
+        bot.tables[GUILD].campaign_id = "d" * 32  # the running table is another campaign
+        await ui.answer(interaction, ui.ALIVE_AFTER_ALL, CAMPAIGN, ROOK_ID)
+        bot.memory.set_condition.assert_awaited_once_with(
+            GUILD, CAMPAIGN, ROOK_ID, ALIVE, source=DM, from_session_at=None
+        )
+
+    async def test_a_failed_write_tells_the_dm_and_leaves_the_buttons(self) -> None:
+        interaction, bot, _live = self.make()
+        bot.memory.set_condition = AsyncMock(side_effect=OSError)
+        await ui.answer(interaction, ui.ALIVE_AFTER_ALL, CAMPAIGN, ROOK_ID)
+        self.assertIn("couldn't record", interaction.followup.send.await_args.args[0])
+        interaction.edit_original_response.assert_not_awaited()  # the buttons stay
 
     async def test_not_really_them_and_ignore_write_nothing_and_keep_it_quiet(self) -> None:
         for action in (ui.NOT_THEM, ui.IGNORE):

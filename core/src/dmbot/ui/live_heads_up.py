@@ -15,9 +15,9 @@ from typing import Any, ClassVar
 
 import discord
 
-from dmbot.memory.live_heads_up import HeadsUp, keep_quiet
-from dmbot.memory.models import ALIVE, DM, MemoryRuleError
-from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.memory.live_heads_up import HeadsUp, is_confirmed_character, keep_quiet
+from dmbot.memory.models import ALIVE, DEAD, DM
+from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 from dmbot.ui.names import _md, _memory
 
 log = logging.getLogger(__name__)
@@ -86,12 +86,15 @@ async def answer(
     all" records a new dated condition (the history stays)."""
     bot, guild, memory = _bot(interaction), interaction.guild, _memory(interaction)
     if guild is None or memory is None:
+        await _tell(interaction, "DMbot can't do that here.")
         return
     campaign = await bot.campaigns.get(guild.id, campaign_id)
     if campaign is None or interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, NOT_THE_DM)
         return
+    await _answer_first(interaction, in_place=True)  # the steps below can take a moment
     table = bot.tables.get(guild.id)
+    # Only the running session of this same campaign: its quiet set, and its start for a date.
     live = table.live_heads_up if table is not None and table.campaign_id == campaign_id else None
     entity = await memory.entity(guild.id, campaign_id, entity_id)
     name = _md(entity.name) if entity is not None else "them"
@@ -100,8 +103,14 @@ async def answer(
             keep_quiet(live, entity_id)
         await _finish(interaction, _DONE[action].format(name=name))
         return
-    if action != ALIVE_AFTER_ALL or entity is None:
+    if action != ALIVE_AFTER_ALL or not is_confirmed_character(entity):
         await _finish(interaction, "That one is no longer there.")
+        return
+    # A stale button never overwrites a newer word of the DM's: only a still-dead entry is brought
+    # back, and the old record stays.
+    current = (await memory.states(guild.id, campaign_id, [entity_id])).get(entity_id)
+    if current is None or current.condition != DEAD:
+        await _finish(interaction, f"**{name}** isn't recorded as dead any more. Nothing changed.")
         return
     try:
         await memory.set_condition(
@@ -110,10 +119,10 @@ async def answer(
             entity_id,
             ALIVE,
             source=DM,
-            from_session_at=table.started_at if table is not None else None,
+            from_session_at=table.started_at if live is not None and table is not None else None,
         )
-    except MemoryRuleError:
-        log.info("Live heads-up: couldn't record alive")  # no names in the log
+    except Exception as exc:  # the database, a rule: the buttons stay so the DM can try again
+        log.info("Live heads-up: couldn't record alive (%s)", type(exc).__name__)
         await _tell(interaction, "DMbot couldn't record that. Try again in a moment.")
         return
     if live is not None:

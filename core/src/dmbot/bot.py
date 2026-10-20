@@ -5599,15 +5599,8 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_consent(gid, speaker)
         ):
             return
-        key = name_key(label)
-        entity = next(
-            (
-                e
-                for e in lookup.entities.values()
-                if e.type == "character" and name_key(e.name) == key
-            ),
-            None,
-        )
+        entity_id = speaker_ai.entity_for(lookup, label)  # exactly one entry, by the label's rule
+        entity = lookup.entities.get(entity_id) if entity_id is not None else None
         if entity is None:
             return
         live = table.live_heads_up
@@ -5627,6 +5620,7 @@ class DMBot(commands.AutoShardedBot):
                 state = (await self.memory.states(gid, cid, [entity.id])).get(entity.id)
                 if not self.consent.has_consent(gid, speaker) or self.tables.get(gid) is not table:
                     return
+                before = live.last_at
                 found = live_heads_up_for(
                     entity,
                     state,
@@ -5637,17 +5631,31 @@ class DMBot(commands.AutoShardedBot):
                 )
                 if found is None:
                     return
-                number = None
-                if self.transcripts is not None and found.since is not None:
-                    sessions = await self.transcripts.sessions(gid, cid, limit=1000)
-                    number = {s.started_at: s.number for s in sessions}.get(found.since)
-                if not self.consent.has_consent(gid, speaker) or self.tables.get(gid) is not table:
+                posted = False
+                try:
+                    number = None
+                    if self.transcripts is not None and found.since is not None:
+                        sessions = await self.transcripts.sessions(gid, cid, limit=1000)
+                        number = {s.started_at: s.number for s in sessions}.get(found.since)
+                    if (
+                        not self.consent.has_consent(gid, speaker)
+                        or self.tables.get(gid) is not table
+                        or table.campaign_id != cid
+                        or not screen_levels.allows(table.screen_level, screen_levels.WARNING)
+                    ):
+                        return
+                    posted = bool(
+                        await self.post(
+                            table.screen_channel_id,
+                            heads_up_text(found, number),
+                            view=heads_up_view(cid, found.entity_id),
+                        )
+                    )
+                finally:
+                    if not posted:
+                        live.last_at = before  # nothing was said, so the cooldown is not used
+                if not posted:
                     return
-                await self.post(
-                    table.screen_channel_id,
-                    heads_up_text(found, number),
-                    view=heads_up_view(cid, found.entity_id),
-                )
                 log.info("Live heads-up posted")  # no names, no words
             except Exception:
                 log.exception("The live heads-up failed")
