@@ -359,6 +359,12 @@ export const held: Held[] = [
       "Held until it has been seen working on the test server (#1403).",
   },
   {
+    date: "2026-10-20",
+    title: "When you say a secret name",
+    what: "If you say a name you marked secret out loud at the table, DMbot asks you at once, privately, whether it is revealed now. Press Yes, players know now or No, keep it secret. DMbot never decides for you, and only asks once a session for each name.",
+    reason: "Waits for the deploy of #2094 (#2088, #2102).",
+  },
+  {
     date: "2026-10-16",
     title: "When a player says a secret name",
     what: "If a player says a name you've marked secret, it ends up in the transcript, which anyone in your server can read. After the session DMbot asks you privately, one name at a time (up to five), whether it should stay secret from players or be opened up. Only you can answer, and DMbot never decides for you.",

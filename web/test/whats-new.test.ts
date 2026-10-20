@@ -84,6 +84,7 @@ describe("What's new", () => {
       "Choose what recaps do",
       "New names from what was said",
       "A note before tonight's session",
+      "When you say a secret name", // until #2094 is deployed (SECRET_REVEAL_LIVE, #2102)
       "When a player says a secret name",
       "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
       "Heads-up when a fallen character speaks", // until dev1 has seen it working (DMBOT_LIVE_HEADS_UP, #2068)

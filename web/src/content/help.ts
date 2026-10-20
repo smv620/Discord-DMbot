@@ -90,6 +90,22 @@ export const secretClueSteps: Step[] = [
 export const PRESESSION_NOTE_LIVE = false;
 export const SECRET_SAID_LIVE = false;
 
+// The question DMbot asks at once when the game master says a secret name out loud (#2088, #2094;
+// core ui/secret_reveal.py). It is on by default on the server (DMBOT_SECRET_REVEAL_ASK), so it
+// goes live with the deploy. The step is held with the What's new entry "When you say a secret
+// name"; set the switch to true in the same change that moves the entry out of `held`.
+export const SECRET_REVEAL_LIVE = false;
+
+export const secretRevealSteps: Step[] = [
+  {
+    text: "When you say a name you marked secret out loud at the table, DMbot asks you at once, privately: \"You just said it out loud. Is it revealed now?\" Press Yes, players know now and DMbot may use it in answers to players; you can make it secret again from the name's card. Press No, keep it secret and DMbot won't ask about it again this session. If your players can look at your DM screen, the question comes to you as a private message instead. DMbot asks about each name once a session, only for what you say, and never decides for you. Only the campaign's DMs can answer.",
+    names: [
+      { name: "Yes, players know now", file: "ui/secret_reveal.py" },
+      { name: "No, keep it secret", file: "ui/secret_reveal.py" },
+    ],
+  },
+];
+
 export const presessionNoteSteps: Step[] = [
   {
     text: "When a session starts, if your plan includes story memory, DMbot can post a short note on your DM screen: read it before you begin. It has last time's recap, what you confirmed about the names heard last time, who or what is dead, lost, destroyed, missing or captured, and how many things said at the table wait for your check. If there is nothing to say, there is no note. It comes once a session, not again if DMbot restarts mid-game. DMbot never sends it to players, and it is not in the transcript.",
@@ -822,6 +838,7 @@ export const dmSteps: Step[] = [
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),
   ...(SECRET_SAID_LIVE ? secretSaidSteps : []),
+  ...(SECRET_REVEAL_LIVE ? secretRevealSteps : []),
   ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
