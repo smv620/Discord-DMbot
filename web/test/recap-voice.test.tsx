@@ -61,6 +61,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   live.on = false;
   vi.unstubAllGlobals();
 });
@@ -151,6 +152,40 @@ describe("speaking a note", () => {
     );
   }, 10000);
 
+  it("keeps words typed while the note is being turned into words", async () => {
+    await open();
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    // The words are typed after the clip went, before the answer comes back.
+    fireEvent.input(screen.getByLabelText(fix.label), { target: { value: "Typed meanwhile." } });
+    await screen.findByText(w.heard, {}, { timeout: 6000 });
+    expect((screen.getByLabelText(fix.label) as HTMLTextAreaElement).value).toBe(
+      "Typed meanwhile. Change the innkeeper's name to Brannoch.",
+    );
+  }, 10000);
+
+  it("closes the ⓘ with Escape", async () => {
+    await open();
+    const info = screen.getByRole("button", { name: w.listeningButton });
+    fireEvent.click(info);
+    expect(screen.getByText(w.listening)).toBeTruthy();
+    fireEvent.keyDown(info, { key: "Escape" });
+    expect(screen.queryByText(w.listening)).toBeNull();
+  });
+
+  it("takes the cut-off note away when the DM types", async () => {
+    const api = mockApi("table");
+    api.voiceResult = async () => ({ state: "done" as const, text: "x".repeat(1200) });
+    await open(api);
+    speak();
+    await screen.findByRole("button", { name: w.stopLabel });
+    stop();
+    await screen.findByText(w.cutOff, {}, { timeout: 6000 });
+    fireEvent.input(screen.getByLabelText(fix.label), { target: { value: "Short." } });
+    expect(screen.queryByText(w.cutOff)).toBeNull();
+  }, 10000);
+
   it("moves focus to Stop when recording starts, and keeps the timer out of the live region", async () => {
     await open();
     speak();
@@ -237,7 +272,7 @@ describe("speaking a note", () => {
     const api = await open();
     speak();
     await screen.findByRole("button", { name: w.stopLabel });
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(59_000);
     await waitFor(() => expect(api.calls).toContain(`sendVoice:${draft.ref}:audio/webm:100`));
     expect(screen.getByText(new RegExp(w.atLimit.slice(0, 20)))).toBeTruthy();
     vi.useRealTimers();

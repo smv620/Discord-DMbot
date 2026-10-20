@@ -50,6 +50,10 @@ export default function RecapFix({
   const statusRef = useRef<HTMLParagraphElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [cutOff, setCutOff] = useState(false);
+  // The words in the box as they are now: a spoken note that comes back later is added after whatever
+  // was typed while it was being turned into words.
+  const textRef = useRef("");
+  textRef.current = text;
 
   const fail = (error: unknown): string => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -249,7 +253,8 @@ export default function RecapFix({
           onHeard={(heard) => {
             // The words are only put in the box: nothing is sent until the DM presses Send.
             // Words already typed stay: the heard words are added after them.
-            const joined = text.trim() === "" ? heard : `${text.trimEnd()} ${heard}`;
+            const now = textRef.current;
+            const joined = now.trim() === "" ? heard : `${now.trimEnd()} ${heard}`;
             setCutOff(joined.length > FIX_MAX_LETTERS);
             setText(joined.slice(0, FIX_MAX_LETTERS));
             noteRef.current?.focus();
@@ -265,7 +270,10 @@ export default function RecapFix({
           value={text}
           disabled={!recap.canEdit}
           aria-describedby="recap-fix-count"
-          onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => {
+            setText((e.target as HTMLTextAreaElement).value);
+            setCutOff(false);
+          }}
         />
       </label>
       <p class="muted small" id="recap-fix-count">

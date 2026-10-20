@@ -4,9 +4,11 @@
 // be recorded gets nothing (the consent rule). Shown only while RECAP_VOICE_LIVE is true (recap-words.ts).
 // A note is a minute at most (Supervisor, 2026-10-20): a minute of speech is about 1,000 letters, which is
 // what the typed box holds, and the API's own limit is two minutes. The 15-second warning comes before it.
+// Recording stops at 59 seconds, not 60: the meter rounds a clip up to a whole minute, so a note a hair
+// over 60 seconds would be charged two.
 export const VOICE_MAX_SECONDS = 60;
 /** Recording stops a little early: the API refuses a clip over 120 seconds, and the recorder runs on past a timer tick. */
-export const VOICE_STOP_AT_SECONDS = 60;
+export const VOICE_STOP_AT_SECONDS = 59;
 export const VOICE_WARN_AT_SECONDS = 45;
 export const VOICE_MAX_BYTES = 2 * 1024 * 1024;
 

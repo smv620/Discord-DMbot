@@ -64,6 +64,10 @@ export default function RecapVoice({
   const [cancelled, setCancelled] = useState(false);
   const [tip, setTip] = useState(false);
   const throwAway = useRef(false);
+  // The parent's setter changes with every render; polling must not restart for it, and it must not
+  // run an old copy (words typed while the note was being turned into words would be lost).
+  const heardRef = useRef(onHeard);
+  heardRef.current = onHeard;
   const stopRef = useRef<HTMLButtonElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -92,7 +96,7 @@ export default function RecapVoice({
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
-    setProblem(words.problem[kind] ?? words.problem.server);
+    setProblem(Object.hasOwn(words.problem, kind) ? words.problem[kind]! : words.problem.server);
   };
 
   // Follow the request until the words are ready.
@@ -113,13 +117,13 @@ export default function RecapVoice({
           setPhase("idle");
           setRequestId(null);
           setHeard(true);
-          onHeard(got.text);
+          heardRef.current(got.text);
           return;
         }
         if (got.state === "failed") {
           setPhase("idle");
           setRequestId(null);
-          const key = FAILED_KEY[got.error ?? ""];
+          const key = Object.hasOwn(FAILED_KEY, got.error ?? "") ? FAILED_KEY[got.error!] : undefined;
           setProblem((key && words.problem[key]) || words.problem.server);
           return;
         }
@@ -147,7 +151,7 @@ export default function RecapVoice({
       live = false;
       if (timer) clearTimeout(timer);
     };
-    // onHeard is the parent's setter; it must not restart the polling.
+    // heardRef is always the latest; it must not restart the polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, recap.ref, requestId, checks]);
 
@@ -207,7 +211,7 @@ export default function RecapVoice({
     try {
       rec = new MediaRecorder(got, {
         mimeType: type,
-        // About 32 kbit/s keeps two minutes under the API's 2 MB limit.
+        // About 32 kbit/s keeps even a two-minute clip under the API's 2 MB limit; a note is a minute at most.
         audioBitsPerSecond: 32000,
       });
     } catch {
@@ -303,6 +307,7 @@ export default function RecapVoice({
       <p role="status" aria-live="polite" class="small">
         {status}
       </p>
+      <div class="with-info">
       {phase === "recording" ? (
         <>
           <button
@@ -338,16 +343,18 @@ export default function RecapVoice({
       )}
       <button
         type="button"
-        class="button secondary"
+        class="button secondary info-dot"
         aria-label={words.listeningButton}
         aria-expanded={tip}
         aria-describedby={tip ? "recap-voice-tip" : undefined}
         onClick={() => setTip((open) => !open)}
+        onKeyDown={(e) => e.key === "Escape" && setTip(false)}
         onPointerEnter={(e) => e.pointerType === "mouse" && setTip(true)}
         onPointerLeave={(e) => e.pointerType === "mouse" && setTip(false)}
       >
         ⓘ
       </button>
+      </div>
       {tip && (
         <p class="muted small" id="recap-voice-tip" role="note">
           {words.listening}
