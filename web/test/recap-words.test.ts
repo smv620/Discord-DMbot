@@ -12,6 +12,7 @@ import { emailSteps } from "../src/content/help";
 import {
   RECAP_AUDIO_LIVE,
   RECAP_NAMES_LIVE,
+  RECAP_SHARE_LIVE,
   RECAPS_LIVE,
   emailsIntroTail,
   recapEmailStep,
@@ -28,6 +29,8 @@ const text = (node: Element | Document | null): string =>
 let off: Document;
 let on: Document;
 let onAudio: Document;
+let shared: Document;
+let sharedAudio: Document;
 let help: Document;
 let privacy: Document;
 beforeAll(async () => {
@@ -37,6 +40,10 @@ beforeAll(async () => {
   off = await render(false, false);
   on = await render(true, false);
   onAudio = await render(true, true);
+  const renderShared = async (audio: boolean): Promise<Document> =>
+    parsePage(await container.renderToString(RecapsPrivacy, { props: { live: true, audio, share: true } }));
+  shared = await renderShared(false);
+  sharedAudio = await renderShared(true);
   help = parsePage(
     await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
   );
@@ -65,6 +72,23 @@ describe("the privacy section", () => {
     expect(t).toContain("DMbot won't post a recap if a player has stopped being recorded");
     expect(t).toContain("are kept with the campaign and deleted when the campaign is deleted");
     expect(t).toContain("with no words in it, and delete it after 90 days");
+  });
+
+  it("says nothing of a shared link until sharing is live, and then says it plainly (#2119)", () => {
+    expect(RECAP_SHARE_LIVE).toBe(false);
+    expect(!RECAP_SHARE_LIVE || RECAPS_LIVE).toBe(true);
+    expect(text(on.body)).not.toMatch(/shared link|has the link/i);
+    const t = text(shared.body);
+    for (const part of [
+      "Anyone who has the link can read it, without signing in",
+      "search engines are asked not to list it",
+      "turn a link off at any time",
+      "make a new one, and the old one then stops working",
+    ]) {
+      expect(t, part).toContain(part);
+    }
+    expect(t).not.toContain("play its voice and music");
+    expect(text(sharedAudio.body)).toContain("read it and play its voice and music, without signing in");
   });
 
   it("names ElevenLabs only when audio is live", () => {

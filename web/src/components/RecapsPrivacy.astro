@@ -8,8 +8,9 @@ import { aiTrainingSentence } from "../content/legal";
 interface Props {
   live: boolean;
   audio: boolean;
+  share?: boolean;
 }
-const { live, audio } = Astro.props;
+const { live, audio, share = false } = Astro.props;
 ---
 
 {
@@ -42,6 +43,16 @@ const { live, audio } = Astro.props;
           that the email was sent, with no words in it, and delete it after 90 days. The email
           itself holds the recap's title and goes through Google, like our other email.
         </li>
+        {share && (
+          <li>
+            <strong>A shared link.</strong> A game master can share a recap by a link. Anyone who
+            has the link can read it{audio ? " and play its voice and music" : ""}, without signing
+            in, and search engines are asked not to list it. A game master can turn a link off at any
+            time, or make a new one, and the old one then stops working. A recap that is not shared
+            can only be read by the game masters of its campaign, and by everyone in the table's chat
+            channel once a game master has posted it.
+          </li>
+        )}
         {audio && (
           <li>
             <strong>Narrated recaps.</strong> To make the voice and the music, the words to be read
