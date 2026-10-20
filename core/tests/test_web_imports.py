@@ -690,14 +690,43 @@ class TheMemberDirectory(WithImports):
         from dmbot.members import MemberDirectory
 
         await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
-        got = await self.find("")
-        self.assertEqual([n for n, _ in got].count("Player 0"), 1)  # MIRA is "Player 0" here
-        self.assertNotIn("Mira Real", [n for n, _ in got])
+        for q in ("", "mira_v", "real", "player 0"):  # whichever of her names is searched
+            names = [n for n, _ in await self.find(q)]
+            self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
+            self.assertNotIn("Mira Real", names, q)
+
+    async def test_nothing_is_kept_for_someone_with_no_consent_row(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, 9206, "Ghost", "ghost")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_consent_for_another_outside_company_hides_the_member(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9207
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET outside_to = 'deepgram' WHERE user_id = %s", (who,)
+            )
+        kw = {**self.kw, "outside": "other-company"}
+        got = await imports.search_members(self.web, self.session, self.ref_c, "quill", **kw)
+        self.assertEqual(
+            got["members"], [{"userId": str(who), "name": "Quill Ardent", "agreed": False}][:0]
+        )
 
     async def test_empty_names_keep_no_row_and_a_name_is_cut_to_a_sane_length(self) -> None:
         from dmbot.members import MemberDirectory
 
         directory = MemberDirectory(self.db)
+        for who in (9204, 9205):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
         await directory.remember(THURSDAY.id, 9204, "", None)
         await directory.remember(THURSDAY.id, 9205, "x" * 500, "  ")
         async with self.db.guild(THURSDAY.id) as conn:

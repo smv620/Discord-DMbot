@@ -1545,8 +1545,8 @@ class DMBot(commands.AutoShardedBot):
                 await directory.remember(
                     guild_id, member.id, getattr(member, "global_name", None), member.name
                 )
-        except Exception:
-            log.warning("Could not keep a member in the directory", exc_info=True)
+        except Exception as exc:  # the type only: a database error's text can quote a name
+            log.warning("Could not keep a member in the directory: %s", type(exc).__name__)
 
     async def _keep_display_name(self, db: Database, user_id: int, name: str) -> None:
         """The background part: one short UPDATE. Never raises; on a failure the person is
@@ -1853,15 +1853,15 @@ class DMBot(commands.AutoShardedBot):
                     await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
             except Exception:
                 log.exception("Could not remove the story claims of a stopped speaker")
-        if self.members is not None:  # no longer offered by name in the import search (#2141)
-            try:
-                async with asyncio.timeout(FORGET_TIMEOUT_S):
-                    await self.members.forget(guild_id, user_id)
-            except Exception:
-                log.exception("Could not remove a stopped speaker from the member directory")
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
+            if self.members is not None:  # no longer offered by name in the import search (#2141)
+                try:
+                    async with asyncio.timeout(FORGET_TIMEOUT_S):
+                        await self.members.forget(guild_id, user_id)
+                except Exception:
+                    log.exception("Could not remove a stopped speaker from the member directory")
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)

@@ -29,9 +29,11 @@ class TheHooks(unittest.IsolatedAsyncioTestCase):
         directory = SimpleNamespace(remember=AsyncMock(side_effect=RuntimeError("db blip")))
         bot = self.bot(directory)
         member = SimpleNamespace(id=7, global_name=None, name="quill_a")
-        with self.assertLogs("dmbot.bot", level="WARNING"):
+        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
             DMBot.note_member(bot, 5, member)  # type: ignore[arg-type]
             await asyncio.gather(*bot._name_tasks)
+        self.assertIn("RuntimeError", " ".join(logs.output))
+        self.assertNotIn("db blip", " ".join(logs.output))  # a database message can quote a name
 
     async def test_without_a_directory_nothing_happens(self) -> None:
         bot = self.bot(None)

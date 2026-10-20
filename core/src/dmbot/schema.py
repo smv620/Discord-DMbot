@@ -7335,33 +7335,39 @@ MEMBER_DIRECTORY = (
                                            AND x.terms_version = terms
                                            AND (outside IS NULL OR x.outside_to = outside)))
                        ORDER BY (lower(m.name) = lower(q)) DESC, m.rank, lower(m.name))
-            FROM (SELECT * FROM (SELECT DISTINCT ON (n.user_id) n.name, n.user_id, n.rank FROM (
-                      SELECT e.name, e.played_by AS user_id, 0 AS rank
-                      FROM memory_entities e
-                      WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
-                        AND e.status = 'confirmed' AND e.played_by IS NOT NULL
-                      UNION ALL
-                      SELECT CASE WHEN d.display_name <> '' THEN d.display_name ELSE d.username END,
-                             d.user_id, 1
-                      FROM member_directory d
-                      WHERE d.guild_id = g AND (d.display_name <> '' OR d.username <> '')
-                        AND (q = '' OR position(lower(q) IN lower(d.display_name)) > 0
-                             OR position(lower(q) IN lower(d.username)) > 0)
-                        AND EXISTS (SELECT 1 FROM consent x
-                                    WHERE x.guild_id = g AND x.user_id = d.user_id
+            FROM (SELECT one.name, one.user_id, one.rank FROM (
+                      -- One row for each account: the campaign's name for the person if there is
+                      -- one, else the directory's, else the website's. A search matches any of
+                      -- the account's names, so it finds the same person whichever it hits.
+                      SELECT n.user_id,
+                             (array_agg(n.name ORDER BY n.rank, lower(n.name)))[1] AS name,
+                             min(n.rank) AS rank,
+                             lower(string_agg(n.hay, ' ')) AS hay
+                      FROM (
+                          SELECT e.played_by AS user_id, e.name, 0 AS rank, e.name AS hay
+                          FROM memory_entities e
+                          WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                            AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                          UNION ALL
+                          SELECT d.user_id,
+                                 CASE WHEN d.display_name <> '' THEN d.display_name
+                                      ELSE d.username END,
+                                 1, d.display_name || ' ' || d.username
+                          FROM member_directory d
+                          WHERE d.guild_id = g AND (d.display_name <> '' OR d.username <> '')
+                          UNION ALL
+                          SELECT u.user_id, u.display_name, 2, u.display_name
+                          FROM web_users u
+                          WHERE coalesce(u.display_name, '') <> ''
+                      ) n
+                      WHERE EXISTS (SELECT 1 FROM consent x
+                                    WHERE x.guild_id = g AND x.user_id = n.user_id
                                       AND x.terms_version = terms
                                       AND (outside IS NULL OR x.outside_to = outside))
-                      UNION ALL
-                      SELECT u.display_name, u.user_id, 2
-                      FROM web_users u
-                      WHERE coalesce(u.display_name, '') <> ''
-                        AND EXISTS (SELECT 1 FROM consent x
-                                    WHERE x.guild_id = g AND x.user_id = u.user_id
-                                      AND x.terms_version = terms
-                                      AND (outside IS NULL OR x.outside_to = outside))
-                  ) n
-                  WHERE (q = '' OR n.rank = 1 OR position(lower(q) IN lower(n.name)) > 0)
-                  ORDER BY n.user_id, n.rank) one
+                         OR n.rank = 0
+                      GROUP BY n.user_id
+                  ) one
+                  WHERE q = '' OR position(lower(q) IN one.hay) > 0
                   ORDER BY (lower(one.name) = lower(q)) DESC, one.rank, lower(one.name)
                   LIMIT 25) m), '[]'::jsonb) INTO found;
         PERFORM set_config('dmbot.import_names', before, true);

@@ -22,19 +22,23 @@ class MemberDirectory:
     async def remember(
         self, guild_id: int, user_id: int, display_name: str | None, username: str | None
     ) -> None:
-        """Add or refresh one member. Call it only for someone whose consent is current."""
+        """Add or refresh one member who has agreed to be recorded (nothing is kept for anyone
+        without a consent row, whatever the caller thinks)."""
         shown = " ".join((display_name or "").split())[:NAME_MAX]
         handle = " ".join((username or "").split())[:NAME_MAX]
         if not (shown or handle):
             return
         async with self._db.guild(guild_id) as conn:
+            # Only for someone who has a consent row now: a task that finishes after the person
+            # stopped can't put their names back.
             await conn.execute(
                 "INSERT INTO member_directory (guild_id, user_id, display_name, username,"
-                " updated_at) VALUES (%s, %s, %s, %s, %s)"
+                " updated_at) SELECT %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM consent"
+                " WHERE guild_id = %s AND user_id = %s)"
                 " ON CONFLICT (guild_id, user_id) DO UPDATE SET"
                 " display_name = EXCLUDED.display_name, username = EXCLUDED.username,"
                 " updated_at = EXCLUDED.updated_at",
-                (guild_id, user_id, shown, handle, int(self._now())),
+                (guild_id, user_id, shown, handle, int(self._now()), guild_id, user_id),
             )
 
     async def forget(self, guild_id: int, user_id: int) -> None:
@@ -44,7 +48,3 @@ class MemberDirectory:
                 "DELETE FROM member_directory WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
-
-    async def forget_all(self, guild_id: int) -> None:
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute("DELETE FROM member_directory WHERE guild_id = %s", (guild_id,))
