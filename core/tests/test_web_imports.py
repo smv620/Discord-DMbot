@@ -12,6 +12,7 @@ from typing import Any, cast
 import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
+from dmbot.db import Database
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import sessions as web_sessions
@@ -231,7 +232,7 @@ class TheStore(WithImports):
 
         self.revoke = False
         with unittest.mock.patch.object(imports, "_plans", then_tomas_stops):
-            real = imports.Database.user
+            real = Database.user
             seen = {"n": 0}
 
             @contextlib.asynccontextmanager
@@ -244,7 +245,7 @@ class TheStore(WithImports):
                     yield conn
 
             with (
-                unittest.mock.patch.object(imports.Database, "user", user),
+                unittest.mock.patch.object(Database, "user", user),
                 self.assertRaises(RecapError) as refused,
             ):
                 await self.confirm(
