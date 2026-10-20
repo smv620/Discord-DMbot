@@ -196,7 +196,8 @@ def _whole_items(text: str) -> list[object]:
     found = _LIST_START.match(text, first) if first >= 0 else None
     if found is None:
         return []
-    decoder, at, items = json.JSONDecoder(), found.end(), []
+    decoder, at = json.JSONDecoder(), found.end()
+    items: list[object] = []
     while True:
         while at < len(text) and text[at] in " \t\r\n,":
             at += 1
