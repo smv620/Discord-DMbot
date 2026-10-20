@@ -82,6 +82,13 @@ FEATURES: tuple[Feature, ...] = (
         ),
     ),
     Feature(
+        "live heads-up",
+        "Heads-up during play",
+        "DMbot tells you on the DM screen when someone you said is dead is voiced at the table.",
+        lambda s: s.live_heads_up,
+        ("live_heads_up", "live_heads_up_cooldown_s"),
+    ),
+    Feature(
         "plan limits",
         "Plan limits",
         "",

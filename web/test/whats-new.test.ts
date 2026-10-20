@@ -86,6 +86,7 @@ describe("What's new", () => {
       "A note before tonight's session",
       "When a player says a secret name",
       "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
+      "Heads-up when a fallen character speaks", // until dev1 has seen it working (DMBOT_LIVE_HEADS_UP, #2068)
       "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
       "How NPCs feel about the party", // until it has been seen on the test server (#1655)
       "Record what your players did", // until it has been seen on the test server (#1732)

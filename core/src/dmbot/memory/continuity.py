@@ -418,6 +418,12 @@ class ContinuityStore:
             tuple(conflicts_in(waiting, world, levels)), facts, sessions, ready, len(waiting)
         )
 
+    async def is_ready(self, guild_id: int, campaign_id: str, levels: Levels) -> bool:
+        """Whether the campaign has reached the critical mass (two counts, no rows): the live
+        heads-up reads this once a session (#2068)."""
+        facts, sessions = await self._counts(guild_id, campaign_id)
+        return reached_critical_mass(facts, sessions, levels)
+
     async def _counts(self, guild_id: int, campaign_id: str) -> tuple[int, int]:
         """How many confirmed facts the campaign has and how many sessions they come from:
         two counts, no rows, so the story is only read when there is something to check."""
