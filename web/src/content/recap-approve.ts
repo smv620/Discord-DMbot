@@ -10,9 +10,12 @@ export const approveWords = {
   approve: "Approve the text",
   pickHeading: "What should DMbot make?",
   /** Where the plan has no narration or music. */
-  textOnlyNote: "Narration and music aren't in your plan, so the only choice is Text only.",
-  busy: "Working…",
-  back: "Not yet",
+  textOnlyNote: "Voice-over and music aren't in your plan, so the only choice is Text only.",
+  /** The plan lookup failed, which is not the same as having no audio. */
+  planUnknown: "We couldn't check your plan, so only Text only is shown. Reload to see all the choices.",
+  checking: "Checking your plan…",
+  busy: "Approving…",
+  back: "Go back",
   /** The Discord buttons' labels (approval.py LABELS). */
   choices: {
     voice: "🎙️ Voice-over",
@@ -35,17 +38,18 @@ export const approveWords = {
     text: "You approved this text with no audio.",
   } satisfies Record<ApproveChoice, string>,
   /** Said when the API refused because of the cues. */
-  cuesListed: "Nothing was approved. Some cues need fixing. See the list below.",
   cuesUnlisted:
-    "Nothing was approved. A cue in the text is wrong. Press Edit and check each 《 》 and (( )), then approve again.",
+    "Nothing was approved. DMbot found a problem with a cue but can't say where. Press Edit and check each 《 》 and (( )), then save and approve again.",
   editEnds: "If you change the text, you approve it again.",
 } as const;
 
+/** Said instead of the "not-allowed" line when the page has just read the recap again itself. */
+export const approveRefreshed = "This recap changed, maybe in Discord. The page is up to date now.";
+
 export const approveErrors: Partial<Record<ApiErrorKind, string>> = {
-  "not-in-plan": "Narration and music aren't in your plan. Pick Text only.",
+  "not-in-plan": "Voice-over and music aren't in your plan. Pick Text only.",
   "bad-choice": "That isn't one of the choices. Reload the page and try again.",
-  "not-allowed":
-    "This recap was already decided, isn't ready, or its audio is being made. Reload the page to see where it is now.",
+  "not-allowed": "This recap changed, maybe in Discord. Reload the page to see where it is now.",
   "not-found": "We can't find that recap. Reload the page, or open it again from your recaps.",
   "signed-out": "You were signed out. Sign in again, then approve the text again.",
   network: "We couldn't reach DMbot. Check your connection and try again.",

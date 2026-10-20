@@ -666,7 +666,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && <RecapApprove api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}

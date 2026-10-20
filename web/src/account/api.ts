@@ -725,7 +725,7 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       const kind = errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server");
       // Cue problems are the page's answer, unless the recap can't be changed at all: then the
       // reload that goes with "not-allowed" and "not-editable" matters more.
-      if (cueProblems.length > 0 && kind !== "not-allowed" && kind !== "not-editable") {
+      if ((cueProblems.length > 0 || code === "cue_problems") && kind !== "not-allowed" && kind !== "not-editable") {
         throw new ApiError("bad-cues", cueProblems);
       }
       throw new ApiError(kind);

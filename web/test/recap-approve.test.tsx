@@ -4,13 +4,23 @@
 // what the plan includes; the cue problems an approval can be refused with; the refusals. It shows
 // only while RECAP_AUDIO_LIVE is true (false today), so these tests switch it on. The API decides;
 // the page shows what it says.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type CueProblem } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
-import { approveErrors, approveWords as w } from "../src/content/recap-approve";
+import {
+  approveErrors,
+  approveRefreshed,
+  approveWords as w,
+} from "../src/content/recap-approve";
 import { cueProblemsHeading } from "../src/content/recaps";
 
 const live = vi.hoisted(() => ({ audio: false }));
@@ -60,25 +70,35 @@ describe("approve the text", () => {
     live.audio = true;
     const api = mockApi("table");
     const choices = api.recapChoices!.bind(api);
-    api.recapChoices = async (ref) => ({ ...(await choices(ref)), canAudio: false });
+    api.recapChoices = async (ref) => ({
+      ...(await choices(ref)),
+      canAudio: false,
+    });
     await open(api);
     fireEvent.click(screen.getByRole("button", { name: w.approve }));
-    expect(await screen.findByRole("button", { name: w.choices.text })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: w.choices.text }),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.choices.voice })).toBeNull();
     expect(screen.queryByRole("button", { name: w.choices.both })).toBeNull();
     expect(screen.getByText(w.textOnlyNote)).toBeTruthy();
+    expect(screen.queryByText(w.planUnknown)).toBeNull();
   });
 
   it("sends the choice, then says what is being made and that an edit asks again", async () => {
     live.audio = true;
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.approve }));
-    fireEvent.click(await screen.findByRole("button", { name: w.choices.both }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: w.choices.both }),
+    );
     expect(await screen.findByText(w.done.both)).toBeTruthy();
     expect(screen.getByText(w.editEnds)).toBeTruthy();
     expect(api.calls).toContain(`approveRecap:${ready.ref}:both`);
     expect(screen.queryByRole("button", { name: w.approve })).toBeNull();
-    await waitFor(() => expect((document.activeElement as HTMLElement | null)?.getAttribute("role")).toBe("status"));
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toBe(w.done.both),
+    );
   });
 
   it("sends each of the four choices as it is", async () => {
@@ -108,7 +128,12 @@ describe("approve the text", () => {
     const recap = api.recap!.bind(api);
     api.recap = async (ref) => ({
       ...(await recap(ref)),
-      approval: { approved: true, choice: "music", approvedAt: 1791000100, canApprove: false },
+      approval: {
+        approved: true,
+        choice: "music",
+        approvedAt: 1791000100,
+        canApprove: false,
+      },
     });
     await open(api);
     expect(screen.getByText(w.was.music)).toBeTruthy();
@@ -121,7 +146,12 @@ describe("approve the text", () => {
     const recap = api.recap!.bind(api);
     api.recap = async (ref) => ({
       ...(await recap(ref)),
-      approval: { approved: false, choice: "", approvedAt: null, canApprove: false },
+      approval: {
+        approved: false,
+        choice: "",
+        approvedAt: null,
+        canApprove: false,
+      },
     });
     await open(api);
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
@@ -137,25 +167,41 @@ describe("a refused approval", () => {
     };
     await open(api);
     fireEvent.click(screen.getByRole("button", { name: w.approve }));
-    fireEvent.click(await screen.findByRole("button", { name: w.choices.voice }));
+    const voice = await screen.findByRole("button", { name: w.choices.voice });
+    (document.activeElement as HTMLElement | null)?.blur(); // a browser drops focus when the button disables
+    fireEvent.click(voice);
   }
 
   it("lists the cue problems, keeps the choices open and says to edit first", async () => {
     const problems: CueProblem[] = [
-      { paragraph: 2, near: "the gate opened", cue: "《glumm》", kind: "unknown", suggest: "gloom" },
+      {
+        paragraph: 2,
+        near: "the gate opened",
+        cue: "《glumm》",
+        kind: "unknown",
+        suggest: "gloom",
+      },
     ];
     await pickWith(new ApiError("bad-cues", problems));
-    expect((await screen.findByRole("alert")).textContent).toBe(w.cuesListed);
-    expect(screen.getByText(cueProblemsHeading(1, "approve"))).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull(); // the list heading carries it, once
+    expect(
+      await screen.findByText(cueProblemsHeading(1, "approve")),
+    ).toBeTruthy();
     expect(cueProblemsHeading(1, "approve")).toContain("Nothing was approved");
     expect(screen.getByText(/“《glumm》” is not a cue word/)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.choices.voice })).toBeTruthy(); // can try again
-    await waitFor(() => expect(document.activeElement?.id).toBe("recap-cue-problems"));
+    await waitFor(() =>
+      expect(document.activeElement?.outerHTML.slice(0, 80)).toContain(
+        "recap-cue-problems",
+      ),
+    );
   });
 
   it("says plainly when the plan has no audio", async () => {
     await pickWith(new ApiError("not-in-plan"));
-    expect((await screen.findByRole("alert")).textContent).toBe(approveErrors["not-in-plan"]);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      approveErrors["not-in-plan"],
+    );
   });
 
   it("reads the page again when the recap was already decided", async () => {
@@ -167,7 +213,15 @@ describe("a refused approval", () => {
       reads += 1;
       const r = await recap(ref);
       return reads > 1
-        ? { ...r, approval: { approved: true, choice: "text", approvedAt: 1791000100, canApprove: false } }
+        ? {
+            ...r,
+            approval: {
+              approved: true,
+              choice: "text",
+              approvedAt: 1791000100,
+              canApprove: false,
+            },
+          }
         : r;
     };
     api.approveRecap = async () => {
@@ -175,8 +229,26 @@ describe("a refused approval", () => {
     };
     await open(api);
     fireEvent.click(screen.getByRole("button", { name: w.approve }));
-    fireEvent.click(await screen.findByRole("button", { name: w.choices.voice }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: w.choices.voice }),
+    );
     expect(await screen.findByText(w.was.text)).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe(approveRefreshed);
+  });
+
+  it("says where to look when the API refuses over cues without a list", async () => {
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({ error: "cue_problems", cue_problems: [] }),
+        { status: 422 },
+      )) as unknown as typeof fetch;
+    const real = httpApi("https://api.example.test", fetcher);
+    await expect(real.approveRecap!("a.b.1", "voice")).rejects.toMatchObject({
+      kind: "bad-cues",
+    });
+    live.audio = true;
+    await pickWith(new ApiError("bad-cues"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.cuesUnlisted);
   });
 
   it("sends the choice to the API's own address, and reads its cue problems over the wire", async () => {
@@ -186,13 +258,24 @@ describe("a refused approval", () => {
       return new Response(
         JSON.stringify({
           error: "cue_problems",
-          cue_problems: [{ paragraph: 1, near: "x", cue: "《a》", kind: "empty", suggest: null, words: "x" }],
+          cue_problems: [
+            {
+              paragraph: 1,
+              near: "x",
+              cue: "《a》",
+              kind: "empty",
+              suggest: null,
+              words: "x",
+            },
+          ],
         }),
         { status: 422 },
       );
     }) as unknown as typeof fetch;
     const real = httpApi("https://api.example.test", fetcher);
-    await expect(real.approveRecap!("a.b.1", "both")).rejects.toMatchObject({ kind: "bad-cues" });
+    await expect(real.approveRecap!("a.b.1", "both")).rejects.toMatchObject({
+      kind: "bad-cues",
+    });
     expect(seen[0]).toEqual({
       url: "https://api.example.test/me/recaps/a.b.1/approve",
       body: JSON.stringify({ choice: "both" }),
