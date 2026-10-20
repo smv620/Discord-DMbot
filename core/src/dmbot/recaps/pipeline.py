@@ -88,6 +88,9 @@ class Inputs:
     # The campaign's example recaps, for the writer's tone only (#2075): the writer's call and the
     # copy check read them; the beats and the fact check never do.
     style: Sequence[str] = ()
+    notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
+    # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
+    corrections: Sequence[str] = ()
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -144,7 +147,6 @@ class RecapWorker:
         consenting: Callable[[int], Consenting],
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
-        audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
@@ -193,7 +195,6 @@ class RecapWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._notify = notify
-        self._audio_wanted = audio_wanted
         self._allowance = allowance
         self._now = clock
 
@@ -545,7 +546,14 @@ class RecapWorker:
                 cid,
                 job,
                 self._creative if self._creative is not None and self._two else self._client(job),
-                rd.prose_system(inputs.setting, length, plain=self._two, style=inputs.style),
+                rd.prose_system(
+                    inputs.setting,
+                    length,
+                    plain=self._two,
+                    style=inputs.style,
+                    notes=inputs.notes,
+                    corrections=inputs.corrections,
+                ),
                 message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
                 schema=None if self._two else rd.prose_schema(),
@@ -619,6 +627,7 @@ class RecapWorker:
                 last=last_try,
                 refused=refused,
                 style=inputs.style,
+                corrections=inputs.corrections,
             )
 
         problems = checked(False)
@@ -642,6 +651,7 @@ class RecapWorker:
             facts, asked = await self._facts(
                 gid, cid, job, rd.pick_beats(sheet, length.beats), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
+                inputs.corrections,
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
@@ -776,6 +786,7 @@ class RecapWorker:
                 last=True,
                 refused=refused,
                 style=inputs.style,
+                corrections=inputs.corrections,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -866,6 +877,7 @@ class RecapWorker:
         shown: Sequence[bt.Beat],
         prose: rd.Prose,
         names: Collection[str] = (),
+        corrections: Sequence[str] = (),
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -873,14 +885,20 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose)
+        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections)
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
         return facts, asked is not None
 
     async def _ask_facts(
-        self, gid: int, cid: str, job: Job, shown: Sequence[bt.Beat], prose: rd.Prose
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        shown: Sequence[bt.Beat],
+        prose: rd.Prose,
+        corrections: Sequence[str] = (),
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
@@ -895,7 +913,7 @@ class RecapWorker:
         try:
             reply = await self._careful.complete(
                 rd.FACTS_SYSTEM,
-                rd.facts_message(shown, prose.summary),
+                rd.facts_message(shown, prose.summary, corrections),
                 max_tokens=FACTS_TOKENS,
                 schema=rd.facts_schema(),
             )
@@ -946,6 +964,7 @@ class RecapWorker:
             last=True,
             refused=[],
             style=inputs.style,
+            corrections=inputs.corrections,
         ):
             return None
         return cut
@@ -1063,22 +1082,9 @@ class RecapWorker:
             last_error="",
         )
         log.info("Recap: ready after %d call(s)", job.calls)
-        ready = await self._store.get(gid, cid, job.session_at)
-        if ready is not None and await self._wants_audio(gid, cid, ready):
-            await self._store.set_audio(gid, cid, job.session_at, audio="queued", tries=0)
-            ready = await self._store.get(gid, cid, job.session_at)
-        return ready
-
-    async def _wants_audio(self, gid: int, cid: str, job: Job) -> bool:
-        """Whether the audio tracks are to be made: the switch is on, a key is set and the plan
-        includes them. Never raises: the text is ready either way."""
-        if self._audio_wanted is None:
-            return False
-        try:
-            return await self._audio_wanted(gid, cid, job)
-        except Exception:
-            log.exception("Recap: couldn't tell whether to make the audio")
-            return False
+        # No audio is queued here (#2083): the DM reads the text, fixes its cues, approves it and
+        # picks what to make; the approval queues the audio.
+        return await self._store.get(gid, cid, job.session_at)
 
     # --- ways out -----------------------------------------------------------------------
 

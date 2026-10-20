@@ -38,7 +38,9 @@ _PERFORMANCE_TAGS = {
     "hushed": "[whispers]",
     "whisper": "[whispers]",
     "sigh": "[sighs]",
+    "whispered": "[whispers]",
 }
+PERFORMANCE_WORDS = tuple(_PERFORMANCE_TAGS)  # the pacing words the cue check allows
 SCENE_BREAK_TAG = "[long pause]"
 
 # The voice's delivery tag for each mood the music has a style for (#1983), keyed by the music
@@ -162,7 +164,7 @@ def _walk(
             before = mood
             tag, mood = _mood_tag(name, mood, emotion_tags)
         else:
-            kind, name = PERFORMANCE_KIND, raw[2:-2].strip().lower()
+            kind, name = PERFORMANCE_KIND, " ".join(raw[2:-2].lower().split())  # (spaces folded)
             tag = _PERFORMANCE_TAGS.get(name, "")
         cues.append([len(spoken), len(tagged), kind, name, tag])
         if tag:
