@@ -2,7 +2,7 @@
 it leaves.
 
 The write contract is in migration 0014 (core/src/dmbot/schema.py): the bot inserts its own row
-with via 'link' and no installer, or clears `left_at` on a rejoin; the website fills in who added
+as a 'link' row with no installer, or clears `left_at` on a rejoin; the website fills in who added
 it (`dmbot.web.accounts`) and its 'site' row is never overwritten here. Nothing wrote these rows
 before, so "Link this server" on the website found no install and anything that asks whether the
 bot has left a server (the recap voice door) saw `left_at` always empty.
@@ -46,8 +46,11 @@ class InstallStore:
 
     async def present(self, guild_ids: Iterable[int]) -> int:
         """At start: every server the bot is in has a row that says so (servers it joined before
-        this was recorded, and ones it left while it was down and came back to). One server's
-        failure does not stop the others. Returns how many were written."""
+        this was recorded, and ones it left and came back to while it was down). One server's
+        failure does not stop the others. Returns how many were written. Known limit (#2163):
+        a server the bot left while it was down keeps an empty `left_at`, since rows of servers
+        the bot is not in cannot be read here; one write per server, in turn, fine at today's
+        size."""
         done = 0
         for guild_id in guild_ids:
             try:

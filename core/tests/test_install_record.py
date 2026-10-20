@@ -5,7 +5,8 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest import mock
+from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
 from dmbot.install_record import InstallStore
@@ -59,12 +60,25 @@ class Rows(DatabaseTest):
         self.assertIsNone(await self.row(G))
 
     async def test_a_row_the_website_made_keeps_its_installer_and_way(self) -> None:
-        await self.store.joined(G)
-        async with self.db.guild(G) as conn:  # the website later fills in who added it
-            await conn.execute("UPDATE installs SET via = 'site' WHERE guild_id = %s", (G,))
-        await self.store.joined(G)  # a restart
-        row = await self.row(G)
-        self.assertEqual(row["via"], "site")  # never overwritten here
+        async with self.db.user(9) as conn:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, created_at, last_sign_in_at) VALUES (9, 1, 1)"
+                " ON CONFLICT DO NOTHING"
+            )
+        async with self.db.guild(G) as conn:  # as the website's install writes it
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, 9, 500, 'site')",
+                (G,),
+            )
+        for step in (self.store.joined, self.store.left, self.store.joined):
+            self.now += 100
+            await step(G)  # a restart, a removal, a rejoin
+            row = await self.row(G)
+            self.assertEqual(
+                (row["installed_by_user_id"], row["installed_at"], row["via"]), (9, 500, "site")
+            )
+        self.assertIsNone((await self.row(G))["left_at"])
 
     async def test_each_server_has_its_own_row(self) -> None:
         await self.store.joined(G)
@@ -76,8 +90,19 @@ class Rows(DatabaseTest):
     async def test_the_start_up_pass_records_every_server_and_survives_a_failure(self) -> None:
         self.assertEqual(await self.store.present([G, OTHER]), 2)
         self.assertIsNotNone(await self.row(G))
-        broken = InstallStore(cast(Any, SimpleNamespace(guild=MagicMock(side_effect=RuntimeError))))
-        self.assertEqual(await broken.present([G, OTHER]), 0)  # logged, never raised
+        broken = InstallStore(self.db)
+        real, calls = broken.joined, []
+
+        async def first_fails(guild_id: int) -> None:
+            calls.append(guild_id)
+            if len(calls) == 1:
+                raise RuntimeError("database error with a row in it")
+            await real(guild_id)
+
+        with mock.patch.object(broken, "joined", first_fails):
+            self.assertEqual(await broken.present([G + 10, OTHER + 10]), 1)
+        self.assertEqual(calls, [G + 10, OTHER + 10])  # the second was still tried
+        self.assertIsNotNone(await self.row(OTHER + 10))
 
 
 class TheHooks(unittest.IsolatedAsyncioTestCase):
@@ -100,9 +125,23 @@ class TheHooks(unittest.IsolatedAsyncioTestCase):
 
     async def test_leaving_is_recorded(self) -> None:
         bot = self.bot()
+        bot.get_guild = lambda gid: None
+        bot._note_left = lambda gid: DMBot._note_left(bot, gid)
         await DMBot.on_guild_remove(bot, cast(Any, SimpleNamespace(id=G)))
         self.assertEqual(bot.tracked, ["install-left"])
+        await DMBot._note_left(bot, G)
         bot.installs.left.assert_called_once_with(G)
+
+    async def test_a_kick_and_a_quick_re_add_does_not_leave_the_server_marked_left(self) -> None:
+        bot = self.bot()
+        bot.get_guild = lambda gid: SimpleNamespace(id=gid)  # it is back already
+        await DMBot._note_left(bot, G)
+        bot.installs.left.assert_not_called()
+
+    def test_an_outage_is_not_a_removal(self) -> None:
+        # Discord's own "unavailable" event is a different one, and nothing here handles it by
+        # writing left_at (a server that is only unavailable is still ours).
+        self.assertFalse(hasattr(DMBot, "on_guild_unavailable"))
 
     async def test_without_a_store_nothing_happens(self) -> None:
         bot = self.bot()
@@ -110,14 +149,21 @@ class TheHooks(unittest.IsolatedAsyncioTestCase):
         await DMBot.on_guild_remove(bot, cast(Any, SimpleNamespace(id=G)))
         self.assertEqual(bot.tracked, [])
 
-    async def test_joining_is_recorded_after_the_welcome(self) -> None:
-        from unittest import mock
+    async def test_joining_is_recorded_even_when_the_welcome_fails(self) -> None:
+        bot = self.bot()
+        with (
+            mock.patch("dmbot.bot.install.post_welcome", AsyncMock(side_effect=RuntimeError)),
+            self.assertRaises(RuntimeError),
+        ):
+            await DMBot.on_guild_join(bot, cast(Any, SimpleNamespace(id=G)))
+        self.assertEqual(bot.tracked, ["install-joined"])  # queued before the welcome
+        bot.installs.joined.assert_called_once_with(G)
 
+    async def test_joining_is_recorded_and_the_welcome_still_goes(self) -> None:
         bot = self.bot()
         with mock.patch("dmbot.bot.install.post_welcome", AsyncMock(return_value="welcomed")):
             await DMBot.on_guild_join(bot, cast(Any, SimpleNamespace(id=G)))
-        self.assertEqual(bot.tracked, ["offer-sweep", "install-joined"])
-        bot.installs.joined.assert_called_once_with(G)
+        self.assertEqual(bot.tracked, ["install-joined", "offer-sweep"])
 
     async def test_the_start_up_pass_covers_every_server_the_bot_is_in(self) -> None:
         bot = self.bot()

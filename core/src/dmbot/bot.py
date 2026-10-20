@@ -3567,17 +3567,27 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
+        if self.installs is not None:  # first: "Link this server" needs the row (#2163), and the
+            self._track(self.installs.joined(guild.id), "install-joined")  # welcome may fail
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
         self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
-        if self.installs is not None:  # the row "Link this server" looks for (#2163)
-            self._track(self.installs.joined(guild.id), "install-joined")
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        """DMbot was removed from a server (or the server was deleted): note when."""
+        """DMbot was removed from a server (or the server was deleted): note when. A server that
+        is merely unavailable in a Discord outage is a different event and is not marked."""
         if self.installs is not None:
-            self._track(self.installs.left(guild.id), "install-left")
+            self._track(self._note_left(guild.id), "install-left")
+
+    async def _note_left(self, guild_id: int) -> None:
+        """Mark the server left, unless it came back already (a kick and a quick re-add: the
+        join's write may land first, and it must not be undone)."""
+        assert self.installs is not None
+        with log_context(guild_id=guild_id):
+            if self.get_guild(guild_id) is not None:
+                return
+            await self.installs.left(guild_id)
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
