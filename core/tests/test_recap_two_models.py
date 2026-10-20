@@ -108,6 +108,43 @@ class TheModels(unittest.TestCase):
         self.assertIs(NEXT_DOWN[AIModelTier.FORMATTING], AIModelTier.FAST)
 
 
+class TheWritersRoom(unittest.IsolatedAsyncioTestCase):
+    """The plain-text writer has room for its answer (#2086); the formatter's room is as it was."""
+
+    def test_the_writers_room_is_larger_than_the_structured_rooms_and_grows_with_the_target(
+        self,
+    ) -> None:
+        rooms = [rd.write_room(rd.length_for(h)) for h in (0.5, 1.0, 1.8, 3.0, 6.0)]
+        self.assertEqual(rooms, sorted(rooms))
+        self.assertEqual(len(set(rooms)), len(rooms))
+        for hours in (0.5, 1.0, 1.8, 3.0, 6.0):
+            length = rd.length_for(hours)
+            self.assertGreater(rd.write_room(length), length.max_tokens)
+        self.assertEqual(rd.length_for(1.8).target, 280)
+        self.assertGreater(rd.write_room(rd.length_for(1.8)), 1556)  # run 12's cut-off limit
+
+    async def test_the_writer_is_given_it_and_the_formatter_keeps_the_old_room(self) -> None:
+        creative, formatting = fx.Canned(WRITTEN), fx.Canned(GOOD)
+        out = await run.run_text(
+            inputs(),
+            fx.Canned(fx.BEATS_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(),
+            creative=creative,
+            formatting=formatting,
+            creative_models=("creative-model", "formatting-model"),
+        )
+        self.assertEqual(out.job.state, "ready")
+        length = rd.length_for(2.5)
+        self.assertEqual(creative.tokens, [rd.write_room(length)])
+        self.assertEqual(formatting.tokens, [length.max_tokens])  # unchanged
+
+    def test_a_write_that_was_cut_off_says_the_limit(self) -> None:
+        cut = cl.CallEvent("write", 1, "creative", 900, 2890, 2890, "max_tokens")
+        self.assertIn("cut off at 2890", cl.line(cut))
+        done = cl.CallEvent("write", 1, "creative", 900, 400, 2890, "end_turn")
+        self.assertNotIn("cut off", cl.line(done))
+
+
 class TheRun(unittest.IsolatedAsyncioTestCase):
     def fast(self) -> fx.Canned:
         return fx.Canned(fx.BEATS_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)

@@ -322,7 +322,7 @@ def safe_answer(
     return answer in kept and not near.ran_out
 
 
-def _matcher_names(lookup: CampaignLookup) -> tuple[list[str], list[str]]:
+def matcher_names(lookup: CampaignLookup) -> tuple[list[str], list[str]]:
     """The campaign's secret names, and its confirmed names that are not secret and not someone at
     the table, for the shared whole-name matcher (#2087)."""
     secrets = [n.text for n in lookup.names if n.secret]
@@ -338,7 +338,7 @@ def text_names_a_secret(lookup: CampaignLookup, text: str) -> bool:
     server."""
     if not lookup.secret_lengths:
         return False
-    secrets, allowed = _matcher_names(lookup)
+    secrets, allowed = matcher_names(lookup)
     if names_a_secret(text, secrets, allowed):  # the shared matcher: titles, plurals, run together
         return True
     words = list(WORD.finditer(text))
@@ -396,7 +396,7 @@ def _without_secrets(
             or _near_secret(lookup, words, begin, end, checks)
         }
         if not bad:  # the shared matcher, on the line as written: a fix that made one is taken back
-            secrets, allowed = _matcher_names(lookup)
+            secrets, allowed = matcher_names(lookup)
             if names_a_secret(text, secrets, allowed) and any(
                 names_a_secret(text, [s], allowed) and not names_a_secret(heard, [s], allowed)
                 for s in secrets

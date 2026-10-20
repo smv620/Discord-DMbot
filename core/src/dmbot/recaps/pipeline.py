@@ -545,7 +545,7 @@ class RecapWorker:
                 self._creative if self._creative is not None and self._two else self._client(job),
                 rd.prose_system(inputs.setting, length, plain=self._two, style=inputs.style),
                 message,
-                more_room(length.max_tokens, job.attempt),
+                more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
                 schema=None if self._two else rd.prose_schema(),
                 stage=stage if self._two else "",
             )

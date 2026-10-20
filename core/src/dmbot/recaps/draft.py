@@ -257,6 +257,22 @@ def length_for(hours: float) -> Length:
     )
 
 
+PLAIN_ROOM_BASE = 600  # tokens for the MOOD and MUSIC lines and a sentence of lead-in
+PLAIN_TOKENS_PER_WORD = (
+    6  # ample: English runs about 1.4, so even a draft several times too long ends
+)
+
+
+def write_room(length: Length) -> int:
+    """The output room of the two-model recap's plain-text writer (#2086). `max_tokens` was sized
+    for the old structured answer; in run 12 the creative writer's first try was cut off at it, a
+    whole call spent for nothing. The room is only a ceiling (the call is paid for the tokens
+    written, and the length band is checked as before), so it is generous: the longest accepted
+    draft's words times a roomy factor plus the label lines. Never below the structured room. The
+    formatter keeps `max_tokens`."""
+    return max(length.max_tokens, PLAIN_ROOM_BASE + length.last_high * PLAIN_TOKENS_PER_WORD)
+
+
 def session_hours(said: Sequence[Said], given: float | None = None) -> float:
     """Hours played: the one given (`recap_run --hours`), else the first to the last line's time,
     else (a file with no times) an estimate from the words, 7,000 an hour, to the nearest quarter
