@@ -25,7 +25,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot import plan_rules
+from dmbot import fetch, plan_rules
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
@@ -153,29 +153,37 @@ async def read_links(
         except import_link.DocError as err:
             return None, err.code
 
-    unique = list(dict.fromkeys(link for link in raw_links if isinstance(link, str)))
-    tasks = {link: asyncio.ensure_future(one(link)) for link in unique}
-    done: set[asyncio.Future[tuple[str | None, str | None]]] = set()
-    pending: set[asyncio.Future[tuple[str | None, str | None]]] = set()
-    if tasks:
-        done, pending = await asyncio.wait(tasks.values(), timeout=LINKS_DEADLINE_S)
-    for task in pending:
-        task.cancel()
-    got: dict[str, tuple[str | None, str | None]] = {}
-    for link, task in tasks.items():
-        try:
-            got[link] = task.result() if task in done else (None, import_link.UNREACHABLE)
-        except Exception:  # never a 500 from one doc; the link is not logged
-            got[link] = (None, import_link.UNREACHABLE)
-    out = []
-    for name, link in zip(named, raw_links, strict=True):
-        text, error = (
-            got.get(link, (None, import_link.NOT_A_GOOGLE_DOC))
-            if isinstance(link, str)
-            else (None, import_link.NOT_A_GOOGLE_DOC)
-        )
-        out.append((name, text, error))
-    return out
+    # The same document twice (in any spelling of its address) is read once and the repeat is
+    # refused by name, so a copy-paste slip never imports one session twice.
+    first: dict[str, int] = {}
+    repeated: set[int] = set()
+    for n, link in enumerate(raw_links):
+        export = fetch.google_doc_export(link) if isinstance(link, str) else None
+        key = str(export) if export is not None else None
+        if key is None:
+            continue
+        if key in first:
+            repeated.add(n)
+        else:
+            first[key] = n
+    tasks: dict[int, asyncio.Future[tuple[str | None, str | None]]] = {}
+    got: dict[int, tuple[str | None, str | None]] = {}
+    try:
+        for n, link in enumerate(raw_links):
+            if n not in repeated:
+                tasks[n] = asyncio.ensure_future(one(link))
+        if tasks:
+            await asyncio.wait(tasks.values(), timeout=LINKS_DEADLINE_S)
+        for n, task in tasks.items():
+            try:
+                got[n] = task.result() if task.done() else (None, import_link.UNREACHABLE)
+            except Exception:  # never a 500 from one doc; the link is not logged
+                got[n] = (None, import_link.UNREACHABLE)
+    finally:
+        for task in tasks.values():  # also on a cancelled request: nothing keeps reading
+            if not task.done():
+                task.cancel()
+    return [(name, *got.get(n, (None, import_link.REPEATED_LINK))) for n, name in enumerate(named)]
 
 
 async def read_files_off_loop(raw: object, raw_links: object = None) -> list[File]:

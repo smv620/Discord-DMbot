@@ -161,16 +161,44 @@ class TheLinks(WithImports):
                     )
         fake.assert_not_awaited()
 
-    async def test_the_same_link_is_read_once(self) -> None:
+    async def test_the_same_doc_twice_is_read_once_and_the_repeat_is_refused(self) -> None:
         fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        spelled = self.DOC + "/edit?usp=sharing"  # another spelling of the same document
         with unittest.mock.patch.object(import_link, "read_doc", fake):
             got = await imports.preview(
-                self.web, self.session, self.ref_c, None, links=[self.DOC, self.DOC], **self.kw
+                self.web, self.session, self.ref_c, None, links=[self.DOC, spelled], **self.kw
             )
         self.assertEqual(fake.await_count, 1)
         self.assertEqual(
-            [f["name"] for f in got["files"]], ["Google Doc 1.txt", "Google Doc 2.txt"]
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("Google Doc 1.txt", None), ("Google Doc 2.txt", "repeated_link")],
         )
+
+    async def test_a_cancelled_request_cancels_the_reads_still_running(self) -> None:
+        started = asyncio.Event()
+        cancelled: list[bool] = []
+
+        async def slow(_link: object) -> str:
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return CRAIG
+
+        with unittest.mock.patch.object(import_link, "read_doc", slow):
+            task = asyncio.ensure_future(
+                imports.preview(
+                    self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+                )
+            )
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(0.05)
+        self.assertEqual(cancelled, [True])
 
     async def test_a_slow_google_marks_the_unfinished_docs_unreachable(self) -> None:
         async def slow(_link: object) -> str:

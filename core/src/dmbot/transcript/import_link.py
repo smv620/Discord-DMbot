@@ -18,6 +18,7 @@ NOT_A_GOOGLE_DOC = "not_a_google_doc"
 NOT_SHARED = "doc_not_shared"
 TOO_BIG = "doc_too_big"
 UNREACHABLE = "doc_unreachable"
+REPEATED_LINK = "repeated_link"  # the same doc was pasted twice; only the first is read
 
 
 class DocError(Exception):
