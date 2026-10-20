@@ -681,7 +681,8 @@ class TheEmail(Base):
 
 def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None = None,
              channel: Any = "default", agreed: set[int] | None = None,
-             present: dict[str, Any] | None = None) -> Any:  # fmt: skip
+             present: dict[str, Any] | None = None,
+             known: list[str] | None = None) -> Any:  # fmt: skip
     from dmbot.bot import DMBot
 
     sent = AsyncMock()
@@ -703,6 +704,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         post=AsyncMock(),
         get_channel=lambda cid: sent if channel == "default" else channel,
         recap_secret_names=AsyncMock(return_value=[] if secrets is None else secrets),
+        recap_allowed_names=AsyncMock(return_value=known or []),
         consent=SimpleNamespace(
             consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE})
         ),
@@ -727,6 +729,22 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
             ("m",), 4, "posting", 0, (fx.ALICE,), {}, None, 1, 1,
         )  # fmt: skip
         return replace(base, **kw)
+
+    async def test_a_secret_inside_a_longer_confirmed_name_does_not_stop_the_post(self) -> None:
+        """#2087: the owner's row. "Arcane Brotherhood" is secret; "Arcane Brotherhood Hall" is a
+        confirmed name. The draft check read the confirmed names, so Post must too."""
+        job = self.job(summary="《Tense》 Mira reached Arcane Brotherhood Hall at dusk.")
+        bot = fake_bot(job, secrets=["Arcane Brotherhood"], known=["Arcane Brotherhood Hall"])
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        bot.recaps.posted.assert_awaited_once()
+        bot.recaps.back_to_draft.assert_not_awaited()
+
+    async def test_the_secret_name_on_its_own_still_stops_the_post(self) -> None:
+        job = self.job(summary="《Tense》 Mira feared the Arcane Brotherhood at dusk.")
+        bot = fake_bot(job, secrets=["Arcane Brotherhood"], known=["Arcane Brotherhood Hall"])
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        bot.recaps.posted.assert_not_awaited()
+        bot.recaps.back_to_draft.assert_awaited_once()
 
     async def test_it_posts_without_cues_and_marks_it_posted_once(self) -> None:
         bot = fake_bot(self.job())

@@ -7442,6 +7442,22 @@ class DMBot(commands.AutoShardedBot):
             return None
         return sorted({n.text for n in lookup.names if n.secret})
 
+    async def recap_allowed_names(self, campaign: Campaign) -> list[str]:
+        """The campaign's confirmed names that are not secret and not someone at the table, read
+        fresh, for the secret check at Post (#2087): "Arcane Brotherhood" inside the confirmed
+        "Arcane Brotherhood Hall" is the hall, as the draft check already reads it. Empty when they
+        can't be read: the check is then stricter, never looser."""
+        if self.lookup is None:
+            return []
+        try:
+            lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Recap: couldn't read the campaign's confirmed names")
+            return []
+        return sorted(
+            {n.text for n in lookup.names if n.confirmed and not n.secret and not n.person}
+        )
+
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
         if self.transcripts is None or self.lookup is None or self.recaps is None:
@@ -7788,7 +7804,7 @@ class DMBot(commands.AutoShardedBot):
         if secrets is None:
             return await back("DMbot couldn't check your secret names just now. Try Post again.")
         text = recap_post.to_the_table(job)
-        if names_a_secret(text, secrets, []):
+        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
             return await back("It names something you keep secret. Change the text, then post.")
         # The audio is looked up first, so the consent read below is the last await before the send.
         audio, audio_note = await self._recap_audio_files(gid, campaign, job, channel)

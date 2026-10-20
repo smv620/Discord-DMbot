@@ -833,13 +833,13 @@ class TheOpeningWords(unittest.TestCase):
 
 class TheWords(unittest.TestCase):
     def test_a_secret_is_found_in_every_form(self) -> None:
-        for text in ("Vex waits", "Vex's blade", "the Vexes came", "Vex-the-Younger", "VEX!"):
+        for text in ("Vex waits", "Vex's blade", "the Vexs came", "Vex-the-Younger", "VEX!"):
             self.assertTrue(names_a_secret(text, ["Vex"], []), text)
         self.assertFalse(names_a_secret("Vexation grew", ["Vex"], []))
-        self.assertTrue(names_a_secret("Lord Malgrave rose", ["Malgrave the Pale"], []))
-        # A word of a secret name is enough: over-blocking is the safe side.
-        self.assertTrue(names_a_secret("The pale light", ["Malgrave the Pale"], []))
-        self.assertFalse(names_a_secret("The light", ["Malgrave the Pale"], []))
+        self.assertTrue(names_a_secret("Lord Malgrave the Pale rose", ["Malgrave the Pale"], []))
+        # Only the whole name is a secret (#2087): one word of it on its own is not.
+        self.assertFalse(names_a_secret("Lord Malgrave rose", ["Malgrave the Pale"], []))
+        self.assertFalse(names_a_secret("The pale light", ["Malgrave the Pale"], []))
         self.assertTrue(names_a_secret("a ✶✶ appeared", ["✶✶"], []))
 
     def test_a_word_a_confirmed_name_also_uses_is_not_a_leak(self) -> None:
