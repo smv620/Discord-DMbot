@@ -1019,3 +1019,19 @@ class Working(Base):
         job = await self.go()
         self.assertEqual(job.calls, 5)
         self.assertEqual(len(self.careful.fact_sent), 1)
+
+    async def test_a_revision_whose_ai_check_failed_is_not_shipped_because_code_found_a_flag(
+        self,
+    ) -> None:
+        n = self.sentence("The torch burned")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(
+                fx.prose_answer(self.DIRECTION_SUMMARY),
+                facts=[fx.facts_answer([(n, "place")]), "not json"],
+            ),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("ferry", job.summary)  # the revision was not shipped
+        self.assertNotIn("The torch burned down a little", job.summary)  # first draft, cut

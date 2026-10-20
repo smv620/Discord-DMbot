@@ -103,6 +103,10 @@ class TheDirections(unittest.TestCase):
         both = "They left the North Gate and rode north."
         self.assertEqual(self.found(both, self.NAMES), [1])
 
+    def test_a_lone_direction_word_in_the_names_hides_nothing(self) -> None:
+        self.assertEqual(self.found("They rode west at dawn.", ("West",)), [1])
+        self.assertEqual(self.found("The Westerners rode on."), [1])
+
     def test_the_code_flags_join_the_fact_check_as_one_flag_per_sentence(self) -> None:
         text = "《Calm》 They rode north. A fire was lit. They went west."
         asked = rd.Facts(((1, "invented"), (2, "place")), (4,))

@@ -577,13 +577,13 @@ class RecapWorker:
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
-            facts = await self._facts(
+            facts, asked = await self._facts(
                 gid, cid, job, rd.pick_beats(sheet, length.beats), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
-        if facts is None and key in self._flags:
+        if not asked and key in self._flags:
             # The revision cannot be checked (the call failed or was unreadable): do not ship it
             # unverified; the first draft stands with its flagged sentences cut.
             return await self._prose_failed(
@@ -772,14 +772,18 @@ class RecapWorker:
         shown: Sequence[bt.Beat],
         prose: rd.Prose,
         names: Collection[str] = (),
-    ) -> rd.Facts | None:
+    ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
-        rule is checked in code, not only asked of the AI, so it holds when the AI's check fails."""
+        rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
+        The second value says whether the AI's check was had at all (a revision without it is not
+        shipped unchecked, whatever the code found)."""
+        key = (gid, cid, job.session_at, "facts")
+        before = self._last.get(key)
         asked = await self._ask_facts(gid, cid, job, shown, prose)
         facts = rd.with_directions(asked, prose.summary, names)
-        if facts is not asked and facts is not None:
-            self._annotate(gid, cid, job, "facts", facts=facts.counts())
-        return facts
+        if facts is not asked and facts is not None and self._last.get(key) is not before:
+            self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
+        return facts, asked is not None
 
     async def _ask_facts(
         self, gid: int, cid: str, job: Job, shown: Sequence[bt.Beat], prose: rd.Prose

@@ -916,7 +916,7 @@ def sentences_of(summary: str) -> list[str]:
 
 _DIRECTION = re.compile(
     r"\b(?:(?:north|south)[- ]?(?:east|west)|north|south|east|west)"
-    r"(?:ward|wards|ern|erly|erner|bound)?\b",
+    r"(?:ward|wards|ern|erly|erners?|bound)?\b",
     re.IGNORECASE,
 )
 
@@ -928,8 +928,11 @@ def stated_directions(summary: str, allowed_names: Collection[str]) -> list[int]
     "Session recaps"). A direction inside a name on the names list ("North Gate") is not one; a
     longer word such as "Northam" never matches, being no whole direction word."""
     owned = sorted(
-        {n for n in allowed_names if _DIRECTION.search(n)}, key=len, reverse=True
-    )  # longest first, so "North Gate Inn" goes before "North Gate"
+        {n for n in allowed_names if len(n.split()) > 1 and _DIRECTION.search(n)},
+        key=len,
+        reverse=True,
+    )  # longest first, so "North Gate Inn" goes before "North Gate". Only names of several words:
+    # a lone "West" in the names list must not hide "rode west" (the word is the thing policed).
     found: list[int] = []
     for number, text in enumerate(sentences_of(summary), start=1):
         for name in owned:
