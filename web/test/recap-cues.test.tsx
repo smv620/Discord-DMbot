@@ -169,7 +169,7 @@ describe("the words for each problem", () => {
     for (const kind of kinds) {
       const line = cueProblemLine({ paragraph: 4, near: "by the well", cue: "《x》", kind, suggest: null });
       expect(line.startsWith("Near “by the well” (paragraph 4): "), kind).toBe(true);
-      expect(line, kind).toMatch(/\b(Change|Pick|Add|Type|Use|Move|Check)\b/);
+      expect(line, kind).toMatch(/\b(Change|Pick|Add|Type|Use|Move|Put|Check)\b/);
       expect(line, kind).not.toMatch(/syntax|tag|bracket|parse|token|regex|enum/i);
     }
     expect(cueProblemLine(problems[0]!)).toContain("Change it to “gloom”");
