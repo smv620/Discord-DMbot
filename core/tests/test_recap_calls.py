@@ -49,8 +49,8 @@ class ThePureParts(unittest.TestCase):
         event = cl.CallEvent("prose", 2, "careful", 1204, 2310, 2559, "max_tokens", 173, ["length"])
         self.assertEqual(
             cl.line(event),
-            "prose try 2: careful, 1204/2310 (limit 2559), stop: max_tokens, 173 words, "
-            "checks: length",
+            "prose try 2: careful, 1204/2310 (limit 2559), stop: max_tokens, cut off at 2559, "
+            "173 words, checks: length",
         )
         event.checks, event.grade = [], {"tension": 4, "ending": 5}
         self.assertTrue(cl.line(event).endswith("checks: passed, grade tension 4 ending 5"))
