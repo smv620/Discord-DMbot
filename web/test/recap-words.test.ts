@@ -109,6 +109,15 @@ describe("Help and the emails list", () => {
 });
 
 describe("the switches and What's new agree", () => {
+  it("the Help step for fixing a recap says where kept style notes are removed", () => {
+    const step = recapSteps.map((x) => x.text).find((t) => t.includes("Tell DMbot what to fix")) ?? "";
+    expect(step !== "").toBe(RECAP_FIX_LIVE);
+    if (RECAP_FIX_LIVE) {
+      expect(step).toContain("this campaign's later recaps too. DMbot keeps the newest 10.");
+      expect(step).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+    }
+  });
+
   it("holds 'Recaps for your table' back exactly while recaps are not live", () => {
     const title = "Recaps for your table";
     expect(held.some((h) => h.title === title)).toBe(!RECAPS_LIVE);
