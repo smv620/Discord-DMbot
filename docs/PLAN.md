@@ -226,6 +226,12 @@ database.
   - **Visible depth:** the queue depth and oldest waiting job go to the log every round. The DM sees "queued" with its place.
   - **Stuck jobs:** a job past its tries fails with a plain reason, as now.
 - **Resources.** The worker container gets its own CPU and memory limits, so ffmpeg can never starve `ears` or the bot during a game. The bot and the worker always deploy from the same commit (one image), and dev1 restarts both.
+- **The switch is temporary.** `DMBOT_WORKER` exists only for rollback while the worker is new. Once dev1 has run the worker live for **two weeks of real sessions**, with every recap, audio render and import done by the worker and no rollback needed, a cleanup PR:
+  - removes the switch;
+  - deletes the bot's in-process copies of the job loops, and any code that only served them;
+  - leaves the bot with only its live work and the outbox delivery.
+
+  dev1 records the two weeks in `docs/testing-history.log`; Supervisor files the cleanup when they're done.
 - **Breaking up `bot.py`.** Each feature moves into its own discord.py extension (a Cog) in its package: `recaps/discord.py`, `memory/discord.py` and so on. Each holds its commands, buttons, listeners and session hooks. `bot.py` keeps startup, the session table and the wiring.
   - **One feature per PR,** with no change in behaviour, starting with recaps.
   - **This adds no queues and no new concurrency:** it is the same process and the same event loop.
