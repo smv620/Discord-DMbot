@@ -20,6 +20,11 @@
 export const RECAPS_LIVE = false;
 export const RECAP_AUDIO_LIVE = false;
 export const RECAP_NAMES_LIVE = false;
+// RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
+// link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
+// entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
+// of it, so it never describes a link nobody can make.
+export const RECAP_SHARE_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
