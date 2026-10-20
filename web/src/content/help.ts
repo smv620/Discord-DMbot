@@ -98,7 +98,7 @@ export const SECRET_REVEAL_LIVE = false;
 
 export const secretRevealSteps: Step[] = [
   {
-    text: "When you say a name you marked secret out loud at the table, DMbot asks you at once, privately: \"You just said it out loud. Is it revealed now?\" Press Yes, players know now and DMbot may use it in answers to players; you can make it secret again from the name's card. Press No, keep it secret and DMbot won't ask about it again this session. If your players can look at your DM screen, the question comes to you as a private message instead. DMbot asks about each name once a session, only for what you say, and never decides for you. Only the campaign's DMs can answer.",
+    text: "When you say a name you marked secret out loud at the table, DMbot asks you at once on your DM screen whether it is revealed now. If your players can look at your DM screen, it is sent to you as a private message instead. Press Yes, players know now, and DMbot may use the name in answers to players; you can make it secret again from the name's card (in the names list). If DMbot has the name more than once, your answer covers every copy. Press No, keep it secret, and DMbot won't ask about that name again this session. It only asks when you say the name, never when a player does, and it never decides for you. Only the campaign's DMs can answer.",
     names: [
       { name: "Yes, players know now", file: "ui/secret_reveal.py" },
       { name: "No, keep it secret", file: "ui/secret_reveal.py" },

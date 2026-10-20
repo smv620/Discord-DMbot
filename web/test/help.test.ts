@@ -569,7 +569,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("Press Yes, players know now")).toBe(SECRET_REVEAL_LIVE);
     const words = secretRevealSteps.map((x) => x.text).join(" ");
-    for (const part of ["make it secret again from the name's card", "private message instead", "once a session", "never decides for you", "Only the campaign's DMs can answer"]) expect(words).toContain(part);
+    for (const part of ["make it secret again from the name's card", "sent to you as a private message instead", "this session", "never when a player does", "covers every copy", "never decides for you", "Only the campaign's DMs can answer"]) expect(words).toContain(part);
     expect(secretRevealSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Yes, players know now", "No, keep it secret"]);
   });
 });

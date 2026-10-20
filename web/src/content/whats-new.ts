@@ -361,7 +361,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "When you say a secret name",
-    what: "If you say a name you marked secret out loud at the table, DMbot asks you at once, privately, whether it is revealed now. Press Yes, players know now or No, keep it secret. DMbot never decides for you, and only asks once a session for each name.",
+    what: "When you, the game master, say a name you marked secret out loud at the table, DMbot asks you at once whether it is revealed now. Press Yes, players know now, and DMbot may use the name in answers to players (you can make it secret again from the name's card). Press No, keep it secret, and DMbot won't ask about it again this session. DMbot never decides for you, and only the campaign's DMs can answer.",
     reason: "Waits for the deploy of #2094 (#2088, #2102).",
   },
   {
