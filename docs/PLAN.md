@@ -231,7 +231,7 @@ database.
   - deletes the bot's in-process copies of the job loops, and any code that only served them;
   - leaves the bot with only its live work and the outbox delivery.
 
-  dev1 records the two weeks in `docs/testing-history.log`; Supervisor files the cleanup when they're done.
+  dev1 records the two weeks in `docs/testing-history.log`; Supervisor files the cleanup when they're done. **Tracked in #2133, which stays open until the cleanup has merged** (owner, 2026-10-20: this must not be forgotten).
 - **Breaking up `bot.py`.** Each feature moves into its own discord.py extension (a Cog) in its package: `recaps/discord.py`, `memory/discord.py` and so on. Each holds its commands, buttons, listeners and session hooks. `bot.py` keeps startup, the session table and the wiring.
   - **One feature per PR,** with no change in behaviour, starting with recaps.
   - **This adds no queues and no new concurrency:** it is the same process and the same event loop.
