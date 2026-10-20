@@ -109,6 +109,14 @@ ROWS = [
     ("The Ox", [], "the oxen", False),
     ("The Ox", [], "ox", False),
     ("The Ox", [], "a box", False),
+    ("The Ox", [], "theox", True),  # a short name with its article, run together (#2100)
+    ("The Ox", [], "anox", True),
+    ("The Ox", [], "theoxes", True),
+    ("The Ox", [], "box", False),
+    ("The Ox", [], "anoxen", False),
+    ("The Ox", [], "aox", False),
+    ("The Go", [], "long ago", False),  # no bare "a" + word: it spells ordinary words
+    ("The Id", [], "some aid arrived", False),
     # a title in the secret but not the text, and the reverse
     ("White", [], "Mr. White", True),
     ("Vex-gate", [], "the Vex gate fell", True),
@@ -160,6 +168,23 @@ class TheOwnersExamples(unittest.TestCase):
         self.assertFalse(sm.names_a_secret("", ["Vex"], []))
 
 
+class EverySecretIsFound(unittest.TestCase):
+    """Many secrets and no allowed names: each is found alone, whatever its place in the list
+    (a cache keyed by a freed object's id once handed one secret another's spans)."""
+
+    def test_the_right_secret_is_found_at_every_place(self) -> None:
+        secrets = [f"word{n} word{n}" for n in range(12)]
+        for n in range(12):
+            for _ in range(20):
+                self.assertEqual(
+                    sm.secret_rule(f"we met word{n} word{n} today", secrets, []), sm.WHOLE_NAME
+                )
+
+    def test_an_unnamed_text_finds_none(self) -> None:
+        secrets = [f"word{n} word{n}" for n in range(12)]
+        self.assertEqual(sm.secret_rule("we met nobody today", secrets, []), "")
+
+
 class Speed(unittest.TestCase):
     """The callers run it on the event loop: a long draft with many names must stay quick."""
 
@@ -181,6 +206,17 @@ class Speed(unittest.TestCase):
         started = time.perf_counter()
         self.assertTrue(sm.names_a_secret(said, secrets, allowed))
         self.assertLess(time.perf_counter() - started, 0.2)
+
+    def test_every_match_inside_an_allowed_name_is_fast(self) -> None:
+        """The contrived text of #2100: the secret stands only inside the allowed name, thousands
+        of times. Each hit once looked for the allowed name again (about 0.6 s); now once."""
+        text = "Black Gate Keep " * 3000
+        best = min(self.timed(text, ["Black Gate"], ["Black Gate Keep"]) for _ in range(3))
+        self.assertLess(best, 0.25)
+        self.assertFalse(sm.names_a_secret(text, ["Black Gate"], ["Black Gate Keep"]))
+        self.assertTrue(
+            sm.names_a_secret(text + " Black Gate", ["Black Gate"], ["Black Gate Keep"])
+        )
 
     @staticmethod
     def timed(text: str, secrets: list[str], allowed: list[str]) -> float:

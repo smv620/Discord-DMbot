@@ -30,6 +30,7 @@ the database.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import itertools
 from collections.abc import Collection, Sequence
@@ -125,13 +126,36 @@ class _Text:
 
     def __init__(self, seen: list[str]) -> None:
         self.seen = seen
+        self._spans: dict[_Name, list[tuple[int, int]]] = {}  # per name, once per reading
+        # Keyed by the name itself, never id(): a freed name's id is reused by the next one, which
+        # would hand back another secret's spans and miss it.
+        self._starts: dict[_Name, list[int]] = {}
         self.index: dict[str, list[int]] = {}
         for i, word in enumerate(seen):
             self.index.setdefault(word, []).append(i)
 
     def spans(self, name: _Name) -> list[tuple[int, int]]:
         """Where the name's words stand, one after the other. Found from the places its first
-        word may stand, so a name that is not in the text costs a few lookups."""
+        word may stand, so a name that is not in the text costs a few lookups. Kept for the next
+        ask: an allowed name is asked about for every secret hit, and a text with many hits would
+        otherwise look for the same name again each time (#2100)."""
+        found = self._spans.get(name)
+        if found is None:
+            found = self._spans[name] = self._find(name)
+        return found
+
+    def inside(self, outer: _Name, start: int, end: int) -> bool:
+        """Whether the words [start, end) stand inside one occurrence of `outer`. Its occurrences
+        all have the same length, so they are searched by where they start (a bisect), not
+        one by one: a text with thousands of hits stays quick."""
+        n = len(outer.words)
+        starts = self._starts.get(outer)
+        if starts is None:  # sorted: the spans come from sorted starts
+            starts = self._starts[outer] = [a for a, _ in self.spans(outer)]
+        i = bisect.bisect_left(starts, end - n)
+        return i < len(starts) and starts[i] <= start
+
+    def _find(self, name: _Name) -> list[tuple[int, int]]:
         n = len(name.words)
         starts = sorted(i for form in name.forms[0] for i in self.index.get(form, ()))
         return [
@@ -205,12 +229,23 @@ def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collect
                             a for n in allowed_names for t in _variants(n) if (a := _name(t))
                         ]
                     if not any(
-                        len(a.words) > len(name.words)
-                        and any(s <= start and end <= e for s, e in reading.spans(a))
+                        len(a.words) > len(name.words) and reading.inside(a, start, end)
                         for a in allowed_cache
                     ):
                         return WHOLE_NAME
             words = tokens[1:] if len(tokens) > 1 and tokens[0] in ARTICLES else tokens
+            if (
+                len(tokens) > 1
+                and tokens[0] in ARTICLES
+                and len(words) == 1
+                and len(words[0]) < MIN_ONE_WORD
+            ):
+                # A short name that is only looked for with its article ("The Ox") run together:
+                # "theox", "anox" and their endings, never the bare "ox". Not "a" + word: it
+                # would match ordinary words ("a" + "go" is "ago").
+                run_together |= {
+                    art + words[0] + e for art in ("the", "an") for e in _endings(words[0])
+                }
             if len(words) > 1:
                 run_together |= _joined(words, article="the") | _joined(words, article="a")
                 run_together |= _joined(words, article="an")
