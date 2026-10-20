@@ -74,6 +74,7 @@ describe("What's new", () => {
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
       "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
+      "Recaps stick to what happened", // with recaps (RECAPS_LIVE, #2064, #2067)
       "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "Play a recap's voice and music together", // with it (#2017)
