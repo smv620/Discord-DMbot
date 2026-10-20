@@ -17,13 +17,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
+from dmbot.recaps import cues
 from dmbot.recaps.allowance import month_bounds
-from dmbot.recaps.audio.worker import text_hash
+from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
-from dmbot.recaps.text import strip_cues
+from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.sessions import Session
 
@@ -32,7 +34,8 @@ LIST_LIMIT = 20
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
-    " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm"
+    " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
+    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -40,25 +43,56 @@ _FROM = (
 
 
 class RecapError(Exception):
-    """Something the page shows in plain words. `code` is for the page's own message."""
+    """Something the page shows in plain words. `code` is for the page's own message.
+    `problems`: for "cue_problems", what is wrong with the cues (#2083), as `cues.Problem.as_dict`
+    with the same problem in plain words under "words"."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, problems: list[dict[str, Any]] | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.problems = problems
 
 
-def _audio_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
+def cue_refusal(summary: str) -> RecapError | None:
+    """The refusal to give when this text's cues are wrong, else None. The API's answer is the
+    only check: the page shows it and never checks cues itself (#2083)."""
+    found = cues.cue_problems(summary)
+    if not found:
+        return None
+    return RecapError("cue_problems", [{**p.as_dict(), "words": p.words()} for p in found])
+
+
+def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> dict[str, Any]:
     """Where the narration and music have got to (#1383), as the page words it. `current`: the
     audio was made from the text as it is now, so the players may be shown; after an edit it is
     not. `canAskAgain` is the page's cue only; the database's door is the rule."""
     state = row["audio"]
+    audio_chosen = row["audio_choice"] in ("voice", "music", "both")
     made_from = text_hash(row["title"], row["summary"])
     current = state == "ready" and row["audio_text_hash"] == made_from
     return {
         "state": state,
         "error": row["audio_error"] if state == "failed" else "",
         "current": current,
-        "canAskAgain": ready and state in ("ready", "failed"),
+        # only for a text the DM approved with audio chosen (the database's door is the rule)
+        "canAskAgain": ready and state in ("ready", "failed") and approved and audio_chosen,
+    }
+
+
+def _approved(row: dict[str, Any]) -> bool:
+    return bool(row["approved_hash"]) and row["approved_hash"] == text_hash(
+        row["title"], row["summary"]
+    )
+
+
+def _approval_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
+    approved = _approved(row)
+    return {
+        "approved": approved,
+        "choice": row["audio_choice"] if approved else "",
+        "approvedAt": row["approved_at"] if approved else None,
+        # The audio is under way or made, or the choice was text only: approving again is not on.
+        "canApprove": ready and not approved,
     }
 
 
@@ -86,7 +120,16 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         and row["tries"] < MAX_TRIES,
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
-        "audio": _audio_view(row, ready=status in ("draft", "posting") and state == "ready"),
+        "audio": _audio_view(
+            row,
+            ready=status in ("draft", "posting") and state == "ready",
+            approved=_approved(row),
+        ),
+        # The DM's approval of the text (#2083). It counts only while the text is what they
+        # approved: an edit ends it. `choice` is what they picked (voice, music, both or text).
+        "approval": _approval_view(row, ready=ready),
+        # The words the cue check allows, so the page shows exactly what the API checks.
+        "cue_words": cues.allowed_words(),
         # When the session's transcript was deleted by the campaign's "Keep transcripts for"
         # setting (Unix seconds, as the transcripts page says it), else null; the recap stays. And
         # how many days the table keeps transcripts, for the page's words (#2022).
@@ -226,6 +269,8 @@ async def edit_recap(
     bullets = [" ".join(b.split()) for b in housekeeping if b.strip()]
     if not text or len(text) > SUMMARY_MAX:
         raise RecapError("bad_text")
+    if refusal := cue_refusal(text):  # the edit stays unsaved until the cues are right (#2083)
+        raise refusal
     if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -275,6 +320,56 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
     return _view(row)
 
 
+async def approve_recap(
+    db: Database,
+    session: Session,
+    ref: str,
+    choice: str,
+    *,
+    audio_in_plan: bool,
+    outside_engine: str | None = None,
+) -> dict[str, Any]:
+    """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
+    database's door (`dmbot_recap_approve`) records who and when and the hash of this very text and
+    queues the audio. `outside_engine`: the speech-to-text company in use, so that only consent
+    given for it counts, as in the bot. The secret names and the plan are checked again by the
+    audio step before any paid call. `audio_in_plan`: from the campaign owner's plan; an audio
+    choice without it is refused ("not_in_plan")."""
+    if choice not in CHOICES:
+        raise RecapError("bad_choice")
+    if choice != TEXT and not audio_in_plan:
+        raise RecapError("not_in_plan")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, row = await _one(conn, ref, session, marks=False)
+        if refusal := cue_refusal(row["summary"]):
+            raise refusal
+        # The same checks as the DM screen's Approve (#2083): no secret name in the text, and
+        # everyone whose lines were used still recorded. The names come through a door and are
+        # used to check this one text; they are never returned.
+        cur = await conn.execute(
+            "SELECT dmbot_recap_check_names(%s, %s, %s, %s) AS r",
+            (gid, cid, TERMS_VERSION, outside_engine),
+        )
+        names = (await cur.fetchone() or {}).get("r")
+        if names is None:
+            raise RecapError("not_allowed")
+        text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])
+        if names_a_secret(text, names["secret"], names["allowed"]):
+            raise RecapError("names_secret")
+        agreed = {int(u) for u in names["recorded"]}
+        if not {int(u) for u in row["speakers"]} <= agreed:
+            raise RecapError("stopped_recording")
+        cur = await conn.execute(
+            "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, choice, text_hash(row["title"], row["summary"])),
+        )  # (the hash of the very text whose cues were just checked)
+        outcome = (await cur.fetchone() or {}).get("r")
+        if outcome != "approved":
+            raise RecapError("not_allowed")
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
 async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
     the campaign, a recap that is ready and not yet decided, and once every 10 minutes."""
@@ -285,6 +380,8 @@ async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any
         outcome = found["r"] if found else "not_allowed"
         if outcome == "too_soon":
             raise RecapError("too_soon")
+        if outcome == "needs_approval":  # the text changed since it was approved
+            raise RecapError("needs_approval")
         if outcome != "queued":
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)

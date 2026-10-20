@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
+from dmbot.transcription.config import OUTSIDE_ENGINES
 from dmbot.web.admin_hash import decode_hash
 from dmbot.web.payments import paid_plan_ids
 from dmbot.web.stripe import StripeConfig
@@ -76,6 +77,9 @@ class WebSettings:
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # The outside speech-to-text company the bot sends voices to (deepgram, cloud), or None: only
+    # consent given for it counts, as in the bot. From TRANSCRIBER, the bot's own setting.
+    outside_engine: str | None = None
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -287,6 +291,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        outside_engine=get("TRANSCRIBER").lower()
+        if get("TRANSCRIBER").lower() in OUTSIDE_ENGINES
+        else None,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

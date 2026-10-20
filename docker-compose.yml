@@ -111,6 +111,9 @@ services:
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
       WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      # Which speech-to-text the bot uses, so the approval check counts only the consent that
+      # holds for it (the same setting as the bot's; no key).
+      TRANSCRIBER: ${TRANSCRIBER:-whisper-local}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
