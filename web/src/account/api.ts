@@ -499,6 +499,7 @@ export type ApiErrorKind =
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
   | "not-ready" // the API has no move codes yet (#1231)
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
+  | "needs-approval" // "Make the audio again" on a text that is no longer approved (#2090)
   | "too-soon" // the account moved less than 30 days ago (#1246)
   | "email-failed" // the move code could not be emailed just now (#1246)
   | "not-paying" // a support ticket needs an account with a plan, Try It too (#1340, #1435)
@@ -691,6 +692,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
   one_waiting: "one-waiting",
