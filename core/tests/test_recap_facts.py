@@ -70,6 +70,57 @@ class TheSplit(unittest.TestCase):
         self.assertTrue(facts.clean)
 
 
+class TheDirections(unittest.TestCase):
+    NAMES = ("North Gate", "Westerly Inn", "Mira", "Northam")
+
+    def found(self, text: str, names: tuple[str, ...] = ()) -> list[int]:
+        return rd.stated_directions(f"《Calm》 {text}", names)
+
+    def test_a_compass_direction_is_flagged_by_its_sentence_number(self) -> None:
+        self.assertEqual(self.found("They rode north to the ferry. Then they rested."), [1])
+        self.assertEqual(self.found("They rested. The wind came from the South."), [2])
+
+    def test_every_form_counts(self) -> None:
+        for text in (
+            "Eastward lay the hills.",
+            "A northern road.",
+            "Westerly winds.",
+            "They went north-east.",
+            "The Southwest gate was shut.",
+            "A southbound cart.",
+            "They walked westwards.",
+        ):
+            self.assertEqual(self.found(text), [1], text)
+
+    def test_ordinary_words_and_longer_names_are_not_directions(self) -> None:
+        for text in ("They reached Northam at dusk.", "Easter bells rang.", "A wasteland."):
+            self.assertEqual(self.found(text), [], text)
+
+    def test_a_direction_in_a_listed_name_is_not_one_but_a_bare_one_still_is(self) -> None:
+        self.assertEqual(self.found("They reached the North Gate.", self.NAMES), [])
+        self.assertEqual(self.found("They slept at the Westerly Inn.", self.NAMES), [])
+        self.assertEqual(self.found("Mira's blade from the North Gate's guard.", self.NAMES), [])
+        both = "They left the North Gate and rode north."
+        self.assertEqual(self.found(both, self.NAMES), [1])
+
+    def test_a_lone_direction_word_in_the_names_hides_nothing(self) -> None:
+        self.assertEqual(self.found("They rode west at dawn.", ("West",)), [1])
+        self.assertEqual(self.found("The Westerners rode on."), [1])
+
+    def test_the_code_flags_join_the_fact_check_as_one_flag_per_sentence(self) -> None:
+        text = "《Calm》 They rode north. A fire was lit. They went west."
+        asked = rd.Facts(((1, "invented"), (2, "place")), (4,))
+        merged = rd.with_directions(asked, text, ())
+        assert merged is not None
+        self.assertEqual(merged.unsupported, ((1, "invented"), (2, "place"), (3, "direction")))
+        self.assertEqual(merged.missing, (4,))
+        alone = rd.with_directions(None, text, ())
+        assert alone is not None
+        self.assertEqual(alone.unsupported, ((1, "direction"), (3, "direction")))
+        self.assertIsNone(rd.with_directions(None, "《Calm》 A fire was lit.", ()))
+        self.assertIs(rd.with_directions(asked, "《Calm》 A fire was lit.", ()), asked)
+
+
 class TheAnswer(unittest.TestCase):
     def test_it_is_read_and_numbers_that_name_nothing_are_dropped(self) -> None:
         raw = fx.facts_answer([(2, "direction"), (2, "place"), (9, "place")], missing=[1, 7])
@@ -178,3 +229,14 @@ class TheReport(unittest.IsolatedAsyncioTestCase):
         section = "\n".join(rows)
         for words in ("torch", "Greywater", "Mira", "burned"):
             self.assertNotIn(words, section)  # counts only: no word of the session or the recap
+
+    async def test_the_calls_section_counts_the_directions_found_in_code(self) -> None:
+        prose = fx.prose_answer(
+            fx.SUMMARY.replace("The torch burned down a little.", "They rode north to the ferry.")
+        )
+        careful = fx.Canned(prose, facts=[fx.CLEAN_FACTS, fx.CLEAN_FACTS])
+        fast = fx.Canned(fx.BEATS_ANSWER, prose, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        out = await run.run_text(inputs(), fast, careful)
+        facts = [r for r in calls_section(out) if r.strip().startswith("facts try")]
+        self.assertIn("flagged: direction 1", facts[0])
+        self.assertNotIn("ferry", "\n".join(calls_section(out)))

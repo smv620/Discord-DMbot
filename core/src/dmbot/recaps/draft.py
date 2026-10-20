@@ -914,6 +914,49 @@ def sentences_of(summary: str) -> list[str]:
     return [strip_cues(summary[a:b]) for a, b in sentence_spans(summary)]
 
 
+_DIRECTION = re.compile(
+    r"\b(?:(?:north|south)[- ]?(?:east|west)|north|south|east|west)"
+    r"(?:ward|wards|ern|erly|erners?|bound)?\b",
+    re.IGNORECASE,
+)
+
+
+def stated_directions(summary: str, allowed_names: Collection[str]) -> list[int]:
+    """The numbers of the narration's sentences (numbered as the fact check numbers them) that
+    hold a compass direction (#2067). Strict on purpose: a direction is flagged even when a beat
+    says it, because until a DM shares the adventure's map the recap states none (docs/PLAN.md,
+    "Session recaps"). A direction inside a name on the names list ("North Gate") is not one; a
+    longer word such as "Northam" never matches, being no whole direction word."""
+    owned = sorted(
+        {n for n in allowed_names if len(n.split()) > 1 and _DIRECTION.search(n)},
+        key=len,
+        reverse=True,
+    )  # longest first, so "North Gate Inn" goes before "North Gate". Only names of several words:
+    # a lone "West" in the names list must not hide "rode west" (the word is the thing policed).
+    found: list[int] = []
+    for number, text in enumerate(sentences_of(summary), start=1):
+        for name in owned:
+            text = re.sub(rf"(?<!\w){re.escape(name)}(?:['’]s)?(?!\w)", " ", text, flags=re.I)
+        if _DIRECTION.search(text):
+            found.append(number)
+    return found
+
+
+def with_directions(
+    facts: Facts | None, summary: str, allowed_names: Collection[str]
+) -> Facts | None:
+    """The fact check's flags plus the directions found in code, as kind `direction`. A sentence
+    both flagged keeps the AI's kind, and is one flag. With no fact check at all, the code's flags
+    stand alone. None only when there is nothing at all to report."""
+    flagged = stated_directions(summary, allowed_names)
+    if not flagged:
+        return facts
+    base = facts or Facts()
+    have = {n for n, _ in base.unsupported}
+    merged = sorted([*base.unsupported, *((n, "direction") for n in flagged if n not in have)])
+    return Facts(tuple(merged), base.missing)
+
+
 def facts_message(beats: Sequence[Beat], summary: str) -> str:
     numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(sentences_of(summary), start=1))
     return f"<beats>\n{sheet(beats)}\n</beats>\n<sentences>\n{_data(numbered)}\n</sentences>"
