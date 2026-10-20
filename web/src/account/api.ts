@@ -753,14 +753,19 @@ export function httpApi(
     path: string,
     body?: unknown,
     asFile = false,
+    anonymous = false,
   ): Promise<unknown> {
     let response: Response;
     try {
-      const init: RequestInit = {
-        method,
-        credentials: "include",
-        headers: { "X-DMbot-Request": "1", Accept: "application/json" },
-      };
+      // A call for someone who is not signed in (a shared recap's link) sends no cookie and no custom
+      // header: it needs neither, and a plain GET stays a simple request.
+      const init: RequestInit = anonymous
+        ? { method, credentials: "omit", headers: { Accept: "application/json" } }
+        : {
+            method,
+            credentials: "include",
+            headers: { "X-DMbot-Request": "1", Accept: "application/json" },
+          };
       if (body !== undefined) {
         init.headers = { ...init.headers, "Content-Type": "application/json" };
         init.body = JSON.stringify(body);
@@ -1005,6 +1010,9 @@ export function httpApi(
       (await call(
         "GET",
         `/recaps/${encodeURIComponent(token)}`,
+        undefined,
+        false,
+        true,
       )) as PublicRecap,
     decideRecap: async (ref, action) =>
       (await call(

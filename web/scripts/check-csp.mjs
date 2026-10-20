@@ -19,6 +19,7 @@ const SCRIPTED = new Set([
   "account/house-rules.html",
   "account/homebrew.html",
   "account/transcripts.html",
+  "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
   "hello.html",
   "admin.html",

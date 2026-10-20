@@ -5,7 +5,7 @@
  */
 import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
 import { shareWords } from "./recap-share";
-import { RECAP_SHARE_LIVE } from "./recap-words";
+import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "./recap-words";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -107,7 +107,7 @@ export const text = {
 
 /** "Ready to read", "Posted"… for one row of the list. */
 export function statusLine(recap: Recap): string {
-  if (recap.status === "posted" && recap.shared && RECAP_SHARE_LIVE) return shareWords.listTag;
+  if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";

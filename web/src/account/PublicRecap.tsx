@@ -6,7 +6,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { publicWords as words } from "../content/recap-share";
-import { RECAP_SHARE_LIVE } from "../content/recap-words";
+import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { sessionDay } from "../content/recaps";
 import { ApiError, type AccountApi, type PublicRecap } from "./api";
 import RecapPlayer from "./RecapPlayer";
@@ -43,7 +43,7 @@ export default function PublicRecapPage({
 
   useEffect(() => {
     // Not live yet, or no secret in the address: nothing to ask, the same message as any dead link.
-    if (!RECAP_SHARE_LIVE || !token || !api.publicRecap) {
+    if (!(RECAPS_LIVE && RECAP_SHARE_LIVE) || !token || !api.publicRecap) {
       setLoad({ kind: "dead" });
       return;
     }

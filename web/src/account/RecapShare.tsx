@@ -6,7 +6,7 @@
 import { useRef, useState } from "preact/hooks";
 
 import { shareWords as words } from "../content/recap-share";
-import { RECAP_SHARE_LIVE } from "../content/recap-words";
+import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
@@ -32,7 +32,8 @@ export default function RecapShareControls({
   const field = useRef<HTMLInputElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
 
-  if (!RECAP_SHARE_LIVE || !recap.share || !api.shareRecap) return null;
+  if (!(RECAPS_LIVE && RECAP_SHARE_LIVE) || !recap.share || !api.shareRecap)
+    return null;
   // A draft or skipped recap has no link to make; say what to do instead of a dead button.
   if (recap.status !== "posted")
     return (

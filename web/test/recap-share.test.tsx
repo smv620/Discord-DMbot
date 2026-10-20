@@ -28,6 +28,10 @@ vi.mock("../src/content/recap-words", async (original) => {
     get RECAP_SHARE_LIVE() {
       return live.share;
     },
+    // Sharing needs recaps on too: the tests run as they will once both are live.
+    get RECAPS_LIVE() {
+      return true;
+    },
   };
 });
 
@@ -266,6 +270,22 @@ describe("over the wire", () => {
       body: JSON.stringify({ action: "new" }),
     });
     expect(seen[1]?.url).toBe("https://api.example.test/recaps/se%2Fcret");
+  });
+
+  it("reads a shared recap with no cookie and no custom header", async () => {
+    const seen: RequestInit[] = [];
+    const fetcher = (async (_url: string, init: RequestInit) => {
+      seen.push(init);
+      return new Response(
+        JSON.stringify({ title: "T", text: "t", postedAt: 1, audio: {} }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    await httpApi("https://api.example.test", fetcher).publicRecap!("x");
+    expect(seen[0]?.credentials).toBe("omit");
+    expect(
+      Object.keys((seen[0]?.headers as Record<string, string>) ?? {}),
+    ).toEqual(["Accept"]);
   });
 
   it("reads the refusals", async () => {
