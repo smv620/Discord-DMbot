@@ -216,6 +216,95 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** The words a cue may use (#2084). Missing from an API older than #2083. */
+  cueWords?: CueWords;
+  /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
+  approval?: RecapApproval;
+}
+
+/** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
+ * refused save says it (#2084, #2083). The API decides what is wrong; the page only shows it. */
+export interface CueProblem {
+  /** Which paragraph, counting from 1. */
+  paragraph: number;
+  /** A few words around the cue, so the DM can find it. */
+  near: string;
+  /** The cue as written. */
+  cue: string;
+  /** One of unknown, unclosed, mismatched, empty, no_words, inside_word today; any other word
+   * gets a plain "this cue is wrong" line (#2083 may add kinds). */
+  kind: string;
+  /** The closest allowed word, or null when none is close. */
+  suggest: string | null;
+}
+
+/** The words a cue may use, as the API checks them (#2084, #2083): the page shows these and
+ * never keeps a list of its own. */
+export interface CueWords {
+  moods: string[];
+  /** Other words that stand for a mood: `{ sad: "somber" }`. */
+  synonyms: Record<string, string>;
+  /** Pause and pace words. */
+  pacing: string[];
+}
+
+/** What the DM approved a recap's text for (#2083, #2084). `approved` is true only while the text
+ * is what was approved: an edit ends it. `choice` is empty until then. */
+export type ApproveChoice = "voice" | "music" | "both" | "text";
+export interface RecapApproval {
+  approved: boolean;
+  choice: ApproveChoice | "";
+  /** Unix seconds, or null. */
+  approvedAt: number | null;
+  /** The recap is ready and not yet approved. */
+  canApprove: boolean;
+}
+
+/** Reads the allowed cue words out of a recap as the API sends it. The field is `cueWords` or
+ * `cue_words` (#2083 is not final), and a value of the wrong shape gives undefined, so the help
+ * is simply not shown. */
+export function readCueWords(body: unknown): CueWords | undefined {
+  const w = (body as { cue_words?: unknown } | null)?.cue_words as
+    Partial<CueWords> | undefined;
+  if (!w || !Array.isArray(w.moods) || !Array.isArray(w.pacing))
+    return undefined;
+  const synonyms: Record<string, string> = {};
+  for (const [from, to] of Object.entries(w.synonyms ?? {})) {
+    if (typeof to === "string") synonyms[from] = to;
+  }
+  return {
+    moods: w.moods.map(String),
+    synonyms,
+    pacing: w.pacing.map(String),
+  };
+}
+
+/** A recap as the API sent it, with its cue words in the one spelling the page reads. */
+function recapFrom(body: unknown): Recap {
+  const recap = body as Recap;
+  const cueWords = readCueWords(body);
+  return cueWords ? { ...recap, cueWords } : recap;
+}
+
+/** Reads the cue problems out of a refused save's or approval's body (`cue_problems`, as #2083's
+ * code sends it); a body with none gives []. */
+export function readCueProblems(body: unknown): CueProblem[] {
+  const list = (body as { cue_problems?: unknown } | null)?.cue_problems;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((item): CueProblem[] => {
+    const p = item as Partial<CueProblem> | null;
+    if (!p || typeof p.paragraph !== "number" || typeof p.kind !== "string")
+      return [];
+    return [
+      {
+        paragraph: p.paragraph,
+        near: String(p.near ?? ""),
+        cue: String(p.cue ?? ""),
+        kind: p.kind,
+        suggest: typeof p.suggest === "string" ? p.suggest : null,
+      },
+    ];
+  });
 }
 
 /** One campaign's recaps used this month, as `GET /me/recaps` says (`recapsThisMonth`, #1428,
@@ -384,7 +473,9 @@ export interface HomebrewPage {
 }
 
 /** The three audio files, as short-lived addresses to play. */
-export type RecapAudioLinks = Partial<Record<"voice" | "music" | "mix", string>>;
+export type RecapAudioLinks = Partial<
+  Record<"voice" | "music" | "mix", string>
+>;
 
 export type RecapAction = "post" | "again" | "drop";
 
@@ -420,6 +511,7 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
+  | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
@@ -428,7 +520,10 @@ export type ApiErrorKind =
   | "server"; // anything else
 
 export class ApiError extends Error {
-  constructor(readonly kind: ApiErrorKind) {
+  constructor(
+    readonly kind: ApiErrorKind,
+    readonly cueProblems: CueProblem[] = [],
+  ) {
     super(kind);
     this.name = "ApiError";
   }
@@ -472,21 +567,36 @@ export interface AccountApi {
   recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
-  saveRecap?(ref: string, summary: string, housekeeping: string[]): Promise<Recap>;
+  saveRecap?(
+    ref: string,
+    summary: string,
+    housekeeping: string[],
+  ): Promise<Recap>;
+  /** Approve the text and pick what to make: voice-over, music, both or text only (#2083). The
+   * API checks the cues again and refuses with `bad-cues`; any choice but text queues audio. */
+  approveRecap?(ref: string, choice: ApproveChoice): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
    * (#1468). `campaignRef` is `<server>.<campaign>`. Missing from an API older than that. */
   recapChoices?(campaignRef: string): Promise<RecapChoices>;
   /** Change one of them; answers all three as they are now. */
-  setRecapChoice?(campaignRef: string, which: RecapChoice, on: boolean): Promise<RecapChoices>;
+  setRecapChoice?(
+    campaignRef: string,
+    which: RecapChoice,
+    on: boolean,
+  ): Promise<RecapChoices>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
   /** A campaign's name and its saved sessions, newest first. `campaignRef` is `<server>.<campaign>`. */
   transcriptSessions?(
     campaignRef: string,
-  ): Promise<{ name: string; keepDays?: number | null; sessions: TranscriptSessionItem[] }>;
+  ): Promise<{
+    name: string;
+    keepDays?: number | null;
+    sessions: TranscriptSessionItem[];
+  }>;
   /** One session to read, in one version. */
   transcript?(
     campaignRef: string,
@@ -495,7 +605,11 @@ export interface AccountApi {
     offset?: number,
   ): Promise<TranscriptView>;
   /** The same text as a file to save, as Discord's download button gives it. */
-  transcriptFile?(campaignRef: string, number: number, version: TranscriptVersion): Promise<Blob>;
+  transcriptFile?(
+    campaignRef: string,
+    number: number,
+    version: TranscriptVersion,
+  ): Promise<Blob>;
   /** The campaigns with house rules in the person's servers, for anyone in them (#1521). Missing
    * from an API older than that. */
   houseRuleCampaigns?(): Promise<HouseRuleCampaign[]>;
@@ -519,7 +633,11 @@ export interface AccountApi {
    * recap's address without its last part: `<server>.<campaign>`. */
   campaignNames?(campaignRef: string): Promise<CampaignName[]>;
   /** Set (a string) or clear (null) how the narrator says one name. */
-  saveSaidAs?(campaignRef: string, nameId: string, saidAs: string | null): Promise<void>;
+  saveSaidAs?(
+    campaignRef: string,
+    nameId: string,
+    saidAs: string | null,
+  ): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
@@ -592,7 +710,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
-export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi {
+export function httpApi(
+  base: string,
+  fetcher: typeof fetch = fetch,
+): AccountApi {
   const root = base.replace(/\/+$/, "");
 
   async function call(
@@ -619,12 +740,27 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     if (response.status === 401) throw new ApiError("signed-out");
     if (!response.ok) {
       let code = "";
+      let cueProblems: CueProblem[] = [];
       try {
-        code = String(((await response.json()) as { error?: unknown }).error ?? "");
+        const body: unknown = await response.json();
+        code = String((body as { error?: unknown }).error ?? "");
+        cueProblems = readCueProblems(body);
       } catch {
         // No JSON body: a plain server error.
       }
-      throw new ApiError(errorKinds[code] ?? (response.status === 403 ? "not-allowed" : "server"));
+      const kind =
+        errorKinds[code] ??
+        (response.status === 403 ? "not-allowed" : "server");
+      // Cue problems are the page's answer, unless the recap can't be changed at all: then the
+      // reload that goes with "not-allowed" and "not-editable" matters more.
+      if (
+        (cueProblems.length > 0 || code === "cue_problems") &&
+        kind !== "not-allowed" &&
+        kind !== "not-editable"
+      ) {
+        throw new ApiError("bad-cues", cueProblems);
+      }
+      throw new ApiError(kind);
     }
     if (response.status === 204) return null;
     return asFile ? response.blob() : response.json();
@@ -638,7 +774,8 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       try {
         return (await call("GET", "/me")) as Me;
       } catch (error) {
-        if (error instanceof ApiError && error.kind === "signed-out") return null;
+        if (error instanceof ApiError && error.kind === "signed-out")
+          return null;
         throw error;
       }
     },
@@ -656,7 +793,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       await call("POST", "/me/move-code");
     },
     sendSupport: async (ticket) => {
-      const answer = (await call("POST", "/support", ticket)) as { reply?: unknown } | null;
+      const answer = (await call("POST", "/support", ticket)) as {
+        reply?: unknown;
+      } | null;
       // Only an explicit "no address" changes the words: an answer without the field is a
       // ticket that was kept, and the team still replies by email.
       return { reply: answer?.reply !== false };
@@ -676,7 +815,9 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
             t !== null &&
             typeof t.at === "number" &&
             typeof t.subject === "string" &&
-            (t.status === "new" || t.status === "answered" || t.status === "closed"),
+            (t.status === "new" ||
+              t.status === "answered" ||
+              t.status === "closed"),
         ),
         reply: answer?.reply !== false,
       };
@@ -691,8 +832,10 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     billingPortalUrl: () => url("/billing/portal"),
     extraHoursUrl: () => url("/billing/extra-hours"),
     recapAudioUrl: () => url("/billing/recap-audio"),
-    downloadExport: async () => (await call("GET", "/me/export", undefined, true)) as Blob,
-    recaps: async () => ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    downloadExport: async () =>
+      (await call("GET", "/me/export", undefined, true)) as Blob,
+    recaps: async () =>
+      ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
     recapList: async () => {
       const got = (await call("GET", "/me/recaps")) as {
         recaps: Recap[];
@@ -701,9 +844,16 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       return { recaps: got.recaps, thisMonth: got.recapsThisMonth ?? [] };
     },
     transcriptCampaigns: async () =>
-      ((await call("GET", "/me/transcripts")) as { campaigns: TranscriptCampaign[] }).campaigns,
+      (
+        (await call("GET", "/me/transcripts")) as {
+          campaigns: TranscriptCampaign[];
+        }
+      ).campaigns,
     transcriptSessions: async (campaignRef) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts`)) as {
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts`,
+      )) as {
         name: string;
         keepDays?: number | null;
         sessions: TranscriptSessionItem[];
@@ -721,7 +871,11 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         true,
       )) as Blob,
     houseRuleCampaigns: async () =>
-      ((await call("GET", "/me/house-rules")) as { campaigns: HouseRuleCampaign[] }).campaigns,
+      (
+        (await call("GET", "/me/house-rules")) as {
+          campaigns: HouseRuleCampaign[];
+        }
+      ).campaigns,
     houseRules: async (campaignRef) =>
       (await call(
         "GET",
@@ -737,9 +891,14 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
     improvement: async () =>
       ((await call("GET", "/me/improvement")) as { improve: boolean }).improve,
     setImprovement: async (on) =>
-      ((await call("PUT", "/me/improvement", { improve: on })) as { improve: boolean }).improve,
+      (
+        (await call("PUT", "/me/improvement", { improve: on })) as {
+          improve: boolean;
+        }
+      ).improve,
     homebrewCampaigns: async () =>
-      ((await call("GET", "/me/homebrew")) as { campaigns: HomebrewCampaign[] }).campaigns,
+      ((await call("GET", "/me/homebrew")) as { campaigns: HomebrewCampaign[] })
+        .campaigns,
     homebrew: async (campaignRef) =>
       (await call(
         "GET",
@@ -766,12 +925,21 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         { saidAs },
       );
     },
-    recap: async (ref) => (await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)) as Recap,
+    recap: async (ref) =>
+      recapFrom(await call("GET", `/me/recaps/${encodeURIComponent(ref)}`)),
     saveRecap: async (ref, summary, housekeeping) =>
-      (await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
-        summary,
-        housekeeping,
-      })) as Recap,
+      recapFrom(
+        await call("PUT", `/me/recaps/${encodeURIComponent(ref)}`, {
+          summary,
+          housekeeping,
+        }),
+      ),
+    approveRecap: async (ref, choice) =>
+      recapFrom(
+        await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, {
+          choice,
+        }),
+      ),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
@@ -784,17 +952,29 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
         `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`,
       )) as RecapChoices,
     setRecapChoice: async (campaignRef, which, on) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`, {
-        which,
-        on,
-      })) as RecapChoices,
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/recap-choices`,
+        {
+          which,
+          on,
+        },
+      )) as RecapChoices,
     askRecapAudioAgain: async (ref) =>
-      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/audio/again`)) as Recap,
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
+      )) as Recap,
     decideRecap: async (ref, action) =>
-      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/${action}`)) as Recap,
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/${action}`,
+      )) as Recap,
     characters: async () =>
-      ((await call("GET", "/me/characters")) as { characters: Character[] }).characters,
-    installUrl: (serverId) => `${root}/install?server_id=${encodeURIComponent(serverId)}`,
+      ((await call("GET", "/me/characters")) as { characters: Character[] })
+        .characters,
+    installUrl: (serverId) =>
+      `${root}/install?server_id=${encodeURIComponent(serverId)}`,
     linkServer: async (serverId) => {
       await call("POST", `/servers/${encodeURIComponent(serverId)}/link`);
     },
@@ -813,8 +993,11 @@ export function httpApi(base: string, fetcher: typeof fetch = fetch): AccountApi
       await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
     requestDelete: async () =>
-      ((await call("POST", "/account/delete/request")) as { confirm_token: string })
-        .confirm_token,
+      (
+        (await call("POST", "/account/delete/request")) as {
+          confirm_token: string;
+        }
+      ).confirm_token,
     confirmDelete: async (token) => {
       await call("POST", "/account/delete/confirm", { confirm_token: token });
     },

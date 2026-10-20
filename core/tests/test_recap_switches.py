@@ -262,9 +262,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
 
     def test_the_buttons_follow_the_plan(self) -> None:
         three = panel.RecapsPanel(campaign(), panel.PlanFacts(True, True, "part of your plan"))
-        self.assertEqual(len(three.children), 3)
+        self.assertEqual(len(three.children), 4)  # and ✍️ Recap style
         two = panel.RecapsPanel(campaign(), panel.PlanFacts(True, False))
-        self.assertEqual(len(two.children), 2)
+        self.assertEqual(len(two.children), 3)
         self.assertEqual(
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )
