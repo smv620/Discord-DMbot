@@ -182,6 +182,25 @@ def _field(value: object) -> str | None:
     return text[:FIELD_MAX] if text else None
 
 
+def _whole_items(text: str) -> list[object]:
+    """The complete claims at the start of an answer that was cut off in the middle of its list
+    (Haiku 5.5 writes longer, and a batch can end mid-claim): every item before the broken one is
+    as good as in a whole answer, so it is kept instead of losing the batch (#2152)."""
+    marker = text.find('"claims"')
+    open_at = text.find("[", marker) if marker >= 0 else -1
+    if open_at < 0:
+        return []
+    decoder, at, items = json.JSONDecoder(), open_at + 1, []
+    while True:
+        while at < len(text) and text[at] in " \t\r\n,":
+            at += 1
+        try:
+            item, at = decoder.raw_decode(text, at)
+        except ValueError:  # the cut item, or the end of the list
+            return items
+        items.append(item)
+
+
 def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int]:
     """The claims in an extractor's JSON answer, and how many items were not well-formed.
     Only line references that were sent count; a claim citing none of them is dropped here
@@ -192,11 +211,15 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
     except ValueError:
         data = None
     items = data.get("claims") if isinstance(data, dict) else None
+    cut = 0
     if not isinstance(items, list):
-        return [], 1
+        items = _whole_items(text) if data is None else []
+        if not items:
+            return [], 1
+        cut = 1  # the item the answer broke off in counts as malformed
     known = set(refs)
     out: list[Extracted] = []
-    bad = max(0, len(items) - MAX_CLAIMS)
+    bad = cut + max(0, len(items) - MAX_CLAIMS)
     for item in items[:MAX_CLAIMS]:
         if not isinstance(item, dict):
             bad += 1
@@ -205,6 +228,8 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         obj = _field(item.get("object")) or ""
         details = " ".join(str(item.get("details") or "").split())[:DETAIL_MAX]
         how = item.get("how")
+        if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
+            how = how.strip().rstrip(".").lower()
         cited = item.get("lines")
         lines = tuple(
             dict.fromkeys(

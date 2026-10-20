@@ -77,6 +77,21 @@ class Parsing(unittest.TestCase):
         for text in ("", "no json here", "{}", '{"claims": 3}', "[1, 2]", "{bad"):
             self.assertEqual(parse_answer(text, {"1"}), ([], 1), text)
 
+    def test_an_answer_cut_off_in_the_list_keeps_the_claims_before_the_break(self) -> None:
+        one = json.dumps(
+            {"subject": "A", "relationship": "knows", "object": "B", "lines": [1], "how": "dm_said"}
+        )
+        cut = '{"claims": [' + one + ", " + one + ', {"subject": "C", "relati'
+        found, bad = parse_answer(cut, {"1"})
+        self.assertEqual((len(found), bad), (2, 1))  # the broken one is counted, not lost silently
+        self.assertEqual(parse_answer('{"claims": [{"subject": "C", "rel', {"1"}), ([], 1))
+
+    def test_the_way_it_was_said_is_read_without_case_or_stray_marks(self) -> None:
+        item = {"subject": "A", "relationship": "knows", "object": "B", "lines": [1]}
+        for how in ("DM_said", " dm_said ", "dm_said."):
+            found, bad = parse_answer(json.dumps({"claims": [{**item, "how": how}]}), {"1"})
+            self.assertEqual((len(found), bad), (1, 0), how)
+
     def test_a_long_answer_is_cut_at_the_cap_and_the_rest_counted(self) -> None:
         one = {
             "subject": "A",

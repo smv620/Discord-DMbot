@@ -308,7 +308,7 @@ class CommandLineTests(unittest.TestCase):
     def test_free_by_default(self) -> None:
         code, out, _ = self.run_main()
         self.assertEqual(code, 0)
-        self.assertIn("estimate for claude-haiku-4-5-20251001: about", out)
+        self.assertIn("estimate for claude-haiku-5-5: about", out)
         self.assertIn("(a guess at 3 characters a token), at most", out)
         self.assertIn("No calls made", out)
 
