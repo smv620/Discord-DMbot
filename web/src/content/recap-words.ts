@@ -20,6 +20,11 @@
 export const RECAPS_LIVE = false;
 export const RECAP_AUDIO_LIVE = false;
 export const RECAP_NAMES_LIVE = false;
+// RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
+// link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
+// entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
+// of it, so it never describes a link nobody can make.
+export const RECAP_SHARE_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
@@ -91,6 +96,9 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     ? [
         {
           text: "A recap can also come with a narrator's voice and music, as two audio files you play together.",
+        },
+        {
+          text: "DMbot makes no audio by itself. Read the recap, then press Approve the text, on the DM screen or on your recap page, and pick voice-over, background music, both, or text only (no audio). You only see what your plan includes. If you change the text later, you approve it again. If a mood or pause mark in the text is wrong, DMbot shows what to fix, and nothing is approved until you fix it.",
         },
       ]
     : []),

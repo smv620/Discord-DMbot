@@ -12,6 +12,7 @@ import { emailSteps } from "../src/content/help";
 import {
   RECAP_AUDIO_LIVE,
   RECAP_NAMES_LIVE,
+  RECAP_SHARE_LIVE,
   RECAPS_LIVE,
   emailsIntroTail,
   recapEmailStep,
@@ -28,6 +29,8 @@ const text = (node: Element | Document | null): string =>
 let off: Document;
 let on: Document;
 let onAudio: Document;
+let shared: Document;
+let sharedAudio: Document;
 let help: Document;
 let privacy: Document;
 beforeAll(async () => {
@@ -37,6 +40,10 @@ beforeAll(async () => {
   off = await render(false, false);
   on = await render(true, false);
   onAudio = await render(true, true);
+  const renderShared = async (audio: boolean): Promise<Document> =>
+    parsePage(await container.renderToString(RecapsPrivacy, { props: { live: true, audio, share: true } }));
+  shared = await renderShared(false);
+  sharedAudio = await renderShared(true);
   help = parsePage(
     await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
   );
@@ -65,6 +72,24 @@ describe("the privacy section", () => {
     expect(t).toContain("DMbot won't post a recap if a player has stopped being recorded");
     expect(t).toContain("are kept with the campaign and deleted when the campaign is deleted");
     expect(t).toContain("with no words in it, and delete it after 90 days");
+  });
+
+  it("says nothing of a shared link until sharing is live, and then says it plainly (#2119)", () => {
+    expect(RECAP_SHARE_LIVE).toBe(false);
+    expect(!RECAP_SHARE_LIVE || RECAPS_LIVE).toBe(true);
+    expect(text(on.body)).not.toMatch(/shared link|has it can read/i);
+    const t = text(shared.body);
+    for (const part of [
+      "even people outside your Discord server, and they can pass it on",
+      "only a request: treat the link like a password",
+      "turn a link off or make a new one",
+      "no longer opens the recap, though anyone who already saw it may keep a copy",
+      "A posted recap is already in the table's chat channel for everyone there",
+    ]) {
+      expect(t, part).toContain(part);
+    }
+    expect(t).not.toContain("play its voice and music");
+    expect(text(sharedAudio.body)).toContain("play its voice and music without signing in");
   });
 
   it("names ElevenLabs only when audio is live", () => {
@@ -121,6 +146,7 @@ describe("the switches and What's new agree", () => {
     ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
+    ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {

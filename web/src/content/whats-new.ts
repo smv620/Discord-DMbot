@@ -205,6 +205,19 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-20",
+    title: "Bring in older sessions",
+    what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
+    reason:
+      "Waits for the importer (#2105, #2106) to deploy, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
+  },
+  {
+    date: "2026-10-20",
+    title: "A short session asks first",
+    what: "If a session is short, under 30 minutes long or with under 30 minutes of game talk, DMbot asks you on your DM screen before writing a recap. Press Write a recap or No recap. If you don't answer, no recap is written. You decide; DMbot only asks.",
+    reason: "In review (#2104); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
@@ -303,6 +316,13 @@ export const held: Held[] = [
       "Held until dev1 deploys #2030 (#2027, #2031). When it is on, move this up and turn on RECAP_NAMES_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },
   {
+    date: "2026-10-20",
+    title: "Approve the text before any audio",
+    what: "DMbot makes no voice-over or music until you have read the recap and pressed Approve the text, on your DM screen or on the recap page. Then you pick voice-over, background music, both, or text only (no audio), and you see only what your plan includes. If you change the text afterwards, you approve it again. If a mood or pause mark in the text is wrong, DMbot shows what to fix, and nothing is approved until you fix it.",
+    reason:
+      "Waits for narrated recaps (RECAP_AUDIO_LIVE, #1385) and for #2083 to deploy. When it is on, move this up with that entry (#2084).",
+  },
+  {
     date: "2026-10-16",
     title: "Narrated recaps with music",
     what: "DMbot can read your recap out loud in a narrator's voice, with music behind it, and you can tell it how to say a name. It comes with Guild and Pro, and you can add it to other paid plans.",
@@ -357,6 +377,12 @@ export const held: Held[] = [
     what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
     reason:
       "Held until it has been seen working on the test server (#1403).",
+  },
+  {
+    date: "2026-10-20",
+    title: "When you say a secret name",
+    what: "When you, the game master, say a name you marked secret out loud at the table, DMbot asks you at once whether it is revealed now. Press Yes, players know now, and DMbot may use the name in answers to players (you can make it secret again from the name's card). Press No, keep it secret, and DMbot won't ask about it again this session. DMbot never decides for you, and only the campaign's DMs can answer.",
+    reason: "Waits for the deploy of #2094 (#2088, #2102).",
   },
   {
     date: "2026-10-16",
