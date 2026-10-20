@@ -115,11 +115,15 @@ def recaps_note(old: str, new: str, done: Any) -> str:
         parts.append(_count(done.waiting, "recap that is waiting", "recaps that are waiting"))
     if done.posted:
         parts.append(_count(done.posted, "posted recap", "posted recaps"))
-    note = f"Also changed {old} to {new} in {' and '.join(parts)}."
+    note = f"Also changed {old} to {new} in {' and '.join(parts)}." if parts else ""
     if done.approvals_kept:
         note += " An approval stays: a spelling fix is not a change of story."
     if done.posted:
         note += " Posts already in Discord are not changed."
+    if done.skipped:
+        note += (
+            f" {_count(done.skipped, 'recap', 'recaps')} would get too long, so left as written."
+        )
     if done.audio_old:
         note += f" Audio already made still says {old}; make it again on the website."
     return note

@@ -1081,7 +1081,7 @@ async def _respell_past(
             log.info(
                 "Fix spelling: %d waiting and %d posted recaps", done.waiting, done.posted
             )  # counts only
-            if done.waiting or done.posted:
+            if done.waiting or done.posted or done.skipped:
                 notes.append(recaps_note(_md(old), _md(new), done))
         except Exception:
             log.exception("Fix spelling: couldn't carry it into the recaps")

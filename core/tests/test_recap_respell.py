@@ -77,16 +77,63 @@ class Recaps(Base):
         self.assertEqual(job.audio, "ready")
         self.assertNotEqual(job.audio_text_hash, text_hash(job.title, job.summary))
 
-    async def test_recaps_being_written_dropped_or_posting_are_left_alone(self) -> None:
+    async def test_recaps_being_written_or_dropped_are_left_alone(self) -> None:
         await self.make(self.one, 100, state="prose")
         await self.make(self.one, 200, status="dropped")
-        await self.make(self.one, 300, status="posting")
         done = await self.respell()
         self.assertEqual((done.waiting, done.posted), (0, 0))
-        for at in (100, 200, 300):
+        for at in (100, 200):
             job = await self.store.get(1, self.one.id, at)
             assert job is not None
             self.assertEqual(job.title, TITLE)
+
+    async def test_a_recap_being_posted_follows_too(self) -> None:
+        await self.make(self.one, 300, status="posting")
+        self.assertEqual((await self.respell()).waiting, 1)
+        job = await self.store.get(1, self.one.id, 300)
+        assert job is not None
+        self.assertEqual(job.title, "Brannoch at the gate")
+
+    async def test_only_the_kept_original_having_it_counts_for_nothing(self) -> None:
+        await self.make(self.one, 100, approved=True, audio="ready")
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET title = 'The gate', summary = 'It waits.'")
+            await conn.execute(
+                "UPDATE recap_jobs SET approved_hash = %s, audio_text_hash = %s",
+                (text_hash("The gate", "It waits."),) * 2,
+            )
+        done = await self.respell()
+        self.assertEqual((done.waiting, done.posted, done.approvals_kept, done.audio_old), (0,) * 4)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertIn("Brannoch", job.original)  # written quietly
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute("SELECT respelled_at FROM recap_jobs")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["respelled_at"])  # the page has nothing to say
+
+    async def test_a_recap_the_new_spelling_would_make_too_long_is_left_and_the_rest_go(
+        self,
+    ) -> None:
+        await self.make(self.one, 100)
+        await self.make(self.one, 200)
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET summary = %s WHERE session_at = 100", ("Branok " * 855,)
+            )  # 5985 characters: one more letter each would pass 6000
+        done = await self.respell()
+        self.assertEqual((done.waiting, done.skipped), (1, 1))
+        long = await self.store.get(1, self.one.id, 100)
+        assert long is not None
+        self.assertTrue(long.summary.startswith("Branok Branok"))
+
+    async def test_a_name_with_a_backslash_or_wildcard_still_matches(self) -> None:
+        await self.make(self.one, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET title = %s", ("Ka\\zeth_1 waits",))
+        done = await self.store.respell(1, self.one.id, "Ka\\zeth_1", "Kazeth", [])
+        self.assertEqual(done.waiting, 1)
 
     async def test_another_campaigns_recaps_are_never_touched(self) -> None:
         await self.make(self.two, 100)

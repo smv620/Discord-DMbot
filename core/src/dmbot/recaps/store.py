@@ -49,6 +49,9 @@ COLUMNS = (
 )
 
 
+_LIMITS = {"title": 120, "summary": 6000, "original": 6000}  # the table's own limits
+
+
 @dataclass(frozen=True, slots=True)
 class RecapRespelled:
     """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
@@ -57,6 +60,7 @@ class RecapRespelled:
     posted: int = 0
     approvals_kept: int = 0
     audio_old: int = 0  # recaps whose finished audio still says the old spelling
+    skipped: int = 0  # recaps the new spelling would make too long: left as they were
 
 
 @dataclass(frozen=True, slots=True)
@@ -483,21 +487,24 @@ class RecapStore:
         longer: Sequence[str],
     ) -> RecapRespelled:
         """A fixed spelling reaches this campaign's recaps (#2170): the written ones that are not
-        in the middle of being posted or dropped get `new` where they say `old` as a whole name
+        dropped get `new` where they say `old` as a whole name
         (never inside a longer name in `longer`), in title, text and the kept original. A waiting
         recap the DM already approved stays approved: a spelling fix is not a change of story, so
         its approval follows the new text. Finished audio is left as it is; it no longer matches
         the text, which is how the page already knows to offer making it again. A posted recap's
         Discord message is not touched; its stored text is, and `respelled_at` lets the page say
         so. One transaction. Counts only."""
-        waiting = posted = kept = audio = 0
+        waiting = posted = kept = audio = skipped = 0
+        word = max(old.split(), key=len, default="")
+        like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT session_at, status, title, summary, original, approved_hash, audio,"
                 " audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                " AND state = 'ready' AND status IN ('draft', 'posted')"
-                " AND (title ILIKE %s OR summary ILIKE %s OR original ILIKE %s) FOR UPDATE",
-                (guild_id, campaign_id, *([f"%{max(old.split(), key=len, default='')}%"] * 3)),
+                " AND state = 'ready' AND status IN ('draft', 'posting', 'posted')"
+                " AND (title ILIKE %s ESCAPE '\\' OR summary ILIKE %s ESCAPE '\\'"
+                " OR original ILIKE %s ESCAPE '\\') FOR UPDATE",
+                (guild_id, campaign_id, like, like, like),
             )
             for row in await cur.fetchall():
                 title, summary, original = row["title"], row["summary"], row["original"]
@@ -511,6 +518,17 @@ class RecapStore:
                     if (found := respell(text, old, new, longer)) is not None
                 }
                 if not changed:
+                    continue
+                if any(len(text) > _LIMITS[name] for name, text in changed.items()):
+                    skipped += 1  # the new spelling is longer and would not fit: left as it was
+                    continue
+                if not ({"title", "summary"} & changed.keys()):
+                    # Only the kept original had it: written, but nothing the DM reads changed.
+                    await conn.execute(
+                        "UPDATE recap_jobs SET original = %s WHERE guild_id = %s"
+                        " AND campaign_id = %s AND session_at = %s",
+                        (changed["original"], guild_id, campaign_id, row["session_at"]),
+                    )
                     continue
                 before = text_hash(title, summary)
                 after = text_hash(changed.get("title", title), changed.get("summary", summary))
@@ -533,7 +551,7 @@ class RecapStore:
                     waiting += 1
                 if row["audio"] == "ready" and row["audio_text_hash"] == before:
                     audio += 1
-        return RecapRespelled(waiting, posted, kept, audio)
+        return RecapRespelled(waiting, posted, kept, audio, skipped)
 
     async def reset_audio(self, guild_id: int, campaign_id: str, session_at: int) -> None:
         """A new recap is being written (Try again): the old audio is no longer its audio."""
