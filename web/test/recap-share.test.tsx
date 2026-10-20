@@ -100,7 +100,7 @@ describe("the share controls", () => {
       shareWords.linkLabel,
     )) as HTMLInputElement;
     expect(field.value).toBe(`${window.location.origin}/r/secret1`);
-    expect(screen.getByText(/Treat the link like a password/)).toBeTruthy();
+    expect(screen.getByText(/treat the link like a password/)).toBeTruthy();
     expect(api.calls).toContain(`shareRecap:${posted!.ref}:on`);
     fireEvent.click(screen.getByRole("button", { name: shareWords.fresh }));
     await waitFor(() =>
@@ -130,9 +130,11 @@ describe("the share controls", () => {
     await waitFor(() =>
       expect(write).toHaveBeenCalledWith(`${window.location.origin}/r/secret1`),
     );
-    expect(await screen.findByText(new RegExp(shareWords.copied))).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: shareWords.copied }),
+    ).toBeTruthy();
     write.mockRejectedValue(new Error("no"));
-    fireEvent.click(screen.getByRole("button", { name: shareWords.copy }));
+    fireEvent.click(screen.getByRole("button", { name: shareWords.copied })); // it still reads Copied for a moment
     expect((await screen.findByRole("alert")).textContent).toBe(
       shareWords.copyFailed,
     );
@@ -164,6 +166,7 @@ describe("the public page", () => {
     expect(tokenFromPath("/r/abc123")).toBe("abc123");
     expect(tokenFromPath("/r/abc123/")).toBe("abc123");
     expect(tokenFromPath("/r/")).toBeNull();
+    expect(tokenFromPath("/r/%E0")).toBeNull(); // mangled: a dead link, not a crash
     expect(tokenFromPath("/account/recaps/x")).toBeNull();
   });
 
@@ -193,6 +196,21 @@ describe("the public page", () => {
     render(<PublicRecapPage api={api} path="/r/secret1" />);
     expect(await screen.findByText(publicWords.dead)).toBeTruthy();
     expect(api.calls.some((c) => c.startsWith("publicRecap"))).toBe(false);
+  });
+
+  it("says it could not load, with a way to try again, when the connection fails", async () => {
+    const api = mockApi("table");
+    let n = 0;
+    api.publicRecap = async () => {
+      n += 1;
+      if (n === 1) throw new ApiError("network");
+      return { title: "T", text: "t", postedAt: 1, audio: {} };
+    };
+    show(api);
+    expect(await screen.findByText(publicWords.trouble)).toBeTruthy();
+    expect(screen.queryByText(publicWords.dead)).toBeNull(); // not told to bother the DM
+    fireEvent.click(screen.getByRole("button", { name: publicWords.tryAgain }));
+    expect(await screen.findByRole("heading", { name: "T" })).toBeTruthy();
   });
 
   it("asks the reader to wait when there have been too many tries", async () => {

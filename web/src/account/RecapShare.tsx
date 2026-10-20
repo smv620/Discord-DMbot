@@ -30,6 +30,7 @@ export default function RecapShareControls({
   const [copied, setCopied] = useState(false);
   const inFlight = useRef(false);
   const field = useRef<HTMLInputElement>(null);
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   if (!RECAP_SHARE_LIVE || !recap.share || !api.shareRecap) return null;
   // A draft or skipped recap has no link to make; say what to do instead of a dead button.
@@ -63,10 +64,13 @@ export default function RecapShareControls({
       );
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
-      setProblem(words.problem[kind] ?? words.problem.server ?? "");
+      setProblem(words.problem[kind] ?? words.problem.server);
     } finally {
       inFlight.current = false;
       setBusy(null);
+      // The pressed button may be gone (Turn the link off removes the whole link block), so focus
+      // goes to the result line rather than dropping to the page.
+      setTimeout(() => statusRef.current?.focus(), 0);
     }
   };
 
@@ -74,7 +78,9 @@ export default function RecapShareControls({
     if (!link) return;
     try {
       await navigator.clipboard.writeText(link);
+      setProblem(null); // an earlier failed copy no longer applies
       setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
     } catch {
       // No clipboard (an older browser, or not allowed): select the link so it can be copied by hand.
       field.current?.select();
@@ -86,17 +92,25 @@ export default function RecapShareControls({
     <section class="panel" aria-labelledby="recap-share">
       <h3 id="recap-share">{words.heading}</h3>
       <p class="muted small">
-        {link ? words.onLead(words.audio) : words.offLead}
+        {link ? words.onLead(words.audio) : words.offLead(words.audio)}
       </p>
       {problem && (
         <p class="note bad" role="alert">
           {problem}
         </p>
       )}
-      <p class="small" role="status" aria-live="polite">
+      <p
+        class="small"
+        role="status"
+        aria-live="polite"
+        tabIndex={-1}
+        ref={statusRef}
+      >
         {note ?? ""}
-        {copied ? ` ${words.copied}.` : ""}
       </p>
+      <span class="sr-only" role="status" aria-live="polite">
+        {copied ? words.copied : ""}
+      </span>
       {link ? (
         <>
           <label class="field">
@@ -105,13 +119,21 @@ export default function RecapShareControls({
               ref={field}
               type="text"
               readOnly
+              autoComplete="off"
+              spellcheck={false}
               value={link}
               onFocus={(e) => (e.target as HTMLInputElement).select()}
             />
           </label>
           <div class="row">
-            <button type="button" class="button" onClick={() => void copy()}>
-              {words.copy}
+            <button
+              type="button"
+              class="button"
+              disabled={busy !== null}
+              aria-describedby="recap-share-hint"
+              onClick={() => void copy()}
+            >
+              {copied ? words.copied : words.copy}
             </button>
             <button
               type="button"
@@ -130,7 +152,9 @@ export default function RecapShareControls({
               {busy === "new" ? words.working : words.fresh}
             </button>
           </div>
-          <p class="muted small">{words.freshHint}</p>
+          <p class="muted small" id="recap-share-hint">
+            {words.freshHint}
+          </p>
         </>
       ) : (
         <button

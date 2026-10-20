@@ -14,7 +14,9 @@ interface Props {
   nofollow?: boolean;
   /** No page-change effect into or out of this page (the legal pages, #1289). */
   plain?: boolean;
-  /** No menu and no footer: a page for someone who was only sent a link (a shared recap, #2119). */
+  /** The canonical link and the share tags are built from the built page's own path, never from the
+   * address in the browser: a shared recap's secret must not be put in them (#2119).
+   * No menu and no footer: a page for someone who was only sent a link (a shared recap, #2119). */
   bare?: boolean;
 }
 

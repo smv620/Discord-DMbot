@@ -13,4 +13,5 @@
 /account/transcripts/*  /account/transcripts  200
 
 # A shared recap (#2119): one page for every link; it reads the secret from the address.
+# /r/ itself and /r/<secret> both get the page; the page reads the secret from the address.
 /r/*  /r  200

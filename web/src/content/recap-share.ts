@@ -7,33 +7,38 @@ import { RECAP_AUDIO_LIVE } from "./recap-words";
 export const shareWords = {
   heading: "Share this recap",
   /** Said while the link is off. */
-  offLead:
-    "Make a link to share this recap. Anyone who has the link can read it without signing in, even people outside your Discord server, and they can pass it on.",
+  offLead: (audio: boolean): string =>
+    `Nothing is shared until you make a link. Then anyone who has the link can read this recap${audio ? " and play its voice and music" : ""} without signing in, even people outside your Discord server, and they can pass the link on. It is the same text you posted to the table.`,
   /** Said while the link is on. */
   onLead: (audio: boolean): string =>
-    `Anyone who has this link can read this recap${audio ? " and play its voice and music" : ""} without signing in, even people outside your Discord server, and they can pass it on. Treat the link like a password.`,
+    `Anyone who has this link can read this recap${audio ? " and play its voice and music" : ""} without signing in, even people outside your Discord server. Anyone you give it to can pass it on, so treat the link like a password.`,
   make: "Make a link",
   linkLabel: "The link to share",
   copy: "Copy",
   copied: "Copied",
-  copyFailed: "Select the link and copy it yourself.",
+  copyFailed: "Copy didn't work. Press and hold the link, then choose Copy.",
   off: "Turn the link off",
   fresh: "Make a new link",
-  freshHint: "The old link stops working. Anyone who already read the recap may keep a copy.",
+  freshHint:
+    "Turning the link off or making a new one stops the old link. It can't take back what someone already read or saved.",
   working: "Working…",
-  doneOff: "The link is off. It no longer opens the recap.",
-  doneFresh: "Here is your new link. The old one no longer opens the recap.",
+  copyingWait: "Wait for the change to finish, then copy.",
+  doneOff: "The link is off. It no longer opens the recap. Anyone who already saw it may still have a copy.",
+  doneFresh: "Here is your new link. The old one no longer opens the recap. Anyone who already saw it may still have a copy.",
   doneOn: "Here is your link.",
-  notPosted: "Post the recap to the table first. Only a posted recap can be shared.",
+  notPosted:
+    "Post the recap to the table first (on the DM screen, press Post to the table). Only a posted recap can be shared.",
   problem: {
     "not-found": "We can't find that recap. Reload the page.",
-    "not-posted": "Post the recap to the table first. Only a posted recap can be shared.",
+    "not-posted":
+      "Post the recap to the table first (on the DM screen, press Post to the table). Only a posted recap can be shared.",
     "signed-out": "You were signed out. Sign in again.",
     network: "We couldn't reach DMbot. Check your connection and try again.",
+    "slow-down": "Too many tries just now. Wait a minute and try again.",
     server: "Something went wrong on our side. Try again in a minute.",
-  } as Record<string, string>,
+  } as Record<string, string> & { server: string },
   /** The state in the recap list. */
-  listTag: "Shared",
+  listTag: "Link on",
   audio: RECAP_AUDIO_LIVE,
 } as const;
 
@@ -44,7 +49,8 @@ export const publicWords = {
   dead: "This recap link isn't active. Ask your DM for a new one.",
   busy: "Too many tries just now. Wait a minute and open the link again.",
   posted: (day: string): string => `Posted ${day}`,
-  tableNote: "A recap from a game of DMbot's table. Written from what the table said; read by whoever has the link.",
-  voice: "Voice",
-  music: "Music",
+  /** A network or server trouble: not a dead link, so the reader is not sent to the DM for nothing. */
+  trouble: "We couldn't load this recap. Check your connection and try again.",
+  tryAgain: "Try again",
+  audioTrouble: "The sound couldn't be played. Reload the page to try again.",
 } as const;

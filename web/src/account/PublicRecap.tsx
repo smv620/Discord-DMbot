@@ -14,7 +14,12 @@ import RecapPlayer from "./RecapPlayer";
 /** The link's secret, read from `/r/<token>`. */
 export function tokenFromPath(path: string): string | null {
   const match = /^\/r\/([^/]+)\/?$/.exec(path);
-  return match ? decodeURIComponent(match[1] ?? "") : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return null; // a mangled address ("/r/%E0") is a dead link, not a crash
+  }
 }
 
 type Load =
@@ -33,6 +38,8 @@ export default function PublicRecapPage({
 }) {
   const token = tokenFromPath(path);
   const [load, setLoad] = useState<Load>({ kind: "loading" });
+  const [tries, setTry] = useState(0);
+  const [soundTrouble, setSoundTrouble] = useState(false);
 
   useEffect(() => {
     // Not live yet, or no secret in the address: nothing to ask, the same message as any dead link.
@@ -59,7 +66,7 @@ export default function PublicRecapPage({
     return () => {
       live = false;
     };
-  }, [api, token]);
+  }, [api, token, tries]);
 
   if (load.kind === "loading")
     return (
@@ -70,7 +77,23 @@ export default function PublicRecapPage({
   if (load.kind === "dead" || load.kind === "error" || load.kind === "busy")
     return (
       <div class="public-recap">
-        <p role="status">{load.kind === "busy" ? words.busy : words.dead}</p>
+        <p role="status">
+          {load.kind === "busy"
+            ? words.busy
+            : load.kind === "error"
+              ? words.trouble
+              : words.dead}
+        </p>
+        {/* A bad connection is not a dead link: the reader can try again without bothering the DM. */}
+        {load.kind === "error" && (
+          <button
+            type="button"
+            class="button"
+            onClick={() => setTry((n) => n + 1)}
+          >
+            {words.tryAgain}
+          </button>
+        )}
       </div>
     );
   const { recap } = load;
@@ -84,8 +107,9 @@ export default function PublicRecapPage({
           <RecapPlayer
             voice={recap.audio.voice}
             music={recap.audio.music}
-            onFail={() => undefined}
+            onFail={() => setSoundTrouble(true)}
           />
+          {soundTrouble && <p class="note">{words.audioTrouble}</p>}
         </div>
       )}
       <div class="card">
