@@ -139,6 +139,28 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
         await secret_posts.hide(G + 1, C, channel=channel, bot_id=9)  # another server
         self.assertEqual(reads, 2)
 
+    async def test_a_question_dropped_from_the_list_means_the_screen_is_read_again(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        reads = 0
+
+        async def history(limit: int | None) -> Any:
+            nonlocal reads
+            reads += 1
+            return
+            yield
+
+        channel = SimpleNamespace(history=history)
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        for _ in range(secret_posts.KEPT_PER_CAMPAIGN):  # exactly full: nothing dropped yet
+            secret_posts.remember(G, C, message())
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 1)
+        for _ in range(secret_posts.KEPT_PER_CAMPAIGN + 1):  # the 21st drops the first
+            secret_posts.remember(G, C, message())
+        await secret_posts.hide(G, C, channel=channel, bot_id=9)
+        self.assertEqual(reads, 2)
+
     async def test_a_failed_search_is_tried_again(self) -> None:
         secret_posts._searched.clear()
         reads = 0

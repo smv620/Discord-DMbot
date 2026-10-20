@@ -7,7 +7,8 @@ screen, a question still sitting there would show the name to people who may now
 messages are remembered here (in memory, per campaign, a handful at a time) and, when the
 visibility moves away from private, edited to a plain line with the buttons gone. A restart
 forgets the list, so the screen's own history is searched too, all of it, for the bot's messages
-that carry these questions' buttons (a change away from private is rare, so the cost is fine). An
+that carry these questions' buttons. That search runs once per campaign per process (everything
+posted after it is remembered here), and again after the list had to drop a question. An
 answered question carries no name any more (its text is written without it), so nothing is left
 for the search to miss.
 """
@@ -33,7 +34,9 @@ def remember(guild_id: int, campaign_id: str, message: Any) -> None:
     """Keep a posted question that shows a secret name (the newest few)."""
     kept = _posts[(guild_id, campaign_id)]
     kept.append(message)
-    del kept[:-KEPT_PER_CAMPAIGN]
+    if len(kept) > KEPT_PER_CAMPAIGN:
+        del kept[:-KEPT_PER_CAMPAIGN]
+        _searched.discard((guild_id, campaign_id))  # one forgotten: the screen must be read again
 
 
 def pending(guild_id: int, campaign_id: str) -> int:
@@ -61,7 +64,8 @@ def is_exposed(visibility: str, in_server_channel: bool) -> bool:
 BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:")
 
 # Campaigns whose screen history was searched in this process. Questions posted after that are
-# remembered in `_posts`, so only what a restart forgot needs the search, and it needs it once.
+# remembered in `_posts`, so only what a restart forgot needs the search, and it needs it once;
+# a question the list drops (over KEPT_PER_CAMPAIGN) takes the campaign out again.
 _searched: set[tuple[int, str]] = set()
 
 
@@ -115,8 +119,11 @@ async def hide(
         except Exception:  # deleted already, or no right to edit
             failed.append(message)
     if failed:  # kept, so the next change away from private tries again
-        _posts[(guild_id, campaign_id)].extend(failed)
-        del _posts[(guild_id, campaign_id)][:-KEPT_PER_CAMPAIGN]
+        kept = _posts[(guild_id, campaign_id)]
+        kept.extend(failed)
+        if len(kept) > KEPT_PER_CAMPAIGN:
+            del kept[:-KEPT_PER_CAMPAIGN]
+            _searched.discard((guild_id, campaign_id))
     if messages:
         log.info("Secret questions pulled back: %d changed, %d not", changed, len(failed))
     return changed
