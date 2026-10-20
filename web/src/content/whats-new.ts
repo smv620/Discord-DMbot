@@ -292,7 +292,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "Recaps stick to what happened",
-    what: "Before you see a recap, DMbot checks each sentence against what was said at the table: the right place, the right people, nothing added. It asks for one rewrite, and any sentence it still can't back up is cut. If too little is left, you get no recap rather than a wrong one. It never states a compass direction (north, south, east or west). You still read the recap first.",
+    what: "Before you see a recap, DMbot checks each sentence against what was said at the table, including the place and the people. If a sentence doesn't match, DMbot has the recap written again once, then cuts any sentence that still doesn't match. If too little is left, you get no recap at all. It also takes out any compass direction (north, south, east or west). The checking can miss things, so you still read the recap first.",
     reason: "Held with recaps (RECAPS_LIVE, #2064, #2067).",
   },
   {
