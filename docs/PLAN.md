@@ -3882,6 +3882,81 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   *Built, recap name fixes (2026-10-19, #2026):* a name passes when every word of it is known, so a hyphenated name from the names file ("Dun-Varra's") is no longer refused; a retry sends the rejected draft (`<previous_draft>`, `<previous_answer>` for the title) with the target and the form and asks for a revision, never resending a draft that names a secret; an answer that only lost its SUMMARY or TITLE label is read leniently and still checked.
   *Built, names the recap kept (2026-10-19, #2027):* `recaps/unknown_names.py` respells a near miss to the known name (same word count and first letter, one letter off, two for names over eight letters, plain English words never), and refuses a word whose closest name is secret; `draft.kept_names` finds the names said in the session that no list has; they are stored in `recap_jobs.to_confirm` (migration 0131, at most 10), shown as **Facts to be confirmed** on the DM's recap page and in `recap_run`'s files, queued as proposed suggestions (source `scan`), and told to the DM once on the DM screen and in a private message with the check's button; a reminder follows once at the next session start.
   *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
+- **Recaps go on after every session** (owner, 2026-10-20, after recap run 12 on the owner's own
+  session worked end to end: text, voice-over and music). That run is the real-recap check #1382
+  waited for.
+  - **What dev1 does:** turns `DMBOT_RECAPS` on in the deploy that carries the approval gate
+    (#2083), never before it, so no audio is made without the DM's approval. The site's
+    `RECAPS_LIVE` turns on with that deploy.
+  - **What happens at the end of a session:** DMbot queues the recap (`recap_session`, built). It
+    writes from the cleaned transcript only: the Cleaner's text, never DM-sidebar or table-question
+    lines, never what the off-topic filter left out, and only people who agreed.
+  - **Narration** stays behind `RECAP_AUDIO_LIVE` and the owner's steps on #1385, which include the
+    add-on's price.
+  - **A short session asks first.** DMbot asks the DM before writing when either of these is
+    under **30 minutes**:
+    - the session ran from its first to its last line;
+    - the game talk left after the off-topic filter, its kept lines' spoken time.
+
+    The DM screen says, for example: "This session was short (22 minutes, 9 minutes of game talk
+    after the chat was left out). Write a recap anyway?" with [Write a recap] and [No recap].
+    "No recap" spends nothing and counts nothing. "Write a recap" queues it as usual. Only the
+    campaign's DMs can answer, and an unanswered question expires when the next session starts.
+- **Importing older sessions** (owner, 2026-10-20; details Supervisor's). A DM can load transcripts
+  of sessions DMbot didn't record, for example a Craig session written out as text. DMbot cleans
+  them and builds the campaign's memory from that history.
+  - **Where:** the website, on a new **Import sessions** page for the campaign's DMs. It takes up to
+    20 files at once, each up to 2 MB of text. The formats:
+    - Craig's plain-text export, as `recap_run` reads it today (`devtools/recap_run/transcript_file.py`
+      moves into core as the importer);
+    - `[hh:mm:ss] Name: words` lines;
+    - DMbot's own transcript download.
+
+    Others are added on request.
+  - **Or a Google Doc link** (owner, 2026-10-20): instead of uploading, the DM may paste the share
+    link of a Google Doc that holds a transcript, one link per session.
+    - **How it's read:** DMbot reads it once, through the guarded link reader `dmbot.fetch` that
+      house rules and name lists already use: Google Docs only, the plain-text export, the same
+      size limit and time-out.
+    - **From there,** it is exactly like an uploaded file: the same formats, consent mapping and
+      checks, and the text isn't kept.
+    - **Who can read the doc:** it must be shared as "Anyone with the link can view". DMbot never
+      asks for access to the DM's Google account for this. If the doc isn't shared that way, the
+      page says so plainly and how to change it. Reading private docs through Google's narrowest
+      `drive.file` access waits for Phase 7.
+  - **Consent is the hard rule, as everywhere.** Before anything is stored, the DM matches each
+    speaker name in a file to a member of the server.
+    - A speaker who matches a member who has agreed to be recorded (the current consent wording)
+      is kept.
+    - Every other speaker's lines are dropped before saving and are never stored: a person not
+      matched, a person who hasn't agreed, and bots.
+    - The page says how many lines each choice keeps or drops.
+    - The DM's word that "everyone agreed" isn't enough. A player who wants their lines kept agrees
+      in Discord first, as for a live session.
+    - Imported sessions are read by the whole server like any transcript. The consent request
+      already says so.
+  - **Each file becomes a stored session.** The DM sets each one's date (the page suggests one from
+    the file name) and its place in order. It is marked *imported*, with the file name, who
+    imported it and when.
+    - Lines without times get times estimated from their words.
+    - The Cleaner and the off-topic filter run on it like a live session, after the fact.
+    - Craig's `{non-game context}` placeholders count as left-out talk.
+  - **Building the campaign:** after the import, DMbot runs the after-session steps on the imported
+    sessions in date order:
+    - the name scan, which asks the DM about new names as usual;
+    - the story-memory steps that are on (the extractor stays behind its own switch).
+
+    Nothing becomes a confirmed fact without the DM.
+  - **Recaps of imported sessions** are optional and per session (a **Write recaps** choice on the
+    page). Each counts against the monthly allowance. The newest imported session's recap becomes
+    the "last time" bridge for the next live session.
+  - **Plans:** importing is part of the paid plans, like recaps. Costs are the Cleaner's and the
+    name scan's fast-tier calls, so a batch is capped and its estimated cost is shown before the
+    DM starts it. Try It campaigns have no import.
+  - **Isolation:** everything stays in that one campaign of that one server. The files themselves
+    aren't kept after the import, only the stored sessions.
+  - **Order:** the importer and its storage with the consent mapping (core and API), then the
+    website page, then building the campaign and the optional recaps.
 - **PlotBot checks every recap before it is accepted** (owner, 2026-10-20; details Supervisor's;
   the first piece of Phase 5c, docs/STORY_MEMORY.md).
   - **When:** a plot check runs when a recap's text is ready, and again after every change to it,

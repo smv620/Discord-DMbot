@@ -48,7 +48,7 @@ class TheWordCheck(unittest.TestCase):
     def test_a_cue_added_moved_or_changed_a_case_or_a_possessive_is_caught(self) -> None:
         for old, new in (
             ("Dusk settled over the road", "Dusk ((hushed)) settled over the road"),  # a cue added
-            ("((slow))", "((fast))"),  # a cue reworded
+            ("((pause))", "((fast))"),  # a cue reworded
             ("Dusk settled", "dusk settled"),  # only the case
             ("Mira and Oskar", "mira and Oskar"),  # a name lowered
             ("Mira drew her blade", "Mira's drew her blade"),  # an apostrophe added
