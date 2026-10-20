@@ -274,10 +274,11 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             [b.item.custom_id for b in old],
             [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
         )
+        self.assertEqual(ready_view(CID, AT).children, [])  # no site: no dead buttons
         new = ready_view(CID, AT, "https://site.example.com").children
         self.assertEqual(
             [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new],
-            [("Recaps", "https://site.example.com/account/recaps"), ("Share a recap", None)],
+            [("Open recaps", "https://site.example.com/account/recaps"), ("Share a recap", None)],
         )
         self.assertEqual(cast(Any, new[1]).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
@@ -290,8 +291,8 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         text = ready_text("The *Silver* Lock", "https://site.example.com/r")
         self.assertIn("Recap ready: **The \\*Silver\\* Lock**", text)
         self.assertIn("Nothing goes to the players until you post it.", text)
-        self.assertIn("Edit it here: https://site.example.com/r", text)
-        self.assertNotIn("Edit it here", ready_text("T", ""))
+        self.assertIn("post it on your recap page: https://site.example.com/r", text)
+        self.assertNotIn("recap page", ready_text("T", ""))
         self.assertIn("Post it to the table now?", ASK)
         reading = reading_text(job(), "")
         self.assertNotIn("posted by your DM", reading)

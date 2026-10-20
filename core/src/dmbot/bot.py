@@ -7662,31 +7662,57 @@ class DMBot(commands.AutoShardedBot):
             return None, "Recaps aren't available right now. Try again in a minute."
         gid, cid = campaign.guild_id, campaign.id
         job = await store.get(gid, cid, session_at)
+        where = (
+            f": {self.settings.site_url.rstrip('/')}/account/recaps"
+            if self.settings.site_url
+            else ""
+        )
         if job is None or job.state != "ready":
             return None, "This recap isn't ready yet. Try again in a minute."
         if job.status == "draft":
             if not job.approved:  # a draft that was never approved is never shared
-                return None, "Approve the text on your recap page first. Nothing was shared."
+                return (
+                    None,
+                    f"Read and approve this recap on your recap page first{where}. "
+                    "Nothing was shared.",
+                )
             if not await store.decide(gid, cid, session_at, "post"):
-                return None, "This recap was already posted or skipped, so nothing was changed."
+                return (
+                    None,
+                    "This recap changed while you were choosing. "
+                    "Nothing was shared. Pick it again.",
+                )
             await self.post_recaps(gid)  # its own checks; a failed one puts it back as a draft
             job = await store.get(gid, cid, session_at)
             if job is None or job.status != "posted":
-                why = (job.last_error if job is not None else "") or "Something stopped it."
-                return None, f"Not posted: {why} Nothing was shared."
+                why = (
+                    job.last_error if job is not None else ""
+                ) or "It couldn't be posted just now."
+                return (
+                    None,
+                    f"Not posted: {why} Nothing was shared. Try again, or check your recap page.",
+                )
         elif job.status != "posted":
-            return None, "This recap was skipped, so it can't be shared."
+            return None, "You skipped this recap, so it can't be shared."
         secrets = await self.recap_secret_names(campaign)
         if secrets is None:
             return None, "DMbot couldn't check your secret names just now. Try again."
         text = "\n".join([job.title, strip_cues(job.summary), *job.housekeeping])
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
-            return None, "It names something you keep secret, so it can't be shared."
+            return (
+                None,
+                "This recap names a secret of yours, so it wasn't shared. "
+                "Edit it on your recap page, then try again.",
+            )
         if not set(job.speakers) <= set(await self.consent.consenting(gid)):
-            return None, "A player stopped being recorded since this was written. Nothing shared."
+            return (
+                None,
+                "A player has stopped being recorded, so this recap can't be shared as "
+                "written. Nothing was shared. Write it again from your recap page.",
+            )
         token = await store.share_token(gid, cid, session_at, new=new)
         if token is None:
-            return None, "This recap isn't posted, so it can't be shared."
+            return None, "This recap isn't posted, so it can't be shared. Try again."
         return token, ""
 
     async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:

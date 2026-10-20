@@ -27,7 +27,7 @@ def make(user: int = DM_ID, *, recent: Any = None, link: Any = (TOKEN, "")) -> A
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=SimpleNamespace(
             recent=AsyncMock(
-                return_value=[(100, "The Silver Lock", "posted")] if recent is None else recent
+                return_value=[(100, 1, "The Silver Lock", "posted")] if recent is None else recent
             ),
             number_of=AsyncMock(return_value=3),
         ),
@@ -64,12 +64,12 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
             channel.send.assert_not_awaited()
 
     async def test_the_dm_gets_a_menu_of_the_recaps_newest_first(self) -> None:
-        recent = [(300 - n, f"Recap {n}", "posted") for n in range(30)]
+        recent = [(300 - n, 30 - n, f"Recap {n}", "posted") for n in range(30)]
         _bot, interaction, _ = make(recent=recent)
         await rs.ShareButton(CID).callback(interaction)
         view = interaction.response.send_message.await_args.kwargs["view"]
         self.assertEqual(len(view.select.options), 25)  # Discord's limit for a menu
-        self.assertEqual(view.select.options[0].label, "Recap 0")
+        self.assertEqual(view.select.options[0].label, "Session 30: Recap 0")
 
     async def test_no_recaps_or_no_site_says_so(self) -> None:
         bot, interaction, _ = make(recent=[])
@@ -85,7 +85,8 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         _bot, interaction, channel = make()
         await rs.HowView(CID, 100).copy.callback(interaction)
         sent = interaction.followup.send.await_args
-        self.assertEqual(sent.args[0], f"https://site.example.com/r/{TOKEN}")
+        self.assertTrue(sent.args[0].endswith(f"https://site.example.com/r/{TOKEN}"))
+        self.assertIn("no sign-in", sent.args[0])
         self.assertTrue(sent.kwargs["ephemeral"])
         channel.send.assert_not_awaited()
 
@@ -113,6 +114,31 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said(interaction), rs.NO_CHAT)
         bot.recap_share_link.assert_not_awaited()
 
+    async def test_a_draft_says_sharing_posts_it_and_the_buttons_say_so(self) -> None:
+        recent = [(200, 2, "New", "draft"), (100, 1, "Old", "posted")]
+        _bot, interaction, _ = make(recent=recent)
+        await rs.ShareButton(CID).callback(interaction)
+        view = interaction.response.send_message.await_args.kwargs["view"]
+        self.assertEqual(view.select.options[0].description, "Not posted yet")
+        self.assertEqual(
+            [b.label for b in rs.HowView(CID, 200, draft=True).children],
+            ["Post and copy link", "Post and send"],
+        )
+        self.assertEqual(
+            [b.label for b in rs.HowView(CID, 100).children],
+            ["Copy the link", "Send to the players"],
+        )
+        self.assertTrue(all(len(b.label) <= 25 for b in rs.HowView(CID, 200, draft=True).children))
+
+    async def test_one_recap_goes_straight_to_how_and_a_second_send_posts_nothing(self) -> None:
+        _bot, interaction, channel = make()
+        await rs.ShareButton(CID).callback(interaction)
+        self.assertEqual(said(interaction), rs.HOW)
+        view = rs.HowView(CID, 100)
+        await view.send.callback(interaction)
+        await view.send.callback(interaction)
+        channel.send.assert_awaited_once()
+
     def test_the_id_survives_a_restart_and_fits(self) -> None:
         self.assertEqual(rs.ShareButton(CID).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertTrue(callable(DMBot.recap_share_link))
@@ -136,7 +162,9 @@ class TheStoreSide(Base):
         await self.store.decide(1, self.one.id, 100, "post")
         await self.store.posted(1, self.one.id, 100)
         got = await self.store.recent(1, self.one.id)
-        self.assertEqual([(a, s) for a, _t, s in got], [(200, "draft"), (100, "posted")])
+        self.assertEqual(
+            [(a, n, s) for a, n, _t, s in got], [(200, 2, "draft"), (100, 1, "posted")]
+        )
         self.assertEqual(await self.store.number_of(1, self.one.id, 300), 3)  # a skipped one counts
         self.assertEqual(await self.store.recent(1, self.two.id), [])  # per campaign
 

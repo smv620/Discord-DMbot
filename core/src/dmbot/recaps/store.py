@@ -630,18 +630,24 @@ class RecapStore:
 
     async def recent(
         self, guild_id: int, campaign_id: str, limit: int = 25
-    ) -> list[tuple[int, str, str]]:
-        """(session_at, title, status) of the campaign's ready recaps, newest first: the list
-        "Share a recap" picks from (#2118). Dropped ones are left out; drafts are listed because
-        sharing one counts as posting it."""
+    ) -> list[tuple[int, int, str, str]]:
+        """(session_at, session number, title, status) of the campaign's ready recaps, newest
+        first: the list "Share a recap" picks from (#2118). Dropped ones are left out; drafts are
+        listed because sharing one counts as posting it. The number counts every recap of the
+        campaign, so it is the same one the players see in the chat line."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT session_at, title, status FROM recap_jobs WHERE guild_id = %s"
-                " AND campaign_id = %s AND state = 'ready' AND status IN ('draft', 'posted')"
+                "SELECT * FROM (SELECT session_at, title, status, state,"
+                " row_number() OVER (ORDER BY session_at) AS n FROM recap_jobs"
+                " WHERE guild_id = %s AND campaign_id = %s) j"
+                " WHERE state = 'ready' AND status IN ('draft', 'posted')"
                 " ORDER BY session_at DESC LIMIT %s",
                 (guild_id, campaign_id, max(1, min(limit, 25))),
             )
-            return [(int(r["session_at"]), r["title"], r["status"]) for r in await cur.fetchall()]
+            return [
+                (int(r["session_at"]), int(r["n"]), r["title"], r["status"])
+                for r in await cur.fetchall()
+            ]
 
     async def number_of(self, guild_id: int, campaign_id: str, session_at: int) -> int:
         """Which session of the campaign this recap is (1 for the first), by its start time."""

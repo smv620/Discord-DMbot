@@ -78,7 +78,7 @@ MAX_SHOWN = 8  # cue problems listed in one message
 def ready_text(title: str, link: str) -> str:
     """The DM-screen line that goes with the buttons: what it is, that nothing has gone to the
     players yet, and where to change the words."""
-    where = f"\nWant to change it first? Edit it here: {link}" if link else ""
+    where = f"\nRead, edit and post it on your recap page: {link}" if link else ""
     return (
         f"📜 Recap ready: **{discord.utils.escape_markdown(title)}**\n"
         f"Nothing goes to the players until you post it.{where}"
@@ -292,10 +292,11 @@ def ready_view(campaign_id: str, session_at: int, site: str = "") -> discord.ui.
     reading, editing, approving and posting now happen, and Share a recap. The older buttons
     (read, approve, post, skip, tell) still work on messages already sent, so nothing breaks."""
     view = discord.ui.View(timeout=None)
-    if site:
-        view.add_item(
-            discord.ui.Button(label="Recaps", emoji="📜", url=f"{site.rstrip('/')}/account/recaps")
-        )
+    if not site:  # no link to open and none to share: no dead buttons
+        return view
+    view.add_item(
+        discord.ui.Button(label="Open recaps", emoji="📜", url=f"{site.rstrip('/')}/account/recaps")
+    )
     view.add_item(ShareButton(campaign_id))
     return view
 

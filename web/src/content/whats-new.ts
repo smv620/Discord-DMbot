@@ -207,8 +207,8 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "Share a recap with a link",
-    what: "Press 📜 Share a recap on your DM screen (or in ⚙️ Settings → Recaps), pick a recap, then copy its link or send it to the players in your chat channel. Anyone with the link can read the story, no sign-in, and you can turn the link off or make a new one on your recap page. A recap you haven't posted yet is posted when you share it, after the same checks as Post. Only game masters see the button.",
-    reason: "In review (#2132 and its Discord buttons); held until merged and dev1 deploys it.",
+    what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
+    reason: "Waiting for review (#2132) and for dev1 to deploy it.",
   },
   {
     date: "2026-10-19",

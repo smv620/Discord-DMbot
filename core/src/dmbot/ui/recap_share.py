@@ -19,13 +19,27 @@ from dmbot.ui.dmbot_commands import _bot, _tell
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was shared."
-NO_SITE = "The website address isn't set up, so there's no link to share."
+NO_SITE = "DMbot doesn't know its website address yet, so there's no link to share."
 NO_RECAPS = "There's no recap to share yet. One is written after each session."
-PICK = "Which recap? The newest is first. Anyone with the link can read the story, no sign-in."
+PICK = "Pick a recap to share. Newest first. Anyone with the link can read it, no sign-in."
 HOW = "How do you want to share it?"
-NO_CHAT = "There's no chat channel for this campaign yet. It's made when a session starts."
-SENT = "✅ Sent the link to the players."
-SEND_FAILED = "DMbot couldn't write in the chat channel. Check it can post there, then try again."
+HOW_DRAFT = (
+    "This recap isn't posted yet. Sharing it posts it, and anyone with the link can read it."
+)
+NO_CHAT = (
+    "There's no chat channel for this campaign yet. It's made when a session starts. "
+    "You can copy the link instead."
+)
+SENT = "✅ Sent the link to the players in your chat channel."
+SENT_ALREADY = "The link was already sent. Nothing more was posted."
+SEND_FAILED = (
+    "I couldn't write in your chat channel, so the link wasn't sent. Let DMbot post there, "
+    "then try again. You can copy the link instead."
+)
+COPY_LEAD = (
+    "Here's the link. Anyone who has it can read the recap, no sign-in. "
+    "Turn it off or make a new one on your recap page:\n"
+)
 TIMEOUT_S = 840  # a private reply's buttons stop working after 15 minutes
 _TEMPLATE = r"dmbot:recapshare:(?P<campaign>[0-9a-f]{32})"
 
@@ -83,25 +97,35 @@ class ShareButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if not recent:
             await _tell(interaction, NO_RECAPS)
             return
+        if len(recent) == 1:  # nothing to pick from: straight to how
+            at, _n, _title, status = recent[0]
+            await _tell(
+                interaction,
+                HOW_DRAFT if status == "draft" else HOW,
+                view=HowView(campaign.id, at, draft=status == "draft"),
+            )
+            return
         await _tell(interaction, PICK, view=PickView(campaign.id, recent))
 
 
 class PickView(discord.ui.View):
     """The recaps to choose from, newest first, at most 25 (Discord's limit for a menu)."""
 
-    def __init__(self, campaign_id: str, recent: list[tuple[int, str, str]]) -> None:
+    def __init__(self, campaign_id: str, recent: list[tuple[int, int, str, str]]) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id = campaign_id
+        self.status = {str(at): status for at, _n, _t, status in recent}
+        # The session number first, so two similar titles differ on a phone's short menu.
         options = [
             discord.SelectOption(
-                label=(title or "A recap")[:100],
+                label=f"Session {n}: {title or 'A recap'}"[:100],
                 value=str(at),
-                description="Not posted yet: sharing posts it" if status == "draft" else None,
+                description="Not posted yet" if status == "draft" else None,
             )
-            for at, title, status in recent[:25]
+            for at, n, title, status in recent[:25]
         ]
         select: discord.ui.Select[discord.ui.View] = discord.ui.Select(
-            placeholder="Pick a recap", options=options
+            placeholder="Choose a recap", options=options
         )
         select.callback = self._picked  # type: ignore[method-assign]
         self.select = select
@@ -111,27 +135,43 @@ class PickView(discord.ui.View):
         campaign = await _campaign(interaction, self.campaign_id)
         if campaign is None:
             return
-        at = int(self.select.values[0])
+        picked = self.select.values[0]
+        draft = self.status.get(picked) == "draft"
         await interaction.response.send_message(
-            HOW, view=HowView(campaign.id, at), ephemeral=True, allowed_mentions=NO_PINGS
+            HOW_DRAFT if draft else HOW,
+            view=HowView(campaign.id, int(picked), draft=draft),
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
         )
 
 
 class HowView(discord.ui.View):
-    def __init__(self, campaign_id: str, session_at: int) -> None:
+    """Copy or send. A recap not posted yet says so and its buttons say "Post and ...", so
+    sharing never posts by surprise. Labels stay short for a phone."""
+
+    def __init__(self, campaign_id: str, session_at: int, *, draft: bool = False) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
+        self.sent = False  # a second press of Send posts nothing more
+        if draft:
+            self.copy.label = "Post and copy link"
+            self.send.label = "Post and send"
 
     @discord.ui.button(label="Copy the link", style=discord.ButtonStyle.primary)
     async def copy(self, interaction: discord.Interaction, _button: discord.ui.Button[Any]) -> None:
         link = await self._link(interaction)
         if link is not None:
-            await interaction.followup.send(link, ephemeral=True, allowed_mentions=NO_PINGS)
+            await interaction.followup.send(
+                COPY_LEAD + link, ephemeral=True, allowed_mentions=NO_PINGS
+            )
 
-    @discord.ui.button(label="Send the link to the players", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Send to the players", style=discord.ButtonStyle.success)
     async def send(self, interaction: discord.Interaction, _button: discord.ui.Button[Any]) -> None:
         campaign = await _campaign(interaction, self.campaign_id)
         if campaign is None:
+            return
+        if self.sent:
+            await _tell(interaction, SENT_ALREADY)
             return
         bot = _bot(interaction)
         channel = (
@@ -154,6 +194,7 @@ class HowView(discord.ui.View):
         except Exception:
             await interaction.followup.send(SEND_FAILED, ephemeral=True)
             return
+        self.sent = True
         await interaction.followup.send(SENT, ephemeral=True)
 
     async def _link(
