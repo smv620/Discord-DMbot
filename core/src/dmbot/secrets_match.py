@@ -13,7 +13,10 @@ or more used to block a text, so a secret like "The White Death" blocked every r
 - a title in its short or long form, with or without the full stop (Mr/Mister ... Prof/Professor);
   a title that ends a name takes the same endings ("the Lost General's");
 - the whole name run together at word edges ("WhiteDeath", "TheWhiteDeath", "MisterWhite"), and
-  several whole secret names glued into one word ("RaeAegis").
+  several whole secret names glued into one word ("RaeAegis"). Run together means the name's own
+  words joined, never an article glued to a short name ("The Ox" is not looked for as "theox":
+  endings make everyday words of such joins, "there's" for "The Re", and blocking a recap for
+  one of them costs more than the join is ever written).
 
 A match inside a longer allowed name does not count ("Arcane Brotherhood" inside the confirmed
 "Arcane Brotherhood Hall" is the hall). A one-word secret under three letters is not looked for
@@ -75,39 +78,6 @@ def _variants(text: str) -> list[list[str]]:
     return [folded] if folded == spaced else [folded, spaced]
 
 
-# Ordinary words that "the" or "an" plus a one or two letter name would spell ("The N" is "then",
-# "An D" is "and"): such a joined form is never looked for, since it would flag everyday text.
-ORDINARY = frozenset(
-    [
-        "and",
-        "ands",
-        "any",
-        "ant",
-        "ants",
-        "anti",
-        "anew",
-        "anno",
-        "ana",
-        "anus",
-        "they",
-        "then",
-        "them",
-        "thee",
-        "there",
-        "their",
-        "theirs",
-        "these",
-        "theme",
-        "themes",
-        "theft",
-        "thefts",
-        "theta",
-        "thy",
-        "thus",
-    ]
-)
-
-
 @functools.lru_cache(maxsize=4096)  # the same words come up in every name and every text
 def _endings(word: str) -> tuple[str, ...]:
     long = len(word) >= LONG_WORD
@@ -159,10 +129,11 @@ class _Text:
 
     def __init__(self, seen: list[str]) -> None:
         self.seen = seen
-        self._spans: dict[_Name, list[tuple[int, int]]] = {}  # per name, once per reading
         # Keyed by the name itself, never id(): a freed name's id is reused by the next one, which
         # would hand back another secret's spans and miss it.
-        self._cover: tuple[list[int], list[int], dict[int, int]] | None = None
+        self._spans: dict[_Name, list[tuple[int, int]]] = {}  # per name, once per reading
+        # The cover of the allowed names it was built from (the same list, by identity).
+        self._cover: tuple[Sequence[_Name], list[int], list[int], dict[int, int]] | None = None
         self.index: dict[str, list[int]] = {}
         for i, word in enumerate(seen):
             self.index.setdefault(word, []).append(i)
@@ -183,7 +154,7 @@ class _Text:
         end reached so far, so a hit costs one bisect however many names are allowed and however
         many hits the text has (#2100). An occurrence that holds [start, end) and is not exactly
         it is longer."""
-        if self._cover is None:
+        if self._cover is None or self._cover[0] is not allowed:
             spans = sorted((a, b) for name in allowed for a, b in self.spans(name))
             starts = [a for a, _ in spans]
             reach: list[int] = []
@@ -193,8 +164,8 @@ class _Text:
                 furthest = max(furthest, b)
                 reach.append(furthest)
                 last_end[a] = max(last_end.get(a, 0), b)
-            self._cover = (starts, reach, last_end)
-        starts, reach, last_end = self._cover
+            self._cover = (allowed, starts, reach, last_end)
+        _, starts, reach, last_end = self._cover
         i = bisect.bisect_left(starts, start)  # occurrences starting before `start` are [:i]
         if i and reach[i - 1] >= end:
             return True
@@ -276,21 +247,6 @@ def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collect
                     if not reading.inside_longer(allowed_cache, start, end):
                         return WHOLE_NAME
             words = tokens[1:] if len(tokens) > 1 and tokens[0] in ARTICLES else tokens
-            if (
-                len(tokens) > 1
-                and tokens[0] in ARTICLES
-                and len(words) == 1
-                and len(words[0]) < MIN_ONE_WORD
-            ):
-                # A short name that is only looked for with its article ("The Ox") run together:
-                # "theox", "anox" and their endings, never the bare "ox". Not "a" + word: it
-                # would match ordinary words ("a" + "go" is "ago").
-                run_together |= {
-                    joined
-                    for art in ("the", "an")
-                    for e in _endings(words[0])
-                    if (joined := art + words[0] + e) not in ORDINARY
-                }
             if len(words) > 1:
                 run_together |= _joined(words, article="the") | _joined(words, article="a")
                 run_together |= _joined(words, article="an")
