@@ -252,7 +252,9 @@ class TheStylePanel(unittest.IsolatedAsyncioTestCase):
         bot.recap_notes.notes = AsyncMock(return_value=[])
         view = panel.StylePanel(CID, [], [Note(4, "Keep it short."), Note(9, "More.")])
         button = next(c for c in view.children if c.label == "Remove note 2")  # type: ignore[attr-defined]
-        await button.callback(interaction(bot, PLAYER))
+        player, dm = interaction(bot, PLAYER), interaction(bot)
+        player.guild_id = dm.guild_id = GUILD
+        await button.callback(player)
         bot.recap_notes.remove.assert_not_awaited()
-        await button.callback(interaction(bot))
+        await button.callback(dm)
         bot.recap_notes.remove.assert_awaited_once_with(GUILD, CID, DM_ID, 9)
