@@ -61,7 +61,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "A recap's length follows your session: about 200 words for a one-hour game, about 400 for three hours. A game of six hours or more gets about 700 words, the longest.",
   },
   {
-    text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
+    text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks that every detail came from that: each sentence has to match the place and the people, and DMbot cuts any it can't back up, or gives you no recap rather than a wrong one. It never states a compass direction. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
   ...(RECAP_NAMES_LIVE ? [recapNamesStep(RECAP_AUDIO_LIVE)] : []),
   {

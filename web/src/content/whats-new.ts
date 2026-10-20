@@ -290,6 +290,12 @@ export const held: Held[] = [
     reason: "Held with recaps (RECAPS_LIVE, #2018).",
   },
   {
+    date: "2026-10-20",
+    title: "Recaps stick to what happened",
+    what: "Before you see a recap, DMbot checks each sentence against what was said at the table: the right place, the right people, nothing added. It asks for one rewrite, and any sentence it still can't back up is cut. If too little is left, you get no recap rather than a wrong one. It never states a compass direction (north, south, east or west). You still read the recap first.",
+    reason: "Held with recaps (RECAPS_LIVE, #2064, #2067).",
+  },
+  {
     date: "2026-10-19",
     title: "New names from your recap",
     what: "When a recap uses a name DMbot didn't know, it asks you to check it, on your DM screen and by private message. Nothing is added to your game until you say so.",
