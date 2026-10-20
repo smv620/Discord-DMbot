@@ -75,6 +75,7 @@ describe("What's new", () => {
       "Add or remove game masters", // until the owner's live check (#1600)
       "Fix a line", // until it has been seen working on the test server (#1491, #1499)
       "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
+      "Share a recap by a link", // until the link API is deployed (RECAP_SHARE_LIVE, #2119)
       "Approve the text before any audio", // with narration (RECAP_AUDIO_LIVE, #2084)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "Play a recap's voice and music together", // with it (#2017)
