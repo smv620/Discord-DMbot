@@ -305,6 +305,7 @@ from dmbot.transcript.cleaner import (
     Fix,
     Vocabulary,
     clean,
+    matcher_names,
     own_name,
     safe_answer,
     with_ending,
@@ -4342,14 +4343,12 @@ class DMBot(commands.AutoShardedBot):
                 if not reveal.names:
                     return
                 known = await self.lookup.get(gid, cid)
-                allowed = [
-                    n.text for n in known.names if n.confirmed and not n.secret and not n.person
-                ]
+                allowed = matcher_names(known)[1]
                 found = revealed_in(line, reveal.names, allowed, reveal)
                 if found is None:
                     return
                 campaign = await self.campaigns.get(gid, cid)
-                posted = False
+                posted = closed = False
                 try:
                     if (
                         campaign is None
@@ -4364,11 +4363,15 @@ class DMBot(commands.AutoShardedBot):
                     text = reveal_question(found.text, found.entries, private=alone)
                     view = reveal_view(cid, found.alias_id, gid)
                     if alone:  # players may peek at the screen: the DM's own messages, not there
-                        posted = await self.sidebar_send_dm(speaker, text, view) == "sent"
+                        sent = await self.sidebar_send_dm(speaker, text, view)
+                        posted = sent == "sent"
+                        # Their private messages are closed: the key stays claimed, so each later
+                        # line naming it doesn't fetch, send and log again for the whole session.
+                        closed = sent == "forbidden"
                     else:
                         posted = bool(await self.post(table.screen_channel_id, text, view=view))
                 finally:
-                    if not posted:
+                    if not posted and not closed:
                         reveal.asked.discard(found.key)  # nothing was said: it may ask again
                 if posted:
                     log.info("Secret reveal: asked")  # no name, no words

@@ -166,6 +166,22 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
         bot.post.assert_awaited_once()
 
+    async def test_a_dm_whose_private_messages_are_closed_is_not_tried_again(self) -> None:
+        table = fake_table()
+        bot = fake_bot(table, visibility="peek")
+        bot.sidebar_send_dm = AsyncMock(return_value="forbidden")
+        await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
+        await ask(bot, table, "the Arcane Brotherhood again", [BROTHERHOOD])
+        self.assertEqual(bot.sidebar_send_dm.await_count, 1)  # the key stays claimed
+
+    async def test_a_failed_private_send_may_be_tried_again(self) -> None:
+        table = fake_table()
+        bot = fake_bot(table, visibility="peek")
+        bot.sidebar_send_dm = AsyncMock(return_value="failed")
+        await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
+        await ask(bot, table, "the Arcane Brotherhood again", [BROTHERHOOD])
+        self.assertEqual(bot.sidebar_send_dm.await_count, 2)
+
     async def test_nothing_is_logged_but_a_fixed_line(self) -> None:
         table = fake_table()
         bot = fake_bot(table)
