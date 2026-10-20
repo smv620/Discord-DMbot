@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "A note when a spelling changed a posted recap",
+    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website says \"Spelling updated\" and reminds you that the message in Discord still shows the old spelling.",
+    reason: "Waits for the spelling change to reach recaps (#2170) and for dev1 to deploy it (#2178).",
+  },
+  {
+    date: "2026-10-20",
     title: "Bring in older sessions",
     what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
