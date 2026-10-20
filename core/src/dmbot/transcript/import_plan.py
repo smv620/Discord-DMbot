@@ -27,7 +27,7 @@ NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT = "not_matched", "not_agreed", "bot", "le
 REASONS = (NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT)
 WORD_MS = 3_600_000 // SPOKEN_WORDS_PER_HOUR  # one spoken word, in milliseconds
 MAX_LINE_MS = 120_000  # a single line is never counted as longer than two minutes
-MAX_LINE_CHARS = 2_000  # a longer line is stored as several, so one can't carry a whole file
+MAX_LINE_CHARS = 2_048  # a longer line is stored as several, so one can't carry a whole file
 
 
 def spoken_ms(text: str) -> int:

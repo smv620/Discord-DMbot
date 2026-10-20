@@ -130,7 +130,8 @@ class TheLineLength(unittest.TestCase):
 
     def test_a_word_longer_than_the_limit_is_cut_where_it_stands(self) -> None:
         pieces = ip._pieces("x" * 4_500)
-        self.assertEqual([len(p) for p in pieces], [2_000, 2_000, 500])
+        cap = ip.MAX_LINE_CHARS
+        self.assertEqual([len(p) for p in pieces], [cap, cap, 4_500 - 2 * cap])
 
 
 class TheTimes(unittest.TestCase):
