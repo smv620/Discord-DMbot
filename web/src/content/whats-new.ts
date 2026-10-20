@@ -369,7 +369,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "Heads-up when a fallen character speaks",
-    what: "If someone voices a character you confirmed has died, DMbot can tell you on your DM screen, so players see it only if your DM screen lets them. Nothing changes unless you press a button, and it is quiet: one at a time, a few minutes apart, and none on Quiet.",
+    what: "If someone speaks as a character you confirmed has died, DMbot points it out on your DM screen, and nothing changes unless you press a button. It waits a few minutes between heads-ups, stays silent on Quiet, and players see it only if your DM screen lets them.",
     reason:
       "Held until it has been seen working on the test server (#2068, #2078): DMBOT_LIVE_HEADS_UP stays off until dev1's live check.",
   },
