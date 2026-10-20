@@ -3909,6 +3909,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
        is at most 2 minutes.
      - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
        for the recap page only.
+     - **Names help, as in a live session** (owner, 2026-10-20): the clip is transcribed with the
+       same campaign name hints a live session sends (Deepgram's keyterms, under the same rules about
+       which names may go), and the text goes through the Cleaner's name fixing, as a DM's live line
+       does. So "care Dinval" comes back as the known name. This costs almost nothing extra.
+     - **It counts as listening time** (owner, 2026-10-20). Each clip's length is added to the
+       campaign's listening minutes for the month, the same hours meter as a session in Discord.
+       The site's words about hours say DMbot listens both in Discord and on the website: "the time
+       DMbot is listening to you, in Discord or on the website".
   4. **Names to check, answered on the page:** the recap's **Facts to be confirmed** list (#2027) is
      shown under the recap with an answer for each name, the same answers as Discord's
      📝 Check new names:
