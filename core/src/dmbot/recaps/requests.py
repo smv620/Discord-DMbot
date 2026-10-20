@@ -125,14 +125,13 @@ class RequestStore:
 
     async def sweep_clips(self) -> int:
         """Clear every clip older than `CLIP_KEEP_S`, in every server, the ones the bot has left
-        included (the rows stay for their hour). A cleanup transaction, not one server's: a
-        policy lets it touch only old clips and only to empty them. Counts how many."""
-        async with self._db.cleanup("old-clips") as conn:
-            cur = await conn.execute(
-                "UPDATE recap_requests SET clip = NULL WHERE clip IS NOT NULL AND created_at < %s",
-                (int(self._now()) - CLIP_KEEP_S,),
-            )
-            return int(cur.rowcount)
+        included (the rows stay for their hour), through `dmbot_sweep_old_clips`: a function that
+        does that and nothing else, so the ten-minute promise holds for every server. Counts
+        how many were emptied."""
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute("SELECT dmbot_sweep_old_clips() AS n")
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
 
     async def sweep(self, guild_id: int) -> int:
         """Delete requests older than `KEEP_FOR_S`, whatever their state (their clips went long

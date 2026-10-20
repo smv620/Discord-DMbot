@@ -7244,7 +7244,9 @@ RECAP_VOICE = r"""
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        -- A server the bot has left keeps no clips: nobody would write them down or sweep them.
+        -- Best effort (#2163: nothing writes installs.left_at yet): a server the bot has left
+        -- takes no new clips. The promise that no clip outlives ten minutes does not rest on this:
+        -- the all-server sweep (dmbot_sweep_old_clips) keeps it.
         IF EXISTS (SELECT 1 FROM installs i WHERE i.guild_id = g AND i.left_at IS NOT NULL) THEN
             RETURN jsonb_build_object('status', 'not_allowed');
         END IF;
@@ -7293,16 +7295,31 @@ RECAP_VOICE = r"""
     END
     $fn$;
 
-    -- Emptying old clips in every server, the ones the bot has left included: the bot's
-    -- cleanup transaction (Database.cleanup("old-clips")) may see and empty a clip that is
-    -- older than ten minutes, and do nothing else with a request.
-    -- (An UPDATE's new row must pass the SELECT rule too, so this one cannot ask for the clip.)
+    -- Emptying old clips in every server, the ones the bot has left included, by one function
+    -- and nothing else: it sets the cleanup marker for its own statement only and does one
+    -- thing, empty the clip of a request older than ten minutes. It is the bot's: not granted
+    -- to the website's role (the policies below mean nothing without the marker, and the
+    -- website's role has no right to the table anyway).
+    -- (An UPDATE's new row must pass the SELECT rule too, so that rule cannot ask for the clip.)
     CREATE POLICY old_clips_seen ON recap_requests FOR SELECT
         USING (dmbot_cleanup() = 'old-clips' AND created_at < dmbot_now() - 600);
     CREATE POLICY old_clips_emptied ON recap_requests FOR UPDATE
         USING (dmbot_cleanup() = 'old-clips' AND clip IS NOT NULL
                AND created_at < dmbot_now() - 600)
         WITH CHECK (dmbot_cleanup() = 'old-clips' AND clip IS NULL);
+    CREATE FUNCTION dmbot_sweep_old_clips() RETURNS BIGINT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        emptied BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.cleanup', 'old-clips', true);
+        UPDATE recap_requests SET clip = NULL
+            WHERE clip IS NOT NULL AND created_at < dmbot_now() - 600;
+        GET DIAGNOSTICS emptied = ROW_COUNT;
+        PERFORM set_config('dmbot.cleanup', '', true);
+        RETURN emptied;
+    END
+    $fn$;
 
     -- A clip's state and the words written from it, to the DM who sent it and no one else.
     CREATE FUNCTION dmbot_recap_voice_read(g BIGINT, c TEXT, at_ BIGINT, rid TEXT)
@@ -7377,6 +7394,9 @@ RECAP_VOICE = r"""
             'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
+            'ALTER FUNCTION dmbot_sweep_old_clips()'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
             'ALTER FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
@@ -7384,6 +7404,7 @@ RECAP_VOICE = r"""
     REVOKE ALL ON FUNCTION dmbot_recap_voice_add(
         BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_sweep_old_clips() FROM PUBLIC;
     """
 
 MIGRATIONS: tuple[Migration, ...] = (

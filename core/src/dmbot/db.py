@@ -262,13 +262,11 @@ class Database:
     @asynccontextmanager
     async def cleanup(
         self,
-        what: Literal[
-            "expired-sessions", "old-feedback", "old-tickets", "old-clips"
-        ] = "expired-sessions",
+        what: Literal["expired-sessions", "old-feedback", "old-tickets"] = "expired-sessions",
     ) -> AsyncIterator[Conn]:
         """A transaction that can see and delete expired website sessions, or delete
-        "Say hello" messages (#665) or support tickets (#1340) older than a year, or empty the
-        voice clips (#2113) older than ten minutes, nothing else."""
+        "Say hello" messages (#665) or support tickets (#1340) older than a year, nothing
+        else."""
         async with self._with(cleanup=what) as conn:
             yield conn
 

@@ -561,6 +561,39 @@ class TheLoop(WithClips):
             rows = {r["id"]: r["gone"] for r in await cur.fetchall()}
         self.assertEqual(rows, {"e" * 32: True, "f" * 32: False})
 
+    async def test_the_sweep_function_is_the_bots_not_the_websites_and_only_empties_clips(
+        self,
+    ) -> None:
+        import psycopg
+
+        rid = await self.send_clip()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_requests SET created_at = created_at - 700 WHERE id = %s", (rid,)
+            )
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.unscoped() as conn:
+                await conn.execute("SELECT dmbot_sweep_old_clips()")
+        self.assertEqual(await self.requests.sweep_clips(), 1)
+        self.assertEqual(await self.requests.sweep_clips(), 0)  # nothing left to empty
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT state, kind, body, clip_type FROM recap_requests WHERE id = %s", (rid,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(
+            (row["state"], row["kind"], row["body"], row["clip_type"]),
+            ("waiting", "voice", "", "audio/webm"),  # nothing else about the request changed
+        )
+        self.assertIsNone(await self.clip_in_row(rid))
+        # The marker the function sets is gone once it ends: a later statement sees nothing.
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT dmbot_cleanup() AS c")
+            marker = await cur.fetchone()
+        assert marker is not None
+        self.assertFalse(marker["c"])
+
     async def test_the_sweep_clears_only_old_clips(self) -> None:
         old, fresh = await self.send_clip(), None
         async with self.db.guild(THURSDAY.id) as conn:
