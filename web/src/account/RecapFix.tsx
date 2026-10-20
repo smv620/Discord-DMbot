@@ -2,9 +2,10 @@
 // "Tell DMbot what to fix" on a recap's page (#2114; core #2113). The DM types a note; the web API only
 // queues it, the bot sorts it into points, and this page polls for them (every 2 seconds, about a
 // minute at most). The DM then removes corrections they don't want and chooses which style notes to
-// keep, and presses Rewrite: that uses one of the recap's tries and clears the approval. DMbot only
-// sorts and rewrites; the DM decides. Replies come back in plain words and are shown as they are.
+// keep, and presses Rewrite: that uses one Try again and clears the approval. DMbot only sorts and
+// rewrites; the DM decides. Replies come back in plain words and are shown as they are.
 // Shown only while RECAPS_LIVE and RECAP_FIX_LIVE are true, for a recap that can still change.
+// The page is keyed by the recap (Recaps.tsx), so nothing carries over from one recap to another.
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { FIX_MAX_LETTERS, fixWords as words } from "../content/recap-fix";
@@ -14,6 +15,13 @@ import { keepFocus } from "./focus";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 30; // about a minute
+
+const flip = (set: Set<string>, id: string, on: boolean): Set<string> => {
+  const next = new Set(set);
+  if (on) next.add(id);
+  else next.delete(id);
+  return next;
+};
 
 export default function RecapFix({
   api,
@@ -27,36 +35,40 @@ export default function RecapFix({
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [points, setPoints] = useState<FixPoints | null>(null);
+  // Corrections start kept and are removed on purpose; a style note starts not kept and is kept on purpose.
   const [corrections, setCorrections] = useState<Set<string>>(new Set());
   const [style, setStyle] = useState<Set<string>>(new Set());
   const [sorting, setSorting] = useState(false);
   const [slow, setSlow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [started, setStarted] = useState(false);
-  const [triesLeft, setTriesLeft] = useState<number | null>(null);
+  const [started, setStarted] = useState<"approve" | "plain" | null>(null);
   const inFlight = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
 
-  const fail = (error: unknown): void => {
+  const fail = (error: unknown): string => {
     const kind = error instanceof ApiError ? error.kind : "server";
-    setProblem(words.problem[kind] ?? words.problem.server);
+    const message = words.problem[kind] ?? words.problem.server;
+    setProblem(message);
+    return kind;
   };
 
   // Follow the request until the bot has sorted the note, or about a minute has passed.
   useEffect(() => {
-    if (!requestId || !api.fixResult) return;
+    const read = api.fixResult;
+    if (!requestId || !read) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polls = 0;
     const tick = async (): Promise<void> => {
       try {
-        const got = await api.fixResult!(recap.ref, requestId);
+        const got = await read(recap.ref, requestId);
         if (!live) return;
-        if (got.state === "done" && got.points) {
+        if (got.state === "done") {
+          if (!got.points) throw new ApiError("server"); // "done" with nothing to show is a fault
           setPoints(got.points);
-          setCorrections(new Set(got.points.corrections.map((c) => c.id))); // kept until removed
-          setStyle(new Set()); // a style note shapes later recaps, so it is only kept on purpose
+          setCorrections(new Set(got.points.corrections.map((c) => c.id)));
+          setStyle(new Set());
           setSorting(false);
           return;
         }
@@ -105,8 +117,12 @@ export default function RecapFix({
     setBusy(true);
     setProblem(null);
     setSlow(false);
+    // A new note starts clean: nothing from an earlier request may be sent with this one.
+    setRequestId(null);
     setPoints(null);
-    setStarted(false);
+    setCorrections(new Set());
+    setStyle(new Set());
+    setStarted(null);
     try {
       const { requestId: id } = await api.sendFix(recap.ref, text.trim());
       setSorting(true);
@@ -119,17 +135,17 @@ export default function RecapFix({
     }
   };
 
-  const flip = (set: Set<string>, id: string, on: boolean): Set<string> => {
-    const next = new Set(set);
-    if (on) next.add(id);
-    else next.delete(id);
-    return next;
-  };
-
   const keptCount = corrections.size + style.size;
+  const noTries = recap.triesLeft <= 0;
 
   const rewrite = async (): Promise<void> => {
-    if (inFlight.current || !api.rewriteWith || !requestId || keptCount === 0)
+    if (
+      inFlight.current ||
+      !api.rewriteWith ||
+      !requestId ||
+      keptCount === 0 ||
+      noTries
+    )
       return;
     inFlight.current = true;
     setBusy(true);
@@ -141,19 +157,37 @@ export default function RecapFix({
         [...corrections],
         [...style],
       );
-      setTriesLeft(done.triesLeft);
       onRecap(done.recap);
+      setRequestId(null);
       setPoints(null);
       setText("");
-      setStarted(true);
+      setStarted(done.needsApproval ? "approve" : "plain");
       keepFocus(() => statusRef.current);
     } catch (error) {
-      fail(error);
+      if (fail(error) === "bad-choice") {
+        // The points are out of date: take them away so they can't be sent again.
+        setRequestId(null);
+        setPoints(null);
+      }
     } finally {
       inFlight.current = false;
       setBusy(false);
     }
   };
+
+  const status = sorting
+    ? words.sorting
+    : slow
+      ? words.slow
+      : started === "approve"
+        ? words.started
+        : started === "plain"
+          ? words.startedNoApproval
+          : points
+            ? points.corrections.length + points.style.length === 0
+              ? words.nothing
+              : words.sorted(points.corrections.length + points.style.length)
+            : "";
 
   return (
     <section class="panel" aria-labelledby="recap-fix">
@@ -171,13 +205,7 @@ export default function RecapFix({
         ref={statusRef}
         class="small"
       >
-        {sorting
-          ? words.sorting
-          : slow
-            ? words.slow
-            : started
-              ? words.started
-              : ""}
+        {status}
       </p>
       <label class="field">
         {words.label}
@@ -185,17 +213,21 @@ export default function RecapFix({
           rows={4}
           maxLength={FIX_MAX_LETTERS}
           value={text}
+          disabled={!recap.canEdit}
+          aria-describedby="recap-fix-count"
           onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
         />
       </label>
-      <p class="muted small">{words.count(text.length)}</p>
+      <p class="muted small" id="recap-fix-count">
+        {words.count(text.length)}
+      </p>
       <button
         type="button"
         class="button"
-        disabled={busy || sorting || text.trim() === ""}
+        disabled={busy || sorting || text.trim() === "" || !recap.canEdit}
         onClick={() => void send()}
       >
-        {sorting ? words.sorting : words.send}
+        {busy && !sorting ? words.sending : words.send}
       </button>
 
       {points && (
@@ -204,26 +236,31 @@ export default function RecapFix({
             <>
               <h4>{words.correctionsHeading}</h4>
               <ul class="campaigns">
-                {points.corrections.map((c) => (
-                  <li key={c.id}>
-                    <span class="campaign-name">{c.text}</span>
-                    <span class="small">
-                      {corrections.has(c.id) ? words.kept : words.notKept}
-                    </span>
-                    {corrections.has(c.id) && (
+                {points.corrections.map((c) => {
+                  const on = corrections.has(c.id);
+                  return (
+                    <li key={c.id}>
+                      <span class="campaign-name">{c.text}</span>
+                      <span class="small">
+                        {on ? words.kept : words.notKept}
+                      </span>
                       <button
                         type="button"
                         class="button secondary"
-                        aria-label={words.removeOne(c.text)}
+                        aria-label={
+                          on
+                            ? words.removeOne(c.text)
+                            : words.putBackOne(c.text)
+                        }
                         onClick={() =>
-                          setCorrections((now) => flip(now, c.id, false))
+                          setCorrections((now) => flip(now, c.id, !on))
                         }
                       >
-                        {words.remove}
+                        {on ? words.remove : words.putBack}
                       </button>
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}
@@ -232,28 +269,27 @@ export default function RecapFix({
               <h4>{words.styleHeading}</h4>
               <p class="muted small">{words.styleLead}</p>
               <ul class="campaigns">
-                {points.style.map((s) => (
-                  <li key={s.id}>
-                    <span class="campaign-name">{s.text}</span>
-                    <span class="small">
-                      {style.has(s.id) ? words.kept : words.notKept}
-                    </span>
-                    <button
-                      type="button"
-                      class="button secondary"
-                      aria-label={
-                        style.has(s.id)
-                          ? words.dontKeepOne(s.text)
-                          : words.keepOne(s.text)
-                      }
-                      onClick={() =>
-                        setStyle((now) => flip(now, s.id, !now.has(s.id)))
-                      }
-                    >
-                      {style.has(s.id) ? words.dontKeep : words.keep}
-                    </button>
-                  </li>
-                ))}
+                {points.style.map((s) => {
+                  const on = style.has(s.id);
+                  return (
+                    <li key={s.id}>
+                      <span class="campaign-name">{s.text}</span>
+                      <span class="small">
+                        {on ? words.kept : words.notKept}
+                      </span>
+                      <button
+                        type="button"
+                        class="button secondary"
+                        aria-label={
+                          on ? words.dontKeepOne(s.text) : words.keepOne(s.text)
+                        }
+                        onClick={() => setStyle((now) => flip(now, s.id, !on))}
+                      >
+                        {on ? words.dontKeep : words.keep}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}
@@ -267,16 +303,18 @@ export default function RecapFix({
           )}
           {points.corrections.length + points.style.length > 0 && (
             <>
-              <p class="small">
-                {recap.triesLeft > 0
-                  ? words.cost(recap.triesLeft)
-                  : words.costNoCount}
+              <p>
+                {noTries
+                  ? words.noTriesLeft
+                  : recap.triesLeft > 0
+                    ? words.cost(recap.triesLeft)
+                    : words.costNoCount}
               </p>
               {keptCount === 0 && <p class="small">{words.nothingKept}</p>}
               <button
                 type="button"
                 class="button"
-                disabled={busy || keptCount === 0}
+                disabled={busy || keptCount === 0 || noTries}
                 onClick={() => void rewrite()}
               >
                 {busy ? words.rewriting : words.rewrite}
@@ -284,9 +322,6 @@ export default function RecapFix({
             </>
           )}
         </div>
-      )}
-      {triesLeft !== null && started && (
-        <p class="muted small">{words.cost(triesLeft)}</p>
       )}
     </section>
   );

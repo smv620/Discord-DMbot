@@ -749,7 +749,6 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
-  not_a_dm: "not-allowed",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */

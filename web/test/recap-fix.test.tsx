@@ -206,6 +206,117 @@ describe("the rewrite", () => {
   }, 10000);
 });
 
+describe("fresh starts and out-of-date points", () => {
+  async function sortedOnce(api = mockApi("table")) {
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 5000 });
+    return api as ReturnType<typeof mockApi>;
+  }
+
+  it("lets a removed correction be put back", async () => {
+    await sortedOnce();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: w.removeOne("Fix the innkeeper's name"),
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: w.putBackOne("Fix the innkeeper's name"),
+      }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: w.removeOne("Fix the innkeeper's name"),
+      }),
+    ).toBeTruthy();
+  }, 10000);
+
+  it("says how many points there are", async () => {
+    await sortedOnce();
+    expect(screen.getByText(w.sorted(3))).toBeTruthy();
+  }, 10000);
+
+  it("says so when nothing was found to change", async () => {
+    const api = mockApi("table");
+    api.fixResult = async () => ({
+      state: "done",
+      points: { corrections: [], style: [], replies: ["Nothing to do."] },
+    });
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.nothing)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.rewrite })).toBeNull();
+  });
+
+  it("treats a finished request with no points as a fault, not a long wait", async () => {
+    const api = mockApi("table");
+    api.fixResult = async () => ({ state: "done" });
+    await open(api);
+    type("anything");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem.server,
+    );
+  });
+
+  it("throws away old points when a new note is sent, and sends the new request's id", async () => {
+    const api = mockApi("table");
+    let n = 0;
+    api.sendFix = async () => ({ requestId: `req${++n}` });
+    api.fixResult = async (_ref, id) => ({
+      state: "done",
+      points: {
+        corrections: [{ id: "c1", text: `Point from ${id}` }],
+        style: [],
+        replies: [],
+      },
+    });
+    await open(api);
+    type("one");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await screen.findByText("Point from req1");
+    type("two");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    await screen.findByText("Point from req2");
+    expect(screen.queryByText("Point from req1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.rewrite }));
+    await waitFor(() =>
+      expect(
+        api.calls.some((c) => c.startsWith(`rewriteWith:${draft.ref}:req2:`)),
+      ).toBe(true),
+    );
+  });
+
+  it("drops the points when the API says they are out of date", async () => {
+    const api = mockApi("table");
+    api.rewriteWith = async () => {
+      throw new ApiError("bad-choice");
+    };
+    await sortedOnce(api);
+    fireEvent.click(screen.getByRole("button", { name: w.rewrite }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["bad-choice"],
+    );
+    expect(screen.queryByRole("button", { name: w.rewrite })).toBeNull();
+  }, 10000);
+
+  it("turns Rewrite off, and says why, when there is no Try again left", async () => {
+    const api = mockApi("table");
+    const recap = api.recap!.bind(api);
+    api.recap = async (ref) => ({ ...(await recap(ref)), triesLeft: 0 });
+    await sortedOnce(api);
+    expect(screen.getByText(w.noTriesLeft)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: w.rewrite }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  }, 10000);
+});
+
 describe("refusals when sending", () => {
   it.each([
     ["too-big", w.problem["too-big"]],
