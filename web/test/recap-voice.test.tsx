@@ -381,7 +381,7 @@ describe("over the wire", () => {
     [429, { error: "too_soon" }, "too-soon"],
     [403, { error: "no_consent" }, "no-consent"],
     [422, { error: "bad_clip" }, "bad-clip"],
-  ])("reads a %i answer as %s", async (status, body, kind) => {
+  ])("reads a %i answer as the %s problem", async (status, body, kind) => {
     const clip = new Blob([new Uint8Array(5)], { type: "audio/webm" });
     await expect(reply(status, body).sendVoice!("r", clip)).rejects.toMatchObject({ kind });
   });

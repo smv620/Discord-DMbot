@@ -1,8 +1,8 @@
 /** @jsxImportSource preact */
 // "Speak instead" on a recap's page (#2114; core #2113 part 2): the DM records a short note, the API
 // turns it into words and deletes the recording, and the words are put in the "Tell DMbot what to
-// fix" box to check before Send. Nothing is sent until the DM presses Stop, the recording is never
-// kept on this page, and the browser asks for the microphone only when the DM presses the button.
+// fix" box to check before Send. The clip is sent when the DM presses Stop, or when the minute is up
+// (the page stops by itself); Cancel throws it away. The recording is never kept on this page, and the browser asks for the microphone only when the DM presses the button.
 // A browser that can't record in webm or ogg (Safari today) sees "type your note instead".
 import { useEffect, useRef, useState } from "preact/hooks";
 
