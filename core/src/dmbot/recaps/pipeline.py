@@ -85,6 +85,9 @@ class Inputs:
     setting: str | None = None  # a campaign has no setting name yet; none is ever written in
     window_chars: int = bt.WINDOW_CHARS  # a test shrinks it to get several windows
     hours: float | None = None  # hours played when known (recap_run); else from the lines' times
+    # The campaign's example recaps, for the writer's tone only (#2075): the writer's call and the
+    # copy check read them; the beats and the fact check never do.
+    style: Sequence[str] = ()
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -542,7 +545,7 @@ class RecapWorker:
                 cid,
                 job,
                 self._creative if self._creative is not None and self._two else self._client(job),
-                rd.prose_system(inputs.setting, length, plain=self._two),
+                rd.prose_system(inputs.setting, length, plain=self._two, style=inputs.style),
                 message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
                 schema=None if self._two else rd.prose_schema(),
@@ -615,6 +618,7 @@ class RecapWorker:
                 length=length,
                 last=last_try,
                 refused=refused,
+                style=inputs.style,
             )
 
         problems = checked(False)
@@ -771,6 +775,7 @@ class RecapWorker:
                 length=length,
                 last=True,
                 refused=refused,
+                style=inputs.style,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -940,6 +945,7 @@ class RecapWorker:
             length=length,
             last=True,
             refused=[],
+            style=inputs.style,
         ):
             return None
         return cut
