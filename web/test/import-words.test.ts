@@ -20,6 +20,8 @@ describe("importing older sessions", () => {
     expect(words).toContain(`up to ${IMPORT_MAX_MB} MB`);
     for (const part of [
       "agreed to be recorded in Discord",
+      "For each name in a file",
+      "Craig is a Discord recording bot",
       "Your word that everyone agreed is not enough",
       "never stored",
       "can be read by everyone in your server",
