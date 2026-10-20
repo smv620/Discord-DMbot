@@ -16,7 +16,6 @@ from dmbot.ai import AIError, Reply
 from dmbot.devtools.claims import __main__ as claims_main
 from dmbot.devtools.claims import cost
 from dmbot.devtools.claims.extract import (
-    MAX_CLAIMS,
     Claim,
     extract,
     parse_answer,
@@ -25,6 +24,7 @@ from dmbot.devtools.claims.extract import (
 from dmbot.devtools.claims.scenes import Expected, Line, batches, load_scenes, parse_scenes
 from dmbot.devtools.claims.score import matches, score
 from dmbot.devtools.story_measure.golden import load_golden
+from dmbot.memory.claims import MAX_CLAIMS
 from dmbot.memory.extractor import SYSTEM
 
 SCENES = Path(__file__).resolve().parents[2] / "docs" / "test-scripts" / "story-scenes.md"

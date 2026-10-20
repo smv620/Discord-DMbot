@@ -10,7 +10,10 @@ from dataclasses import dataclass
 # US dollars per million tokens: (input, output).
 PRICES: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5-20251001": (1.0, 5.0),
-    "claude-haiku-5-5": (0.10, 0.50),  # (#2055; see devtools/costs/prices.py for the source)
+    "claude-haiku-5-5": (
+        0.10,
+        0.50,
+    ),  # (the fast tier since #2152; see devtools/costs/prices.py for the source)
     "claude-opus-5-5": (4.0, 20.0),  # the recap's creative model (#2074)
 }
 SESSION_S = 4 * 3600

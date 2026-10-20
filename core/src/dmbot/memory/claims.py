@@ -233,7 +233,8 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
             continue
         subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
         obj = _field(item.get("object")) or ""
-        details = " ".join(str(item.get("details") or "").split())[:DETAIL_MAX]
+        said = item.get("details")  # words only: a list or a number is no detail
+        details = " ".join(said.split())[:DETAIL_MAX] if isinstance(said, str) else ""
         how = item.get("how")
         if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
             how = how.strip().rstrip(".").lower()
