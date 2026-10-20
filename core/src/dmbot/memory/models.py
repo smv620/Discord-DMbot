@@ -158,7 +158,7 @@ def name_key(text: str) -> str:
     """
     decomposed = unicodedata.normalize("NFKD", text.casefold())
     letters = "".join(c for c in decomposed if not unicodedata.combining(c))
-    letters = re.sub(r"['’`\-]", "", letters)
+    letters = re.sub(r"['’ʼ`\-]", "", letters)
     return " ".join(re.sub(r"[^\w\s]", " ", letters).split())
 
 

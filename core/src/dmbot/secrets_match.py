@@ -7,8 +7,9 @@ or more used to block a text, so a secret like "The White Death" blocked every r
 - case, accents, apostrophes and hyphens (`name_key`); a hyphen is read both ways, folded away
   ("Dun-Varra" is "DunVarra") and as a space ("Vex-gate" holds "Vex");
 - a leading article (a, an, the) added, dropped or swapped;
-- on any word, a possessive or plural (`'s`, `s'`, `s`) and, on a word of five letters or more,
-  `es` or a verb ending (`-ed`, `-d`, `-ing`) ("Bran" is not "brand"; "Ghosts" and "Ghosted");
+- on any word, a possessive or plural (`'s`, `s'`, `s`); `es` on a word ending s, x, z, ch or sh
+  or of four letters or more; `-ed` and `-ing` on a word of four letters or more; `-d` only after
+  a final "e" ("Bran" is not "brand"; "Vexes", "Ghosts" and "Ghosted"; "Vex" is not "vexing");
 - a title in its short or long form, with or without the full stop (Mr/Mister ... Prof/Professor);
   a title that ends a name takes the same endings ("the Lost General's");
 - the whole name run together at word edges ("WhiteDeath", "TheWhiteDeath", "MisterWhite"), and
@@ -38,11 +39,10 @@ from dmbot.memory.models import name_key
 WHOLE_NAME = "whole-name"  # which rule found a secret name (never the name itself)
 RUN_TOGETHER = "run-together"
 MIN_ONE_WORD = 3  # a one-word secret shorter than this is not looked for bare
-LONG_WORD = 5  # -es, -ed, -d and -ing only on a word at least this long ("Bran" is not "brand")
+LONG_WORD = 4  # -ed and -ing (and -es on any word) only on a word at least this long
 ARTICLES = ("a", "an", "the")
 # After `name_key` an apostrophe is gone, so "'s" and "s'" are both just "s".
-SHORT_ENDINGS = ("", "s")
-LONG_ENDINGS = ("", "s", "es", "ed", "d", "ing")
+ES_LETTERS = ("s", "x", "z", "ch", "sh")  # a word ending so takes -es at any length ("Vexes")
 MAX_FORMS = 64  # run-together spellings tried for one name (titles and articles multiply them)
 # Each group is one title; any member stands for the others.
 _TITLES = (
@@ -74,7 +74,15 @@ def _variants(text: str) -> list[list[str]]:
 
 
 def _endings(word: str) -> tuple[str, ...]:
-    return LONG_ENDINGS if len(word) >= LONG_WORD else SHORT_ENDINGS
+    long = len(word) >= LONG_WORD
+    out = ["", "s"]
+    if long or word.endswith(ES_LETTERS):
+        out.append("es")
+    if long:
+        out += ["ed", "ing"]
+    if word.endswith("e"):  # "Ghoule" is "Ghouled"; "Bran" is never "Brand"
+        out.append("d")
+    return tuple(out)
 
 
 def _forms(word: str, *, last: bool, titled: bool = True) -> frozenset[str]:

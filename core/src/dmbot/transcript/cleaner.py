@@ -397,9 +397,10 @@ def _without_secrets(
         }
         if not bad:  # the shared matcher, on the line as written: a fix that made one is taken back
             secrets, allowed = _matcher_names(lookup)
-            if names_a_secret(text, secrets, allowed) and not names_a_secret(
-                heard, secrets, allowed
-            ):
+            if names_a_secret(text, secrets, allowed) and any(
+                names_a_secret(text, [s], allowed) and not names_a_secret(heard, [s], allowed)
+                for s in secrets
+            ):  # secret by secret: a different one in the heard line doesn't excuse a new one
                 bad = set(range(len(fixes)))
         left, near.ran_out = checks.left, near.ran_out or checks.ran_out
         if not bad:
