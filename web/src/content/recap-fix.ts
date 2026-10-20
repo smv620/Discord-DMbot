@@ -19,7 +19,7 @@ export const fixWords = {
   correctionsHeading: "Changes to make",
   styleHeading: "Style notes",
   styleLead:
-    "Style notes you keep are saved for this campaign's later recaps too. You can remove them in ⚙️ Settings, then Recaps. These start not kept: press Keep on the ones you want.",
+    "Style notes you keep are saved for this campaign's later recaps too. The newest 10 are kept. You can remove them in ⚙️ Settings → 📜 Recaps → ✍️ Recap style. These start not kept: press Keep on the ones you want.",
   repliesHeading: "Answer from DMbot (nothing is changed by this)",
   remove: "Remove",
   removeOne: (text: string): string => `Remove: ${text}`,

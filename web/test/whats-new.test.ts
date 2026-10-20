@@ -29,6 +29,13 @@ beforeAll(async () => {
 });
 
 describe("What's new", () => {
+  it("says style notes are kept for this campaign's later recaps and where to remove them", () => {
+    const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
+    expect(fix?.what).toContain("this campaign's later recaps");
+    expect(fix?.what).toContain("newest 10");
+    expect(fix?.what).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+  });
+
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
     const shown = [...page.querySelectorAll(".entry")];

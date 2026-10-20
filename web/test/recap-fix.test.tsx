@@ -524,7 +524,8 @@ describe("over the wire", () => {
       },
       seen,
     );
-    await real.sendFix!("1.a.5", "Fix it");
+    // The API answers 202 to a note, as it does on the wire.
+    await reply(202, { requestId: "abc" }, seen).sendFix!("1.a.5", "Fix it");
     await real.fixResult!("1.a.5", "abc");
     const done = await real.rewriteWith!("1.a.5", "abc", ["c1"], ["s1"]);
     expect(seen.map((s) => s.url)).toEqual([
