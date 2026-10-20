@@ -485,10 +485,12 @@ class RecapStore:
         old: str,
         new: str,
         longer: Sequence[str],
+        hidden: Sequence[str] = (),
     ) -> RecapRespelled:
         """A fixed spelling reaches this campaign's recaps (#2170): the written ones that are not
         dropped get `new` where they say `old` as a whole name
-        (never inside a longer name in `longer`), in title, text and the kept original. A waiting
+        (never inside a longer name in `longer`, and never completing a name in `hidden`), in title,
+        text and the kept original. A waiting
         recap the DM already approved stays approved: a spelling fix is not a change of story, so
         its approval follows the new text. Finished audio is left as it is; it no longer matches
         the text, which is how the page already knows to offer making it again. A posted recap's
@@ -515,7 +517,7 @@ class RecapStore:
                         ("summary", summary),
                         ("original", original),
                     )
-                    if (found := respell(text, old, new, longer)) is not None
+                    if (found := respell(text, old, new, longer, hidden)) is not None
                 }
                 if not changed:
                     continue

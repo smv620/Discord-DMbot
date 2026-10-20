@@ -25,6 +25,16 @@ MAX_RESPELLED = 5000  # lines one fixed spelling rewrites; the rest stay as they
 
 
 @dataclass(frozen=True, slots=True)
+class PastRespell:
+    """What one run of a fixed spelling did to the past transcripts (#2170)."""
+
+    lines: int
+    sessions: int
+    remaining: int  # more lines that would change: the next run does them
+    run: int  # this run's number within the fix, 0 when it wrote nothing
+
+
+@dataclass(frozen=True, slots=True)
 class Deleted:
     """What "Delete my past transcripts" removed in one server (#1532)."""
 
@@ -317,21 +327,27 @@ class TranscriptStore:
         old: str,
         new: str,
         longer: Collection[str],
+        hidden: Collection[str] = (),
         *,
         now: int,
         forget_before: int,
-    ) -> tuple[int, int]:
+    ) -> PastRespell:
         """Write `new` where this campaign's past cleaned lines say `old` as a whole name, in
-        ONE transaction (so a failure changes nothing). Only the cleaned text: what was heard is
-        never touched. Only this campaign's sessions and only lines of speech (not the DM sidebar,
-        not typed lines). A match inside a longer name in `longer` is left alone. The places are
-        kept under `batch` for `undo_respell`; places older than `forget_before` are dropped.
-        Returns (lines changed, sessions they were in)."""
+        ONE transaction (so a failure changes nothing), at most `MAX_RESPELLED` lines in session
+        order; `remaining` says how many more would change (run it again for the next run, which
+        has its own Undo). Only the cleaned text: what was heard is never touched. Only this
+        campaign's sessions that have ended (never the one being played, whose lines the Cleaner is
+        still writing) and only lines of speech (not the DM sidebar, not typed lines). A match
+        inside a longer name in `longer` is left alone, and so is a line the change would make say
+        a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
+        places older than `forget_before` are dropped."""
         longest = max(old.split(), key=len, default="")
         if not longest or old == new:
-            return 0, 0
-        changed = 0
+            return PastRespell(0, 0, 0, 0)
+        updates: list[tuple[int, str]] = []
+        rows: list[tuple[Any, ...]] = []
         sessions: set[str] = set()
+        remaining = 0
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND campaign_id = %s"
@@ -339,55 +355,89 @@ class TranscriptStore:
                 (guild_id, campaign_id, forget_before),
             )
             cur = await conn.execute(
-                "SELECT l.id, l.session_id, l.user_id, l.started_ms, l.heard,"
+                "SELECT coalesce(max(run), 0) + 1 AS run FROM transcript_respells"
+                " WHERE campaign_id = %s AND batch = %s",
+                (campaign_id, batch),
+            )
+            run = int((await cur.fetchone() or {"run": 1})["run"])
+            cur = await conn.execute(
+                "SELECT l.id, l.session_id, l.user_id,"
                 " coalesce(l.text, l.heard) AS cleaned"
                 " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-                " WHERE s.guild_id = %s AND s.campaign_id = %s AND l.sidebar IS NULL"
-                " AND NOT l.typed AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
+                " AND l.sidebar IS NULL AND NOT l.typed"
+                " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
                 " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
                 (guild_id, campaign_id, longest, MAX_RESPELLED * 4),
             )
             for row in await cur.fetchall():
-                if changed >= MAX_RESPELLED:
-                    break
-                found = respell(str(row["cleaned"]), old, new, longer)
+                found = respell(str(row["cleaned"]), old, new, longer, hidden)
                 if found is None:
                     continue
-                await conn.execute(
-                    "UPDATE transcript_lines SET text = NULLIF(%s, heard) WHERE id = %s",
-                    (found.text, row["id"]),
-                )
-                await conn.execute(
-                    "INSERT INTO transcript_respells (guild_id, campaign_id, batch, session_id,"
-                    " line_id, user_id, new_text, offsets, was, made_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                if len(updates) >= MAX_RESPELLED:
+                    remaining += 1
+                    continue
+                updates.append((int(row["id"]), found.text))
+                rows.append(
                     (
                         guild_id,
                         campaign_id,
                         batch,
+                        run,
                         row["session_id"],
                         row["id"],
                         row["user_id"],
+                        old,
                         new,
                         list(found.offsets),
                         list(found.was),
                         now,
-                    ),
+                    )
                 )
-                changed += 1
                 sessions.add(str(row["session_id"]))
-        return changed, len(sessions)
+            if updates:
+                await conn.execute(
+                    "UPDATE transcript_lines t SET text = NULLIF(v.text, t.heard)"
+                    " FROM unnest(%s::bigint[], %s::text[]) AS v(id, text) WHERE t.id = v.id",
+                    ([u[0] for u in updates], [u[1] for u in updates]),
+                )
+                async with conn.cursor() as ins:
+                    await ins.executemany(
+                        "INSERT INTO transcript_respells (guild_id, campaign_id, batch, run,"
+                        " session_id, line_id, user_id, old_text, new_text, offsets, was, made_at)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        rows,
+                    )
+        return PastRespell(len(updates), len(sessions), remaining, run if updates else 0)
 
-    async def undo_respell(self, guild_id: int, campaign_id: str, batch: int) -> tuple[int, int]:
-        """Put the old spelling back where `respell_names` wrote the new one, for that batch. A
-        line that was changed again since is left as it is. Returns (lines, sessions) put back."""
+    async def respell_spellings(
+        self, guild_id: int, campaign_id: str, batch: int
+    ) -> tuple[str, str] | None:
+        """The old and new spelling a fix wrote into past transcripts (to carry on with the rest),
+        or None when it wrote nothing that can still be undone."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT old_text, new_text FROM transcript_respells WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = %s LIMIT 1",
+                (guild_id, campaign_id, batch),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["old_text"]), str(row["new_text"]))
+
+    async def undo_respell(
+        self, guild_id: int, campaign_id: str, batch: int, run: int | None = None
+    ) -> tuple[int, int]:
+        """Put the old spelling back where `respell_names` wrote the new one, for that batch (all
+        its runs, or just `run`). A line that was changed again since is left as it is. Returns
+        (lines, sessions) put back."""
         changed = 0
         sessions: set[str] = set()
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND campaign_id = %s"
-                " AND batch = %s RETURNING session_id, line_id, new_text, offsets, was",
-                (guild_id, campaign_id, batch),
+                " AND batch = %s AND (%s::int IS NULL OR run = %s)"
+                " RETURNING session_id, line_id, new_text, offsets, was",
+                (guild_id, campaign_id, batch, run, run),
             )
             for row in await cur.fetchall():
                 found = await conn.execute(
