@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import unittest
-
-import json
 
 from dmbot.logs import JsonFormatter, TextFormatter, TokenMaskFilter, mask_tokens
 
