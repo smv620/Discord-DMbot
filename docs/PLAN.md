@@ -4038,6 +4038,67 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
      - **Explain**: the DM types a short note on who or what it is, kept with the name.
 
      Answering on either the page or Discord answers both.
+- **Recaps on the website, and only two buttons in Discord** (owner, 2026-10-20; this replaces
+  the buttons below).
+  - **[Recaps]**, one button, opens the campaign's recap list on the website, newest session
+    first. Each entry opens that recap's page, where the DM views, listens, edits, fixes and
+    approves it.
+  - **[Share a recap]**, for the campaign's DMs, picks a recap and offers **Copy the link** or
+    **Send the link to the players**, which posts it in the campaign's `dmb-chat`.
+  - **Signing in:** editing and approving need the website sign-in, by Discord or by email, as now.
+  - **Viewing and listening need no sign-in** (owner): anyone with a recap's link can read it and
+    play its audio. The rules that keep this safe:
+    - **Only posted recaps:** a link works only after the DM has approved the text and posted or
+      shared the recap. A draft stays visible to the campaign's signed-in DMs only.
+    - **Only the table's version:** the shared page shows the posted text and audio and nothing
+      else. No "Facts to be confirmed", no housekeeping, no secret name (checked again at share
+      time, as at post time).
+    - **An unguessable link:** each recap has its own random address, never the campaign's or
+      the server's ids. The DM can turn a link off, or make a new one, which ends the old one.
+    - **Not in search engines:** shared pages carry `noindex`.
+    - **The privacy page** says that a shared recap can be read by anyone who has its link.
+  - **Disk:** reserve 1 GB of recap audio per campaign. That covers 100 sessions of recaps up to
+    3 minutes in today's encoding. See docs/costs.md, "Disk space for recap audio".
+- **PlotBot checks every recap before it is accepted** (owner, 2026-10-20; details Supervisor's;
+  the first piece of Phase 5c, docs/STORY_MEMORY.md).
+  - **When:** a plot check runs when a recap's text is ready, and again after every change to it,
+    including a change to an older recap.
+  - **What it reads:** the recap against the running campaign:
+    - the earlier accepted recaps;
+    - the confirmed story memory (facts, conditions, who carries what, threads and promises);
+    - and, with the Shared story switch on, the adventure's plan.
+  - **What it finds:**
+    - contradictions, such as someone dead who acts, an item in two hands, or a place described
+      differently;
+    - dropped threads and broken promises;
+    - timeline slips;
+    - a secret that the recap would reveal.
+  - **How it works:** the code checks of section 4 first, then one careful-tier call for judgment.
+    Each issue gets a level (possible, probable, likely), the recap sentence it is about, and the
+    earlier source it conflicts with, quoted with its session.
+  - **DM-only.** The issues show only on the signed-in DM's recap page. They never appear on a
+    shared link, to players, or in a transcript.
+  - **Talking it through.** For each issue the DM can chat with PlotBot on the page: "It's a
+    different Ulfgar", "he came back as a ghost", "my mistake". Each issue ends in one of four ways:
+    1. **Fix the recap:** the point becomes a correction, through the typed-instructions path.
+    2. **The story changed:** PlotBot proposes the plot-tracking update, a new dated fact or
+       condition, a thread moved, or a link, and **saves it only when the DM presses Save** (PlotBot
+       records only DM-confirmed facts, as the hard rule says).
+    3. **Not a problem:** the DM's explanation is kept with the issue, so it isn't raised again.
+    4. **Leave it as is.**
+  - **Accept.** Accepting the recap (the approval of the text) waits until every issue has an
+    answer. **The DM always decides:** "Leave it as is" is always one of the answers, so PlotBot can
+    advise but never block.
+  - **An accepted recap becomes part of the campaign notes.** It is kept as that session's summary,
+    which PlotBot, the pre-session note, recall and later plot checks read. Each accepted version is
+    kept, so the history is never lost.
+  - **Changing a recap later,** even an old one: PlotBot is given the before and after, checks the
+    changed parts against the campaign and against the later recaps that may depend on them, and
+    Accept waits for the new issues' answers.
+  - **Cost and limits:** about one careful-tier call per check, plus the chat. A rate limit per
+    campaign applies, and it is counted in docs/costs.md.
+  - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
+    check leans on the earlier accepted recaps. It grows more useful as memory fills.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
