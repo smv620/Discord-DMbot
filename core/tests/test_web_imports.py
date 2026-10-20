@@ -71,6 +71,93 @@ class WithImports(Base):
         )
 
 
+class TheLinks(WithImports):
+    """Google Doc links next to uploads (#2140): each becomes a file, then follows the same path."""
+
+    DOC = "https://docs.google.com/document/d/" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+    def reader(self, texts: dict[str, str | imports.import_link.DocError]) -> Any:
+        async def read(link: object) -> str:
+            got = texts[str(link)]
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        return unittest.mock.patch.object(imports.import_link, "read_doc", read)
+
+    async def test_a_shared_doc_previews_and_imports_like_a_file(self) -> None:
+        with self.reader({self.DOC: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+            (one,) = got["files"]
+            self.assertEqual(
+                (one["name"], one["format"], one["lineCount"]), ("Google Doc 1.txt", "plain", 3)
+            )
+            done = await imports.confirm(
+                self.web, self.session, self.ref_c, None,
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "Google Doc 1.txt", "date": "2026-09-14"}],
+                },
+                links=[self.DOC], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(done["sessions"], [{"file": "Google Doc 1.txt", "state": "waiting"}])
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
+        err = imports.import_link.DocError
+        other = self.DOC + "x"
+        with self.reader({self.DOC: err("doc_not_shared"), other: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                links=[self.DOC, other], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("a.txt", None), ("Google Doc 1.txt", "doc_not_shared"), ("Google Doc 2.txt", None)],
+        )
+
+    async def test_a_link_that_is_not_a_google_doc_is_marked(self) -> None:
+        got = await imports.preview(
+            self.web, self.session, self.ref_c, None, links=["https://example.com/x"], **self.kw
+        )
+        self.assertEqual(got["files"][0]["error"], "not_a_google_doc")
+
+    async def test_links_and_files_count_together_toward_the_limit(self) -> None:
+        many = [(f"{n}.txt", CRAIG) for n in range(imports.MAX_FILES)]
+        with self.assertRaises(RecapError) as refused:
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(*many), links=[self.DOC], **self.kw
+            )
+        self.assertEqual(refused.exception.code, "too_many_files")
+        with self.assertRaises(RecapError):
+            await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC] * 21, **self.kw
+            )
+
+    async def test_nothing_at_all_is_refused_and_a_bad_links_value_too(self) -> None:
+        for files_, links in ((None, None), ([], []), (None, "https://x"), (None, {"a": 1})):
+            with self.assertRaises(RecapError):
+                await imports.preview(
+                    self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                )
+
+    async def test_a_non_dm_reads_no_doc(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        with (
+            unittest.mock.patch.object(imports.import_link, "read_doc", fake),
+            self.assertRaises(RecapError),
+        ):
+            await imports.preview(self.web, bob, self.ref_c, None, links=[self.DOC], **self.kw)
+        fake.assert_not_awaited()
+
+
 class ThePreviewAndCheck(WithImports):
     async def test_the_preview_lists_speakers_and_stores_nothing(self) -> None:
         got = await self.preview(("tuesday-2026-09-14.txt", CRAIG))
