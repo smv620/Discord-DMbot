@@ -29,6 +29,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.transcript.models import NARRATING
+from dmbot.transcript.topics import Waiting
 from dmbot.ui import live_heads_up as ui
 
 GUILD, CAMPAIGN, SPEAKER, DM_USER = 1, "c" * 32, 7, 8
@@ -254,9 +255,7 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
                                     (True, NARRATING, 0), (True, "", 0)):  # fmt: skip
             bot, table = self.make()
             bot.settings.live_heads_up = on
-            await botmod.DMBot._save_entity(
-                bot, table, SimpleNamespace(speaker=SPEAKER, started_ms=1), label
-            )
+            await botmod.DMBot._save_entity(bot, table, Waiting(SPEAKER, 1, "", 0.0), label)
             self.assertEqual(len(bot.tracked), expected, (on, label))
 
     async def test_a_failure_costs_the_heads_up_and_never_the_line(self) -> None:
