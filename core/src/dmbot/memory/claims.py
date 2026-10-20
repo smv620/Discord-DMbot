@@ -182,22 +182,28 @@ def _field(value: object) -> str | None:
     return text[:FIELD_MAX] if text else None
 
 
+_LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
+
+
 def _whole_items(text: str) -> list[object]:
     """The complete claims at the start of an answer that was cut off in the middle of its list
     (Haiku 5.5 writes longer, and a batch can end mid-claim): every item before the broken one is
-    as good as in a whole answer, so it is kept instead of losing the batch (#2152)."""
-    marker = text.find('"claims"')
-    open_at = text.find("[", marker) if marker >= 0 else -1
-    if open_at < 0:
+    as good as in a whole answer, so it is kept instead of losing the batch (#2152). Only an
+    answer whose first `{` opens the claims list and whose list never closes is read this way: a
+    list that ended properly in an answer that is broken elsewhere stays rejected, and words
+    before the JSON (which may quote a transcript) are never searched for a list."""
+    first = text.find("{")
+    found = _LIST_START.match(text, first) if first >= 0 else None
+    if found is None:
         return []
-    decoder, at, items = json.JSONDecoder(), open_at + 1, []
+    decoder, at, items = json.JSONDecoder(), found.end(), []
     while True:
         while at < len(text) and text[at] in " \t\r\n,":
             at += 1
         try:
             item, at = decoder.raw_decode(text, at)
         except ValueError:  # the cut item, or the end of the list
-            return items
+            return [] if text[at:].lstrip().startswith("]") else items
         items.append(item)
 
 
