@@ -2511,7 +2511,7 @@ class DMBot(commands.AutoShardedBot):
             ("old undo history", lambda: self.prune_old_changes(table)),
             # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
-            # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
+            # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
@@ -7605,10 +7605,7 @@ class DMBot(commands.AutoShardedBot):
         then on belong to that session, not this one (#2169: counted by session)."""
         if self.transcripts is None:
             return None
-        later = [
-            s.started_at for s in await self.transcripts.sessions(gid, cid) if s.started_at > began
-        ]
-        return min(later, default=None)
+        return await self.transcripts.next_session_start(gid, cid, began)
 
     async def _open_name_questions(self, gid: int, cid: str, session_id: str, began: int) -> int:
         """How many name questions from this session still wait for the DM (#2169): names the name
@@ -7675,8 +7672,8 @@ class DMBot(commands.AutoShardedBot):
 
     async def recheck_recap_hold(self, table: Table) -> None:
         """After the story extractor (#2169): count the name questions again for a recap held
-        while it ran. None open: write the recap. Some open: ask the DM now. A recap that was not
-        held is left alone."""
+        while it ran, under the same rules as every round. A recap that was not held is left
+        alone."""
         store = self.recap_holds
         if (
             store is None
@@ -7692,25 +7689,7 @@ class DMBot(commands.AutoShardedBot):
         held = await store.get(gid, cid, session.started_at)
         if held is None or held.asked:
             return
-        campaign = await self.campaigns.get(gid, cid)
-        if campaign is None:
-            return
-        with log_context(guild_id=gid, campaign_id=cid):
-            waiting = await self._open_name_questions(gid, cid, held.session_id, session.started_at)
-            if waiting == 0:
-                if await store.release(gid, cid, session.started_at) == recap_hold.QUEUED:
-                    await self._say_writing(campaign, held.channel_id, session.started_at)
-                return
-            if await self.post(
-                held.channel_id,
-                recap_hold.question_text(waiting),
-                view=hold_view(cid, held.session_at),
-            ):
-                await store.mark_asked(gid, cid, session.started_at)
-                log.info("Recap: held for %d name question(s)", waiting)  # a count
-            else:  # not told: a wait nobody knows about is no wait
-                if await store.release(gid, cid, session.started_at) == recap_hold.QUEUED:
-                    await self._say_writing(campaign, held.channel_id, session.started_at)
+        await self._release_one(store, gid, held, extractor_done=True)
 
     async def release_recap_holds(self, gid: int) -> None:
         """A round's check: a held recap whose questions are all answered is written (#2169). The
@@ -7727,19 +7706,43 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Recap: couldn't check a held recap")
 
     async def _release_one(
-        self, store: recap_hold.HoldStore, gid: int, held: recap_hold.Hold
+        self,
+        store: recap_hold.HoldStore,
+        gid: int,
+        held: recap_hold.Hold,
+        *,
+        extractor_done: bool = False,
     ) -> None:
+        """One held recap, the same rules whether the round or the end of the extractor asks: a
+        campaign that is gone or has recaps off drops it; a silent hold waits for the extractor
+        (`extractor_done`, or `QUIET_WAIT_S` having passed); questions open ask the DM once; none
+        open writes the recap, if the plan allows it."""
         campaign = await self.campaigns.get(gid, held.campaign_id)
         if campaign is None or not campaign.recaps_text:  # the DM's own choice: no recap
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
-            if not held.asked and time.time() - held.created_at < recap_hold.QUIET_WAIT_S:
-                return  # the story extractor is still running; it counts again when done
-            if await self._open_name_questions(
-                gid, held.campaign_id, held.session_id, held.session_at
+            if (
+                not held.asked
+                and not extractor_done
+                and time.time() - held.created_at < recap_hold.QUIET_WAIT_S
             ):
-                return
+                return  # the story extractor is still running; it counts again when done
+            waiting = await self._open_name_questions(
+                gid, held.campaign_id, held.session_id, held.session_at
+            )
+            if waiting:
+                if held.asked:
+                    return
+                if await self.post(
+                    held.channel_id,
+                    recap_hold.question_text(waiting),
+                    view=hold_view(held.campaign_id, held.session_at),
+                ):
+                    await store.mark_asked(gid, held.campaign_id, held.session_at)
+                    log.info("Recap: held for %d name question(s)", waiting)  # a count
+                    return
+                # Not told: a wait nobody knows about is no wait. Fall through and write it.
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:

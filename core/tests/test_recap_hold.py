@@ -120,6 +120,15 @@ class TheStore(DatabaseTest):
         await self.hold_it()  # a hold made through the store clears the mark
         self.assertEqual(len(await self.holds.held(GUILD)), 2)
 
+    async def test_a_hold_made_while_the_server_is_read_is_not_hidden(self) -> None:
+        real = self.holds._mark_empty
+        self.assertEqual(await self.holds.held(GUILD), [])
+        self.holds._empty.discard(GUILD)
+        seen = self.holds._made.get(GUILD, 0)
+        await self.hold_it()
+        real(GUILD, seen)  # the read that began before the hold finishes now
+        self.assertEqual(len(await self.holds.held(GUILD)), 1)
+
     async def test_two_releases_at_once_make_one_job(self) -> None:
         await self.hold_it()
         results = await asyncio.gather(
@@ -168,7 +177,7 @@ def fake_bot(
         settings=SimpleNamespace(site_url="", recaps_on=True, story_extractor_on=extractor),
         extractor_ai=object() if extractor else None,
         transcripts=SimpleNamespace(
-            sessions=AsyncMock(return_value=[SimpleNamespace(started_at=AT + 10_000)]),
+            next_session_start=AsyncMock(return_value=AT + 10_000),
             session=AsyncMock(return_value=SimpleNamespace(id="s1", started_at=AT)),
         ),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
@@ -312,8 +321,8 @@ class EachRound(IsolatedAsyncioTestCase):
         bot = fake_bot()
         bot.memory.entities = AsyncMock(return_value=[entity(AT + 10), entity(AT + 500)])
         self.assertEqual(await bot._open_name_questions(GUILD, "c" * 32, "s1", AT), 2)
-        bot.transcripts.sessions = AsyncMock(
-            return_value=[SimpleNamespace(started_at=AT + 100), SimpleNamespace(started_at=AT)]
+        bot.transcripts.next_session_start = AsyncMock(
+            return_value=AT + 100
         )  # the next session began at AT + 100: counted by session, not by when it was held
         self.assertEqual(await bot._open_name_questions(GUILD, "c" * 32, "s1", AT), 1)
 
@@ -365,6 +374,82 @@ class EachRound(IsolatedAsyncioTestCase):
         with patch("dmbot.bot.time.time", return_value=1_000 + hold.QUIET_WAIT_S + 1):
             await bot.release_recap_holds(GUILD)
         bot.recap_holds.release.assert_awaited_once()
+
+    async def test_a_silent_hold_past_the_wait_asks_when_names_are_open(self) -> None:
+        bot = fake_bot(proposed=2)
+        silent = hold.Hold("c" * 32, AT, "s1", DM, 66, 1_000, asked=False)
+        bot.recap_holds.held = AsyncMock(return_value=[silent])
+        bot.recap_holds.mark_asked = AsyncMock(return_value=True)
+        with patch("dmbot.bot.time.time", return_value=1_000 + hold.QUIET_WAIT_S + 1):
+            await bot.release_recap_holds(GUILD)
+        self.assertEqual(bot.post.await_args.args, (66, hold.question_text(2)))
+        bot.recap_holds.mark_asked.assert_awaited_once_with(GUILD, "c" * 32, AT)
+        bot.recap_holds.release.assert_not_awaited()
+
+    async def test_a_silent_hold_past_the_wait_whose_question_cannot_be_posted_is_released(
+        self,
+    ) -> None:
+        bot = fake_bot(proposed=2)
+        silent = hold.Hold("c" * 32, AT, "s1", DM, 66, 1_000, asked=False)
+        bot.recap_holds.held = AsyncMock(return_value=[silent])
+        bot.post = AsyncMock(side_effect=[False, True])  # the question fails, the line works
+        with patch("dmbot.bot.time.time", return_value=1_000 + hold.QUIET_WAIT_S + 1):
+            await bot.release_recap_holds(GUILD)
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
+
+    async def test_the_recheck_has_the_same_gates_as_every_round(self) -> None:
+        t = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, transcript_session_id="s1")
+        off = fake_bot(extractor=True)
+        off.recap_holds.get = AsyncMock(
+            return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, 1, asked=False)
+        )
+        off.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(**{**vars(campaign()), "recaps_text": False})
+        )
+        await off.recheck_recap_hold(t)  # the DM switched recaps off meanwhile: the hold goes
+        off.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT, queue=False)
+        barred = fake_bot(extractor=True)
+        barred.recap_holds.get = AsyncMock(
+            return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, 1, asked=False)
+        )
+        barred.recap_allowed = AsyncMock(return_value=False)  # the plan lacks it, or a blip
+        await barred.recheck_recap_hold(t)
+        barred.recap_holds.release.assert_not_awaited()
+
+    async def test_names_the_extractor_proposes_hold_the_recap_until_answered(self) -> None:
+        """The ruling, in the real order: held silently, the extractor proposes names, the DM is
+        asked once, the rounds keep it held, and only when none are left is the recap queued."""
+        bot = fake_bot(extractor=True)
+        made = hold.Hold("c" * 32, AT, "s1", DM, 66, 1_000, asked=False)
+        proposed: list[Any] = []
+        bot.memory.entities = AsyncMock(side_effect=lambda *a, **k: list(proposed))
+        bot.recap_holds.get = AsyncMock(side_effect=lambda *a: made)
+        bot.recap_holds.held = AsyncMock(side_effect=lambda *a: [made])
+        asked = {"n": 0}
+
+        async def mark(*_: Any) -> bool:
+            nonlocal made
+            asked["n"] += 1
+            made = hold.Hold("c" * 32, AT, "s1", DM, 66, 1_000, asked=True)
+            return True
+
+        bot.recap_holds.mark_asked = mark
+        t = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, transcript_session_id="s1")
+        await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)  # session end: nothing open yet
+        bot.recaps.enqueue.assert_not_awaited()
+        bot.post.assert_not_awaited()
+        proposed += [entity(AT + 5), entity(AT + 6)]  # ... then the extractor proposes two names
+        await bot.recheck_recap_hold(t)
+        self.assertEqual(bot.post.await_args.args, (66, hold.question_text(2)))
+        self.assertEqual(asked["n"], 1)
+        bot.post.reset_mock()
+        await bot.release_recap_holds(GUILD)  # rounds keep it held and ask nothing more
+        await bot.recheck_recap_hold(t)
+        bot.recap_holds.release.assert_not_awaited()
+        bot.post.assert_not_awaited()
+        proposed.clear()  # the DM answered them all
+        await bot.release_recap_holds(GUILD)
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
 
     async def test_recaps_off_everywhere_has_its_own_answer(self) -> None:
         bot = fake_bot()

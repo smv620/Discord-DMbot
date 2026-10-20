@@ -50,6 +50,7 @@ class HoldStore:
         # Servers last seen holding nothing, so a round asks the database about the others only.
         # This process is the only one that holds, so a hold made here clears the mark.
         self._empty: set[int] = set()
+        self._made: dict[int, int] = {}  # holds made per server, so a read can tell it raced one
 
     async def hold(
         self,
@@ -88,8 +89,14 @@ class HoldStore:
             )
             made = bool(cur.rowcount)
         if made:
+            self._made[guild_id] = self._made.get(guild_id, 0) + 1
             self._empty.discard(guild_id)
         return made
+
+    def _mark_empty(self, guild_id: int, seen: int) -> None:
+        """Remember a server holds nothing, unless a hold was made while the read was running."""
+        if self._made.get(guild_id, 0) == seen:
+            self._empty.add(guild_id)
 
     async def mark_asked(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """The DM has now been told. False when it was already (or the hold is gone)."""
@@ -106,6 +113,7 @@ class HoldStore:
         again until a hold is made in it (the round runs every minute for every server)."""
         if guild_id in self._empty:
             return []
+        seen = self._made.get(guild_id, 0)
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
@@ -113,7 +121,7 @@ class HoldStore:
             )
             rows = await cur.fetchall()
         if not rows:
-            self._empty.add(guild_id)
+            self._mark_empty(guild_id, seen)
         return [
             Hold(
                 r["campaign_id"],
