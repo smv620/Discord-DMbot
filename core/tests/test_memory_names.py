@@ -346,7 +346,9 @@ class NameCards(NamesTest):
         self.assertIn("🪪 **Bellaros**", text)
         keys = {a.key for a in await self.memory.aliases(GUILD, self.campaign.id)}
         self.assertIn("bellaros", keys)
-        self.assertNotIn("belleros", keys)
+        self.assertIn("belleros", keys)  # kept as an "old spelling" (#2170)
+        old = [a for a in await self.memory.aliases(GUILD, self.campaign.id) if a.key == "belleros"]
+        self.assertEqual([a.kind for a in old], ["old"])
 
     async def test_the_narrators_spelling_is_asked_only_when_spoken_recaps_are_on(self) -> None:
         from dmbot.ui import name_card

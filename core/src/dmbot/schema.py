@@ -7138,6 +7138,15 @@ RECAP_SHARE = (
     """
 )
 
+OLD_SPELLING = """
+    -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
+    -- still matches it, so a line that says it is fixed to the new spelling and a search finds
+    -- the entry, but speech-to-text is never told to listen for it.
+    ALTER TABLE memory_aliases DROP CONSTRAINT memory_aliases_kind_check;
+    ALTER TABLE memory_aliases ADD CONSTRAINT memory_aliases_kind_check
+        CHECK (kind IN ('full', 'short', 'nickname', 'title', 'misheard', 'old'));
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7290,6 +7299,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0134_recap_style_notes", RECAP_STYLE_NOTES),  # style notes and corrections (#2076)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
+    ("0142_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

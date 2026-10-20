@@ -1735,7 +1735,28 @@ class MemoryStore:
                 await w.insert(
                     ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
                 )
+            await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
             return Written(_entity(row), w.batch)
+
+    async def _keep_old_spelling(
+        self, w: Changes, entity_id: str, old_name: str, old_key: str, new_key: str
+    ) -> None:
+        """The spelling a fixed name had becomes an "old spelling" other name (#2170): matched, so
+        a line that says it is fixed to the new spelling and a search finds the entry, but never
+        listened for. Dropped, as the old spelling always was, when it is only the new one
+        written differently, when another entry has it as a name (the cleaner would turn that
+        entry's lines into this one), when any secret name has it, or when it is a word the DM
+        screen uses."""
+        if old_key == new_key or is_dm_word(old_name):
+            return
+        others = await w.select(ALIASES, " AND key = %s AND entity_id <> %s", [old_key, entity_id])
+        if any(o["status"] in LIVE or o["secret"] for o in others):
+            return
+        mine = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
+        if mine:  # it was rejected on the way (the new spelling was already another name)
+            await w.update(ALIASES, mine[0]["id"], {"kind": "old", "status": CONFIRMED})
+            return
+        await w.insert(ALIASES, _new_alias(w, entity_id, old_name, "old", CONFIRMED, False, None))
 
     async def set_main_name(
         self, guild_id: int, campaign_id: str, entity_id: str, alias_id: str, *, source: str
