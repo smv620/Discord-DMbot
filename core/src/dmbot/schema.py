@@ -7554,6 +7554,7 @@ ISOLATED_TABLES = (
     "transcript_lines",
     "session_imports",
     "import_speakers",
+    "member_directory",
     "transcript_suggestions",
     "waiting_name_questions",
     "memory_heard",
