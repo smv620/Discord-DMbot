@@ -18,7 +18,15 @@ from dmbot.dm_screen import messages
 from dmbot.dm_screen.recap_panel import FAILED, ONLY_DM, may_change
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
-from dmbot.recaps.style import EXAMPLE_MAX_WORDS, MAX_EXAMPLES, Example, StyleStore
+from dmbot.recaps.style import (
+    EXAMPLE_MAX_WORDS,
+    MAX_EXAMPLES,
+    MAX_NOTES,
+    Example,
+    Note,
+    NoteStore,
+    StyleStore,
+)
 
 log = logging.getLogger(__name__)
 
@@ -26,8 +34,8 @@ NO_STYLE = "✍️ Recap style isn't ready just now. Please try again."
 PREVIEW_CHARS = 120
 
 
-def panel_text(own: list[Example], note: str = "") -> str:
-    """The panel's words: what is in use, one line for each example."""
+def panel_text(own: list[Example], note: str = "", notes: list[Note] | None = None) -> str:
+    """The panel's words: what is in use, one line for each example and each saved note."""
     lines = [note, ""] if note else []
     lines.append("✍️ **Recap style**")
     lines += ["", "Paste a recap you like. DMbot copies how it sounds, never what happens in it."]
@@ -39,6 +47,9 @@ def panel_text(own: list[Example], note: str = "") -> str:
             lines.append(f"{n}. {text[:PREVIEW_CHARS]}{more}")
     else:
         lines += ["", "Now using DMbot's own examples."]
+    if notes:
+        lines += ["", f"Your notes ({len(notes)} of {MAX_NOTES}), the newest last:"]
+        lines += [f"{n}. {x.text}" for n, x in enumerate(notes, 1)]
     return "\n".join(lines)
 
 
@@ -81,6 +92,13 @@ async def change(interaction: discord.Interaction, campaign_id: str, what: str, 
         elif what == "remove":
             await styles.remove(guild.id, campaign_id, interaction.user.id, int(arg))
             note = "Removed."
+        elif what == "forget":
+            notes_store: NoteStore | None = getattr(interaction.client, "recap_notes", None)
+            if notes_store is None:
+                await interaction.response.send_message(NO_STYLE, ephemeral=True)
+                return
+            await notes_store.remove(guild.id, campaign_id, interaction.user.id, int(arg))
+            note = "Removed."
         else:
             await styles.use_defaults(guild.id, campaign_id, interaction.user.id)
             note = "Now using DMbot's own examples."
@@ -101,14 +119,16 @@ async def show(
     if styles is None or guild is None:
         await interaction.response.send_message(NO_STYLE, ephemeral=True)
         return
+    notes_store: NoteStore | None = getattr(interaction.client, "recap_notes", None)
     try:
         own = await styles.own(guild.id, campaign.id)
+        saved = await notes_store.notes(guild.id, campaign.id) if notes_store is not None else []
     except Exception:
         log.exception("Couldn't read the recap style")
         await interaction.response.send_message(FAILED, ephemeral=True)
         return
-    view = StylePanel(campaign.id, own)
-    text = panel_text(own, note)
+    view = StylePanel(campaign.id, own, saved)
+    text = panel_text(own, note, saved)
     if edit and interaction.type == discord.InteractionType.component:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     else:
@@ -120,7 +140,9 @@ async def show(
 class StylePanel(discord.ui.View):
     """A private panel; it can't outlive its message, so it needs no stored button IDs."""
 
-    def __init__(self, campaign_id: str, own: list[Example]) -> None:
+    def __init__(
+        self, campaign_id: str, own: list[Example], notes: list[Note] | None = None
+    ) -> None:
         super().__init__(timeout=600)
         self.campaign_id = campaign_id
         add: discord.ui.Button[StylePanel] = discord.ui.Button(
@@ -137,6 +159,12 @@ class StylePanel(discord.ui.View):
             )
             remove.callback = self._remove(example.id)  # type: ignore[method-assign]
             self.add_item(remove)
+        for n, saved in enumerate(notes or [], 1):
+            forget: discord.ui.Button[StylePanel] = discord.ui.Button(
+                label=f"Remove note {n}", style=discord.ButtonStyle.secondary, row=3 + (n - 1) // 5
+            )
+            forget.callback = self._forget(saved.id)  # type: ignore[method-assign]
+            self.add_item(forget)
         if own:
             defaults: discord.ui.Button[StylePanel] = discord.ui.Button(
                 label="Use the defaults", style=discord.ButtonStyle.secondary, row=2
@@ -152,6 +180,12 @@ class StylePanel(discord.ui.View):
     def _remove(self, example_id: int) -> Any:
         async def callback(interaction: discord.Interaction) -> None:
             await change(interaction, self.campaign_id, "remove", example_id)
+
+        return callback
+
+    def _forget(self, note_id: int) -> Any:
+        async def callback(interaction: discord.Interaction) -> None:
+            await change(interaction, self.campaign_id, "forget", note_id)
 
         return callback
 
