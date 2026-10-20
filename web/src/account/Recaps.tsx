@@ -303,7 +303,9 @@ function AudioPanel({
         message:
           kind === "too-soon"
             ? panelWords.tooSoon
-            : (errors[kind] ?? errors.other),
+            : kind === "needs-approval"
+              ? panelWords.needsApproval
+              : (errors[kind] ?? errors.other),
       });
     } finally {
       asking.current = false;

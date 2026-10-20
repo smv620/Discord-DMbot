@@ -116,6 +116,7 @@ class Settings:
     # dev1's live check. The gap between two of them, in seconds.
     live_heads_up: bool = False
     live_heads_up_cooldown_s: float = 300.0
+    secret_reveal_ask: bool = True  # ask the DM at once when they say a secret name (#2088)
     presession_note: bool = True  # the note on the DM screen when a session starts (#1403)
     sidebar_recall_budget: int = SIDEBAR_RECALL_BUDGET
     # Test recordings (#1019): servers where people who agreed to it have their voices saved
@@ -225,6 +226,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             'DMBOT_LIVE_HEADS_UP_MINUTES must be a number from 0 to 120, got "'
             + live_minutes_raw
             + '".'
+        )
+    reveal_raw = (get("DMBOT_SECRET_REVEAL_ASK") or "1").lower()
+    if reveal_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_SECRET_REVEAL_ASK must be 1 (on) or 0 (off), got "' + reveal_raw + '".'
         )
     presession_raw = (get("DMBOT_PRESESSION_NOTE") or "1").lower()
     if presession_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -379,6 +385,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
         live_heads_up=live_raw in ("1", "true", "on"),
         live_heads_up_cooldown_s=live_minutes * 60,
+        secret_reveal_ask=reveal_raw in ("1", "true", "on"),
         presession_note=presession_raw in ("1", "true", "on"),
         sidebar_recall_budget=int(sidebar_budget_raw),
         admin_primary_id=admin_primary,
