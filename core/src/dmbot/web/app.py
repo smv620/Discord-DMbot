@@ -68,7 +68,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
-from dmbot.web.recap_requests import read_instructions, rewrite, send_instructions
+from dmbot.web.recap_requests import STATUS, read_instructions, rewrite, send_instructions
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -621,6 +621,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    request_status = STATUS
 
     async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
         """A small JSON body, read with a running cap (a declared length is not trusted)."""
@@ -648,7 +649,7 @@ def create_app(
                 db, session, ref, body.get("text") if isinstance(body, dict) else None
             )
         except RecapError as err:
-            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/recaps/{ref}/instructions/{request_id}")
@@ -659,7 +660,7 @@ def create_app(
         try:
             return await read_instructions(db, session, ref, request_id)
         except RecapError as err:
-            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/recaps/{ref}/rewrite")
@@ -671,7 +672,7 @@ def create_app(
         try:
             return await rewrite(db, session, ref, body)
         except RecapError as err:
-            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/recaps/{ref}/audio")

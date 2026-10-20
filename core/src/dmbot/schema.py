@@ -7022,7 +7022,7 @@ RECAP_REQUESTS = (
         WHERE state IN ('waiting', 'working');
     """
     + _isolate("recap_requests")
-    + """
+    + r"""
     -- The doors the website's role uses: it has no grant on the table. Each checks the caller is
     -- a DM of the campaign in a server on the session's list.
     CREATE FUNCTION dmbot_recap_request_add(g BIGINT, c TEXT, at_ BIGINT, txt TEXT)
@@ -7048,6 +7048,9 @@ RECAP_REQUESTS = (
             RETURN jsonb_build_object('status', 'not_editable');
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
+        -- The one-hour promise holds for a server the bot has left too: old words go here.
+        DELETE FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
         IF (SELECT count(*) FROM recap_requests r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.state IN ('waiting', 'working')
               AND r.created_at > now_s - 600) >= 3 THEN
@@ -7112,6 +7115,9 @@ RECAP_REQUESTS = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
+        -- The campaign row first, the same order as the Discord notes path, so the two can't
+        -- wait on each other.
+        PERFORM 1 FROM campaigns k WHERE k.guild_id = g AND k.id = c FOR UPDATE;
         SELECT * INTO r FROM recap_requests x
             WHERE x.guild_id = g AND x.campaign_id = c AND x.session_at = at_ AND x.id = rid
               AND x.user_id = dmbot_current_user() AND x.state = 'done' FOR UPDATE;
@@ -7154,11 +7160,8 @@ RECAP_REQUESTS = (
         IF cardinality(have) > max_corrections THEN
             have := have[cardinality(have) - max_corrections + 1 : cardinality(have)];
         END IF;
-        -- The same lock the Discord path takes before it changes the notes, so two saves at once
-        -- can't both count the room that is left.
-        PERFORM 1 FROM campaigns k WHERE k.guild_id = g AND k.id = c FOR UPDATE;
         FOREACH item IN ARRAY add_s LOOP
-            item := left(item, 300);
+            item := regexp_replace(btrim(left(item, 300)), '\s+', ' ', 'g');  -- as NoteStore.add
             DELETE FROM recap_style_notes n
                 WHERE n.guild_id = g AND n.campaign_id = c AND lower(n.text) = lower(item);
             DELETE FROM recap_style_notes n

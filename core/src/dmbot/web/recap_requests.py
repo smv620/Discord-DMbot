@@ -13,6 +13,19 @@ from dmbot.web import recaps
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
+# The status of each refusal on these routes, as in the shape posted on #2113 for the page.
+# `not_allowed` is 403 here (recaps or the plan are off); the older recap routes keep their 409.
+STATUS: dict[str, tuple[int, str]] = {
+    "not_found": (404, "not_found"),
+    "not_allowed": (403, "not_allowed"),
+    "not_editable": (409, "not_editable"),
+    "no_tries": (409, "no_tries"),
+    "bad_text": (422, "bad_text"),
+    "bad_choice": (422, "bad_choice"),
+    "too_big": (413, "too_big"),
+    "too_soon": (429, "too_soon"),
+}
+
 MAX_TEXT = 1000  # the form limit the Discord path uses too
 MAX_IDS = 20
 

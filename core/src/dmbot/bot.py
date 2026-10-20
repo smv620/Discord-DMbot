@@ -8502,17 +8502,19 @@ class DMBot(commands.AutoShardedBot):
                 async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
                     campaign = await self.campaigns.get(gid, req.campaign_id)
                     job = await self.recaps.get(gid, req.campaign_id, req.session_at)  # type: ignore[union-attr]
-                    if campaign is None or job is None or job.status != "draft" or ai is None:
-                        return recap_requests.NOT_ALLOWED
-                    if req.user_id not in campaign.dm_user_ids:  # still a DM, at the moment of use
-                        return recap_requests.NOT_ALLOWED
-                    why = await self.recap_feedback_gate(campaign, job)
-                    if why is None:
-                        return None
-                    return (
-                        recap_requests.TOO_SOON
-                        if why == recap_feedback.TOO_OFTEN
-                        else recap_requests.NOT_ALLOWED
+
+                    async def feedback_gate() -> str | None:
+                        why = await self.recap_feedback_gate(campaign, job)  # type: ignore[arg-type]
+                        if why is None:
+                            return None
+                        return (
+                            recap_requests.TOO_SOON
+                            if why == recap_feedback.TOO_OFTEN
+                            else recap_requests.NOT_ALLOWED
+                        )
+
+                    return await recap_requests.stop_reason(
+                        req, campaign, job, has_ai=ai is not None, feedback_gate=feedback_gate
                     )
 
                 async def sort(text: str) -> Any:

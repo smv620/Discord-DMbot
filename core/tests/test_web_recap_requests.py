@@ -3,8 +3,11 @@ loop, polled, and "Rewrite with these". Invented fixtures only."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
+import unittest
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot import schema
@@ -16,7 +19,8 @@ from dmbot.web import recap_requests as web
 from dmbot.web import sessions
 from dmbot.web.recaps import RecapError, read_recap
 from tests import recap_fixtures as fx
-from tests.test_recap_web import BOB, NOW, THURSDAY, Base
+from tests.test_recap_web import BOB, HEADERS, NOW, Base
+from tests.test_web_api import API, SITE, THURSDAY, FakeDiscord, settings
 
 POINTS = Sorted(
     style=("Shorter, please.",),
@@ -38,7 +42,7 @@ class WithRequests(Base):
         rid = await self.send()
         request = await self.requests.claim_next(THURSDAY.id)
         assert request is not None and request.id == rid
-        await self.requests.finish(THURSDAY.id, rid, answer=rq.answer_of(points))
+        await self.requests.finish(THURSDAY.id, request, answer=rq.answer_of(points))
         return rid
 
     async def code(self, call: Any) -> str:
@@ -77,7 +81,7 @@ class TheQueue(WithRequests):
         self.assertEqual(await self.code(self.send()), "not_editable")
 
     async def test_a_person_who_is_not_a_dm_of_the_campaign_is_told_nothing(self) -> None:
-        bob_token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob_token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         bob = await sessions.find(self.web, bob_token, now=NOW)
         assert bob is not None
         self.assertEqual(
@@ -189,7 +193,7 @@ class TheCaps(WithRequests):
                 (THURSDAY.id, self.one.id, BOB.id),
             )
         rid = await self.answered()
-        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         bob = await sessions.find(self.web, token, now=NOW)
         assert bob is not None
         self.assertEqual(
@@ -316,3 +320,199 @@ class TheRewrite(WithRequests):
         )
         shown = await read_recap(self.web, self.session, self.ref)
         self.assertFalse(shown["canPost"])  # being written again
+
+
+class TheLateWorker(WithRequests):
+    async def test_a_worker_whose_claim_was_taken_back_cannot_overwrite_the_answer(self) -> None:
+        await self.send()
+        first = await self.requests.claim_next(THURSDAY.id)
+        assert first is not None
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET claimed_at = 1")  # a stalled claim
+        second = await self.requests.claim_next(THURSDAY.id)
+        assert second is not None and second.claimed_at != first.claimed_at
+        self.assertTrue(
+            await self.requests.finish(
+                THURSDAY.id, second, answer=rq.answer_of(Sorted(corrections=("The real one.",)))
+            )
+        )
+        late = rq.answer_of(Sorted(corrections=("Words the DM never read.",)))
+        self.assertFalse(await self.requests.finish(THURSDAY.id, first, answer=late))
+        got = await web.read_instructions(self.web, self.session, self.ref, first.id)
+        self.assertEqual(got["points"]["corrections"][0]["text"], "The real one.")
+
+    async def test_a_sort_that_hangs_ends_before_its_claim_can_be_taken_back(self) -> None:
+        self.assertLess(rq.SORT_TIMEOUT_S, rq.RETAKE_AFTER_S)
+        await self.send()
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None
+
+        async def hang(_text: str) -> Sorted:
+            await asyncio.sleep(30)
+            return POINTS
+
+        from unittest.mock import patch
+
+        with patch.object(rq, "SORT_TIMEOUT_S", 0.05):
+            outcome = await rq.run_one(
+                self.requests, THURSDAY.id, request,
+                gate=AsyncMock(return_value=None), sort=hang,
+            )  # fmt: skip
+        self.assertEqual(outcome, "sort_failed")
+
+    def test_an_empty_sort_says_so(self) -> None:
+        from dmbot.recaps.feedback import NOTHING_REPLY
+
+        self.assertEqual(
+            rq.answer_of(Sorted()),
+            {"corrections": [], "style": [], "replies": [NOTHING_REPLY]},
+        )
+
+
+class TheGate(unittest.IsolatedAsyncioTestCase):
+    """The four things checked at the moment of use, before any AI call."""
+
+    def request(self, user: int = 7) -> rq.Request:
+        return rq.Request("a" * 32, "c" * 32, 100, user, "words", 1)
+
+    async def stop(self, **kw: Any) -> str | None:
+        base: dict[str, Any] = {
+            "campaign": SimpleNamespace(dm_user_ids=frozenset({7})),
+            "job": SimpleNamespace(status="draft"),
+            "has_ai": True,
+            "feedback_gate": AsyncMock(return_value=None),
+        }
+        base.update(kw)
+        return await rq.stop_reason(self.request(), **base)
+
+    async def test_all_four_pass_when_nothing_is_wrong(self) -> None:
+        self.assertIsNone(await self.stop())
+
+    async def test_each_failure_stops_it_before_the_ai(self) -> None:
+        gate = AsyncMock(return_value=None)
+        cases: dict[str, dict[str, Any]] = {
+            "demoted": {"campaign": SimpleNamespace(dm_user_ids=frozenset({8}))},
+            "posted": {"job": SimpleNamespace(status="posted")},
+            "gone": {"job": None},
+            "no campaign": {"campaign": None},
+            "no ai": {"has_ai": False},
+        }
+        for name, kw in cases.items():
+            self.assertEqual(await self.stop(feedback_gate=gate, **kw), rq.NOT_ALLOWED, name)
+        gate.assert_not_awaited()  # none of them got as far as the limit check
+        self.assertEqual(
+            await self.stop(feedback_gate=AsyncMock(return_value=rq.TOO_SOON)), rq.TOO_SOON
+        )
+
+
+class TheRoutes(WithRequests):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        import httpx
+
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(
+            self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+        await super().asyncTearDown()
+
+    async def test_the_words_are_accepted_with_202_and_can_be_polled(self) -> None:
+        got = await self.client.post(f"/me/recaps/{self.ref}/instructions", json={"text": "hello"})
+        self.assertEqual(got.status_code, 202, got.text)
+        rid = got.json()["requestId"]
+        poll = await self.client.get(f"/me/recaps/{self.ref}/instructions/{rid}")
+        self.assertEqual((poll.status_code, poll.json()), (200, {"state": "waiting"}))
+
+    async def test_a_big_body_is_refused_by_its_declared_length_and_when_streamed(self) -> None:
+        url = f"/me/recaps/{self.ref}/instructions"
+        declared = await self.client.post(
+            url, content=b"x" * 9000, headers={"content-type": "application/json"}
+        )
+        self.assertEqual((declared.status_code, declared.json()["error"]), (413, "too_big"))
+
+        async def chunks() -> Any:
+            for _ in range(10):
+                yield b"x" * 1000  # no length up front
+
+        streamed = await self.client.post(
+            url, content=chunks(), headers={"content-type": "application/json"}
+        )
+        self.assertEqual((streamed.status_code, streamed.json()["error"]), (413, "too_big"))
+
+    async def test_a_long_text_a_bad_body_and_too_many_requests(self) -> None:
+        url = f"/me/recaps/{self.ref}/instructions"
+        long = await self.client.post(url, json={"text": "x" * 1001})
+        self.assertEqual((long.status_code, long.json()["error"]), (413, "too_big"))
+        bad = await self.client.post(
+            url, content=b"{nope", headers={"content-type": "application/json"}
+        )
+        self.assertEqual((bad.status_code, bad.json()["error"]), (422, "bad_text"))
+        codes = []
+        for _ in range(14):
+            got = await self.client.post(url, json={"text": "hi"})
+            codes.append(got.status_code)
+        self.assertIn(429, codes)
+
+    async def test_the_refusal_codes_map_to_the_shapes_statuses(self) -> None:
+        self.assertEqual(web.STATUS["not_allowed"], (403, "not_allowed"))
+        self.assertEqual(web.STATUS["not_editable"][0], 409)
+        self.assertEqual(web.STATUS["no_tries"][0], 409)
+        self.assertEqual(web.STATUS["too_soon"][0], 429)
+        self.assertEqual(web.STATUS["bad_choice"][0], 422)
+
+    async def test_rewrite_over_http(self) -> None:
+        rid = await self.answered()
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/rewrite", json={"requestId": rid, "corrections": ["c1"]}
+        )
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertTrue(got.json()["needsApproval"])
+        again = await self.client.post(
+            f"/me/recaps/{self.ref}/rewrite", json={"requestId": rid, "corrections": ["c1"]}
+        )
+        self.assertEqual((again.status_code, again.json()["error"]), (404, "not_found"))
+
+
+def fx_alice() -> Any:
+    from tests.test_web_api import ALICE
+
+    return ALICE
+
+
+class TheDoorDetails(WithRequests):
+    async def test_the_same_note_in_another_case_or_spacing_is_kept_once(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,"
+                " created_at) VALUES (%s, %s, 1, %s, %s, 0)",
+                (THURSDAY.id, self.one.id, "shorter, please.", fx.ALICE),
+            )
+        rid = await self.answered(Sorted(style=("  Shorter,   PLEASE. ",)))
+        await web.rewrite(self.web, self.session, self.ref, {"requestId": rid, "style": ["s1"]})
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT text FROM recap_style_notes")
+            self.assertEqual([r["text"] for r in await cur.fetchall()], ["Shorter, PLEASE."])
+
+    async def test_adding_a_request_sweeps_the_campaigns_hour_old_rows(self) -> None:
+        old = await self.send()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET created_at = 1")
+        await self.send()
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT id FROM recap_requests")
+            ids = [r["id"] for r in await cur.fetchall()]
+        self.assertNotIn(old, ids)
+        self.assertEqual(len(ids), 1)
