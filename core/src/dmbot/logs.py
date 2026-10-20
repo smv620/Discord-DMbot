@@ -72,14 +72,19 @@ class TokenMaskFilter(logging.Filter):
     """Hides shared-recap tokens in the message and in a traceback's text, on every handler."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
+        try:
+            message = record.getMessage()
+        except Exception:  # a bad format string is the formatter's to report, not ours
+            message = ""
         masked = mask_tokens(message)
-        if masked != message:
+        if message and masked != message:
             record.msg, record.args = masked, None
         if record.exc_info and not record.exc_text:
             record.exc_text = logging.Formatter().formatException(record.exc_info)
         if record.exc_text:
             record.exc_text = mask_tokens(record.exc_text)
+        if record.stack_info:
+            record.stack_info = mask_tokens(record.stack_info)
         return True
 
 
@@ -114,7 +119,7 @@ class JsonFormatter(logging.Formatter):
             + f".{int(record.msecs):03d}Z",
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": mask_tokens(record.getMessage()),
         }
         for name in CONTEXT_FIELDS:
             value = getattr(record, name, None)
@@ -122,7 +127,11 @@ class JsonFormatter(logging.Formatter):
                 # Discord IDs exceed JavaScript's safe integer range; keep them as text.
                 entry[name] = str(value) if name == "guild_id" else value
         if record.exc_info:
-            entry["exc"] = self.formatException(record.exc_info)
+            # Masked here too, not only by the filter: this formatter re-formats exc_info itself,
+            # so a handler without the filter would still write a token from a traceback (#2138).
+            entry["exc"] = mask_tokens(record.exc_text or self.formatException(record.exc_info))
+        if record.stack_info:
+            entry["stack"] = mask_tokens(record.stack_info)
         return json.dumps(entry, ensure_ascii=False)
 
 
@@ -141,7 +150,7 @@ class TextFormatter(logging.Formatter):
             if value is not None
         ]
         record.ctx = f" [{' '.join(parts)}]" if parts else ""
-        return super().format(record)
+        return mask_tokens(super().format(record))  # message, traceback and stack alike (#2138)
 
 
 # discord.py logs raw gateway events at DEBUG, which include usernames and what people
