@@ -268,6 +268,13 @@ describe("Google Doc links", () => {
     expect(screen.queryByText(w.linkName(2))).toBeNull();
   });
 
+  it("treats the same doc with a different ending as the same doc", () => {
+    open();
+    add(docUrl("same"));
+    add("https://docs.google.com/document/d/same/edit?usp=sharing");
+    expect(screen.getByRole("alert").textContent).toBe(w.linkAlreadyAdded);
+  });
+
   it("adds on Enter, announces it, and gives the box focus back", () => {
     open();
     link(docUrl("abc"));
@@ -297,6 +304,10 @@ describe("Google Doc links", () => {
         `importStart:100.cmp1:1=Google Doc 1.txt@2026-09-21|links:${docUrl("good")}`,
       ),
     );
+    // The DM sees the name from their own list, never the one renamed for the API, and no ".txt".
+    expect(screen.queryByText("Google Doc 1.txt")).toBeNull();
+    expect(screen.queryByText("Google Doc 2.txt")).toBeNull();
+    expect(screen.getAllByText("Google Doc 2").length).toBeGreaterThan(0);
   });
 });
 

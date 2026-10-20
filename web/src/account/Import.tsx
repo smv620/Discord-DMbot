@@ -180,6 +180,12 @@ export default function Import({
       return next;
     });
 
+  /** The name the DM saw in the list they built, for a name the API sent back (it renames links by place). */
+  const shownApi = (apiName: string): string => {
+    const seen = Object.entries(sentNames).find(([, sent]) => sent === apiName)?.[0];
+    return words.shownName(seen ?? apiName);
+  };
+
   /** Everything after Preview comes from one snapshot of the files and links, so a change clears it all. */
   const forgetPreview = (): void => {
     setProblem(null);
@@ -202,17 +208,22 @@ export default function Import({
       return;
     }
     const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
+    // Links are told apart from files by the name "Google Doc N.txt", so a file may not use it.
+    const clash = list.find((f) => /^Google Doc \d+\.txt$/.test(f.name));
     const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
     setPickProblem(
       big
         ? words.fileTooBig(big.name)
-        : odd
+        : clash
+          ? words.fileNameTaken(clash.name)
+          : odd
           ? words.fileNotTxt(odd.name)
           : null,
     );
   };
 
   const choose = (event: Event): void => {
+    if (busy) return;
     const list = Array.from((event.target as HTMLInputElement).files ?? []);
     setPicked(list);
     forgetPreview();
@@ -221,13 +232,15 @@ export default function Import({
 
   const addLink = (): void => {
     const link = linkText.trim();
-    if (link === "") return;
+    if (link === "" || busy) return;
     // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
     if (!/^https:\/\/docs\.google\.com\/document\//i.test(link)) {
       setLinkProblem(words.notAGoogleDocLink);
       return;
     }
-    if (links.includes(link)) {
+    // The same doc can be pasted with a different ending, so compare the doc's id when there is one.
+    const docId = (l: string): string => /\/d\/([\w-]+)/.exec(l)?.[1] ?? l;
+    if (links.some((l) => docId(l) === docId(link))) {
       setLinkProblem(words.linkAlreadyAdded);
       return;
     }
@@ -246,6 +259,7 @@ export default function Import({
   };
 
   const removeLink = (at: number): void => {
+    if (busy) return;
     const next = links.filter((_, i) => i !== at);
     setLinks(next);
     setLinkProblem(null);
@@ -430,7 +444,7 @@ export default function Import({
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
-              <span class="campaign-name">{s.file}</span>
+              <span class="campaign-name">{shownApi(s.file)}</span>
               <span class="small">
                 {s.date} · {words.state[s.state] ?? s.state}
                 {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
@@ -475,9 +489,11 @@ export default function Import({
           accept=".txt,text/plain"
           multiple
           onChange={choose}
+          disabled={busy}
           aria-label={words.pickLabel}
         />
         <form
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
             addLink();
@@ -530,6 +546,7 @@ export default function Import({
                 <button
                   type="button"
                   data-remove-link
+                  disabled={busy}
                   class="button secondary"
                   aria-label={words.removeLink(i + 1)}
                   onClick={() => removeLink(i)}
@@ -678,7 +695,7 @@ export default function Import({
                       <ul class="campaigns">
                         {check.files.map((f) => (
                           <li key={f.name}>
-                            <span class="campaign-name">{words.shownName(f.name)}</span>
+                            <span class="campaign-name">{shownApi(f.name)}</span>
                             {f.leftOut > 0 && (
                               <span class="small">
                                 {words.leftOutFile(f.leftOut)}
@@ -726,7 +743,7 @@ export default function Import({
                 <ol class="campaigns">
                   {order.map((name, i) => (
                     <li key={name}>
-                      <span class="campaign-name">{name}</span>
+                      <span class="campaign-name">{words.shownName(name)}</span>
                       <span class="small">
                         {words.position(i + 1, order.length)}
                       </span>

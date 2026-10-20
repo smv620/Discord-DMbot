@@ -40,6 +40,7 @@ export const importPage = {
   working: "Working…",
   tooManyFiles: `That is more than ${IMPORT_MAX_FILES} files and links together. Choose fewer.`,
   fileTooBig: (name: string): string => `${name} is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
+  fileNameTaken: (name: string): string => `${name} has a name DMbot uses for Google Docs. Rename the file, then choose it again.`,
   fileNotTxt: (name: string): string => `${name} isn't a .txt file.`,
   fileError: {
     unreadable: "DMbot couldn't read this file.",
