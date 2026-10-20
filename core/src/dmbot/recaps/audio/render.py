@@ -27,6 +27,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from dmbot.recaps import approval
 from dmbot.recaps.audio import mix, music
 from dmbot.recaps.audio.eleven import SPEECH_RATE, ElevenLabs, Locator, ProviderError
 from dmbot.recaps.audio.files import FILE_NAMES, MIX, MUSIC, VOICE, AudioFiles
@@ -72,14 +73,22 @@ class Made:
     credits: int  # what the provider's price list says this cost
 
 
-def estimate_credits(script: Script, *, ambience_needed: bool) -> int:
+def kinds_for(mode: str) -> tuple[str, ...]:
+    """The files kept for a choice (#2083): the voice-over alone is its voice and its mix, the
+    background music alone is the bed, and both keep all three."""
+    return {
+        approval.VOICE: (VOICE, MIX),
+        approval.MUSIC: (MUSIC,),
+        approval.BOTH: (VOICE, MUSIC, MIX),
+    }[mode]
+
+
+def estimate_credits(script: Script, *, ambience_needed: bool, mode: str = approval.BOTH) -> int:
     """What making this recap will cost in provider credits, before any call (for the cap)."""
     seconds = music.total_seconds(len(script.spoken)) + HEAD_SECONDS + TAIL_SECONDS
-    return (
-        sum(len(p.tagged) for p in script.paragraphs)
-        + math.ceil(seconds / 60) * 900
-        + (200 if ambience_needed else 0)
-    )
+    speech = sum(len(p.tagged) for p in script.paragraphs) if mode != approval.MUSIC else 0
+    bed = math.ceil(seconds / 60) * 900 if mode != approval.VOICE else 0
+    return speech + bed + (200 if ambience_needed and mode != approval.VOICE else 0)
 
 
 def _silence(seconds: float) -> bytes:
@@ -113,8 +122,13 @@ def _tidy(folder: Path) -> None:
             (folder / name).unlink()
 
 
-def _made(folder: Path) -> tuple[str, ...]:
-    return tuple(k for k in (VOICE, MUSIC, MIX) if (folder / FILE_NAMES[k]).is_file())
+def _made(folder: Path, kinds: tuple[str, ...] = (VOICE, MUSIC, MIX)) -> tuple[str, ...]:
+    """The kept files that exist. A choice keeps only its own files."""
+    for kind in (VOICE, MUSIC, MIX):
+        if kind not in kinds:
+            with contextlib.suppress(OSError):
+                (folder / FILE_NAMES[kind]).unlink()
+    return tuple(k for k in kinds if (folder / FILE_NAMES[k]).is_file())
 
 
 class Renderer:
@@ -135,13 +149,19 @@ class Renderer:
         seed: int,
         dictionary: Locator | None,
         guard: Guard = no_guard,
+        mode: str = approval.BOTH,
     ) -> Made:
+        """`mode` (#2083): the voice-over alone, the background music alone, or both. The music
+        alone is as long as the voice-over would have been (the same estimate), in the same mood
+        sections as the text's cues share it."""
         await asyncio.to_thread(_fresh, into)  # nothing left by a stopped earlier try
         before = self._provider.credits
+        speaking = mode != approval.MUSIC
+        scoring = mode != approval.VOICE
         # 1. The voice, a paragraph at a time; the moods' times come from its timestamps.
         pcm = bytearray(_silence(HEAD_SECONDS))
         starts: dict[int, float] = {}
-        for paragraph in script.paragraphs:
+        for paragraph in script.paragraphs if speaking else ():
             begun = len(pcm) / (2 * SPEECH_RATE)
             await guard()  # before each paid call: consent, secrets and the cap, again
             speech = await self._provider.speech(
@@ -156,20 +176,29 @@ class Renderer:
                     at = speech.starts[min(cue.tagged_offset, len(speech.starts) - 1)]
                     starts.setdefault(cue.offset, begun + at)
             pcm += speech.pcm + _silence(GAP_SECONDS)
+        if not speaking:
+            # No voice was asked for: the music is as long as the voice would have been, from the
+            # same estimate the cap uses, and the mix is built over that much silence.
+            estimate = music.total_seconds(len(script.spoken)) + HEAD_SECONDS
+            pcm = bytearray(_silence(estimate))
         pcm += _silence(TAIL_SECONDS)
         seconds = len(pcm) / (2 * SPEECH_RATE)
         voice_wav = into / "in-voice.wav"
         await asyncio.to_thread(_write_wav, voice_wav, pcm)
-        # 2. The music: sections as long as the voice spends in each mood.
-        plan = music.composition_request(script, seconds=math.ceil(seconds), starts=starts)
-        total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
+        # 2. The music: sections as long as the voice spends in each mood (or, with no voice,
+        # as long as each mood's share of the words).
         music_mp3 = into / "in-music.mp3"
-        await guard()
-        piece = await self._provider.music(plan, seconds=total_ms / 1000)
-        await asyncio.to_thread(music_mp3.write_bytes, piece)
+        if scoring:
+            plan = music.composition_request(
+                script, seconds=math.ceil(seconds), starts=starts if speaking else None
+            )
+            total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
+            await guard()
+            piece = await self._provider.music(plan, seconds=total_ms / 1000)
+            await asyncio.to_thread(music_mp3.write_bytes, piece)
         # 3. One ambience loop (the first scene found), kept for this campaign and scene kind.
         bed: Path | None = None
-        beds = music.ambience_requests(script)
+        beds = music.ambience_requests(script) if scoring else []
         if beds:
             bed = self._files.ambience_path(guild_id, campaign_id, beds[0].kind)
             if not await asyncio.to_thread(bed.is_file):
@@ -177,11 +206,11 @@ class Renderer:
                 data = await self._provider.ambience(beds[0].as_request())
                 await asyncio.to_thread(_keep, bed, data)
         # 4. The mix.
-        mixing = mix.plan(seconds, with_music=True, with_ambience=bed is not None)
+        mixing = mix.plan(seconds, with_music=scoring, with_ambience=bed is not None)
         argv = mix.command(
             mixing,
             voice=str(voice_wav),
-            music=str(music_mp3),
+            music=str(music_mp3) if scoring else None,
             ambience=None if bed is None else str(bed),
             out_voice=str(into / FILE_NAMES[VOICE]),
             out_bed=str(into / FILE_NAMES[MUSIC]),
@@ -191,12 +220,21 @@ class Renderer:
         if await self._run(argv) != 0:
             raise RenderError("mix")
         await asyncio.to_thread(_tidy, into)
-        made = await asyncio.to_thread(_made, into)
-        if len(made) != 3:
+        kept = kinds_for(mode)
+        made = await asyncio.to_thread(_made, into, kept)
+        if len(made) != len(kept):
             raise RenderError("mix")
         credits = self._provider.credits - before
         log.info("Recap audio made: %d paragraph(s), %d credits", len(script.paragraphs), credits)
         return Made(into, made, seconds, credits)
 
 
-__all__ = ["Made", "ProviderError", "RenderError", "Renderer", "estimate_credits", "run_ffmpeg"]
+__all__ = [
+    "Made",
+    "ProviderError",
+    "RenderError",
+    "Renderer",
+    "estimate_credits",
+    "kinds_for",
+    "run_ffmpeg",
+]

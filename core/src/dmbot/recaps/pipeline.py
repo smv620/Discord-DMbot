@@ -141,7 +141,6 @@ class RecapWorker:
         consenting: Callable[[int], Consenting],
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
-        audio_wanted: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
@@ -190,7 +189,6 @@ class RecapWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._notify = notify
-        self._audio_wanted = audio_wanted
         self._allowance = allowance
         self._now = clock
 
@@ -1057,22 +1055,9 @@ class RecapWorker:
             last_error="",
         )
         log.info("Recap: ready after %d call(s)", job.calls)
-        ready = await self._store.get(gid, cid, job.session_at)
-        if ready is not None and await self._wants_audio(gid, cid, ready):
-            await self._store.set_audio(gid, cid, job.session_at, audio="queued", tries=0)
-            ready = await self._store.get(gid, cid, job.session_at)
-        return ready
-
-    async def _wants_audio(self, gid: int, cid: str, job: Job) -> bool:
-        """Whether the audio tracks are to be made: the switch is on, a key is set and the plan
-        includes them. Never raises: the text is ready either way."""
-        if self._audio_wanted is None:
-            return False
-        try:
-            return await self._audio_wanted(gid, cid, job)
-        except Exception:
-            log.exception("Recap: couldn't tell whether to make the audio")
-            return False
+        # No audio is queued here (#2083): the DM reads the text, fixes its cues, approves it and
+        # picks what to make; the approval queues the audio.
+        return await self._store.get(gid, cid, job.session_at)
 
     # --- ways out -----------------------------------------------------------------------
 

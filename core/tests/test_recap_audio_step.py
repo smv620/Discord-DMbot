@@ -530,7 +530,8 @@ class Base(DatabaseTest):
             1, self.one.id, 100, state="ready", title="The Silver Lock", summary=SUMMARY,
             housekeeping=["Mira drew her blade."], speakers=[fx.DM, fx.ALICE], game_day=4,
         )  # fmt: skip
-        await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0)
+        # The DM approved the text and picked both tracks (#2083): that queues the audio.
+        self.assertTrue(await self.store.approve(1, self.one.id, 100, fx.DM, "both"))
         self.agreed: Collection[int] = {fx.DM, fx.ALICE, fx.BOB}
         self.secret: list[str] = []
         self.spoken: list[nm.SpokenName] = [nm.SpokenName("Greywater Keep", "Grey-water Keep")]
@@ -560,6 +561,107 @@ class Base(DatabaseTest):
         job = await self.store.get(1, self.one.id, 100)
         assert job is not None
         return job
+
+
+class Choices(Base):
+    """The DM's approval and what they pick (#2083): voice-over, music, both or text only."""
+
+    async def reapprove(self, choice: str) -> None:
+        await self.store.set_audio(1, self.one.id, 100, audio="off")
+        self.assertTrue(await self.store.approve(1, self.one.id, 100, fx.DM, choice))
+
+    async def test_both_makes_all_three_files_and_every_kind_of_call(self) -> None:
+        await self.worker().run(1, self.one.id, 100)
+        self.assertEqual(
+            sorted(self.files.present(1, self.one.id, 100)), sorted([VOICE, MUSIC, MIX])
+        )
+        self.assertTrue(self.fake.paths("text-to-speech"))
+        self.assertTrue(self.fake.paths("/v1/music"))
+
+    async def test_voice_over_alone_makes_the_voice_and_its_mix_and_asks_for_no_music(self) -> None:
+        await self.reapprove("voice")
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.audio, "ready")
+        self.assertEqual(sorted(self.files.present(1, self.one.id, 100)), sorted([VOICE, MIX]))
+        self.assertTrue(self.fake.paths("text-to-speech"))
+        self.assertEqual(self.fake.paths("/v1/music"), [])
+        self.assertEqual(self.fake.paths("sound-generation"), [])
+
+    async def test_music_alone_asks_for_no_voice_and_is_as_long_as_the_voice_would_be(self) -> None:
+        await self.reapprove("music")
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.audio, "ready")
+        self.assertEqual(sorted(self.files.present(1, self.one.id, 100)), [MUSIC])
+        self.assertEqual(self.fake.paths("text-to-speech"), [])
+        ((_, body),) = self.fake.paths("/v1/music")
+        assert body is not None
+        sections = body["composition_plan"]["sections"]
+        from dmbot.recaps.audio import music as music_module
+        from dmbot.recaps.audio import script as script_module
+
+        script = script_module.build(
+            job.title, job.game_day, job.summary, secret_names=[], allowed_names=[]
+        )
+        self.assertEqual(
+            sum(x["duration_ms"] for x in sections) // 1000,
+            music_module.total_seconds(len(script.spoken)) + 6,  # the voice's head and tail
+        )
+        self.assertGreaterEqual(len(sections), 2)  # the text's moods share it
+
+    async def test_text_only_queues_nothing_and_makes_nothing(self) -> None:
+        await self.store.set_audio(1, self.one.id, 100, audio="off")
+        job = await self.job()
+        self.assertEqual(await self.store.audio_due(1), [])
+        await self.reapprove("text")
+        job = await self.job()
+        self.assertEqual((job.audio, job.audio_choice, job.approved), ("off", "text", True))
+        self.assertEqual(await self.store.audio_due(1), [])
+        await self.worker().run(1, self.one.id, 100)
+        self.assertEqual(self.fake.calls, [])
+
+    async def test_without_approval_no_paid_call_is_made_even_if_audio_is_queued(self) -> None:
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET approved_hash = '', audio_choice = ''")
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.audio, "off")
+        self.assertEqual(self.fake.calls, [])
+
+    async def test_an_edit_ends_the_approval_and_the_audio_is_not_made(self) -> None:
+        self.assertTrue((await self.job()).approved)
+        await self.store.update(1, self.one.id, 100, summary="《Calm》 The DM rewrote it.")
+        job = await self.job()
+        self.assertFalse(job.approved)
+        await self.worker().run(1, self.one.id, 100)
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual((await self.job()).audio, "off")
+
+    async def test_approval_records_who_and_when_and_needs_a_ready_undecided_recap(
+        self,
+    ) -> None:
+        job = await self.job()
+        self.assertEqual((job.approved_by, job.approved_at), (fx.DM, NOW))
+        await self.store.set_audio(1, self.one.id, 100, audio="off")
+        await self.store.decide(1, self.one.id, 100, "drop")
+        self.assertFalse(await self.store.approve(1, self.one.id, 100, fx.DM, "both"))
+
+    async def test_a_second_approval_does_not_restart_audio_that_is_under_way(self) -> None:
+        self.assertFalse(await self.store.approve(1, self.one.id, 100, fx.DM, "voice"))  # queued
+        self.assertEqual((await self.job()).audio_choice, "both")
+
+    async def test_an_estimate_for_each_choice_counts_only_what_it_asks_for(self) -> None:
+        from dmbot.recaps.audio.render import estimate_credits
+        from dmbot.recaps.audio.script import build
+
+        script = build("T", 1, SUMMARY, secret_names=[], allowed_names=[])
+        both = estimate_credits(script, ambience_needed=True, mode="both")
+        voice = estimate_credits(script, ambience_needed=True, mode="voice")
+        music = estimate_credits(script, ambience_needed=True, mode="music")
+        self.assertLess(voice, both)
+        self.assertLess(music, both)
+        self.assertEqual(voice + music, both)
 
 
 class Working(Base):
@@ -612,6 +714,8 @@ class Working(Base):
     async def test_a_secret_name_in_the_recap_stops_it_before_any_call(self) -> None:
         self.secret = [SECRET_NAME]
         await self.store.update(1, self.one.id, 100, summary=f"《Calm》 {SECRET_NAME}'s keep fell.")
+        await self.store.set_audio(1, self.one.id, 100, audio="off")
+        self.assertTrue(await self.store.approve(1, self.one.id, 100, fx.DM, "both"))  # this text
         job = await self.worker().run(1, self.one.id, 100)
         assert job is not None
         self.assertEqual((job.audio, job.audio_error), ("failed", SECRET))
@@ -770,7 +874,9 @@ class Working(Base):
         worker._renderer.render = render_then_edit  # type: ignore[union-attr,method-assign]
         job = await worker.run(1, self.one.id, 100)
         assert job is not None
-        self.assertEqual(job.audio, "queued")  # tried again later, from the new text
+        # The edit ended the approval: nothing is kept and nothing is made again until the DM
+        # approves the new text.
+        self.assertEqual((job.audio, job.approved), ("off", False))
         self.assertEqual(self.files.present(1, self.one.id, 100), {})
 
     async def test_the_audio_is_marked_with_the_text_it_was_made_from(self) -> None:
@@ -862,9 +968,9 @@ class Working(Base):
 
 
 class WhenTheTextIsReady(DatabaseTest):
-    """The text worker queues the audio only when it is wanted, and never waits for it."""
+    """No audio is queued when the text is ready (#2083): the DM approves it first."""
 
-    async def run_it(self, wanted: bool | Exception) -> Any:
+    async def test_the_text_is_ready_at_once_and_no_audio_is_queued(self) -> None:
         campaigns = CampaignStore(self.db)
         one = await campaigns.create(1, "One", fx.DM)
         store = RecapStore(self.db, clock=lambda: float(NOW))
@@ -881,30 +987,18 @@ class WhenTheTextIsReady(DatabaseTest):
         async def told(gid: int, cid: str, job: Any) -> None:
             return None
 
-        async def audio(gid: int, cid: str, job: Any) -> bool:
-            if isinstance(wanted, Exception):
-                raise wanted
-            return wanted
-
         canned = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
         worker = pl.RecapWorker(
             store, canned, fx.Canned(), load=load, consenting=lambda gid: fx.everyone,
-            allowed=ok, notify=told, audio_wanted=audio, clock=lambda: float(NOW),
+            allowed=ok, notify=told, clock=lambda: float(NOW),
         )  # fmt: skip
         await store.enqueue(1, one.id, 100, dm_user_id=fx.DM)
-        return await worker.run(1, one.id, 100)
-
-    async def test_wanted_audio_is_queued_and_the_text_is_ready_at_once(self) -> None:
-        job = await self.run_it(True)
-        self.assertEqual((job.state, job.audio), ("ready", "queued"))
-
-    async def test_unwanted_audio_stays_off(self) -> None:
-        job = await self.run_it(False)
-        self.assertEqual((job.state, job.audio), ("ready", "off"))
-
-    async def test_a_check_that_fails_leaves_the_recap_ready_and_the_audio_off(self) -> None:
-        job = await self.run_it(RuntimeError("boom"))
-        self.assertEqual((job.state, job.audio), ("ready", "off"))
+        job = await worker.run(1, one.id, 100)
+        assert job is not None
+        self.assertEqual(
+            (job.state, job.audio, job.approved, job.audio_choice), ("ready", "off", False, "")
+        )
+        self.assertEqual(await store.audio_due(1), [])
 
 
 if __name__ == "__main__":

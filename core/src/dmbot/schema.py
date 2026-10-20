@@ -2057,6 +2057,75 @@ QUIET_STOP = """
             CHECK (quiet_stop_minutes IN (0, 30, 60, 90));
 """
 
+RECAP_APPROVAL = """
+    -- The DM approves a recap's text before any audio is made, and picks what to make (#2083).
+    -- approved_hash is a fingerprint of the title and summary the DM approved (sha256 of
+    -- "title\\nsummary", the audio's own `text_hash`), so an edit after approval makes it stale
+    -- with no one having to clear it: an approval counts only while the hash matches the text.
+    -- audio_choice: voice, music, both, or text (no audio). Defaulted columns change no rows, so
+    -- no row-level-security policy is needed.
+    ALTER TABLE recap_jobs ADD COLUMN approved_by BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN approved_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN approved_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE recap_jobs ADD COLUMN audio_choice TEXT NOT NULL DEFAULT ''
+        CHECK (audio_choice IN ('', 'voice', 'music', 'both', 'text'));
+
+    -- Approving from the website. The website's role may only change the columns its grant names,
+    -- so approving goes through this door: only a DM of the campaign, only a recap that is ready
+    -- and still the DM's to post. It records who and when (the database's own clock) and the hash
+    -- of the text as it is now, and, for any choice but text, queues the audio the way the bot
+    -- does. The page checks the cues first; the secret names and the plan are checked again by the
+    -- audio step before a paid call, as for every audio.
+    CREATE FUNCTION dmbot_recap_approve(g BIGINT, c TEXT, at_ BIGINT, choice TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF choice NOT IN ('voice', 'music', 'both', 'text') THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND OR job.state <> 'ready' OR job.status <> 'draft' THEN
+            RETURN 'not_allowed';
+        END IF;
+        -- Audio that is being made, or was made, is not started over by a second approval.
+        IF choice <> 'text' AND job.audio NOT IN ('off', 'failed') THEN
+            RETURN 'not_allowed';
+        END IF;
+        UPDATE recap_jobs SET
+            approved_by = dmbot_current_user(), approved_at = now_s,
+            approved_hash = encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')),
+                                   'hex'),
+            audio_choice = choice,
+            audio = CASE WHEN choice = 'text' THEN job.audio ELSE 'queued' END,
+            audio_tries = CASE WHEN choice = 'text' THEN job.audio_tries ELSE 0 END,
+            audio_next_at = CASE WHEN choice = 'text' THEN job.audio_next_at ELSE 0 END,
+            audio_error = CASE WHEN choice = 'text' THEN job.audio_error ELSE '' END
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'approved';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
+"""
+
 STORY_MODE = """
     -- The Shared story switch (docs/STORY_MEMORY.md, section 6; #1692): Off (the default),
     -- Watch the story or Guide me. Nothing reads it yet: the story-plan reader, the divergence
@@ -2745,6 +2814,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    # Approving a recap's text and picking its audio (#2083): the only write to those columns.
+    ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
@@ -6906,6 +6977,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         RECAP_TO_CONFIRM,
     ),  # names a recap kept, for the DM to confirm (#2027)
     ("0132_quiet_stop", QUIET_STOP),  # minutes of silence before an automatic stop (#2034)
+    ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
