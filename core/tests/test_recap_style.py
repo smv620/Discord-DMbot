@@ -111,10 +111,54 @@ class TheTwoModelWorker(unittest.IsolatedAsyncioTestCase):
 
 
 class TheDefaults(unittest.TestCase):
+    def test_the_owners_four_examples_are_the_defaults(self) -> None:
+        found = st.defaults()
+        self.assertEqual(len(found), 4)
+        for text in found:
+            self.assertLessEqual(len(text.split()), st.EXAMPLE_MAX_WORDS)
+            self.assertEqual(text, text.strip())
+
+    def test_the_example_files_are_utf8_with_one_closing_newline_in_file_name_order(self) -> None:
+        import pathlib
+
+        folder = pathlib.Path(st.__file__).parent / "style_examples"
+        names = sorted(p.name for p in folder.glob("*.txt"))
+        self.assertEqual(
+            names,
+            [
+                "01_blood_and_ice.txt",
+                "02_the_huntsman_cometh.txt",
+                "03_glyphs_of_warding.txt",
+                "04_soulbinder_broken.txt",
+            ],
+        )
+        for name in names:
+            raw = (folder / name).read_bytes()
+            raw.decode("utf-8")
+            self.assertTrue(raw.endswith(b"\n") and not raw.endswith(b"\n\n"), name)
+            self.assertNotIn(b"\r", raw, name)
+
+    def test_no_default_holds_a_name_from_the_campaign_names_files(self) -> None:
+        import pathlib
+        import re
+
+        from tests import recap_fixtures as fx
+
+        names = list(fx.NAMES)
+        scripts = pathlib.Path(__file__).resolve().parents[2] / "docs" / "test-scripts"
+        for path in scripts.glob("*names*.txt"):  # the names files the test scripts use
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
+                name = line.split("=")[0].strip()
+                if name and not name.startswith("#"):
+                    names.append(name)
+        text = "\n".join(st.defaults())
+        clashes = [n for n in names if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
+        self.assertEqual(clashes, [])
+
     def test_a_default_is_shipped_and_short_enough(self) -> None:
         found = st.defaults()
         self.assertTrue(found)
-        self.assertLessEqual(len(found), st.MAX_EXAMPLES)
+        # (the four defaults are the owner's; the limit of 3 is for the examples a DM adds)
         for text in found:
             self.assertLessEqual(len(text.split()), st.EXAMPLE_MAX_WORDS)
 
