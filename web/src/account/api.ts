@@ -397,8 +397,9 @@ export interface ImportPreview {
 export interface ImportMember {
   userId: string;
   name: string;
-  /** Whether they are recorded now: lines of a member who has not agreed are dropped. */
-  agreed: boolean;
+  /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
+   * only a suggestion has named them: Check says what is dropped. */
+  agreed?: boolean;
 }
 export interface ImportDropped {
   not_matched: number;

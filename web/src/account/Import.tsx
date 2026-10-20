@@ -31,7 +31,10 @@ export function campaignFromPath(path: string): string | null {
 
 const DROP = "drop";
 const POLL_MS = 3000;
-const isDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+/** A real calendar day: the round trip catches "2026-02-31", which some engines would shift. */
+const isDate = (s: string): boolean =>
+  /^\d{4}-\d{2}-\d{2}$/.test(s) &&
+  new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 interface Folded {
   label: string;
@@ -41,7 +44,13 @@ interface Folded {
   suggestedName: string | null;
 }
 
-export default function Import({ api, path }: { api: AccountApi; path: string }) {
+export default function Import({
+  api,
+  path,
+}: {
+  api: AccountApi;
+  path: string;
+}) {
   const ref = campaignFromPath(path);
   const [picked, setPicked] = useState<File[]>([]);
   const [texts, setTexts] = useState<ImportFileIn[]>([]);
@@ -57,16 +66,22 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  // A problem with the chosen files themselves: it blocks Preview until other files are chosen.
+  const [pickProblem, setPickProblem] = useState<string | null>(null);
+  const [moved, setMoved] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const inFlight = useRef(false);
-  const problemRef = useRef<HTMLParagraphElement>(null);
+  const searchSeq = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const [pollTries, setPollTries] = useState(0);
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
+    // The message is announced by its role="alert"; moving focus too would read it twice.
     setProblem(words.problem[kind] ?? words.problem.server ?? "");
-    // The message is announced by its role; focus moves so a keyboard user lands on it.
-    setTimeout(() => problemRef.current?.focus(), 0);
   };
 
   /** Runs one request at a time, with the busy state and the problem line every step shares. */
@@ -120,7 +135,11 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
         setProgress(next);
-        if (next.sessions.some((s) => s.state === "waiting" || s.state === "working"))
+        if (
+          next.sessions.some(
+            (s) => s.state === "waiting" || s.state === "working",
+          )
+        )
           timer = setTimeout(() => void tick(), POLL_MS);
       } catch (error) {
         if (live) fail(error);
@@ -131,15 +150,18 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
       live = false;
       if (timer) clearTimeout(timer);
     };
+    // `fail` only sets state, so it is left out of the dependencies on purpose; pollTries restarts it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, ref, importId]);
+  }, [api, ref, importId, pollTries]);
 
+  // Nothing is shown unless importing is live and the API has the routes (an older API has none).
   if (!IMPORT_LIVE || !api.importPreview || !ref) return null;
 
   const remember = (list: ImportMember[]): void =>
     setKnown((now) => {
       const next = { ...now };
-      for (const m of list) next[m.userId] = m;
+      // A later answer from the members list ("agreed" known) wins over a bare suggestion.
+      for (const m of list) next[m.userId] = { ...next[m.userId], ...m };
       return next;
     });
 
@@ -147,12 +169,22 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
     const list = Array.from((event.target as HTMLInputElement).files ?? []);
     setPicked(list);
     setProblem(null);
-    if (list.length > IMPORT_MAX_FILES) setProblem(words.tooManyFiles);
+    setPickProblem(null);
+    // Everything after Preview comes from one snapshot of the files, so new files clear it all.
+    setPreview(null);
+    setTexts([]);
+    setCheck(null);
+    setOrder([]);
+    setMapping({});
+    setDates({});
+    setGuessed({});
+    setKnown({});
+    if (list.length > IMPORT_MAX_FILES) setPickProblem(words.tooManyFiles);
     else {
       const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
       const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
-      if (big) setProblem(words.fileTooBig(big.name));
-      else if (odd) setProblem(words.fileNotTxt(odd.name));
+      if (big) setPickProblem(words.fileTooBig(big.name));
+      else if (odd) setPickProblem(words.fileNotTxt(odd.name));
     }
   };
 
@@ -168,14 +200,22 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
       setCheck(null);
       const start: Record<string, string> = {};
       for (const f of good)
-        for (const s of f.speakers) start[s.label] ??= s.suggested?.userId ?? DROP;
+        for (const s of f.speakers)
+          start[s.label] ??= s.suggested?.userId ?? DROP;
       setMapping(start);
-      setDates(Object.fromEntries(good.map((f) => [f.name, f.suggestedDate ?? ""])));
-      setGuessed(Object.fromEntries(good.map((f) => [f.name, f.suggestedDate !== null])));
+      setDates(
+        Object.fromEntries(good.map((f) => [f.name, f.suggestedDate ?? ""])),
+      );
+      setGuessed(
+        Object.fromEntries(good.map((f) => [f.name, f.suggestedDate !== null])),
+      );
       setOrder(good.map((f) => f.name));
       const suggestedPeople: ImportMember[] = good.flatMap((f) =>
         f.speakers.flatMap((s) =>
-          s.suggested ? [{ userId: s.suggested.userId, name: s.suggested.name, agreed: true }] : [],
+          // `agreed` is not invented: only the members list and Check know it (consent is theirs to say).
+          s.suggested
+            ? [{ userId: s.suggested.userId, name: s.suggested.name }]
+            : [],
         ),
       );
       remember(suggestedPeople);
@@ -185,10 +225,21 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
   const search = (value: string): void => {
     setQuery(value);
     if (!api.importMembers) return;
-    void api.importMembers(ref, value).then(remember, fail);
+    // Wait for a pause in the typing, and use only the newest answer: a slow answer for "ab" must
+    // not land after "abc".
+    const mine = ++searchSeq.current;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      void api.importMembers!(ref, value).then(
+        (list) => mine === searchSeq.current && remember(list),
+        () => undefined, // The people already listed still work; the next typing tries again.
+      );
+    }, 300);
   };
 
-  const sentFiles = (): ImportFileIn[] => texts.filter((t) => order.includes(t.name));
+  // The API orders the sessions by plan.sessions[].order, not by the order the files are sent in.
+  const sentFiles = (): ImportFileIn[] =>
+    texts.filter((t) => order.includes(t.name));
 
   const doCheck = (): Promise<void> =>
     run(async () => {
@@ -203,6 +254,7 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
       if (i < 0 || j < 0 || j >= now.length) return now;
       const next = [...now];
       [next[i], next[j]] = [next[j] as string, next[i] as string];
+      setMoved(words.moved(name, j + 1, now.length));
       return next;
     });
 
@@ -213,16 +265,26 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
       if (!api.importStart) return;
       const started = await api.importStart(ref, sentFiles(), {
         mapping,
-        sessions: order.map((file, i) => ({ file, date: dates[file] ?? "", order: i + 1 })),
+        sessions: order.map((file, i) => ({
+          file,
+          date: dates[file] ?? "",
+          order: i + 1,
+        })),
       });
       setProgress({
-        sessions: started.sessions.map((s) => ({ file: s.file, date: dates[s.file] ?? "", state: s.state, reason: null })),
+        sessions: started.sessions.map((s) => ({
+          file: s.file,
+          date: dates[s.file] ?? "",
+          state: s.state,
+          reason: null,
+        })),
       });
       setImportId(started.importId);
     });
 
   const memberOptions = Object.values(known);
-  const label = (m: ImportMember): string => (m.agreed ? m.name : `${m.name} (${words.notAgreedMark})`);
+  const label = (m: ImportMember): string =>
+    m.agreed === false ? `${m.name} (${words.notAgreedMark})` : m.name;
 
   if (signedOut)
     return (
@@ -236,24 +298,44 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
 
   // After the import has started, only the progress is shown.
   if (progress) {
-    const done = progress.sessions.every((s) => s.state === "done" || s.state === "failed");
+    const done = progress.sessions.every(
+      (s) => s.state === "done" || s.state === "failed",
+    );
     const failed = progress.sessions.some((s) => s.state === "failed");
     return (
       <div class="stack">
         <h2>{words.progressHeading}</h2>
         {problem && (
-          <p class="note bad" role="alert" tabIndex={-1} ref={problemRef}>
+          <p class="note bad" role="alert">
             {problem}
           </p>
         )}
+        {problem && (
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setProblem(null);
+              setPollTries((n) => n + 1);
+            }}
+          >
+            {words.checkAgain}
+          </button>
+        )}
+        <p role="status" aria-live="polite">
+          {words.doneCount(
+            progress.sessions.filter((s) => s.state === "done").length,
+            progress.sessions.length,
+          )}
+        </p>
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
               <span class="campaign-name">{s.file}</span>
               <span class="small">
                 {s.date} · {words.state[s.state] ?? s.state}
-                {s.state === "failed" && s.reason
-                  ? ` · ${words.failedReason[s.reason] ?? ""}`
+                {s.state === "failed"
+                  ? ` · ${(s.reason && words.failedReason[s.reason]) || words.failedFallback}`
                   : ""}
               </span>
             </li>
@@ -262,7 +344,9 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
         {done && (
           <p role="status">
             {failed ? words.someFailed : words.allDone}{" "}
-            <a href={`/account/transcripts/${encodeURIComponent(ref)}`}>{words.seeTranscripts}</a>
+            <a href={`/account/transcripts/${encodeURIComponent(ref)}`}>
+              {words.seeTranscripts}
+            </a>
           </p>
         )}
       </div>
@@ -273,19 +357,38 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
     <div class="stack">
       <p class="muted small">{words.lead}</p>
       {problem && (
-        <p class="note bad" role="alert" tabIndex={-1} ref={problemRef}>
+        <p class="note bad" role="alert">
           {problem}
+        </p>
+      )}
+
+      {pickProblem && (
+        <p class="note bad" role="alert">
+          {pickProblem}
         </p>
       )}
 
       <section class="panel" aria-labelledby="import-pick">
         <h2 id="import-pick">{words.pickLabel}</h2>
-        <input type="file" accept=".txt,text/plain" multiple onChange={choose} aria-label={words.pickLabel} />
-        {picked.length > 0 && <p class="small">{words.chosen(picked.length)}</p>}
+        <input
+          type="file"
+          accept=".txt,text/plain"
+          multiple
+          onChange={choose}
+          aria-label={words.pickLabel}
+        />
+        {picked.length > 0 && (
+          <p class="small">{words.chosen(picked.length)}</p>
+        )}
         <button
           type="button"
           class="button"
-          disabled={busy || picked.length === 0 || picked.length > IMPORT_MAX_FILES || problem !== null}
+          disabled={
+            busy ||
+            picked.length === 0 ||
+            picked.length > IMPORT_MAX_FILES ||
+            problem !== null
+          }
           onClick={() => void lookAtFiles()}
         >
           {busy && !preview ? words.working : words.preview}
@@ -300,7 +403,9 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
               .map((f) => (
                 <li key={f.name}>
                   <span class="campaign-name">{f.name}</span>
-                  <span class="small">{words.fileError[f.error ?? ""] ?? words.fileErrorOther}</span>
+                  <span class="small">
+                    {words.fileError[f.error ?? ""] ?? words.fileErrorOther}
+                  </span>
                 </li>
               ))}
           </ul>
@@ -318,7 +423,9 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                   <input
                     type="search"
                     value={query}
-                    onInput={(e) => search((e.target as HTMLInputElement).value)}
+                    onInput={(e) =>
+                      search((e.target as HTMLInputElement).value)
+                    }
                     aria-describedby="import-find-hint"
                   />
                 </label>
@@ -334,7 +441,9 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                         <span class="campaign-name">{s.label}</span>
                         <span class="small">
                           {words.lines(s.lines)}
-                          {s.why && s.suggested === chosen ? ` · ${words.suggestedBecause(s.why)}` : ""}
+                          {s.why && s.suggested === chosen
+                            ? ` · ${words.suggestedBecause(s.why)}`
+                            : ""}
                         </span>
                         <select
                           aria-label={`${s.label}: ${words.matchHeading}`}
@@ -352,7 +461,7 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                             </option>
                           ))}
                         </select>
-                        {who && !who.agreed && (
+                        {who && who.agreed === false && (
                           <span class="small" role="note">
                             {words.droppedReason.not_agreed}
                           </span>
@@ -361,41 +470,97 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                     );
                   })}
                 </ul>
-                <button type="button" class="button secondary" disabled={busy} onClick={() => void doCheck()}>
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  onClick={() => void doCheck()}
+                >
                   {words.checkButton}
                 </button>
-                {check && (
-                  <div role="status">
-                    <p class="small">{words.checkLead}</p>
-                    <ul class="campaigns">
-                      {check.files.map((f) => (
-                        <li key={f.name}>
-                          <span class="campaign-name">{f.name}</span>
-                          {f.leftOut > 0 && <span class="small">{words.leftOutFile(f.leftOut)}</span>}
-                          {f.speakers.map((s) => (
-                            <span class="small" key={s.label}>
-                              {s.label}: {words.kept(s.kept)}
-                              {Object.entries(s.dropped)
-                                .filter(([, n]) => n > 0)
-                                .map(([why, n]) => `; ${words.dropped(n, words.droppedReason[why] ?? why)}`)
-                                .join("")}
-                            </span>
-                          ))}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {/* A live region that is always there, so the result is announced when it fills in. */}
+                <div role="status" aria-live="polite">
+                  {check && (
+                    <>
+                      <p>
+                        {words.checkedSummary(
+                          check.files.reduce(
+                            (n, f) =>
+                              n + f.speakers.reduce((m, x) => m + x.kept, 0),
+                            0,
+                          ),
+                          check.files.reduce(
+                            (n, f) =>
+                              n +
+                              f.speakers.reduce(
+                                (m, x) =>
+                                  m +
+                                  Object.values(x.dropped).reduce(
+                                    (d, v) => d + v,
+                                    0,
+                                  ),
+                                0,
+                              ),
+                            0,
+                          ),
+                        )}
+                      </p>
+                      <p class="small">{words.checkLead}</p>
+                      <ul class="campaigns">
+                        {check.files.map((f) => (
+                          <li key={f.name}>
+                            <span class="campaign-name">{f.name}</span>
+                            {f.leftOut > 0 && (
+                              <span class="small">
+                                {words.leftOutFile(f.leftOut)}
+                              </span>
+                            )}
+                            <ul>
+                              {f.speakers.map((x) => (
+                                <li class="small" key={x.label}>
+                                  {x.label}: {words.kept(x.kept)}
+                                  {Object.entries(x.dropped)
+                                    .filter(([, n]) => n > 0)
+                                    .map(
+                                      ([why, n]) =>
+                                        `; ${words.dropped(n, words.droppedReason[why] ?? why)}`,
+                                    )
+                                    .join("")}
+                                </li>
+                              ))}
+                            </ul>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
               </section>
 
               <section class="panel" aria-labelledby="import-dates">
                 <h2 id="import-dates">{words.datesHeading}</h2>
                 <p class="small">{words.datesLead}</p>
+                {order.length > 1 &&
+                  allDates &&
+                  order.some(
+                    (n, i) =>
+                      i > 0 &&
+                      (dates[n] ?? "") < (dates[order[i - 1] as string] ?? ""),
+                  ) && (
+                    <p class="note" role="note">
+                      {words.datesOutOfOrder}
+                    </p>
+                  )}
+                <p class="sr-only" role="status" aria-live="polite">
+                  {moved}
+                </p>
                 <ol class="campaigns">
                   {order.map((name, i) => (
                     <li key={name}>
                       <span class="campaign-name">{name}</span>
-                      <span class="small">{words.position(i + 1, order.length)}</span>
+                      <span class="small">
+                        {words.position(i + 1, order.length)}
+                      </span>
                       <label class="field">
                         {words.dateLabel(name)}
                         <input
@@ -408,13 +573,15 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                           }}
                         />
                       </label>
-                      {guessed[name] && <span class="small">{words.dateGuess}</span>}
+                      {guessed[name] && (
+                        <span class="small">{words.dateGuess}</span>
+                      )}
                       <span class="row">
                         <button
                           type="button"
                           class="button secondary"
                           aria-label={words.moveUp(name)}
-                          disabled={i === 0}
+                          aria-disabled={i === 0}
                           onClick={() => move(name, -1)}
                         >
                           ↑
@@ -423,7 +590,7 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
                           type="button"
                           class="button secondary"
                           aria-label={words.moveDown(name)}
-                          disabled={i === order.length - 1}
+                          aria-disabled={i === order.length - 1}
                           onClick={() => move(name, 1)}
                         >
                           ↓
@@ -436,11 +603,24 @@ export default function Import({ api, path }: { api: AccountApi; path: string })
 
               <section class="panel" aria-labelledby="import-confirm">
                 <h2 id="import-confirm">{words.confirmHeading}</h2>
-                <p>{words.estimate(order.length, preview.estimate.fastCalls)}</p>
+                <p>
+                  {words.estimate(order.length, preview.estimate.fastCalls)}
+                </p>
                 <p class="small">{words.confirmNote}</p>
-                <button type="button" class="button" disabled={busy || !allDates || order.length === 0} onClick={() => void start()}>
+                <button
+                  type="button"
+                  class="button"
+                  disabled={
+                    busy || !allDates || order.length === 0 || check === null
+                  }
+                  onClick={() => void start()}
+                >
                   {busy ? words.working : words.importButton}
                 </button>
+                {check === null && <p class="small">{words.checkFirst}</p>}
+                {check !== null && !allDates && (
+                  <p class="small">{words.needDates}</p>
+                )}
               </section>
             </>
           )}
