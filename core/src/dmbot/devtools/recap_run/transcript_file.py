@@ -30,7 +30,7 @@ from __future__ import annotations
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.audio.script import EMOTION, PERFORMANCE_KIND, Script
 from dmbot.recaps.text import CUE, PERFORMANCE
-from dmbot.transcript.importer import (  # noqa: F401 (the tool and its tests read them from here)
+from dmbot.transcript.importer import (
     DMBOT,
     FORMATS,
     LINE_MS,
@@ -45,6 +45,29 @@ from dmbot.transcript.importer import (  # noqa: F401 (the tool and its tests re
     parse,
 )
 from dmbot.transcript.models import Line
+
+# What the tool and its tests read from here, although the parser lives in the importer now.
+__all__ = [
+    "CONSENT_QUESTION",
+    "DMBOT",
+    "FORMATS",
+    "LINE_MS",
+    "PLAIN",
+    "SPEAKER_BASE",
+    "SRT",
+    "VTT",
+    "Transcript",
+    "TranscriptError",
+    "Utterance",
+    "consent_given",
+    "cue_map",
+    "detect",
+    "dm_id",
+    "lines_of",
+    "parse",
+    "parse_names",
+    "speaker_ids",
+]
 
 
 def speaker_ids(transcript: Transcript) -> dict[str, int]:

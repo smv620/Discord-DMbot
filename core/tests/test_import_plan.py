@@ -30,7 +30,11 @@ DMBOT = """DMbot transcript: Tuesday
 [0:42:30] (DMbot): This is not the table's.
 """
 
-MAPPING = {"Mira (mira_v)": ALICE, "Tomas (tomas#1)": BOB, "Rook": BOTID}
+MAPPING: dict[str, int | str | None] = {
+    "Mira (mira_v)": ALICE,
+    "Tomas (tomas#1)": BOB,
+    "Rook": BOTID,
+}
 
 
 class TheFormats(unittest.TestCase):
@@ -70,10 +74,11 @@ class TheConsentMapping(unittest.TestCase):
         self.assertEqual(plan.left_out, 1)
 
     def test_an_unmapped_or_dropped_speaker_is_dropped_before_anything_is_stored(self) -> None:
-        for mapping in (
+        mappings: list[dict[str, int | str | None]] = [
             {**MAPPING, "Tomas (tomas#1)": ip.DROP},
             {k: v for k, v in MAPPING.items() if k != "Tomas (tomas#1)"},
-        ):
+        ]
+        for mapping in mappings:
             plan = ip.make_plan(importer.parse(CRAIG), mapping, agreed={ALICE, BOB}, bots={BOTID})
             self.assertNotIn(BOB, {line.user_id for line in plan.lines})
             tomas = next(r for r in plan.speakers if r.label.startswith("Tomas"))

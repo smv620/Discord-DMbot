@@ -18,12 +18,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript.cleaner import clean
-from dmbot.transcript.topic_ai import classify
+from dmbot.transcript.topic_ai import Completes, classify
 from dmbot.transcript.topics import GAME, WINDOW_LINES
 
 log = logging.getLogger(__name__)
@@ -84,7 +83,7 @@ class ImportStore:
             cur = await conn.execute(
                 "UPDATE session_imports SET state = 'waiting' WHERE state = 'working'"
             )
-            return cur.rowcount
+            return int(cur.rowcount)
 
     async def rows(self, guild_id: int, session_id: str) -> list[Row]:
         async with self._db.guild(guild_id) as conn:
@@ -129,7 +128,7 @@ class ImportStore:
 
 
 class ImportJob:
-    def __init__(self, store: ImportStore, lookup: Lookup, topic_ai: Any | None) -> None:
+    def __init__(self, store: ImportStore, lookup: Lookup, topic_ai: Completes | None) -> None:
         self.store, self.lookup, self.topic_ai = store, lookup, topic_ai
 
     async def run_round(self, guild_id: int) -> int:
@@ -201,6 +200,9 @@ class ImportJob:
         leaves its lines as game talk: nothing is left out on a guess. Returns the topics and the
         windows and failures left over."""
         out = [GAME] * len(lines)
+        ai = self.topic_ai
+        if ai is None:
+            return out, windows_left, failures
         for start in range(0, len(lines), WINDOW_LINES):
             if windows_left <= 0 or failures >= TOPIC_FAILURES_BEFORE_REST:
                 break
@@ -211,7 +213,7 @@ class ImportJob:
             windows_left -= 1
             try:
                 topics, _reply = await asyncio.wait_for(
-                    classify(self.topic_ai, [t for _, t in sent]), TOPIC_CALL_TIMEOUT_S
+                    classify(ai, [t for _, t in sent]), TOPIC_CALL_TIMEOUT_S
                 )
             except Exception:
                 failures += 1
