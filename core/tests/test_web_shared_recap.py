@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psycopg
 
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -168,13 +170,75 @@ class TheLink(Shared):
     async def test_one_token_finds_one_recap(self) -> None:
         await self.post_it()
         mine = await self.token()
+        # Bob's recap in the other campaign is posted and shared too.
         async with self.db.guild(THURSDAY.id) as conn:
-            await conn.execute("UPDATE recap_jobs SET status = 'posted', decided_at = 5")
-        other = (await self.share("on", self.dm)).json()["path"]
-        self.assertEqual(other, f"/r/{mine}")
-        body = (await self.public.get(f"/recaps/{mine}")).json()
-        self.assertNotIn("campaign", body)
-        self.assertNotIn("guild", body)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted', decided_at = 5, title = 'The Other Lock'"
+                " WHERE campaign_id = %s",
+                (self.two.id,),
+            )
+        theirs = await self.share("on", self.bob)
+        self.assertEqual(theirs.status_code, 404)  # Bob's session names his own recap's ref
+        other_ref = self.other
+        got = await self.bob.post(f"/me/recaps/{other_ref}/share", json={"action": "on"})
+        other = got.json()["path"].removeprefix("/r/")
+        self.assertNotEqual(other, mine)
+        self.assertEqual(
+            (await self.public.get(f"/recaps/{mine}")).json()["title"], "The Silver Lock"
+        )
+        self.assertEqual(
+            (await self.public.get(f"/recaps/{other}")).json()["title"], "The Other Lock"
+        )
+        body = (await self.public.get(f"/recaps/{mine}")).text
+        self.assertNotIn(self.one.id, body)
+        self.assertNotIn(str(THURSDAY.id), body)
+
+    async def test_the_web_role_cannot_read_recaps_by_setting_the_settings_itself(self) -> None:
+        await self.post_it()
+        token = await self.token()
+        async with self.web.anonymous() as conn:
+            await conn.execute("SELECT set_config('dmbot.recap_share_tok', %s, true)", (token,))
+            await conn.execute(
+                "SELECT set_config('dmbot.recap_share_guild', %s, true)", (str(THURSDAY.id),)
+            )
+            await conn.execute(
+                "SELECT set_config('dmbot.recap_share_campaign', %s, true)", (self.one.id,)
+            )
+            cur = await conn.execute("SELECT count(*) AS n FROM recap_jobs")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)  # (the rules hide every row)
+        for table in ("memory_aliases", "memory_entities"):
+            async with self.web.anonymous() as conn:  # and it has no right on the names at all
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    await conn.execute(f"SELECT count(*) FROM {table}")
+
+    async def test_a_name_limited_to_some_players_is_a_secret_too(self) -> None:
+        await self.post_it()
+        token = await self.token()
+        await self.make_secret("Mira")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE memory_aliases SET secret = false")
+            await conn.execute("UPDATE memory_entities SET audience_limited = true")
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+
+    async def test_a_secret_inside_a_longer_confirmed_name_is_that_name(self) -> None:
+        await self.post_it()
+        token = await self.token()
+        await self.make_secret("Greywater")  # the recap says "Greywater Keep"
+        async with self.db.guild(THURSDAY.id) as conn:  # ... which the DM has confirmed
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at) VALUES (%s, %s, %s, 'place', 'Greywater Keep', '',"
+                " 'confirmed', 'dm', 0)",
+                (THURSDAY.id, self.one.id, "f" * 32),
+            )
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                " kind, secret, status, sound_codes, source, created_at) VALUES (%s, %s, %s, %s,"
+                " 'Greywater Keep', 'greywater keep', 'full', false, 'confirmed', '{}', 'dm', 0)",
+                (THURSDAY.id, self.one.id, "b" * 32, "f" * 32),
+            )
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual(got.status_code, 200)  # (the confirmed place is not the secret)
 
     async def test_the_public_read_is_limited_per_address(self) -> None:
         await self.post_it()
@@ -189,7 +253,15 @@ class TheLink(Shared):
 
 
 class TheAudio(Shared):
-    async def make_audio(self) -> None:
+    async def make_audio(self, *, choice: str = "both", current: bool = True) -> None:
+        job = await self.state(self.one.id)
+        digest = text_hash(job.title, job.summary) if current else "0" * 64
+        async with self.db.guild(THURSDAY.id) as conn:  # (set after Post too: the store won't)
+            await conn.execute(
+                "UPDATE recap_jobs SET audio = 'ready', audio_text_hash = %s, audio_choice = %s"
+                " WHERE campaign_id = %s",
+                (digest, choice, self.one.id),
+            )
         for kind in KINDS:
             path = self.files.path(THURSDAY.id, self.one.id, 100, kind)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,8 +285,28 @@ class TheAudio(Shared):
         await self.make_audio()
         token = await self.token()
         kind = KINDS[0]
+        self.assertEqual((await self.public.get(f"/recaps/{token}/audio/{kind}")).status_code, 200)
         await self.make_secret("Mira")
         self.assertEqual((await self.public.get(f"/recaps/{token}/audio/{kind}")).status_code, 404)
+
+    async def test_the_audio_stops_when_the_link_is_turned_off(self) -> None:
+        await self.post_it()
+        await self.make_audio()
+        token = await self.token()
+        await self.share("off")
+        self.assertEqual(
+            (await self.public.get(f"/recaps/{token}/audio/{KINDS[0]}")).status_code, 404
+        )
+
+    async def test_audio_that_is_not_of_this_text_or_not_chosen_is_not_offered(self) -> None:
+        await self.post_it()
+        token = await self.token()
+        for kw in ({"current": False}, {"choice": "text"}):
+            await self.make_audio(**kw)  # type: ignore[arg-type]
+            self.assertEqual((await self.public.get(f"/recaps/{token}")).json()["audio"], {}, kw)
+            self.assertEqual(
+                (await self.public.get(f"/recaps/{token}/audio/{KINDS[0]}")).status_code, 404, kw
+            )
 
     async def test_an_unknown_kind_or_token_is_not_found(self) -> None:
         await self.post_it()

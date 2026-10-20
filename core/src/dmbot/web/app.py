@@ -681,10 +681,14 @@ def create_app(
 
     # The public, read-only link of a posted recap (#2118): no sign-in, the token is the key.
     # Per address, because anyone can call it; the same answer for every way it can fail.
+    # The page itself is strict; the audio has its own, looser one (a player asks for a file in
+    # several ranges). Behind a proxy, settings.client_ip_header must be set or every visitor shares
+    # one address.
     shared_limit = RateLimit(60, count=30)
+    shared_audio_limit = RateLimit(60, count=240)
 
-    def shared_gate(request: Request) -> None:
-        verdict = shared_limit.take(limit_key(client_address(request)))
+    def shared_gate(request: Request, limit: RateLimit = shared_limit) -> None:
+        verdict = limit.take(limit_key(client_address(request)))
         if verdict != "ok":
             raise HTTPException(
                 status_code=429 if verdict == "wait" else 503,
@@ -704,7 +708,7 @@ def create_app(
 
     @app.get("/recaps/{token}/audio/{kind}")
     async def shared_recap_audio(token: str, kind: str, request: Request) -> FileResponse:
-        shared_gate(request)
+        shared_gate(request, shared_audio_limit)
         path = await shared_recaps.audio_for(db, recap_files, token, kind)
         if path is None:
             raise HTTPException(status_code=404, detail="not_found")

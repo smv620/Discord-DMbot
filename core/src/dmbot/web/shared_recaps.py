@@ -20,15 +20,16 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.text import names_a_secret, strip_cues
 
-_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 
 
 async def _find(db: Database, token: str) -> dict[str, Any] | None:
     """The posted recap this token names whose text passes the secret check, else None."""
-    if not _TOKEN.match(token):
+    if not _TOKEN.fullmatch(token):
         return None
     async with db.anonymous() as conn:
         cur = await conn.execute("SELECT dmbot_recap_shared(%s) AS r", (token,))
@@ -41,6 +42,16 @@ async def _find(db: Database, token: str) -> dict[str, Any] | None:
     return found
 
 
+def _audio_ok(found: dict[str, Any]) -> bool:
+    """The audio may be offered only while it is the audio of this very text: made, with audio
+    chosen, and from the title and story as they are now (an edit or a leftover file is not)."""
+    return (
+        found["audio"] == "ready"
+        and found["audioChoice"] in ("voice", "music", "both")
+        and found["audioHash"] == text_hash(found["title"], found["summary"])
+    )
+
+
 async def read_shared(
     db: Database, files: AudioFiles | None, token: str, api_url: str
 ) -> dict[str, Any] | None:
@@ -49,7 +60,7 @@ async def read_shared(
     if found is None:
         return None
     audio: dict[str, str] = {}
-    if files is not None:
+    if files is not None and _audio_ok(found):
         try:
             present = files.present(int(found["guild"]), found["campaign"], int(found["at"]))
         except ValueError:
@@ -72,7 +83,7 @@ async def audio_for(db: Database, files: AudioFiles | None, token: str, kind: st
     if files is None or kind not in KINDS:
         return None
     found = await _find(db, token)
-    if found is None:
+    if found is None or not _audio_ok(found):
         return None
     try:
         path = files.path(int(found["guild"]), found["campaign"], int(found["at"]), kind)

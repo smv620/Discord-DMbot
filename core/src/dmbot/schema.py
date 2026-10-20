@@ -6970,7 +6970,9 @@ MORE_HOMEBREW_KINDS = """
 
 
 RECAP_SHARE = (
-    _setting("dmbot_recap_share_read", "dmbot.recap_share_read", "TEXT")
+    _setting("dmbot_recap_share_tok", "dmbot.recap_share_tok", "TEXT")
+    + _setting("dmbot_recap_share_guild", "dmbot.recap_share_guild", "BIGINT")
+    + _setting("dmbot_recap_share_campaign", "dmbot.recap_share_campaign", "TEXT")
     + """
     -- A public, read-only link for a posted recap (#2118). The token is random (256 bits,
     -- URL-safe, made by the API), stored with the recap, and is the whole key: a link finds one
@@ -6980,20 +6982,25 @@ RECAP_SHARE = (
 
     -- The public read has no signed-in person and no server set, so the function that serves it
     -- needs a way past the row-level rules on the three tables it reads (the recap, and the names
-    -- for the secret check): a read-only policy TO the role that owns the function (the one running
-    -- this migration), open only while the function has set its own setting. Never the website's
-    -- role, which could otherwise set the setting itself and read every recap.
+    -- for the secret check). Each is a read-only policy TO the role that owns the function (the
+    -- one running this migration) and tied to what the function itself sets: the recap to the
+    -- token it was given, the names to the one recap's server and campaign it then found. Never the
+    -- website's role: even if it set these settings itself, the policy is not for it, and a
+    -- function that runs as the owner sees only that one recap and its campaign's names.
     DO $do$
     BEGIN
         EXECUTE format(
             'CREATE POLICY recap_share_read ON recap_jobs FOR SELECT TO %I
-                USING (dmbot_recap_share_read() = ''on'')', current_user);
+                USING (share_token IS NOT NULL AND share_token = dmbot_recap_share_tok())',
+            current_user);
         EXECUTE format(
             'CREATE POLICY recap_share_read ON memory_aliases FOR SELECT TO %I
-                USING (dmbot_recap_share_read() = ''on'')', current_user);
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND campaign_id = dmbot_recap_share_campaign())', current_user);
         EXECUTE format(
             'CREATE POLICY recap_share_read ON memory_entities FOR SELECT TO %I
-                USING (dmbot_recap_share_read() = ''on'')', current_user);
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND campaign_id = dmbot_recap_share_campaign())', current_user);
     END
     $do$;
 
@@ -7006,20 +7013,22 @@ RECAP_SHARE = (
     DECLARE
         job recap_jobs%ROWTYPE;
         out JSONB;
-        before TEXT := COALESCE(current_setting('dmbot.recap_share_read', true), '');
     BEGIN
         IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
             RETURN NULL;
         END IF;
-        PERFORM set_config('dmbot.recap_share_read', 'on', true);
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
         SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND status = 'posted';
         IF NOT FOUND THEN
-            PERFORM set_config('dmbot.recap_share_read', before, true);
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
             RETURN NULL;
         END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
         out := jsonb_build_object(
             'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
             'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
             'secret', COALESCE((
                 SELECT jsonb_agg(DISTINCT a.text)
                 FROM memory_aliases a JOIN memory_entities e
@@ -7036,7 +7045,9 @@ RECAP_SHARE = (
                   AND NOT a.secret AND NOT e.audience_limited
                   AND a.status = 'confirmed' AND e.status = 'confirmed'
                   AND e.type <> 'person'), '[]'::jsonb));
-        PERFORM set_config('dmbot.recap_share_read', before, true);
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
         RETURN out;
     END
     $fn$;
@@ -7069,6 +7080,9 @@ RECAP_SHARE = (
         END IF;
         IF job.status <> 'posted' THEN
             RETURN jsonb_build_object('status', 'not_posted', 'token', NULL);
+        END IF;
+        IF (act = 'new' OR job.share_token IS NULL) AND tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;  -- the API always passes a good one
         END IF;
         IF act = 'new' OR job.share_token IS NULL THEN
             UPDATE recap_jobs SET share_token = tok
