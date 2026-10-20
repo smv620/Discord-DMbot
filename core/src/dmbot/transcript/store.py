@@ -255,11 +255,13 @@ class TranscriptStore:
             return [_session(r) for r in await cur.fetchall()]
 
     async def next_session_start(self, guild_id: int, campaign_id: str, after: int) -> int | None:
-        """When the campaign's first session starting after `after` began, or None."""
+        """When the campaign's first session with lines that started after `after` began, or None.
+        A session row is written before anyone speaks (and the one being played now has few
+        lines), so only one with lines ends the window (#2169)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT min(started_at) AS at FROM transcript_sessions"
-                " WHERE campaign_id = %s AND started_at > %s",
+                " WHERE campaign_id = %s AND started_at > %s AND line_count > 0",
                 (campaign_id, after),
             )
             row = await cur.fetchone()

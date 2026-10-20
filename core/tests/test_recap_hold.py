@@ -121,13 +121,16 @@ class TheStore(DatabaseTest):
         self.assertEqual(len(await self.holds.held(GUILD)), 2)
 
     async def test_a_hold_made_while_the_server_is_read_is_not_hidden(self) -> None:
-        real = self.holds._mark_empty
-        self.assertEqual(await self.holds.held(GUILD), [])
-        self.holds._empty.discard(GUILD)
-        seen = self.holds._made.get(GUILD, 0)
-        await self.hold_it()
-        real(GUILD, seen)  # the read that began before the hold finishes now
-        self.assertEqual(len(await self.holds.held(GUILD)), 1)
+        real = self.holds._read
+
+        async def read_then_hold(guild_id: int) -> Any:
+            rows = await real(guild_id)  # the read finds nothing ...
+            await self.hold_it()  # ... and a hold commits before the read's mark is made
+            return rows
+
+        with patch.object(self.holds, "_read", read_then_hold):
+            self.assertEqual(await self.holds.held(GUILD), [])  # this read did not see it
+        self.assertEqual(len(await self.holds.held(GUILD)), 1)  # but the next one asks again
 
     async def test_two_releases_at_once_make_one_job(self) -> None:
         await self.hold_it()
@@ -171,6 +174,8 @@ def fake_bot(
         hold=AsyncMock(return_value=True),
         held=AsyncMock(return_value=[]),
         release=AsyncMock(return_value=hold.QUEUED),
+        mark_asked=AsyncMock(return_value=True),
+        unmark_asked=AsyncMock(),
         get=AsyncMock(return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, 1)),
     )
     bot = SimpleNamespace(
@@ -395,7 +400,18 @@ class EachRound(IsolatedAsyncioTestCase):
         bot.post = AsyncMock(side_effect=[False, True])  # the question fails, the line works
         with patch("dmbot.bot.time.time", return_value=1_000 + hold.QUIET_WAIT_S + 1):
             await bot.release_recap_holds(GUILD)
+        bot.recap_holds.unmark_asked.assert_awaited_once_with(GUILD, "c" * 32, AT)  # claim back
         bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
+
+    async def test_the_round_and_the_recheck_never_both_ask(self) -> None:
+        bot = fake_bot(proposed=2)
+        silent = hold.Hold("c" * 32, AT, "s1", DM, 66, 1_000, asked=False)
+        bot.recap_holds.held = AsyncMock(return_value=[silent])
+        bot.recap_holds.mark_asked = AsyncMock(return_value=False)  # the other one claimed it
+        with patch("dmbot.bot.time.time", return_value=1_000 + hold.QUIET_WAIT_S + 1):
+            await bot.release_recap_holds(GUILD)
+        bot.post.assert_not_awaited()
+        bot.recap_holds.release.assert_not_awaited()
 
     async def test_the_recheck_has_the_same_gates_as_every_round(self) -> None:
         t = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, transcript_session_id="s1")

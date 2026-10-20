@@ -7716,7 +7716,9 @@ class DMBot(commands.AutoShardedBot):
         """One held recap, the same rules whether the round or the end of the extractor asks: a
         campaign that is gone or has recaps off drops it; a silent hold waits for the extractor
         (`extractor_done`, or `QUIET_WAIT_S` having passed); questions open ask the DM once; none
-        open writes the recap, if the plan allows it."""
+        open writes the recap, if the plan allows it. A question that cannot be posted is not
+        waited on: the recap is written instead; if the plan cannot be checked at that moment the
+        hold stays, silent, and the next round tries again."""
         campaign = await self.campaigns.get(gid, held.campaign_id)
         if campaign is None or not campaign.recaps_text:  # the DM's own choice: no recap
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
@@ -7734,15 +7736,20 @@ class DMBot(commands.AutoShardedBot):
             if waiting:
                 if held.asked:
                     return
+                # Claim first, so the round and the end of the extractor never both ask.
+                if not await store.mark_asked(gid, held.campaign_id, held.session_at):
+                    return  # the other one is asking
                 if await self.post(
                     held.channel_id,
                     recap_hold.question_text(waiting),
                     view=hold_view(held.campaign_id, held.session_at),
                 ):
-                    await store.mark_asked(gid, held.campaign_id, held.session_at)
                     log.info("Recap: held for %d name question(s)", waiting)  # a count
                     return
-                # Not told: a wait nobody knows about is no wait. Fall through and write it.
+                # Not told: a wait nobody knows about is no wait. Give the claim back and fall
+                # through to write it (if the plan cannot be checked now, the hold stays silent
+                # and the next round asks again).
+                await store.unmark_asked(gid, held.campaign_id, held.session_at)
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:

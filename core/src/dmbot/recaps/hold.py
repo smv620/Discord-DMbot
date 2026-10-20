@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.db import Database
 
@@ -93,6 +94,14 @@ class HoldStore:
             self._empty.discard(guild_id)
         return made
 
+    async def _read(self, guild_id: int) -> list[dict[str, Any]]:
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
+                " asked FROM recap_holds ORDER BY created_at, session_at"
+            )
+            return list(await cur.fetchall())
+
     def _mark_empty(self, guild_id: int, seen: int) -> None:
         """Remember a server holds nothing, unless a hold was made while the read was running."""
         if self._made.get(guild_id, 0) == seen:
@@ -108,18 +117,21 @@ class HoldStore:
             )
             return bool(cur.rowcount)
 
+    async def unmark_asked(self, guild_id: int, campaign_id: str, session_at: int) -> None:
+        """Give back a claim to ask the DM when the question could not be posted."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_holds SET asked = FALSE WHERE campaign_id = %s AND session_at = %s",
+                (campaign_id, session_at),
+            )
+
     async def held(self, guild_id: int) -> list[Hold]:
         """Every held recap in the server, oldest first. A server last seen with none is not asked
         again until a hold is made in it (the round runs every minute for every server)."""
         if guild_id in self._empty:
             return []
         seen = self._made.get(guild_id, 0)
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
-                " asked FROM recap_holds ORDER BY created_at, session_at"
-            )
-            rows = await cur.fetchall()
+        rows = await self._read(guild_id)
         if not rows:
             self._mark_empty(guild_id, seen)
         return [
