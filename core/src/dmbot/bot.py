@@ -240,6 +240,7 @@ from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
+from dmbot.memory.secret_reveal import RevealSession, revealed_in
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -387,6 +388,8 @@ from dmbot.ui.secret_aloud import (
     question_text,
     secret_aloud_view,
 )
+from dmbot.ui.secret_reveal import RevealButton, reveal_view
+from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
@@ -688,6 +691,7 @@ class Table:
     # The stored transcript (#41, #125): this session's row, and lines not saved yet.
     started_at: int = 0  # Unix seconds; the same after a restart
     live_heads_up: LiveSession = field(default_factory=LiveSession)  # #2068, for this session
+    reveal: RevealSession = field(default_factory=RevealSession)  # #2088, for this session
     # Listening minutes already written to the hours meter (#437). None until first read:
     # the stored number, so a restart counts none twice. `meter_base` is that number and
     # `meter_since` when this process began listening, so time while DMbot was down is
@@ -1272,6 +1276,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
+        self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
@@ -4292,6 +4297,11 @@ class DMBot(commands.AutoShardedBot):
                 self._note_house_rule(table, user_id, line)
         except Exception:
             log.exception("House rules by voice: couldn't look at a line")
+        try:  # a DM saying one of their secret names: ask at once if it is revealed now (#2088)
+            if self.settings.secret_reveal_ask and not held and table.is_dm(user_id):
+                self._track(self._reveal_ask(table, user_id, line), "secret-reveal-ask")
+        except Exception:
+            log.exception("Secret reveal: couldn't look at a line")
         if self.clocks is not None:
             if typed and table.clock_waiting >= table_chat.CLOCK_WAITING_MAX:
                 return  # typed flood: skip this clock phrase, never speech (#1154)
@@ -4305,6 +4315,65 @@ class DMBot(commands.AutoShardedBot):
                 task.add_done_callback(
                     lambda _t: setattr(table, "clock_waiting", table.clock_waiting - 1)
                 )
+
+    async def _reveal_ask(self, table: Table, speaker: int, line: str) -> None:
+        """The DM just said one of their secret names (#2088, docs/PLAN.md, "When a secret is
+        revealed"): ask them at once, once for each name in a session, whether it is revealed now.
+        Code only, no AI. Never on Quiet (the after-session question covers it then), only while
+        the DM is recorded and the session runs, and nothing is written without their press. On the
+        DM screen when only the DM can read it; as a private message to the DM when the players
+        may peek at it. A failure costs the question, never the line. The log gets no name."""
+        gid, cid = table.guild_id, table.campaign_id
+        if (
+            self.memory is None
+            or self.lookup is None
+            or cid is None
+            or self.tables.get(gid) is not table
+            or not screen_levels.allows(table.screen_level, screen_levels.QUESTION)
+            or not self.consent.has_consent(gid, speaker)
+        ):
+            return
+        reveal = table.reveal
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                now = time.monotonic()
+                if not reveal.fresh(now):  # the secret names change rarely: read once a minute
+                    reveal.names, reveal.read_at = await secret_names(self.memory, gid, cid), now
+                if not reveal.names:
+                    return
+                known = await self.lookup.get(gid, cid)
+                allowed = [
+                    n.text for n in known.names if n.confirmed and not n.secret and not n.person
+                ]
+                found = revealed_in(line, reveal.names, allowed, reveal)
+                if found is None:
+                    return
+                campaign = await self.campaigns.get(gid, cid)
+                posted = False
+                try:
+                    if (
+                        campaign is None
+                        or speaker not in campaign.dm_user_ids
+                        or not self.consent.has_consent(gid, speaker)
+                        or self.tables.get(gid) is not table
+                        or table.campaign_id != cid
+                        or not screen_levels.allows(table.screen_level, screen_levels.QUESTION)
+                    ):
+                        return
+                    alone = campaign.dm_screen_visibility != "private"
+                    text = reveal_question(found.text, found.entries, private=alone)
+                    view = reveal_view(cid, found.alias_id, gid)
+                    if alone:  # players may peek at the screen: the DM's own messages, not there
+                        posted = await self.sidebar_send_dm(speaker, text, view) == "sent"
+                    else:
+                        posted = bool(await self.post(table.screen_channel_id, text, view=view))
+                finally:
+                    if not posted:
+                        reveal.asked.discard(found.key)  # nothing was said: it may ask again
+                if posted:
+                    log.info("Secret reveal: asked")  # no name, no words
+            except Exception:
+                log.exception("The secret reveal question failed")
 
     async def _remember_style(self, table: Table) -> None:
         """Keep the initiative style a DM's words set, for the next session (#1784). Written only
