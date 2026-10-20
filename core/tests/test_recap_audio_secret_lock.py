@@ -31,29 +31,30 @@ class ShortSecretsInOrdinaryWords(unittest.TestCase):
         for text in (
             "They stood there. Aegis shone on the wall.",  # "there aegis" runs through "rae"
             "A brave rider crossed the raeburn road.",
-            "The caravan paused near the vexing bridge.",  # "vex" begins an ordinary word
+            "The caravan paused near the vexation bridge.",  # "vex" begins an ordinary word
         ):
             self.assertEqual(refused(text, [RAE, VEX]), "", text)
 
     def test_the_name_as_a_word_its_possessive_and_plural_do_block(self) -> None:
         self.assertEqual(refused("Rae walked in.", [RAE]), "whole-name")
         self.assertEqual(refused("It was Vex's blade.", [VEX]), "whole-name")
-        self.assertEqual(refused("The Vexes arrived.", [VEX]), "whole-name")
+        self.assertEqual(refused("The Vexs arrived.", [VEX]), "whole-name")  # (s on any word)
+        self.assertEqual(refused("The Vexes arrived.", [VEX]), "")  # -es needs five letters
 
     def test_hyphen_and_spaced_spellings_block(self) -> None:
         self.assertEqual(refused("Dun-Varra rose.", [DUN]), "whole-name")
         self.assertEqual(refused("Dun Varra's keep.", [DUN]), "whole-name")
-        self.assertEqual(refused("Then Varra spoke.", [DUN]), "word")  # one word of it
+        self.assertEqual(refused("Then Varra spoke.", [DUN]), "")  # one word of it: not the name
 
     def test_a_long_secret_run_together_still_blocks_but_only_at_a_word_start(self) -> None:
         self.assertEqual(refused("SilasVane rode on.", [SILAS]), "run-together")
         self.assertEqual(refused("Her friend, a smith named silas-vane.", [SILAS]), "whole-name")
         # inside another word, or across a gap that is not the name: not the name
-        self.assertEqual(refused("The pinsilas vane turned.", [SILAS]), "word")  # the word "vane"
+        self.assertEqual(refused("The pinsilas vane turned.", [SILAS]), "")
         self.assertEqual(refused("The pinsilasvane turned.", [SILAS]), "")
 
     def test_a_secret_word_a_confirmed_name_also_uses_is_not_blocked(self) -> None:
-        # (the recap text's own rule: "Silas" is a confirmed name too, so "Silas" alone is fine)
+        # ("Silas" alone is not the secret name "Silas Vane" at all, #2087)
         self.assertEqual(refused("Silas laughed.", [SILAS], allowed=["Silas Brook"]), "")
         self.assertEqual(
             refused("Silas Vane laughed.", [SILAS], allowed=["Silas Brook"]), "whole-name"
@@ -75,7 +76,8 @@ class SpellingsOfShortNames(unittest.TestCase):
         self.assertEqual(refused("There Aegis stood.", ["Rae", "Aegis"]), "whole-name")
 
     def test_a_short_secret_joined_to_other_letters_is_the_accepted_gap(self) -> None:
-        self.assertEqual(refused("The vexing road.", [VEX]), "")
+        self.assertEqual(refused("The vexation road.", [VEX]), "")
+        self.assertEqual(refused("The vexing road.", [VEX]), "")  # (endings need five letters)
 
 
 class TheTwoLocksAgree(unittest.TestCase):
@@ -96,7 +98,7 @@ class TheTwoLocksAgree(unittest.TestCase):
                 self.assertEqual(refused(text, self.SECRETS), "", text)
 
     def test_a_text_the_recap_check_refuses_is_refused_by_the_audio_with_its_rule(self) -> None:
-        for text in ("Vex's axe.", "Dun-Varra smiled.", "Then Varra spoke."):
+        for text in ("Vex's axe.", "Dun-Varra smiled.", "Then Dun Varra spoke."):
             rule = secret_rule(text, self.SECRETS, [])
             self.assertTrue(rule, text)
             self.assertEqual(refused(text, self.SECRETS), rule, text)
@@ -104,7 +106,7 @@ class TheTwoLocksAgree(unittest.TestCase):
     def test_the_rule_is_a_fixed_word_and_never_the_name(self) -> None:
         for text, secret in (("Rae spoke.", [RAE]), ("SilasVane rode.", [SILAS])):
             rule = refused(text, secret)
-            self.assertIn(rule, ("whole-name", "word", "run-together"))
+            self.assertIn(rule, ("whole-name", "run-together"))
             try:
                 script.build("T", None, text, secret_names=secret)
             except script.SecretInScript as exc:

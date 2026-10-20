@@ -654,6 +654,27 @@ class TheRealSecretCheck(unittest.TestCase):
         for words in ("the hooded stranger waits", "then I met Silas Vane today", "silas vane"):
             self.assertTrue(text_names_a_secret(self.names(), words), words)
 
+    def test_the_shared_matcher_catches_a_title_swap_a_plural_and_run_together(self) -> None:
+        """#2087: "Mister White" for the secret "Mr. White", "the White Deaths" for "The White
+        Death", and the name run together are secret names too, in a suggested line."""
+        from dmbot.transcript.cleaner import text_names_a_secret
+
+        lookup = names_with(
+            more_aliases=(
+                alias(BELLEROS, "Mr. White", secret=True),
+                alias(BELLEROS, "The White Death", secret=True),
+            )
+        )
+        for words in (
+            "I met Mister White today",
+            "the White Deaths came",
+            "WhiteDeath rides",
+            "mr white's cellar",
+        ):
+            self.assertTrue(text_names_a_secret(lookup, words), words)
+        for words in ("Mr. Weaton waits", "an icy death", "white lady"):
+            self.assertFalse(text_names_a_secret(lookup, words), words)
+
     def test_a_sound_alike_of_a_secret_name_inside_a_longer_line(self) -> None:
         from dmbot.transcript.cleaner import text_names_a_secret
 

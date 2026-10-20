@@ -793,7 +793,8 @@ class Working(Base):
             nonlocal loads
             loads += 1
             if loads >= 4:  # partway through: the DM has since made a name secret
-                return AudioInputs(["Greywater"], self.spoken)
+                # ("Greywater" would not do: it stands inside the confirmed "Greywater Keep")
+                return AudioInputs(["Mira"], self.spoken)
             return await original(gid, cid, job)
 
         worker._load = load
