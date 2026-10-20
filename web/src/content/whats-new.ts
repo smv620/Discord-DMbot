@@ -205,6 +205,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-20",
+    title: "Share a recap with a link",
+    what: "Press 📜 Share a recap on your DM screen (or in ⚙️ Settings → Recaps), pick a recap, then copy its link or send it to the players in your chat channel. Anyone with the link can read the story, no sign-in, and you can turn the link off or make a new one on your recap page. A recap you haven't posted yet is posted when you share it, after the same checks as Post. Only game masters see the button.",
+    reason: "In review (#2132 and its Discord buttons); held until merged and dev1 deploys it.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",

@@ -22,6 +22,7 @@ from dmbot.recaps.notify import page_link
 from dmbot.ui import recap_feedback
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.recap_share import ShareButton
 
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this recap any more. Nothing was changed. Check your recap page."
@@ -80,7 +81,7 @@ def ready_text(title: str, link: str) -> str:
     where = f"\nWant to change it first? Edit it here: {link}" if link else ""
     return (
         f"📜 Recap ready: **{discord.utils.escape_markdown(title)}**\n"
-        f"Nothing goes to the players until you press Post.{where}"
+        f"Nothing goes to the players until you post it.{where}"
     )
 
 
@@ -286,10 +287,16 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         )
 
 
-def ready_view(campaign_id: str, session_at: int) -> discord.ui.View:
+def ready_view(campaign_id: str, session_at: int, site: str = "") -> discord.ui.View:
+    """The two buttons left on a new recap line (#2118): the recap list on the website, where
+    reading, editing, approving and posting now happen, and Share a recap. The older buttons
+    (read, approve, post, skip, tell) still work on messages already sent, so nothing breaks."""
     view = discord.ui.View(timeout=None)
-    for act in ("read", "approve", "post", "drop", "tell"):
-        view.add_item(RecapButton(act, campaign_id, session_at))
+    if site:
+        view.add_item(
+            discord.ui.Button(label="Recaps", emoji="📜", url=f"{site.rstrip('/')}/account/recaps")
+        )
+    view.add_item(ShareButton(campaign_id))
     return view
 
 

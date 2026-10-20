@@ -266,7 +266,7 @@ from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
-from dmbot.recaps.text import names_a_secret
+from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, retire_channels
 from dmbot.rules import house_voice
@@ -388,6 +388,7 @@ from dmbot.ui.names import (
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
+from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -1295,6 +1296,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
@@ -2214,7 +2216,7 @@ class DMBot(commands.AutoShardedBot):
                         table.screen_channel_id,
                         f"📜 Last session's recap is still waiting: **{shown}**. "
                         "Nothing has gone to the players.",
-                        view=ready_view(cid, session_at),
+                        view=ready_view(cid, session_at, self.settings.site_url),
                         remember=("recap", cid, session_at),
                     )
             except Exception:
@@ -7647,6 +7649,46 @@ class DMBot(commands.AutoShardedBot):
         log.info("Recap approval: %d problem(s)", len(problems))
         return problems
 
+    async def recap_share_link(
+        self, campaign: Campaign, session_at: int, *, new: bool = False
+    ) -> tuple[str | None, str]:
+        """The public link of a recap for "Share a recap" (#2118): (token, ""), or (None, why in
+        plain words). A recap not posted yet is posted first, the same move and checks as Post
+        (its approval, the secret names, people still recorded, all read again); a posted one has
+        the secret and people checks read again before its link is handed out. The token is a
+        secret link: it is never logged."""
+        store = self.recaps
+        if store is None:
+            return None, "Recaps aren't available right now. Try again in a minute."
+        gid, cid = campaign.guild_id, campaign.id
+        job = await store.get(gid, cid, session_at)
+        if job is None or job.state != "ready":
+            return None, "This recap isn't ready yet. Try again in a minute."
+        if job.status == "draft":
+            if not job.approved:  # a draft that was never approved is never shared
+                return None, "Approve the text on your recap page first. Nothing was shared."
+            if not await store.decide(gid, cid, session_at, "post"):
+                return None, "This recap was already posted or skipped, so nothing was changed."
+            await self.post_recaps(gid)  # its own checks; a failed one puts it back as a draft
+            job = await store.get(gid, cid, session_at)
+            if job is None or job.status != "posted":
+                why = (job.last_error if job is not None else "") or "Something stopped it."
+                return None, f"Not posted: {why} Nothing was shared."
+        elif job.status != "posted":
+            return None, "This recap was skipped, so it can't be shared."
+        secrets = await self.recap_secret_names(campaign)
+        if secrets is None:
+            return None, "DMbot couldn't check your secret names just now. Try again."
+        text = "\n".join([job.title, strip_cues(job.summary), *job.housekeeping])
+        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
+            return None, "It names something you keep secret, so it can't be shared."
+        if not set(job.speakers) <= set(await self.consent.consenting(gid)):
+            return None, "A player stopped being recorded since this was written. Nothing shared."
+        token = await store.share_token(gid, cid, session_at, new=new)
+        if token is None:
+            return None, "This recap isn't posted, so it can't be shared."
+        return token, ""
+
     async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:
         """Whether the audio is to be made for a recap that has just become ready: the switch,
         the key and voice, and a plan that includes spoken recaps (closed when it can't be
@@ -7763,7 +7805,7 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id,
                     ready_text(job.title, link),
-                    view=ready_view(cid, job.session_at),
+                    view=ready_view(cid, job.session_at, self.settings.site_url),
                     remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:

@@ -269,11 +269,17 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         interaction.response.edit_message.assert_not_awaited()
 
     def test_the_views_carry_ids_that_survive_a_restart(self) -> None:
-        ids = [cast(Any, i).custom_id for i in ready_view(CID, AT).children]
-        self.assertEqual(
-            ids,
+        old = [RecapButton(a, CID, AT) for a in ("read", "approve", "post", "drop", "tell")]
+        self.assertEqual(  # the old buttons still answer on messages already sent (#2118)
+            [b.item.custom_id for b in old],
             [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
         )
+        new = ready_view(CID, AT, "https://site.example.com").children
+        self.assertEqual(
+            [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new],
+            [("Recaps", "https://site.example.com/account/recaps"), ("Share a recap", None)],
+        )
+        self.assertEqual(cast(Any, new[1]).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
         longest = f"dmbot:recap:post:{CID}:{10**11}"
         self.assertLessEqual(len(longest), 100)
@@ -283,7 +289,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     def test_the_words(self) -> None:
         text = ready_text("The *Silver* Lock", "https://site.example.com/r")
         self.assertIn("Recap ready: **The \\*Silver\\* Lock**", text)
-        self.assertIn("Nothing goes to the players until you press Post.", text)
+        self.assertIn("Nothing goes to the players until you post it.", text)
         self.assertIn("Edit it here: https://site.example.com/r", text)
         self.assertNotIn("Edit it here", ready_text("T", ""))
         self.assertIn("Post it to the table now?", ASK)
