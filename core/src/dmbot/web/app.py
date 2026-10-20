@@ -68,6 +68,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
+from dmbot.web.recap_requests import read_instructions, rewrite, send_instructions
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -563,6 +564,7 @@ def create_app(
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
+        "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -613,6 +615,54 @@ def create_app(
                 return JSONResponse(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
+    # polled by the page. The words are never logged.
+    instructions_limit = RateLimit(60, count=12)
+
+    @app.post("/me/recaps/{ref}/instructions", status_code=202)
+    async def me_recap_instructions(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if instructions_limit.take(f"instructions:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > 8 * 1024:
+            raise HTTPException(status_code=413, detail="too_big")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await send_instructions(
+                db, session, ref, body.get("text") if isinstance(body, dict) else None
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/instructions/{request_id}")
+    async def me_recap_instructions_state(
+        ref: str, request_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_instructions(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/rewrite")
+    async def me_recap_rewrite(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await rewrite(db, session, ref, body)
+        except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

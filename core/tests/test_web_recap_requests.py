@@ -1,0 +1,266 @@
+"""What a DM types on the recap page (#2113): queued by the website's doors, sorted by the bot's
+loop, polled, and "Rewrite with these". Invented fixtures only."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+from unittest.mock import AsyncMock
+
+from dmbot.recaps import requests as rq
+from dmbot.recaps.feedback import Sorted
+from dmbot.recaps.store import MAX_TRIES
+from dmbot.web import recap_requests as web
+from dmbot.web import sessions
+from dmbot.web.recaps import RecapError, read_recap
+from tests import recap_fixtures as fx
+from tests.test_recap_web import BOB, NOW, THURSDAY, Base
+
+POINTS = Sorted(
+    style=("Shorter, please.",),
+    corrections=("Mira did not draw her blade.",),
+    replies=("DMbot doesn't invent story.",),
+)
+
+
+class WithRequests(Base):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.requests = rq.RequestStore(self.db)
+
+    async def send(self, text: str = "Mira did not draw her blade.") -> str:
+        got = await web.send_instructions(self.web, self.session, self.ref, text)
+        return str(got["requestId"])
+
+    async def answered(self, points: Sorted = POINTS) -> str:
+        rid = await self.send()
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None and request.id == rid
+        await self.requests.finish(THURSDAY.id, rid, answer=rq.answer_of(points))
+        return rid
+
+    async def code(self, call: Any) -> str:
+        with self.assertRaises(RecapError) as err:
+            await call
+        return err.exception.code
+
+
+class TheQueue(WithRequests):
+    async def test_the_words_are_queued_and_nothing_else_changes(self) -> None:
+        before = await self.state(self.one.id)
+        rid = await self.send()
+        self.assertRegex(rid, r"^[0-9a-f]{32}$")
+        self.assertEqual(
+            await web.read_instructions(self.web, self.session, self.ref, rid), {"state": "waiting"}
+        )
+        after = await self.state(self.one.id)
+        self.assertEqual((after.tries, after.corrections), (before.tries, before.corrections))
+
+    async def test_the_limits_and_the_refusals(self) -> None:
+        for bad in ("", "   ", None, 7):
+            self.assertEqual(
+                await self.code(web.send_instructions(self.web, self.session, self.ref, bad)),
+                "bad_text",
+            )
+        self.assertEqual(
+            await self.code(web.send_instructions(self.web, self.session, self.ref, "x" * 1001)),
+            "too_big",
+        )
+        for _ in range(3):
+            await self.send()
+        self.assertEqual(await self.code(self.send()), "too_soon")  # three waiting is the limit
+
+    async def test_a_recap_that_is_posted_or_skipped_takes_no_notes(self) -> None:
+        await self.store.decide(THURSDAY.id, self.one.id, 100, "drop")
+        self.assertEqual(await self.code(self.send()), "not_editable")
+
+    async def test_a_person_who_is_not_a_dm_of_the_campaign_is_told_nothing(self) -> None:
+        bob_token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob = await sessions.find(self.web, bob_token, now=NOW)
+        assert bob is not None
+        self.assertEqual(
+            await self.code(web.send_instructions(self.web, bob, self.ref, "hello")), "not_found"
+        )
+        rid = await self.send()
+        self.assertEqual(
+            await self.code(web.read_instructions(self.web, bob, self.ref, rid)), "not_found"
+        )
+
+    async def test_an_odd_request_id_is_not_found(self) -> None:
+        for odd in ("", "x", "F" * 32, None, "a" * 33):
+            self.assertEqual(
+                await self.code(web.read_instructions(self.web, self.session, self.ref, odd)),
+                "not_found",
+            )
+
+
+class TheBot(WithRequests):
+    async def work(self, gate: Any = None, sort: Any = None) -> str:
+        await self.send()
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None
+        return await rq.run_one(
+            self.requests,
+            THURSDAY.id,
+            request,
+            gate=gate or AsyncMock(return_value=None),
+            sort=sort or AsyncMock(return_value=POINTS),
+        )
+
+    async def test_the_sorted_points_come_back_with_ids_and_the_plain_reply(self) -> None:
+        self.assertEqual(await self.work(), "done")
+        rid = await self.latest()
+        got = await web.read_instructions(self.web, self.session, self.ref, rid)
+        self.assertEqual(got["state"], "done")
+        self.assertEqual(
+            got["points"],
+            {
+                "corrections": [{"id": "c1", "text": "Mira did not draw her blade."}],
+                "style": [{"id": "s1", "text": "Shorter, please."}],
+                "replies": ["DMbot doesn't invent story."],
+            },
+        )
+
+    async def latest(self) -> str:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT id FROM recap_requests ORDER BY created_at DESC")
+            row = await cur.fetchone()
+        assert row is not None
+        return str(row["id"])
+
+    async def test_a_gate_that_says_no_asks_the_ai_nothing(self) -> None:
+        sort = AsyncMock()
+        self.assertEqual(
+            await self.work(gate=AsyncMock(return_value=rq.TOO_SOON), sort=sort), "too_soon"
+        )
+        sort.assert_not_awaited()
+        got = await web.read_instructions(self.web, self.session, self.ref, await self.latest())
+        self.assertEqual(got, {"state": "failed", "error": "too_soon"})
+
+    async def test_a_sort_that_fails_or_raises_is_failed_not_stuck(self) -> None:
+        self.assertEqual(await self.work(sort=AsyncMock(return_value=None)), "sort_failed")
+        self.assertEqual(
+            await self.work(sort=AsyncMock(side_effect=RuntimeError("db secret words"))),
+            "sort_failed",
+        )
+        got = await web.read_instructions(self.web, self.session, self.ref, await self.latest())
+        self.assertEqual(got["state"], "failed")
+
+    async def test_the_words_are_never_logged(self) -> None:
+        with (
+            self.assertNoLogs(level=logging.DEBUG)
+            if False
+            else self.assertLogs("dmbot.recaps.requests", level="WARNING") as logs
+        ):
+            await self.work(
+                sort=AsyncMock(side_effect=RuntimeError("Mira did not draw her blade."))
+            )
+        self.assertNotIn("Mira", " ".join(logs.output))
+
+    async def test_a_stalled_claim_is_taken_again_and_old_rows_are_swept(self) -> None:
+        await self.send()
+        first = await self.requests.claim_next(THURSDAY.id)
+        assert first is not None
+        self.assertIsNone(await self.requests.claim_next(THURSDAY.id))  # held by the first
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET claimed_at = 1")
+        again = await self.requests.claim_next(THURSDAY.id)
+        assert again is not None and again.id == first.id
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET created_at = 1")
+        self.assertEqual(await self.requests.sweep(THURSDAY.id), 1)
+
+
+class TheRewrite(WithRequests):
+    async def test_the_kept_points_queue_a_try_clear_the_approval_and_save_the_notes(self) -> None:
+        await self.store.approve(
+            THURSDAY.id, self.one.id, 100, fx.ALICE, "text", expected=await self.hash()
+        )
+        rid = await self.answered()
+        got = await web.rewrite(
+            self.web,
+            self.session,
+            self.ref,
+            {"requestId": rid, "corrections": ["c1"], "style": ["s1"]},
+        )
+        self.assertTrue(got["needsApproval"])
+        self.assertEqual(got["triesLeft"], MAX_TRIES - 1)
+        job = await self.state(self.one.id)
+        self.assertEqual(
+            (job.state, job.tries, job.approved_by, job.audio_choice), ("queued", 1, 0, "")
+        )
+        self.assertEqual(job.corrections, ("Mira did not draw her blade.",))
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT text FROM recap_style_notes")
+            self.assertEqual([r["text"] for r in await cur.fetchall()], ["Shorter, please."])
+            cur = await conn.execute("SELECT count(*) AS n FROM recap_requests")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # the request is used up
+
+    async def hash(self) -> str:
+        from dmbot.recaps.approval import text_hash
+
+        job = await self.state(self.one.id)
+        return text_hash(job.title, job.summary)
+
+    async def test_only_what_the_dm_kept_and_only_ids_that_were_offered(self) -> None:
+        rid = await self.answered()
+        for body in (
+            {"requestId": rid, "corrections": ["c9"]},
+            {"requestId": rid, "style": ["c1"]},
+            {"requestId": rid},
+            {"requestId": rid, "corrections": []},
+            {"requestId": rid, "corrections": "c1"},
+        ):
+            self.assertEqual(
+                await self.code(web.rewrite(self.web, self.session, self.ref, body)), "bad_choice"
+            )
+        self.assertEqual((await self.state(self.one.id)).tries, 0)
+
+    async def test_a_request_that_is_not_done_or_not_the_dms_own_is_not_found(self) -> None:
+        rid = await self.send()  # still waiting
+        body = {"requestId": rid, "corrections": ["c1"]}
+        self.assertEqual(
+            await self.code(web.rewrite(self.web, self.session, self.ref, body)), "not_found"
+        )
+
+    async def test_no_tries_left_and_not_editable_change_nothing(self) -> None:
+        rid = await self.answered()
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="ready")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET tries = %s", (MAX_TRIES,))
+        body = {"requestId": rid, "corrections": ["c1"]}
+        self.assertEqual(
+            await self.code(web.rewrite(self.web, self.session, self.ref, body)), "no_tries"
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET tries = 0, status = 'posted'")
+        self.assertEqual(
+            await self.code(web.rewrite(self.web, self.session, self.ref, body)), "not_editable"
+        )
+
+    async def test_the_note_limit_drops_the_oldest(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            for n in range(10):
+                await conn.execute(
+                    "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text,"
+                    " created_by, created_at) VALUES (%s, %s, %s, %s, %s, 0)",
+                    (THURSDAY.id, self.one.id, n + 1, f"old {n}", fx.ALICE),
+                )
+        rid = await self.answered()
+        await web.rewrite(self.web, self.session, self.ref, {"requestId": rid, "style": ["s1"]})
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT text FROM recap_style_notes ORDER BY position")
+            texts = [r["text"] for r in await cur.fetchall()]
+        self.assertEqual(len(texts), 10)
+        self.assertNotIn("old 0", texts)
+        self.assertEqual(texts[-1], "Shorter, please.")
+
+    async def test_the_recap_read_shows_the_new_state(self) -> None:
+        rid = await self.answered()
+        await web.rewrite(
+            self.web, self.session, self.ref, {"requestId": rid, "corrections": ["c1"]}
+        )
+        shown = await read_recap(self.web, self.session, self.ref)
+        self.assertFalse(shown["canPost"])  # being written again

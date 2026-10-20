@@ -256,6 +256,7 @@ from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import cues, short
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import post as recap_post
+from dmbot.recaps import requests as recap_requests
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
@@ -264,6 +265,8 @@ from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.requests import Request as RecapRequest
+from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret
@@ -464,6 +467,8 @@ RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
+RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_ROUND_S = 60
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
@@ -901,6 +906,7 @@ class DMBot(commands.AutoShardedBot):
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
+        self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
@@ -1360,6 +1366,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_audio_loop(), "recap-audio")]
                 if self.audio_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._recap_request_loop(), "recap-requests")]
+                if self.recap_requests is not None
                 else []
             ),
             *(
@@ -8457,6 +8468,59 @@ class DMBot(commands.AutoShardedBot):
                 except Exception:
                     log.exception("Removing old recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
+
+    async def _recap_request_loop(self) -> None:
+        """Every few seconds: what DMs typed on the recap page (#2113), sorted and written back
+        for the page to poll. A short poll instead of a wake-up for now; the worker (#2128) can
+        take it over unchanged."""
+        sweeps = 0
+        while True:
+            try:
+                await self.run_recap_requests()
+                sweeps += 1
+                if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
+                    for guild in list(self.guilds):
+                        await self.recap_requests.sweep(guild.id)
+            except Exception:
+                log.exception("The recap requests failed")
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_recap_requests(self) -> None:
+        store = self.recap_requests
+        ai = self.recap_feedback_ai
+        if store is None or self.recaps is None or not self.settings.recaps_on:
+            return
+        for guild in list(self.guilds):
+            for _ in range(RECAP_REQUESTS_PER_ROUND):
+                request = await store.claim_next(guild.id)
+                if request is None:
+                    break
+
+                async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
+                    campaign = await self.campaigns.get(gid, req.campaign_id)
+                    job = await self.recaps.get(gid, req.campaign_id, req.session_at)  # type: ignore[union-attr]
+                    if campaign is None or job is None or job.status != "draft" or ai is None:
+                        return recap_requests.NOT_ALLOWED
+                    if req.user_id not in campaign.dm_user_ids:  # still a DM, at the moment of use
+                        return recap_requests.NOT_ALLOWED
+                    why = await self.recap_feedback_gate(campaign, job)
+                    if why is None:
+                        return None
+                    return (
+                        recap_requests.TOO_SOON
+                        if why == recap_feedback.TOO_OFTEN
+                        else recap_requests.NOT_ALLOWED
+                    )
+
+                async def sort(text: str) -> Any:
+                    assert ai is not None
+                    return await recap_feedback.sort_feedback(ai, text)
+
+                with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
+                    outcome = await recap_requests.run_one(
+                        store, guild.id, request, gate=gate, sort=sort
+                    )
+                    log.info("Recap request: %s", outcome)  # the word only, never the text
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
