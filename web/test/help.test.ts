@@ -11,7 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, presessionNoteSteps, secretSaidSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -56,7 +56,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -530,5 +530,36 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("Only some know this")).toBe(SECRET_CLUES_LIVE);
     const words = secretClueSteps.map((x) => x.text).join(" ");
     expect(words).toContain("DMbot never decides who learned it. You do.");
+  });
+
+  it("holds the note-before-a-session step with its held What's new entry, and flips them together (#2069)", () => {
+    const heldTitle = held.map((h) => h.title).includes("A note before tonight's session");
+    expect(heldTitle).toBe(!PRESESSION_NOTE_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("read it before you begin")).toBe(PRESESSION_NOTE_LIVE);
+    // Hidden while the switch is false, but the step itself is still checked.
+    const words = presessionNoteSteps.map((x) => x.text).join(" ");
+    for (const part of ["last time's recap", "wait for your check", "DMbot never sends it to players", "If there is nothing to say, there is no note"]) expect(words).toContain(part);
+    // Only what the built note holds: no button, no story-thread or guide line behind another switch.
+    expect(words).not.toMatch(/\bpress\b|thread|promise|What's next/i);
+    const entry = held.find((h) => h.title === "A note before tonight's session")?.what ?? "";
+    for (const part of ["last time's recap", "anything lost or ended", "wait for your check"]) {
+      expect(entry, part).toContain(part);
+    }
+  });
+
+  it("holds the secret-name question step with its held What's new entry, and flips them together (#2069)", () => {
+    const heldTitle = held.map((h) => h.title).includes("When a player says a secret name");
+    expect(heldTitle).toBe(!SECRET_SAID_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Press Not secret any more")).toBe(SECRET_SAID_LIVE);
+    const words = secretSaidSteps.map((x) => x.text).join(" ");
+    for (const part of ["five at most", "make it secret again from the name's card", "covers every copy", "Only the campaign's DMs can answer", "DMbot never decides for you"]) expect(words).toContain(part);
+    // The buttons are named as the code labels them, with the file the label check reads.
+    expect(secretSaidSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Keep it secret", "Not secret any more"]);
+    const entry = held.find((h) => h.title === "When a player says a secret name")?.what ?? "";
+    for (const part of ["one name at a time (up to five)", "never decides for you"]) {
+      expect(entry, part).toContain(part);
+    }
   });
 });
