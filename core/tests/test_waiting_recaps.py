@@ -1,5 +1,5 @@
 """A finished recap the DM never decided on is said once at the next session start (#1474), with the
-same three buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
+same buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
 or unfinished one; nothing when the campaign's recaps are off or the session resumed."""
 
 from __future__ import annotations
@@ -78,7 +78,11 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
         )
         ids = [cast(Any, i).custom_id for i in kwargs["view"].children]
         self.assertEqual(
-            ids, [f"dmbot:recap:{a}:{'c' * 32}:300" for a in ("read", "approve", "post", "drop")]
+            ids,
+            [
+                f"dmbot:recap:{a}:{'c' * 32}:300"
+                for a in ("read", "approve", "post", "drop", "tell")
+            ],
         )
         self.assertEqual(bot.post.await_count, 1)
 
