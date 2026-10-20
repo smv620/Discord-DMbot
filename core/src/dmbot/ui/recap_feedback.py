@@ -232,9 +232,9 @@ class NoteView(_Timed):
             # The edit form was answered (and the AI asked) first, so this is a follow-up; the
             # note's own message loses its buttons, which would only fail now.
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
-            if interaction.message is not None:
-                with contextlib.suppress(discord.HTTPException):
-                    await interaction.message.edit(content=text, view=None)
+            if self.message is not None:  # (the stored message: an ephemeral follow-up can't be
+                with contextlib.suppress(discord.HTTPException):  # edited through the channel)
+                    await self.message.edit(content=text, view=None)
         else:
             await interaction.response.edit_message(
                 content=text, view=None, allowed_mentions=NO_PINGS
@@ -278,12 +278,11 @@ class EditNoteModal(discord.ui.Modal, title="Edit the note"):
         # An edit is sorted again like the first words were: it is kept only as exactly one style
         # note, never as a correction or a request to invent (the same gate, the same AI call).
         bot = _bot(interaction)
-        job = await bot.recaps.latest_draft(campaign.guild_id, campaign.id) if bot.recaps else None
         ai = bot.recap_feedback_ai
-        if ai is None or job is None:
+        if ai is None:
             await _tell(interaction, NO_FEEDBACK)
             return
-        stopped = await bot.recap_feedback_gate(campaign, job)
+        stopped = await bot.recap_feedback_gate(campaign)  # (no draft needed to edit a note)
         if stopped is not None:
             await _tell(interaction, stopped)
             return
@@ -300,8 +299,9 @@ class EditNoteModal(discord.ui.Modal, title="Edit the note"):
             or sorted_.replies
             or fb.asks_to_invent(edited)
         ):
+            invent = fb.asks_to_invent(edited) or fb.STORY_HELP_REPLY in sorted_.replies
             await interaction.followup.send(
-                fb.STORY_HELP_REPLY if sorted_.replies else NOT_A_NOTE,
+                fb.STORY_HELP_REPLY if invent else NOT_A_NOTE,
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

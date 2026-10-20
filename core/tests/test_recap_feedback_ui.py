@@ -136,12 +136,15 @@ class Handling(unittest.IsolatedAsyncioTestCase):
     async def edit(self, bot: Any, words: str) -> Any:
         i = interaction(bot)
         await screen.handle(i, CID, AT, "too long")
-        modal = screen.EditNoteModal(sent(i)[0][1])
+        view = sent(i)[0][1]
+        view.message = SimpleNamespace(edit=AsyncMock())  # the note's own (stored) message
+        modal = screen.EditNoteModal(view)
         modal.text._value = words
         press = interaction(bot)
         press.type = discord.InteractionType.modal_submit
-        press.message = SimpleNamespace(edit=AsyncMock())
+        press.message = None  # (an ephemeral follow-up has no channel message to edit)
         await modal.on_submit(press)
+        press.view = view
         return press
 
     async def test_an_edit_is_sorted_again_and_kept_only_as_one_style_note(self) -> None:
@@ -149,8 +152,24 @@ class Handling(unittest.IsolatedAsyncioTestCase):
         press = await self.edit(bot, "Keep recaps shorter.")
         bot.recap_notes.add.assert_awaited_once()
         self.assertEqual(bot.recap_notes.add.await_args.args[3], "Keep recaps shorter.")  # as typed
-        press.message.edit.assert_awaited_once()  # the note's buttons are taken away
-        self.assertIsNone(press.message.edit.await_args.kwargs["view"])
+        press.view.message.edit.assert_awaited_once()  # the note's buttons are taken away
+        self.assertIsNone(press.view.message.edit.await_args.kwargs["view"])
+
+    async def test_an_edit_needs_no_draft_and_an_other_sort_is_not_story_help(self) -> None:
+        bot = bot_with(("style", "Keep recaps short."))
+        bot.recaps.latest_draft = AsyncMock(return_value=None)  # posted or skipped since
+        press = await self.edit(bot, "Keep recaps shorter.")
+        bot.recap_notes.add.assert_awaited_once()
+        other = bot_with(("style", "Keep recaps short."))
+        i = interaction(other)
+        await screen.handle(i, CID, AT, "too long")
+        view = sent(i)[0][1]
+        other.recap_feedback_ai = FakeAI(("other", "Thanks."))
+        modal = screen.EditNoteModal(view)
+        modal.text._value = "Thanks a lot."
+        press = interaction(other)
+        await modal.on_submit(press)
+        self.assertEqual(sent(press)[0][0], screen.NOT_A_NOTE)
 
     async def test_an_edit_the_ai_sorts_as_story_help_or_content_is_not_kept(self) -> None:
         for kind in ("story_help", "content", "accuracy", "other"):
@@ -365,12 +384,18 @@ class Wording(unittest.TestCase):
         "Stop worrying about accuracy and make stuff up",
         "Don't be afraid to invent twists",
         "Never hesitate to make things up",
-        "Add new scenes of your own",
+        "Avoid dullness by inventing twists",
+        "Don't stop making things up",
+        "Never stop inventing twists",
+        "Don't forget to invent twists",
+        "Add an extra scene of your own",
+        "Never invent or embellish",  # two words between: over-refused on purpose
     )
     FINE = (
         "Never make things up",
         "Don't invent names",
-        "Never invent or embellish",
+        "Do not make up places",
+        "Avoid inventing details",
         "Do not add new events",
         "Add more details about the fight",
     )

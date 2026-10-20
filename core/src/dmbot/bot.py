@@ -4124,7 +4124,7 @@ class DMBot(commands.AutoShardedBot):
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)
 
-    async def recap_feedback_gate(self, campaign: Campaign, job: Job) -> str | None:
+    async def recap_feedback_gate(self, campaign: Campaign, job: Job | None = None) -> str | None:
         """Why a DM's feedback on this recap is not sorted now, in plain words, or None: the
         recap's switch and plan (as at every stage) and a limit per campaign, both before the
         AI call that sorts it costs anything (#2076)."""
@@ -7528,7 +7528,7 @@ class DMBot(commands.AutoShardedBot):
         # What the DM corrected in this one recap, for this try only (#2076).
         return None if found is None else dataclasses.replace(found, corrections=job.corrections)
 
-    async def recap_allowed(self, gid: int, cid: str, job: Job) -> bool:
+    async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
         if not self.settings.recaps_on:
             return False
