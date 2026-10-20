@@ -194,12 +194,22 @@ class HowView(discord.ui.View):
 
     @discord.ui.button(label="Send to the players", style=discord.ButtonStyle.success)
     async def send(self, interaction: discord.Interaction, _button: discord.ui.Button[Any]) -> None:
-        campaign = await _campaign(interaction, self.campaign_id)
-        if campaign is None:
-            return
+        # Claimed before the first await: two quick presses can't both get past this check, so
+        # the link is posted to the players once. Any way out but a sent link gives it back.
         if self.sent:
             await _tell(interaction, SENT_ALREADY)
             return
+        self.sent = True
+        done = False
+        try:
+            done = await self._send(interaction)
+        finally:
+            self.sent = done
+
+    async def _send(self, interaction: discord.Interaction) -> bool:
+        campaign = await _campaign(interaction, self.campaign_id)
+        if campaign is None:
+            return False
         bot = _bot(interaction)
         channel = (
             bot.get_channel(campaign.dmbchat_channel_id) if campaign.dmbchat_channel_id else None
@@ -211,10 +221,10 @@ class HowView(discord.ui.View):
             != campaign.guild_id
         ):
             await _tell(interaction, NO_CHAT)
-            return
+            return False
         link = await self._link(interaction, campaign)
         if link is None:
-            return
+            return False
         try:
             numbers = await session_numbers(bot, campaign)
             number = numbers.get(self.session_at)
@@ -223,9 +233,9 @@ class HowView(discord.ui.View):
         except Exception as exc:  # the deferred reply must always be answered
             log.warning("Share a recap: the send failed: %s", type(exc).__name__)  # never the link
             await interaction.followup.send(SEND_FAILED, ephemeral=True)
-            return
-        self.sent = True
+            return False
         await interaction.followup.send(SENT, ephemeral=True)
+        return True
 
     async def _link(
         self, interaction: discord.Interaction, campaign: Any | None = None

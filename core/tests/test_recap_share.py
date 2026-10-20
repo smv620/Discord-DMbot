@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
@@ -141,6 +141,22 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
         await view.send.callback(interaction)
         channel.send.assert_awaited_once()
 
+    async def test_two_quick_presses_of_send_post_the_link_once(self) -> None:
+        import asyncio
+
+        _bot, interaction, channel = make()
+        view = rs.HowView(CID, 100)
+        await asyncio.gather(view.send.callback(interaction), view.send.callback(interaction))
+        channel.send.assert_awaited_once()
+
+    async def test_a_failed_send_gives_the_press_back(self) -> None:
+        _bot, interaction, channel = make()
+        channel.send = AsyncMock(side_effect=RuntimeError("no rights"))
+        view = rs.HowView(CID, 100)
+        await view.send.callback(interaction)
+        self.assertFalse(view.sent)  # the DM may try again once the channel is fixed
+        self.assertEqual(interaction.followup.send.await_args.args[0], rs.SEND_FAILED)
+
     def test_the_id_survives_a_restart_and_fits(self) -> None:
         self.assertEqual(rs.ShareButton(CID).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertTrue(callable(DMBot.recap_share_link))
@@ -228,7 +244,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
 
     async def run_it(self, bot: Any) -> tuple[Any, str]:
         campaign = SimpleNamespace(guild_id=GUILD, id=CID)
-        return await DMBot.recap_share_link(bot, campaign, 100)
+        return await DMBot.recap_share_link(bot, cast(Any, campaign), 100)
 
     async def test_a_posted_recap_that_passes_gets_its_token(self) -> None:
         bot, store = self.bot(self.job())
