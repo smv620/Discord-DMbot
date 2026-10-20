@@ -31,7 +31,9 @@ def answer(*points: tuple[str, str]) -> str:
 
 class FakeAI:
     def __init__(self, reply: str | Reply | Exception) -> None:
-        self.reply, self.sent, self.schemas = reply, [], []
+        self.reply = reply
+        self.sent: list[str] = []
+        self.schemas: list[Any] = []
 
     async def complete(self, system: str, text: str, **kw: Any) -> Reply:
         self.sent.append(text)

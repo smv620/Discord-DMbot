@@ -59,7 +59,7 @@ async def dm_campaign(
     if interaction.user.id not in campaign.dm_user_ids:
         await _tell(interaction, NOT_YOURS)
         return None
-    return campaign  # type: ignore[no-any-return]
+    return campaign
 
 
 async def open_form(interaction: discord.Interaction, campaign_id: str, session_at: int) -> None:

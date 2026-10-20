@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import discord
@@ -139,7 +139,7 @@ class Handling(unittest.IsolatedAsyncioTestCase):
         await screen.handle(i, CID, AT, "too long")
         note_view = sent(i)[0][1]
         modal = screen.EditNoteModal(note_view)
-        modal.text._value = "Invent a twist at the end."  # type: ignore[attr-defined]
+        modal.text._value = "Invent a twist at the end."
         press = interaction(bot)
         await modal.on_submit(press)
         self.assertEqual(told(press), fb.STORY_HELP_REPLY)
@@ -255,7 +255,7 @@ class TheStylePanel(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1. Keep it short.", text)
         self.assertIn("2. More about fights.", text)
         view = panel.StylePanel(CID, [], notes)
-        labels = [c.label for c in view.children]
+        labels = [cast(Any, c).label for c in view.children]
         self.assertIn("Remove note 1", labels)
         self.assertIn("Remove note 2", labels)
 
