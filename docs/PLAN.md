@@ -3882,6 +3882,27 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   *Built, recap name fixes (2026-10-19, #2026):* a name passes when every word of it is known, so a hyphenated name from the names file ("Dun-Varra's") is no longer refused; a retry sends the rejected draft (`<previous_draft>`, `<previous_answer>` for the title) with the target and the form and asks for a revision, never resending a draft that names a secret; an answer that only lost its SUMMARY or TITLE label is read leniently and still checked.
   *Built, names the recap kept (2026-10-19, #2027):* `recaps/unknown_names.py` respells a near miss to the known name (same word count and first letter, one letter off, two for names over eight letters, plain English words never), and refuses a word whose closest name is secret; `draft.kept_names` finds the names said in the session that no list has; they are stored in `recap_jobs.to_confirm` (migration 0131, at most 10), shown as **Facts to be confirmed** on the DM's recap page and in `recap_run`'s files, queued as proposed suggestions (source `scan`), and told to the DM once on the DM screen and in a private message with the check's button; a reminder follows once at the next session start.
   *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
+- **Recaps on the website, and only two buttons in Discord** (owner, 2026-10-20; this replaces
+  the buttons below).
+  - **[Recaps]**, one button, opens the campaign's recap list on the website, newest session
+    first. Each entry opens that recap's page, where the DM views, listens, edits, fixes and
+    approves it.
+  - **[Share a recap]**, for the campaign's DMs, picks a recap and offers **Copy the link** or
+    **Send the link to the players**, which posts it in the campaign's `dmb-chat`.
+  - **Signing in:** editing and approving need the website sign-in, by Discord or by email, as now.
+  - **Viewing and listening need no sign-in** (owner): anyone with a recap's link can read it and
+    play its audio. The rules that keep this safe:
+    - **Only posted recaps:** a link works only after the DM has approved the text and posted or
+      shared the recap. A draft stays visible to the campaign's signed-in DMs only.
+    - **Only the table's version:** the shared page shows the posted text and audio and nothing
+      else. No "Facts to be confirmed", no housekeeping, no secret name (checked again at share
+      time, as at post time).
+    - **An unguessable link:** each recap has its own random address, never the campaign's or
+      the server's ids. The DM can turn a link off, or make a new one, which ends the old one.
+    - **Not in search engines:** shared pages carry `noindex`.
+    - **The privacy page** says that a shared recap can be read by anyone who has its link.
+  - **Disk:** reserve 1 GB of recap audio per campaign. That covers 100 sessions of recaps up to
+    3 minutes in today's encoding. See docs/costs.md, "Disk space for recap audio".
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the

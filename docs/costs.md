@@ -274,6 +274,24 @@ One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000
 
 **Monthly allowance per campaign** (#1428): `DMBOT_RECAPS_PER_MONTH` (default 10) written recaps and `DMBOT_RECAP_AUDIO_PER_MONTH` (default 8) narrated ones, counted from the job rows for the calendar month in UTC; each Try again counts again, a job that never got written does not, and free access and grants are not limited. Worst case for one paid campaign in a month at the defaults: 10 x $0.05 = **$0.50 of text** plus 8 x $1.30 = **about $10.40 of narration and music**, so **about $11 a month** (Creator prices). A count that can't be read spends nothing.
 
+### Disk space for recap audio (owner, 2026-10-20)
+
+**What one recap stores today** (`recaps/audio/files.py`, `mix.py`): three MP3 files: the voice, the music bed and the mix. `mix.py` sets no bitrate, so ffmpeg's MP3 default applies: 128 kbit/s, about **0.96 MB per minute** each, or **about 2.9 MB per minute of recap**. Each campaign also keeps a few ambience loops (one per scene kind, about 10 MB at most). The text is a few kilobytes.
+
+**What to reserve per campaign:** the owner's case is a long-running game of **100 sessions** with recaps of **at most 3 minutes**. That is 300 minutes, 5 hours of audio:
+
+| Encoding | MB per recap-minute | 100 recaps of 3 min |
+|---|---|---|
+| Today (3 files at 128 kbit/s) | 2.9 | **about 865 MB** |
+| Voice 64 kbit/s mono + music 128 kbit/s + mix 128 kbit/s | 2.4 | about 720 MB |
+| Voice 64 kbit/s mono + music 128 kbit/s, no mix file | 1.4 | about 430 MB |
+
+**Reserve 1 GB per campaign.** That holds the worst case in today's format with room for the ambience loops. Most campaigns will use far less: recaps are often under 3 minutes, and a weekly game takes about two years to reach 100 sessions.
+
+**What it costs:** the server's own disk, or an attached volume, is priced per GB per month. Hetzner's volumes are listed at about €0.044 to €0.052 per GB a month (third-party price guides, 2026; dev1 confirms the actual provider, plan and price, see #2117). That is **about $0.05 to $0.06 per campaign a month** at the full 1 GB. If audio is in the server backups, that doubles to about $0.10 to $0.12.
+
+**In the margins:** a fully grown paid campaign with narration costs about $11 a month in narration and music (above) and **about $0.06 to $0.12 a month** in storage. So storage is under 1% of a narrated campaign's monthly cost and doesn't change the plan margins. For a whole server: 100 campaigns at the full reserve is 100 GB, about $5 to $6 a month, or $10 to $12 with backups. That goes on top of the $11 a month server (PLAN, "Hosting cost") once the disk outgrows what the server includes.
+
 ### One recap test run (#1424)
 
 `python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT --yes` costs what one live recap's text costs: up to nine AI calls (more for a very long session, one for each extra window of the transcript), about 12,000 to 20,000 input tokens and 3,000 to 5,000 output tokens for a normal session, so a few cents on the fast tier plus a little on the careful tier when a check makes it retry. It prints its own estimate first and does nothing without `--yes`. `--audio` adds the narration and music: about 7,000 provider credits (see above). `--golden` runs the three invented sessions: about three times one recap's text cost. Record the real figures here after dev1's first run.
