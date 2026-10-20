@@ -271,7 +271,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(interaction)
         bot.memory.make_name_not_secret.assert_not_awaited()
         self.assertEqual(
-            interaction.response.edit_message.await_args.kwargs["content"], kept_text("Auril")
+            interaction.response.edit_message.await_args.kwargs["content"], kept_text()
         )
 
     async def test_a_player_or_a_stranger_is_refused(self) -> None:

@@ -37,8 +37,12 @@ def question_text(name: str, entries: int = 1, *, private: bool = False) -> str:
     )
 
 
-def kept_text(name: str) -> str:
-    return f"👍 **{name}** stays secret. DMbot won't ask about it again this session."
+def kept_text() -> str:
+    """The answer, without the name (#2097)."""
+    return (
+        "👍 It stays secret. You'll find it on the name's card. DMbot won't ask about it again "
+        "this session."
+    )
 
 
 def name_in(interaction: discord.Interaction) -> str:
@@ -100,7 +104,7 @@ class RevealButton(
         name = name_in(interaction)
         if self.act == "n":
             await interaction.response.edit_message(
-                content=kept_text(name), view=None, allowed_mentions=NO_PINGS
+                content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
             return
         memory = bot.memory

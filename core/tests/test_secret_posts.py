@@ -12,8 +12,9 @@ from dmbot.dm_screen import secret_posts
 G, C = 5, "c" * 32
 
 
-def message() -> SimpleNamespace:
-    return SimpleNamespace(edit=AsyncMock())
+def message(answered: bool = False) -> SimpleNamespace:
+    # An open question still has its buttons (components); an answered one has none.
+    return SimpleNamespace(edit=AsyncMock(), components=[] if answered else [object()])
 
 
 class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
@@ -35,6 +36,24 @@ class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(secret_posts.pending(G, C), 0)
         self.assertEqual(await secret_posts.hide(G, C), 0)  # a second change edits nothing
+
+    async def test_an_answered_question_gets_the_second_line(self) -> None:
+        done = message(answered=True)
+        secret_posts.remember(G, C, done)
+        await secret_posts.hide(G, C)
+        self.assertEqual(done.edit.await_args.kwargs["content"], secret_posts.HIDDEN_ANSWERED)
+        self.assertEqual(
+            secret_posts.HIDDEN_ANSWERED, "This was about a secret name. See the name's card."
+        )
+
+    async def test_a_copy_whose_edit_failed_is_kept_and_tried_again(self) -> None:
+        stuck = message()
+        stuck.edit.side_effect = [RuntimeError("busy"), None]
+        secret_posts.remember(G, C, stuck)
+        self.assertEqual(await secret_posts.hide(G, C), 0)
+        self.assertEqual(secret_posts.pending(G, C), 1)  # remembered for the next change
+        self.assertEqual(await secret_posts.hide(G, C), 1)
+        self.assertEqual(secret_posts.pending(G, C), 0)
 
     async def test_another_campaign_or_server_is_left_alone(self) -> None:
         mine, other, elsewhere = message(), message(), message()
@@ -80,6 +99,16 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
             for m in (keep, reveal, other_button, players, plain):
                 yield m
 
+        # The whole history is searched, not only the last few: nothing limits the read.
+        seen: list[Any] = []
+
+        async def history_all(limit: int | None) -> Any:
+            seen.append(limit)
+            return
+            yield
+
+        await secret_posts.hide(G, C, channel=SimpleNamespace(history=history_all), bot_id=9)
+        self.assertEqual(seen, [None])
         channel = SimpleNamespace(history=history)
         self.assertEqual(await secret_posts.hide(G, C, channel=channel, bot_id=9), 2)
         keep.edit.assert_awaited_once()

@@ -6,7 +6,10 @@ which is safe only while the screen is private. If the DM later lets players pee
 screen, a question still sitting there would show the name to people who may now look. The
 messages are remembered here (in memory, per campaign, a handful at a time) and, when the
 visibility moves away from private, edited to a plain line with the buttons gone. A restart
-forgets the list; the questions are for the session that asked them.
+forgets the list, so the screen's own history is searched too, all of it, for the bot's messages
+that carry these questions' buttons (a change away from private is rare, so the cost is fine). An
+answered question carries no name any more (its text is written without it), so nothing is left
+for the search to miss.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ log = logging.getLogger(__name__)
 
 KEPT_PER_CAMPAIGN = 20
 HIDDEN = "This question was about a secret name. Answer it from the name's card."
+HIDDEN_ANSWERED = "This was about a secret name. See the name's card."
 
 _posts: dict[tuple[int, str], list[Any]] = defaultdict(list)
 
@@ -54,7 +58,6 @@ def is_exposed(visibility: str, in_server_channel: bool) -> bool:
 
 # What a question's buttons start with: the keep-it-secret question and the reveal question.
 BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:rv:")
-SCAN = 50  # how many recent messages of the screen to look through
 
 
 async def _scan(channel: Any, bot_id: int) -> list[Any]:
@@ -62,7 +65,7 @@ async def _scan(channel: Any, bot_id: int) -> list[Any]:
     restart forgot. Matched by the buttons' ids, since the text alone can't be told apart."""
     found: list[Any] = []
     try:
-        async for message in channel.history(limit=SCAN):
+        async for message in channel.history(limit=None):
             if getattr(getattr(message, "author", None), "id", None) != bot_id:
                 continue
             ids = [
@@ -88,13 +91,22 @@ async def hide(
     if channel is not None and bot_id is not None:
         known = {getattr(m, "id", None) for m in messages}
         messages += [m for m in await _scan(channel, bot_id) if getattr(m, "id", None) not in known]
-    changed = failed = 0
+    changed = 0
+    failed: list[Any] = []
     for message in messages:
+        answered = not getattr(message, "components", None)  # no buttons left: already answered
         try:
-            await message.edit(content=HIDDEN, view=None, allowed_mentions=NO_PINGS)
+            await message.edit(
+                content=HIDDEN_ANSWERED if answered else HIDDEN,
+                view=None,
+                allowed_mentions=NO_PINGS,
+            )
             changed += 1
-        except Exception:  # deleted already, or no right to edit: nothing more can be done
-            failed += 1
+        except Exception:  # deleted already, or no right to edit
+            failed.append(message)
+    if failed:  # kept, so the next change away from private tries again
+        _posts[(guild_id, campaign_id)].extend(failed)
+        del _posts[(guild_id, campaign_id)][:-KEPT_PER_CAMPAIGN]
     if messages:
-        log.info("Secret questions pulled back: %d changed, %d not", changed, failed)
+        log.info("Secret questions pulled back: %d changed, %d not", changed, len(failed))
     return changed
