@@ -77,6 +77,7 @@ const CueProblems = forwardRef<HTMLDivElement, { problems: CueProblem[]; help: b
           ))}
         </ul>
         {problems.length > shown.length && <p>{cueProblemsMore(problems.length - shown.length)}</p>}
+        <p class="muted small">{cueWords.paragraphs}</p>
       </div>
     );
   },

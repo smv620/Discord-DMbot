@@ -88,6 +88,7 @@ describe("a save with cue problems", () => {
     // Still editing: the text box and the save button are there, and nothing says it was saved.
     expect(screen.getByRole("button", { name: text.save })).toBeTruthy();
     expect(screen.queryByText(text.saved)).toBeNull();
+    expect(screen.getByText(cueWords.paragraphs)).toBeTruthy();
   });
 
   it("clears the list when the next save goes through", async () => {

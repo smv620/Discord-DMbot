@@ -143,8 +143,9 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
 
 // The cue checks on save (#2084). The API says where each problem is and what kind it is; these
 // are the words for it. A cue is the 《mood》 or ((pause)) marker in the text, so each line says
-// "cue", never "tag" or "syntax", and each says what to do next. "no_words" is read as a cue with
-// no story words next to it: check it against #2083's own meaning when that lands.
+// "cue", never "tag" or "syntax", and each says what to do next. The kinds and the paragraph
+// counting (a blank line starts a new paragraph) are #2083's, from core/src/dmbot/recaps/cues.py;
+// "no_words" there is a mood cue with no story after it before the next mood.
 export const cueWords = {
   help: "Cue words",
   helpLead:
@@ -152,6 +153,8 @@ export const cueWords = {
   moods: "Moods",
   synonyms: "Other words that work for a mood",
   pacing: "Pauses and pace",
+  /** What a paragraph is, since the box shows no numbers. */
+  paragraphs: "Paragraphs are counted from the top; a blank line starts a new one.",
   /** Nothing was saved, and the edit is still in the box. */
   noteEmpty:
     "Nothing was saved. A cue in the text is wrong. Check each 《 》 and (( )), then save again.",
@@ -183,7 +186,7 @@ export function cueProblemLine(problem: CueProblem, help = true): string {
     unclosed: `${cue} has no ending. Add the closing mark after it.`,
     mismatched: `${cue} starts with one mark and ends with another. Use 《 》 at both ends, or (( )) at both ends.`,
     empty: `${cue} has nothing inside. Type a word between the marks, or delete it.`,
-    no_words: `${cue} is not next to any story words. Move it next to the words it goes with, or delete it.`,
+    no_words: `${cue} has no story after it before the next mood. Put the words it goes with after it, or delete it.`,
     inside_word: `${cue} is inside a word. Move it to a space between words.`,
   };
   return `${where}: ${said[problem.kind] ?? `${cue} is wrong. Check it against the cue words.`}`;
