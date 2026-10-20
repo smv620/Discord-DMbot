@@ -161,11 +161,13 @@ export const cueWords = {
   maxShown: 5,
 } as const;
 
-/** The heading over the list: how many, and what happens next. */
-export function cueProblemsHeading(count: number): string {
-  return `Nothing was saved, and your edits are still in the box. Fix ${
-    count === 1 ? "this cue" : `these ${count} cues`
-  }, then press ${text.save}.`;
+/** The heading over the list: how many, and what happens next. After a refused save the edit is
+ * still in the box; after a refused approval the DM goes to Edit first. */
+export function cueProblemsHeading(count: number, action: "save" | "approve" = "save"): string {
+  const these = count === 1 ? "this cue" : `these ${count} cues`;
+  return action === "approve"
+    ? `Nothing was approved. Press ${text.edit}, fix ${these}, save, then approve again.`
+    : `Nothing was saved, and your edits are still in the box. Fix ${these}, then press ${text.save}.`;
 }
 
 /** "And 2 more. Fix these and save to see the rest." for a list cut at `maxShown`. */

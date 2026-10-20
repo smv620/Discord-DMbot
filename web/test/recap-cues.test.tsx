@@ -4,7 +4,13 @@
 // box and stays unsaved; a clean save works as before; the cue words help shows the words the API
 // sends. The API decides what is wrong, so the page is only shown what it says. The cue parts
 // show only while RECAP_AUDIO_LIVE is true (false today), so these tests switch it on.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -51,8 +57,20 @@ const words: CueWords = {
   pacing: ["pause", "long pause"],
 };
 const problems: CueProblem[] = [
-  { paragraph: 2, near: "the gate 《glumm》 opened", cue: "《glumm》", kind: "unknown", suggest: "gloom" },
-  { paragraph: 3, near: "she waited ((pause", cue: "((pause", kind: "unclosed", suggest: null },
+  {
+    paragraph: 2,
+    near: "the gate 《glumm》 opened",
+    cue: "《glumm》",
+    kind: "unknown",
+    suggest: "gloom",
+  },
+  {
+    paragraph: 3,
+    near: "she waited ((pause",
+    cue: "((pause",
+    kind: "unclosed",
+    suggest: null,
+  },
 ];
 
 function api() {
@@ -143,19 +161,33 @@ describe("the cue words help", () => {
 });
 
 describe("what the API sends", () => {
-  it("reads either spelling of the field and ignores what it cannot use", () => {
-    const one = { paragraph: 1, near: "x", cue: "《a》", kind: "empty", suggest: null };
-    expect(readCueProblems({ cueProblems: [one] })).toEqual([one]);
-    expect(readCueProblems({ cue_problems: [one, { kind: "empty" }, null] })).toEqual([one]);
+  it("reads the problems and ignores what it cannot use", () => {
+    const one = {
+      paragraph: 1,
+      near: "x",
+      cue: "《a》",
+      kind: "empty",
+      suggest: null,
+    };
+    expect(
+      readCueProblems({ cue_problems: [one, { kind: "empty" }, null] }),
+    ).toEqual([one]);
     expect(readCueProblems({ error: "bad_text" })).toEqual([]);
     expect(readCueProblems(null)).toEqual([]);
   });
 
   it("makes a refused save with cue problems a 'bad-cues' error, whatever the code says", async () => {
-    const fetcher = vi.fn(async () =>
-      new Response(JSON.stringify({ error: "something_new", cueProblems: problems }), { status: 422 }),
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ error: "something_new", cue_problems: problems }),
+          { status: 422 },
+        ),
     );
-    const real = httpApi("https://api.example.test", fetcher as unknown as typeof fetch);
+    const real = httpApi(
+      "https://api.example.test",
+      fetcher as unknown as typeof fetch,
+    );
     await expect(real.saveRecap!("a.b.1", "text", [])).rejects.toMatchObject({
       kind: "bad-cues",
       cueProblems: problems,
@@ -165,15 +197,36 @@ describe("what the API sends", () => {
 
 describe("the words for each problem", () => {
   it("say where it is and what to do, in plain words", () => {
-    const kinds: string[] = ["unknown", "unclosed", "mismatched", "empty", "no_words", "inside_word"];
+    const kinds: string[] = [
+      "unknown",
+      "unclosed",
+      "mismatched",
+      "empty",
+      "no_words",
+      "inside_word",
+    ];
     for (const kind of kinds) {
-      const line = cueProblemLine({ paragraph: 4, near: "by the well", cue: "《x》", kind, suggest: null });
-      expect(line.startsWith("Near “by the well” (paragraph 4): "), kind).toBe(true);
-      expect(line, kind).toMatch(/\b(Change|Pick|Add|Type|Use|Move|Put|Check)\b/);
-      expect(line, kind).not.toMatch(/syntax|tag|bracket|parse|token|regex|enum/i);
+      const line = cueProblemLine({
+        paragraph: 4,
+        near: "by the well",
+        cue: "《x》",
+        kind,
+        suggest: null,
+      });
+      expect(line.startsWith("Near “by the well” (paragraph 4): "), kind).toBe(
+        true,
+      );
+      expect(line, kind).toMatch(
+        /\b(Change|Pick|Add|Type|Use|Move|Put|Check)\b/,
+      );
+      expect(line, kind).not.toMatch(
+        /syntax|tag|bracket|parse|token|regex|enum/i,
+      );
     }
     expect(cueProblemLine(problems[0]!)).toContain("Change it to “gloom”");
-    expect(cueProblemLine({ ...problems[0]!, suggest: null })).not.toContain("Change it to");
+    expect(cueProblemLine({ ...problems[0]!, suggest: null })).not.toContain(
+      "Change it to",
+    );
   });
 });
 
@@ -195,8 +248,12 @@ describe("more of what the page and the API do", () => {
     fireEvent.input(box, { target: { value: "My edit 《glumm》." } });
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     await screen.findByText(cueProblemsHeading(2));
-    expect((screen.getByLabelText(text.editLabel) as HTMLTextAreaElement).value).toBe("My edit 《glumm》.");
-    await waitFor(() => expect(document.activeElement?.id).toBe("recap-cue-problems"));
+    expect(
+      (screen.getByLabelText(text.editLabel) as HTMLTextAreaElement).value,
+    ).toBe("My edit 《glumm》.");
+    await waitFor(() =>
+      expect(document.activeElement?.id).toBe("recap-cue-problems"),
+    );
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     await screen.findByText(text.saved);
     expect(screen.queryByLabelText(text.editLabel)).toBeNull();
@@ -209,15 +266,22 @@ describe("more of what the page and the API do", () => {
       throw new ApiError("bad-cues", problems);
     };
     await openEditor(a);
-    expect(document.querySelector("details.cue-help")?.hasAttribute("open")).toBe(false);
+    expect(
+      document.querySelector("details.cue-help")?.hasAttribute("open"),
+    ).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     await screen.findByText(cueProblemsHeading(2));
-    expect(document.querySelector("details.cue-help")?.hasAttribute("open")).toBe(true);
+    expect(
+      document.querySelector("details.cue-help")?.hasAttribute("open"),
+    ).toBe(true);
   });
 
   it("shows the first five and says how many more, and says 'this cue' for one", async () => {
     live.audio = true;
-    const many = Array.from({ length: 7 }, (_, i) => ({ ...problems[1]!, paragraph: i + 1 }));
+    const many = Array.from({ length: 7 }, (_, i) => ({
+      ...problems[1]!,
+      paragraph: i + 1,
+    }));
     const a = api();
     a.saveRecap = async () => {
       throw new ApiError("bad-cues", many);
@@ -239,7 +303,9 @@ describe("more of what the page and the API do", () => {
     };
     await openEditor(a);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
-    expect((await screen.findByRole("alert")).textContent).toBe(cueWords.noteEmpty);
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      cueWords.noteEmpty,
+    );
     expect(screen.queryByText(/Nothing was saved, and your edits/)).toBeNull();
   });
 
@@ -252,35 +318,59 @@ describe("more of what the page and the API do", () => {
     await openEditor(a);
     fireEvent.click(screen.getByRole("button", { name: text.save }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/too long/);
-    expect(screen.getByLabelText(text.editLabel).getAttribute("aria-invalid")).toBeNull();
+    expect(
+      screen.getByLabelText(text.editLabel).getAttribute("aria-invalid"),
+    ).toBeNull();
     expect(document.querySelector(".cue-problems")).toBeNull();
   });
 
   it("keeps 'bad_text' as it was over the wire, and a 'not editable' refusal as it was", async () => {
     const send = (status: number, body: unknown) =>
-      httpApi("https://api.example.test", (async () =>
-        new Response(JSON.stringify(body), { status })) as unknown as typeof fetch);
-    await expect(send(400, { error: "bad_text" }).saveRecap!("a.b.1", "t", [])).rejects.toMatchObject({
+      httpApi(
+        "https://api.example.test",
+        (async () =>
+          new Response(JSON.stringify(body), {
+            status,
+          })) as unknown as typeof fetch,
+      );
+    await expect(
+      send(400, { error: "bad_text" }).saveRecap!("a.b.1", "t", []),
+    ).rejects.toMatchObject({
       kind: "bad-text",
     });
     await expect(
-      send(403, { error: "not_allowed", cueProblems: problems }).saveRecap!("a.b.1", "t", []),
+      send(403, { error: "not_allowed", cue_problems: problems }).saveRecap!(
+        "a.b.1",
+        "t",
+        [],
+      ),
     ).rejects.toMatchObject({ kind: "not-allowed", cueProblems: [] });
   });
 
-  it("reads the cue words in either spelling, and ignores a wrong shape", async () => {
+  it("reads the cue words and ignores a wrong shape", async () => {
     expect(readCueWords({ cue_words: words })).toEqual(words);
-    expect(readCueWords({ cueWords: words })).toEqual(words);
-    expect(readCueWords({ cueWords: { moods: "calm" } })).toBeUndefined();
+    expect(readCueWords({ cue_words: { moods: "calm" } })).toBeUndefined();
     expect(readCueWords({})).toBeUndefined();
     const fetcher = (async () =>
-      new Response(JSON.stringify({ ref: "a.b.1", cue_words: words }), { status: 200 })) as unknown as typeof fetch;
-    const got = await httpApi("https://api.example.test", fetcher).recap!("a.b.1");
+      new Response(JSON.stringify({ ref: "a.b.1", cue_words: words }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    const got = await httpApi("https://api.example.test", fetcher).recap!(
+      "a.b.1",
+    );
     expect(got.cueWords).toEqual(words);
   });
 
   it("gives a kind it does not know a plain line with a next step", () => {
-    const line = cueProblemLine({ paragraph: 2, near: "by the well", cue: "《x》", kind: "brand_new", suggest: null });
-    expect(line).toBe("Near “by the well” (paragraph 2): “《x》” is wrong. Check it against the cue words.");
+    const line = cueProblemLine({
+      paragraph: 2,
+      near: "by the well",
+      cue: "《x》",
+      kind: "brand_new",
+      suggest: null,
+    });
+    expect(line).toBe(
+      "Near “by the well” (paragraph 2): “《x》” is wrong. Check it against the cue words.",
+    );
   });
 });
