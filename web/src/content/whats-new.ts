@@ -205,6 +205,13 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-20",
+    title: "Bring in older sessions",
+    what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot build the campaign's memory from them. You match each speaker to a member of your server. Only players who have agreed to be recorded are kept; everyone else's lines are dropped before anything is saved. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
+    reason:
+      "Waits for the importer (#2105, #2106) to deploy, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",

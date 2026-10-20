@@ -255,5 +255,6 @@ Unlocks: #1831
 - **QAbot (#1341):** needs the steps on #1341.
 - **Heads-up when a fallen character speaks (#2068, #2078):** off until `DMBOT_LIVE_HEADS_UP=1`. It also needs a
   character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
+- **Bring in older sessions (#2105, #2106, #2107):** not built yet, so there is nothing to check yet.
 
 The reasons are in `docs/GO_LIVE.md`.
