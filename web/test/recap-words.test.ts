@@ -48,11 +48,10 @@ beforeAll(async () => {
 });
 
 describe("the privacy section", () => {
-  it("is switched off today and the page then has no word of it", () => {
-    expect(RECAPS_LIVE).toBe(false);
-    expect(RECAP_AUDIO_LIVE).toBe(false);
+  it("is on the page exactly while recaps are live, and says nothing when switched off", () => {
+    expect(RECAP_AUDIO_LIVE).toBe(false); // narration waits for the owner's ElevenLabs go-ahead
     expect(text(off.body)).toBe("");
-    expect(privacy.querySelector("#recaps")).toBeNull();
+    expect(privacy.querySelector("#recaps") !== null).toBe(RECAPS_LIVE);
   });
 
   it("says who writes it, who sees it, and how long it is kept", () => {
@@ -81,10 +80,10 @@ describe("the privacy section", () => {
 });
 
 describe("Help and the emails list", () => {
-  it("show nothing about recaps while recaps are off", () => {
-    expect(help.querySelector("#recaps-heading")).toBeNull();
-    expect(emailSteps.map((s) => s.text).join(" ")).not.toMatch(/recap/i);
-    expect(emailsIntroTail).toBe("The only others are two Try It emails, each sent once.");
+  it("show nothing about recaps exactly while recaps are off", () => {
+    expect(help.querySelector("#recaps-heading") !== null).toBe(RECAPS_LIVE);
+    expect(/recap/i.test(emailSteps.map((s) => s.text).join(" "))).toBe(RECAPS_LIVE);
+    expect(emailsIntroTail.includes("when a recap is ready")).toBe(RECAPS_LIVE);
   });
 
   it("pin the sentences for when they are on", () => {
@@ -97,7 +96,7 @@ describe("Help and the emails list", () => {
     expect(all).toContain("Nothing goes to your players until you press Post to the table");
     expect(all).toContain("if a player has stopped being recorded since it was written");
     expect(all).toContain("or it names something you keep secret");
-    expect(all).toContain("checks each sentence against what was said");
+    expect(all).toContain("checks the sentences against what was said");
     expect(all).toContain("If too little is left, there is no recap");
     expect(all).toContain("It also takes out compass directions");
     // Says no more than the check does: not "never wrong", and no technical words (#2072).
@@ -118,7 +117,7 @@ describe("the switches and What's new agree", () => {
   // turning a switch on without its line, or the line up without its switch, fails (#1463).
   it.each([
     ["Choose what recaps do", RECAPS_LIVE],
-    ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
+    ["Recaps fit your session", RECAPS_LIVE],
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
     ["Approve the text before any audio", RECAP_AUDIO_LIVE],
@@ -129,9 +128,9 @@ describe("the switches and What's new agree", () => {
     expect(entries.some((e) => e.title === title)).toBe(on);
   });
 
-  it("has what #1457 and #1462 ship (the DM-screen buttons) in the held recaps entry", () => {
+  it("has what #1457 and #1462 ship (the DM-screen buttons) in the recaps entry", () => {
     const text = [...entries, ...held].find((e) => e.title === "Recaps for your table")?.what ?? "";
-    expect(text).toContain("read, post or skip it right on the DM screen");
+    expect(text).toContain("on the DM screen or the website");
   });
 
   it("never has audio live without recaps", () => {

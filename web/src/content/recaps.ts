@@ -47,9 +47,9 @@ export function allowanceLines(
 
 export const text = {
   heading: "Your recaps",
-  lead: "After a session, DMbot writes a short recap for your table. Only you can see it until you post it.",
+  lead: "After a session, DMbot can write a short recap for your table (paid plans). Only you can see it until you post it.",
   loading: "Loading your recaps…",
-  empty: "No recaps yet. DMbot emails you when one is ready.",
+  empty: "No recaps yet. DMbot tells you when one is ready.",
   // While recaps are off (RECAPS_LIVE false) the page promises nothing: no email, no recap to come.
   emptyOff: "No recaps yet.",
   back: "All your recaps",
