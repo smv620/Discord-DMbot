@@ -231,7 +231,7 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
-    title: "A fixed spelling carries through",
+    title: "A fixed spelling reaches past transcripts",
     what: "When you fix how a name is spelled, DMbot still knows the old spelling, writes the new one in the cleaned transcripts of your past sessions, and tells you how many lines changed. What was heard is never changed. One Undo puts it all back.",
     reason: "In review (#2175, #2170); held until dev1 deploys it.",
   },

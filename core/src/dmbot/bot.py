@@ -373,7 +373,11 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
-from dmbot.ui.name_card import UndoButton, UndoConnectionButton, UndoSpellingButton
+from dmbot.ui.name_card import (
+    UndoButton,
+    UndoConnectionButton,
+    UndoSpellingButton,
+)
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
     RecapNamesButton,

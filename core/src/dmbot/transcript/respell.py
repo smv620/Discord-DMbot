@@ -29,9 +29,27 @@ class Respelled:
     was: tuple[str, ...]  # what each place said before (the name only, as it was written)
 
 
+_APOSTROPHES = "'\u2019\u2018\u02bc`"
+_DASHES = "-\u2010\u2011\u2013"
+
+
+def _part(word: str) -> str:
+    """One word of a name as a pattern: any apostrophe or dash in it matches its look-alikes, as
+    the secret-name matcher does (a phone types a curly one)."""
+    out = []
+    for ch in word:
+        if ch in _APOSTROPHES:
+            out.append(f"[{_APOSTROPHES}]")
+        elif ch in _DASHES:
+            out.append(f"[{_DASHES}]")
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
+
+
 def _words(name: str) -> re.Pattern[str]:
     """The name as whole words, any case, any run of spaces between its words."""
-    parts = [re.escape(w) for w in name.split()]
+    parts = [_part(w) for w in name.split()]
     return re.compile(r"(?<!\w)" + r"\s+".join(parts) + r"(?!\w)", re.IGNORECASE)
 
 
@@ -44,10 +62,13 @@ def contains(text: str, name: str) -> bool:
     return bool(_spans(text, name))
 
 
-def respell(text: str, old: str, new: str, longer: Iterable[str] = ()) -> Respelled | None:
+def respell(
+    text: str, old: str, new: str, longer: Iterable[str] = (), hidden: Iterable[str] = ()
+) -> Respelled | None:
     """`text` with each whole-word `old` written as `new`, or None when nothing changes. `longer`:
     the campaign's other names that contain `old` as whole words; a match inside one of them
-    is left alone."""
+    is left alone. `hidden`: names players must not read (secret names, DM-only entries): a line
+    the change would make say one the line did not say before is left as it was."""
     mine = _spans(text, old)
     if not mine:
         return None
@@ -70,7 +91,10 @@ def respell(text: str, old: str, new: str, longer: Iterable[str] = ()) -> Respel
         length += len(new)
         at = b
     out.append(text[at:])
-    return Respelled("".join(out), tuple(offsets), tuple(was))
+    result = "".join(out)
+    if any(contains(result, h) and not contains(text, h) for h in hidden):
+        return None  # the new spelling would complete a name that is not for the transcript
+    return Respelled(result, tuple(offsets), tuple(was))
 
 
 def put_back(text: str, offsets: Sequence[int], was: Sequence[str], new: str) -> str | None:
@@ -97,6 +121,14 @@ def done_note(old: str, new: str, lines: int, sessions: int) -> str:
         f"{_count(lines, 'line', 'lines')} of {_count(sessions, 'past session', 'past sessions')}"
     )
     return f"Changed {old} to {new} in {where}."
+
+
+def left_note(remaining: int) -> str:
+    """How many lines are still to do after one run, and what to press."""
+    return (
+        f"{_count(remaining, 'more line is', 'more lines are')} still to change: "
+        "press Finish the past transcripts."
+    )
 
 
 def undone_note(old: str, lines: int, sessions: int) -> str:
