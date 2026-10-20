@@ -123,7 +123,7 @@ class Where(unittest.TestCase):
         allowed = cues.allowed_words()
         self.assertEqual(allowed["moods"], list(EMOTION_VOICE))
         self.assertEqual(allowed["synonyms"], dict(SYNONYMS))
-        self.assertIn("long pause", allowed["pacing"])  # type: ignore[operator]
+        self.assertIn("long pause", allowed["pacing"])
 
     def test_nothing_is_repaired_and_problems_come_in_order(self) -> None:
         text = "《Tens》 One ((pausse)) two."

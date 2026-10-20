@@ -15,6 +15,7 @@ from __future__ import annotations
 import difflib
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.recaps.audio.music import SYNONYMS
 from dmbot.recaps.audio.script import EMOTION_VOICE, PERFORMANCE_WORDS
@@ -30,7 +31,7 @@ _CLOSER = {"《": "》", "((": "))"}
 _WORDISH = re.compile(r"\w")
 
 
-def allowed_words() -> dict[str, object]:
+def allowed_words() -> dict[str, Any]:
     """What the check allows, for the website to show: the moods, the synonyms each mood also
     answers to, and the pacing words."""
     return {"moods": list(MOODS), "synonyms": dict(SYNONYMS), "pacing": list(PACING)}
