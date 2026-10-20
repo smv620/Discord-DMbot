@@ -1,11 +1,11 @@
 """Cleaning an imported session (#2105): the Transcript Cleaner and the off-topic labelling, run
 on its stored lines the way they run on a live session, in the background away from the website.
 
-The website stores the lines (through its store door) and leaves the session `waiting`. This job takes
-it (`working`), fixes misheard names with the campaign's own names (never a fix DMbot is unsure of:
-nothing is shown with Undo for a file, so only the silent ones are made), asks the fast AI which
-windows of lines are not game talk, and marks it `done`. What was heard never changes; only the
-cleaned text and the topic do. Counts only in the log, never a word of the transcript.
+The website stores the lines (through its store door) and leaves the session `waiting`. This job
+takes it (`working`), fixes misheard names with the campaign's own names (never a fix DMbot is
+unsure of: nothing is shown with Undo for a file, so only the silent ones are made), asks the fast
+AI which windows of lines are not game talk, and marks it `done`. What was heard never changes; only
+the cleaned text and the topic do. Counts only in the log, never a word of the transcript.
 
 A restart puts `working` back to `waiting` (`ImportStore.resume`), so nothing is lost. A name
 lookup or cleaning that fails leaves the line as heard; an AI window that fails leaves its lines
