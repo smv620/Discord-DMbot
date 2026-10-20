@@ -44,7 +44,7 @@ const problems: CueProblem[] = [
 
 function api() {
   const a = mockApi("table");
-  const recap = a.recap.bind(a);
+  const recap = a.recap!.bind(a);
   a.recap = async (ref) => ({ ...(await recap(ref)), cueWords: words });
   return a;
 }
