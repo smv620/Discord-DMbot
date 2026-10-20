@@ -253,9 +253,8 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues
+from dmbot.recaps import cues, short
 from dmbot.recaps import feedback as recap_feedback
-from dmbot.recaps import short
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
