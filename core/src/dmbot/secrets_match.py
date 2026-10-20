@@ -30,6 +30,7 @@ the database.
 
 from __future__ import annotations
 
+import functools
 import itertools
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
@@ -73,6 +74,7 @@ def _variants(text: str) -> list[list[str]]:
     return [folded] if folded == spaced else [folded, spaced]
 
 
+@functools.lru_cache(maxsize=4096)  # the same words come up in every name and every text
 def _endings(word: str) -> tuple[str, ...]:
     long = len(word) >= LONG_WORD
     out = ["", "s"]
