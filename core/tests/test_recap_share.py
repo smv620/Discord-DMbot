@@ -150,10 +150,40 @@ class TheShareButton(unittest.IsolatedAsyncioTestCase):
     async def test_two_quick_presses_of_send_post_the_link_once(self) -> None:
         import asyncio
 
-        _bot, interaction, channel = make()
+        bot, interaction, channel = make()
+        real = bot.campaigns.get
+
+        async def yields(*a: Any) -> Any:
+            await asyncio.sleep(0)  # a real lookup suspends here: the other press runs meanwhile
+            return await real(*a)
+
+        bot.campaigns.get = yields
         view = rs.HowView(CID, 100)
         await asyncio.gather(view.send.callback(interaction), view.send.callback(interaction))
         channel.send.assert_awaited_once()
+
+        # Without the claim (calling the part behind it twice) the same interleaving posts twice:
+        # the claim in `send` is what holds it to one.
+        bot2, interaction2, channel2 = make()
+        real2 = bot2.campaigns.get
+
+        async def yields2(*a: Any) -> Any:
+            await asyncio.sleep(0)
+            return await real2(*a)
+
+        bot2.campaigns.get = yields2
+        view2 = rs.HowView(CID, 100)
+        await asyncio.gather(view2._send(interaction2), view2._send(interaction2))
+        self.assertEqual(channel2.send.await_count, 2)
+
+    async def test_the_press_stays_used_when_only_the_confirmation_fails(self) -> None:
+        _bot, interaction, channel = make()
+        interaction.followup.send = AsyncMock(side_effect=RuntimeError("late"))
+        view = rs.HowView(CID, 100)
+        with self.assertRaises(RuntimeError):
+            await view.send.callback(interaction)
+        channel.send.assert_awaited_once()
+        self.assertTrue(view.sent)  # the link went out: a second press must post nothing
 
     async def test_a_failed_send_gives_the_press_back(self) -> None:
         _bot, interaction, channel = make()

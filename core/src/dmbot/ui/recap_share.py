@@ -180,6 +180,7 @@ class HowView(discord.ui.View):
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
         self.sent = False  # a second press of Send posts nothing more
+        self._posted = False
         if draft:
             self.copy.label = "Post and copy link"
             self.send.label = "Post and send"
@@ -200,11 +201,12 @@ class HowView(discord.ui.View):
             await _tell(interaction, SENT_ALREADY)
             return
         self.sent = True
-        done = False
+        self._posted = False
         try:
-            done = await self._send(interaction)
+            await self._send(interaction)
         finally:
-            self.sent = done
+            if not self._posted:  # only a link that really went out keeps the press used
+                self.sent = False
 
     async def _send(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign(interaction, self.campaign_id)
@@ -230,6 +232,7 @@ class HowView(discord.ui.View):
             number = numbers.get(self.session_at)
             lead = f"📜 Recap of session {number}" if number is not None else "📜 A recap"
             await channel.send(f"{lead}: {link}", allowed_mentions=NO_PINGS)
+            self._posted = True  # right after the send, before anything else can fail
         except Exception as exc:  # the deferred reply must always be answered
             log.warning("Share a recap: the send failed: %s", type(exc).__name__)  # never the link
             await interaction.followup.send(SEND_FAILED, ephemeral=True)
