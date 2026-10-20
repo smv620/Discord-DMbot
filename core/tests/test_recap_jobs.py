@@ -949,9 +949,8 @@ class Working(Base):
         job = await self.store.get(1, self.one.id, 100)
         assert job is not None
         sheet = [rd.Beat(1, "x", (), (1,), "event")]  # type: ignore[attr-defined]
-        self.assertIsNone(
-            await self.worker._facts(1, self.one.id, job, sheet, rd.Prose("A b.", ()))
-        )
+        result = await self.worker._facts(1, self.one.id, job, sheet, rd.Prose("A b.", ()))
+        self.assertEqual(result, (None, False))
         self.assertEqual(self.worker._careful.fact_sent, [])  # type: ignore[attr-defined]
 
     async def test_the_test_report_gets_no_sentence_of_the_recap(self) -> None:
