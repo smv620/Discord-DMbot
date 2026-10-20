@@ -2057,6 +2057,23 @@ QUIET_STOP = """
             CHECK (quiet_stop_minutes IN (0, 30, 60, 90));
 """
 
+RECAP_STYLE = f"""
+    -- The examples a DM pastes so recaps sound the way they like (#2075). DMbot copies how an
+    -- example sounds, never what happens in it. At most 3 a campaign, each at most 600 words
+    -- (the store checks both). Per campaign, isolated, deleted with the campaign, and in the
+    -- campaign's backup.
+    CREATE TABLE recap_style_examples (
+        {_memory_scope()}
+        -- Never reused, so a button on an old panel can't remove a newer example (#2075).
+        id          BIGINT GENERATED ALWAYS AS IDENTITY,
+        position    INTEGER NOT NULL CHECK (position >= 0),
+        text        TEXT NOT NULL CHECK (char_length(text) BETWEEN 1 AND 8000),
+        created_by  BIGINT NOT NULL CHECK (created_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    """ + _isolate("recap_style_examples")
+
 RECAP_APPROVAL = """
     -- The DM approves a recap's text before any audio is made, and picks what to make (#2083).
     -- approved_hash is a fingerprint of the title and summary the DM approved (sha256 of
@@ -6989,6 +7006,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         RECAP_TO_CONFIRM,
     ),  # names a recap kept, for the DM to confirm (#2027)
     ("0132_quiet_stop", QUIET_STOP),  # minutes of silence before an automatic stop (#2034)
+    ("0133_recap_style", RECAP_STYLE),  # examples a DM gives for how recaps sound (#2075)
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
 )
 
@@ -7045,6 +7063,7 @@ ISOLATED_TABLES = (
     "plan_divergences",
     "plan_position",
     "npcs_channel_messages",
+    "recap_style_examples",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

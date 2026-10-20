@@ -262,6 +262,7 @@ from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
+from dmbot.recaps.style import StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, retire_channels
@@ -838,6 +839,7 @@ class DMBot(commands.AutoShardedBot):
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
         npcs_messages: MessageMap | None = None,
+        recap_styles: StyleStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -889,6 +891,7 @@ class DMBot(commands.AutoShardedBot):
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
+        self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
@@ -7453,6 +7456,7 @@ class DMBot(commands.AutoShardedBot):
             guild_id=gid,
             campaign_id=cid,
             session_at=job.session_at,
+            styles=self.recap_styles,
         )
 
     async def recap_allowed(self, gid: int, cid: str, job: Job) -> bool:
@@ -9507,6 +9511,7 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
         campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
+        campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)
@@ -9543,6 +9548,7 @@ async def run(settings: Settings) -> None:
             AdventureStore(db),
             PlanStore(db),
             npcs_messages=NpcMessageStore(db),
+            recap_styles=StyleStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

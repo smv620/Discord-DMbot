@@ -219,9 +219,9 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 + "\n".join(f"• {p}" for p in shown)
                 + tail
                 + "\n\nMoods go in 《 》: "
-                + ", ".join(words["moods"])  # type: ignore[arg-type]
+                + ", ".join(words["moods"])
                 + ".\nPacing goes in (( )): "
-                + ", ".join(words["pacing"])  # type: ignore[arg-type]
+                + ", ".join(words["pacing"])
                 + ".\nEdit the text on your recap page, then press Approve again.",
             )
             return
