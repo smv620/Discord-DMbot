@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.ai import Reply
 from dmbot.campaigns import CampaignStore
-from dmbot.consent import ConsentStore
+from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.transcript.import_job import FAILED_NAMES, ImportJob, ImportStore
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
@@ -132,6 +132,46 @@ class TheJob(DatabaseTest):
         await self.job(ai).run_round(GUILD)
         self.assertEqual(ai.calls, 0)
         self.assertEqual(await self.state(), ("done", ""))
+        first = (await self.transcripts.lines(GUILD, self.session))[0]
+        self.assertEqual(first.text, first.heard)
+
+    async def test_consent_under_older_terms_means_no_ai_call_and_the_text_as_heard(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION - 1,))
+        ai = FakeAI("1. other\n2. other")
+        await self.job(ai).run_round(GUILD)
+        self.assertEqual(ai.calls, 0)
+        lines = await self.transcripts.lines(GUILD, self.session)
+        self.assertEqual(
+            [(line.text, line.topic) for line in lines], [(r.heard, "game") for r in lines]
+        )
+
+    async def test_a_player_who_stops_after_the_first_window_is_never_sent_again(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.transcript import import_job as ij
+
+        consent = ConsentStore(self.db)
+
+        class StopsAfterFirst(FakeAI):
+            async def complete(self, system: str, text: str, **kw: Any) -> Reply:
+                reply = await super().complete(system, text, **kw)
+                consent.stop_now(GUILD, MIRA)  # the player presses Stop recording me
+                return reply
+
+        ai = StopsAfterFirst("1. other")
+        with patch.object(ij, "WINDOW_LINES", 1):
+            await self.job(ai, consenting=consent.consenting).run_round(GUILD)
+        self.assertEqual(ai.calls, 1)  # the second window was never sent
+        self.assertEqual(await self.state(), ("done", ""))
+
+    async def test_stop_now_before_the_round_means_nothing_is_worked_on(self) -> None:
+        consent = ConsentStore(self.db)
+        await consent.consenting(GUILD)  # cached: in
+        consent.stop_now(GUILD, MIRA)
+        ai = FakeAI("1. other\n2. other")
+        await self.job(ai, consenting=consent.consenting).run_round(GUILD)
+        self.assertEqual(ai.calls, 0)
         first = (await self.transcripts.lines(GUILD, self.session))[0]
         self.assertEqual(first.text, first.heard)
 

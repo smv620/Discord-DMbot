@@ -2955,7 +2955,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     ("dmbot_import_members", "dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)"),
     ("dmbot_import_progress", "dmbot_import_progress(BIGINT, TEXT, TEXT)"),
-    ("dmbot_import_mapping", "dmbot_import_mapping(BIGINT, TEXT, JSONB)"),
+    ("dmbot_import_mapping", "dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT)"),
     # Approving a recap's text and picking its audio (#2083): the only write to those columns.
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     (
@@ -7018,7 +7018,16 @@ SESSION_IMPORTS = (
     );
     """
     + _isolate("import_speakers")
+    + _setting("dmbot_import_names", "dmbot.import_names", "TEXT")
     + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY import_names ON web_users FOR SELECT TO %I
+                USING (dmbot_import_names() = ''on'')',
+            current_user);
+    END
+    $do$;
     -- The doors the website's role stores an import through. It has no grant on the transcript or
     -- consent tables, so each door checks the caller is a DM of the campaign in a server on the
     -- session's list, and the store door keeps only lines of members who have agreed under the
@@ -7115,11 +7124,16 @@ SESSION_IMPORTS = (
     $fn$;
 
 
-    -- dmbot_import_members: the people of the campaign (its table people, each tied to a Discord
-    -- account), searched by name, at most 25, with whether each is recorded now. NULL unless a DM.
+    -- dmbot_import_members: who a label can be tied to, searched by name, at most 25: the
+    -- campaign's table people (each tied to a Discord account) and every other member of THIS
+    -- server who is recorded now and has a name on a website account, so a new campaign has
+    -- people to pick from. Never another server's people. NULL unless a DM.
     CREATE FUNCTION dmbot_import_members(g BIGINT, c TEXT, q TEXT, terms INT, outside TEXT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        found JSONB;
+        before TEXT := COALESCE(current_setting('dmbot.import_names', true), '');
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
@@ -7128,20 +7142,40 @@ SESSION_IMPORTS = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        RETURN COALESCE((
+        -- web_users is closed to everyone; a policy TO the owner role opens it only while this
+        -- function has set its own setting, and only this query reads names from it.
+        PERFORM set_config('dmbot.import_names', 'on', true);
+        SELECT COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
-                       'userId', m.played_by::TEXT, 'name', m.name,
+                       'userId', m.user_id::TEXT, 'name', m.name,
                        'agreed', EXISTS (SELECT 1 FROM consent x
-                                         WHERE x.guild_id = g AND x.user_id = m.played_by
+                                         WHERE x.guild_id = g AND x.user_id = m.user_id
                                            AND x.terms_version = terms
                                            AND (outside IS NULL OR x.outside_to = outside)))
                        ORDER BY lower(m.name))
-            FROM (SELECT e.name, e.played_by FROM memory_entities e
-                  WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
-                    AND e.status = 'confirmed' AND e.played_by IS NOT NULL
-                    AND (q = '' OR position(lower(q) IN lower(e.name)) > 0)
-                  ORDER BY (lower(e.name) = lower(q)) DESC, lower(e.name)
-                  LIMIT 25) m), '[]'::jsonb);
+            FROM (SELECT n.name, n.user_id FROM (
+                      SELECT e.name, e.played_by AS user_id, 0 AS rank
+                      FROM memory_entities e
+                      WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                        AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                      UNION ALL
+                      SELECT u.display_name, u.user_id, 1
+                      FROM web_users u
+                      WHERE coalesce(u.display_name, '') <> ''
+                        AND EXISTS (SELECT 1 FROM consent x
+                                    WHERE x.guild_id = g AND x.user_id = u.user_id
+                                      AND x.terms_version = terms
+                                      AND (outside IS NULL OR x.outside_to = outside))
+                        AND NOT EXISTS (SELECT 1 FROM memory_entities e2
+                                        WHERE e2.guild_id = g AND e2.campaign_id = c
+                                          AND e2.type = 'person' AND e2.status = 'confirmed'
+                                          AND e2.played_by = u.user_id)
+                  ) n
+                  WHERE (q = '' OR position(lower(q) IN lower(n.name)) > 0)
+                  ORDER BY (lower(n.name) = lower(q)) DESC, n.rank, lower(n.name)
+                  LIMIT 25) m), '[]'::jsonb) INTO found;
+        PERFORM set_config('dmbot.import_names', before, true);
+        RETURN found;
     END
     $fn$;
 
@@ -7167,8 +7201,10 @@ SESSION_IMPORTS = (
     $fn$;
 
     -- dmbot_import_mapping: the remembered {label: member} of the campaign, and (with `put`) the
-    -- new choices to remember. NULL unless a DM.
-    CREATE FUNCTION dmbot_import_mapping(g BIGINT, c TEXT, put JSONB) RETURNS JSONB
+    -- new choices to remember, kept only for members recorded now. NULL unless a DM.
+    CREATE FUNCTION dmbot_import_mapping(
+        g BIGINT, c TEXT, put JSONB, terms INT, outside TEXT
+    ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
@@ -7187,6 +7223,11 @@ SESSION_IMPORTS = (
                 WHERE p.key <> '' AND p.value ~ '^[0-9]{1,19}$'
                   AND (length(p.value) < 19 OR p.value <= '9223372036854775807')
                   AND p.value::BIGINT > 0
+                  AND terms >= 6  -- old consent never counts (IMPORT_TERMS_FLOOR)
+                  AND EXISTS (SELECT 1 FROM consent x  -- only people recorded now are remembered
+                              WHERE x.guild_id = g AND x.user_id = p.value::BIGINT
+                                AND x.terms_version = terms
+                                AND (outside IS NULL OR x.outside_to = outside))
                   AND (SELECT count(*) FROM import_speakers s2
                        WHERE s2.guild_id = g AND s2.campaign_id = c) < 200
                 ON CONFLICT (guild_id, campaign_id, label)
@@ -7212,7 +7253,7 @@ SESSION_IMPORTS = (
             'ALTER FUNCTION dmbot_import_progress(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
-            'ALTER FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB)'
+            'ALTER FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
@@ -7221,7 +7262,7 @@ SESSION_IMPORTS = (
         BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_import_progress(BIGINT, TEXT, TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT) FROM PUBLIC;
     """
 )
 

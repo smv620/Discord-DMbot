@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
+import unittest.mock
+from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
@@ -196,6 +199,68 @@ class TheStore(WithImports):
         remembered = {s["label"]: s["suggested"] for s in got["files"][0]["speakers"]}
         self.assertEqual(remembered["Mira (mira_v)"]["userId"], str(stranger))  # remembered whole
 
+    async def test_only_people_recorded_now_are_remembered_for_next_time(self) -> None:
+        await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            ("a.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id FROM import_speakers ORDER BY 1")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [MIRA])  # not Tomas
+
+    async def test_the_members_search_covers_the_servers_recorded_people_only(self) -> None:
+        stranger, unrecorded, elsewhere = 9101, 9102, 9103
+        await ConsentStore(self.db).grant(THURSDAY.id, stranger)
+        await ConsentStore(self.db).grant(555, elsewhere)  # recorded, but on another server
+        for who, name in ((stranger, "Zed Fenn"), (unrecorded, "Zed Gray"), (elsewhere, "Zed Ode")):
+            user = SimpleNamespace(id=who, name=name, email=None)
+            await web_sessions.sign_in(self.web, cast(Any, user), [THURSDAY], now=NOW, days=30)
+        got = await imports.search_members(self.web, self.session, self.ref_c, "zed", **self.kw)
+        self.assertEqual(
+            [(m["userId"], m["agreed"]) for m in got["members"]], [(str(stranger), True)]
+        )
+
+    async def test_a_second_file_the_door_refuses_stores_nothing_at_all(self) -> None:
+        await ConsentStore(self.db).grant(THURSDAY.id, TOMAS)
+        original = imports._plans
+
+        def then_tomas_stops(*args: Any, **kw: Any) -> Any:
+            plans = original(*args, **kw)  # both files look fine here ...
+            self.revoke = True
+            return plans
+
+        self.revoke = False
+        with unittest.mock.patch.object(imports, "_plans", then_tomas_stops):
+            real = imports.Database.user
+            seen = {"n": 0}
+
+            @contextlib.asynccontextmanager
+            async def user(db: Any, *a: Any, **kw: Any) -> Any:
+                async with real(db, *a, **kw) as conn:
+                    if self.revoke and seen["n"] == 0:
+                        seen["n"] = 1
+                        async with self.db.guild(THURSDAY.id) as other:  # ... until the store
+                            await other.execute("DELETE FROM consent WHERE user_id = %s", (TOMAS,))
+                    yield conn
+
+            with (
+                unittest.mock.patch.object(imports.Database, "user", user),
+                self.assertRaises(RecapError) as refused,
+            ):
+                await self.confirm(
+                    {
+                        "mapping": MAPPING,
+                        "sessions": [
+                            {"file": "a.txt", "date": "2026-09-14"},
+                            {"file": "b.txt", "date": "2026-09-15"},
+                        ],
+                    },
+                    ("a.txt", CRAIG),
+                    ("b.txt", "Tomas (tomas#1): hello there friend.\n"),
+                )
+        self.assertEqual(refused.exception.code, "no_lines_kept")
+        self.assertEqual(await self.sessions(), 0)
+
     async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
         await self.confirm(
             {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 0}]},
@@ -347,8 +412,8 @@ class TheRoutes(WithImports):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(imports_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         self.clients = []
         for who in (ALICE, BOB):
@@ -381,6 +446,36 @@ class TheRoutes(WithImports):
             headers={"content-type": "application/json"},
         )
         self.assertEqual((got.status_code, got.json()["error"]), (403, "not_a_dm"))
+
+    async def test_every_import_route_is_not_found_while_the_switch_is_off(self) -> None:
+        off = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=off), base_url=API, headers=HEADERS
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            base = f"/me/campaigns/{self.ref_c}/imports"
+            for method, path in (
+                ("POST", "/preview"), ("GET", "/members"), ("POST", "/check"), ("POST", ""),
+                ("GET", "/" + "f" * 32),
+            ):  # fmt: skip
+                got = await client.request(method, base + path, json={"files": []})
+                self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"), path)
+
+    async def test_a_body_of_the_worst_escaped_legal_files_fits(self) -> None:
+        worst = '\n"' * (imports.MAX_BYTES // 2)  # 2 MB that JSON writes at twice the size
+        body = json.dumps({"files": [{"name": f"{n}.txt", "text": worst} for n in range(20)]})
+        self.assertGreater(len(body), 20 * imports.MAX_BYTES)
+        self.assertLess(len(body), imports.MAX_BODY_BYTES)
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview",
+            content=body,
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual(got.status_code, 200, got.text[:200])
 
     async def test_a_body_over_the_limit_is_refused_with_413(self) -> None:
         got = await self.dm.post(
@@ -476,7 +571,7 @@ class TheGuards(WithImports):
     async def test_a_person_who_is_not_a_dm_of_the_campaign_is_refused_everywhere(self) -> None:
         from dmbot.web import sessions as web_sessions
 
-        token = await web_sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         bob = await web_sessions.find(self.web, token, now=NOW)
         assert bob is not None
         for call in (

@@ -780,6 +780,12 @@ def create_app(
     # Importing is the heaviest thing the API does: a few a minute for a person is plenty.
     import_limit = RateLimit(60, count=6)
 
+    async def imports_enabled() -> None:
+        """Off by default (DMBOT_IMPORTS): the routes do not exist for anyone until dev1 has
+        checked a real import."""
+        if not settings.imports_on:
+            raise HTTPException(status_code=404, detail="not_found")
+
     async def import_body(request: Request, session: Session) -> dict[str, Any]:
         """The JSON body, read with a running size cap (a declared length is not trusted) and
         parsed away from the event loop. Counted per account before anything is read."""
@@ -808,7 +814,7 @@ def create_app(
         status, detail = recap_refusals.get(err.code, (404, "not_found"))
         return HTTPException(status_code=status, detail=detail)
 
-    @app.post("/me/campaigns/{ref}/imports/preview")
+    @app.post("/me/campaigns/{ref}/imports/preview", dependencies=[Depends(imports_enabled)])
     async def me_import_preview(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
         try:  # the DM and the plan come first: nothing is read for anyone who may not import
@@ -827,7 +833,7 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
-    @app.get("/me/campaigns/{ref}/imports/members")
+    @app.get("/me/campaigns/{ref}/imports/members", dependencies=[Depends(imports_enabled)])
     async def me_import_members(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
         session, _token = signed
         try:
@@ -838,7 +844,7 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
-    @app.post("/me/campaigns/{ref}/imports/check")
+    @app.post("/me/campaigns/{ref}/imports/check", dependencies=[Depends(imports_enabled)])
     async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
         try:  # the DM and the plan come first: nothing is read for anyone who may not import
@@ -858,7 +864,9 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
-    @app.post("/me/campaigns/{ref}/imports", status_code=202)
+    @app.post(
+        "/me/campaigns/{ref}/imports", status_code=202, dependencies=[Depends(imports_enabled)]
+    )
     async def me_import(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
         try:  # the DM and the plan come first: nothing is read for anyone who may not import
@@ -878,7 +886,7 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
-    @app.get("/me/campaigns/{ref}/imports/{import_id}")
+    @app.get("/me/campaigns/{ref}/imports/{import_id}", dependencies=[Depends(imports_enabled)])
     async def me_import_progress(ref: str, import_id: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:

@@ -39,7 +39,10 @@ from dmbot.web.sessions import Session
 
 MAX_FILES = 20
 MAX_BYTES = 2 * 1024 * 1024
-MAX_BODY_BYTES = MAX_FILES * MAX_BYTES + 256 * 1024  # all the files, and the plan around them
+# All the files as JSON text: a quote or newline takes two bytes and a control character six, so
+# 2.5x covers the worst text a legal file can hold (a file full of newlines and quotes is 2x);
+# the plan around them gets 256 KB. Each file is still held to MAX_BYTES once decoded.
+MAX_BODY_BYTES = int(MAX_FILES * MAX_BYTES * 2.5) + 256 * 1024
 MAX_LABEL = 80  # the table's own limit on a remembered label
 MAX_LINES = 20_000  # lines in one file; each is a stored row and a share of an AI call
 MAX_LINES_ALL = 60_000  # lines in one import
@@ -227,10 +230,12 @@ async def search_members(
     return {"members": members}
 
 
-async def _remembered(conn: Conn, c: Campaign, put: Mapping[str, int] | None) -> dict[str, str]:
+async def _remembered(
+    conn: Conn, c: Campaign, put: Mapping[str, int] | None, outside: str | None
+) -> dict[str, str]:
     cur = await conn.execute(
-        "SELECT dmbot_import_mapping(%s, %s, %s::jsonb) AS r",
-        (c.guild_id, c.campaign_id, json.dumps(put) if put else None),
+        "SELECT dmbot_import_mapping(%s, %s, %s::jsonb, %s, %s) AS r",
+        (c.guild_id, c.campaign_id, json.dumps(put) if put else None, TERMS_VERSION, outside),
     )
     return dict((await cur.fetchone() or {}).get("r") or {})
 
@@ -264,7 +269,7 @@ async def preview(
     files = await read_files_off_loop(raw_files)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-        remembered = await _remembered(conn, c, None)
+        remembered = await _remembered(conn, c, None, outside)
         seen: dict[str, dict[str, Any] | None] = {}
         out = []
         for f in files:
@@ -459,7 +464,7 @@ async def confirm(
             stored.append({"file": f.name, "state": "waiting"})
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
-        await _remembered(conn, c, remembered)
+        await _remembered(conn, c, remembered, outside)
     return {
         "importId": batch,
         "sessions": stored,
