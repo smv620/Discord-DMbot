@@ -62,6 +62,7 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
+      "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)
       "A 📇 Names button", // until dev1 deploys it (#1987, #2002)
       "See what DMbot looked at", // until #1957 deploys (#1958)
@@ -86,6 +87,7 @@ describe("What's new", () => {
       "Choose what recaps do",
       "New names from what was said",
       "A note before tonight's session",
+      "When you say a secret name", // until #2094 is deployed (SECRET_REVEAL_LIVE, #2102)
       "When a player says a secret name",
       "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
       "Heads-up when a fallen character speaks", // until dev1 has seen it working (DMBOT_LIVE_HEADS_UP, #2068)

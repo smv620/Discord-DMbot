@@ -212,6 +212,12 @@ export const held: Held[] = [
       "Waits for the importer (#2105, #2106) to deploy, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
   },
   {
+    date: "2026-10-20",
+    title: "A short session asks first",
+    what: "If a session is short, under 30 minutes long or with under 30 minutes of game talk, DMbot asks you on your DM screen before writing a recap. Press Write a recap or No recap. If you don't answer, no recap is written. You decide; DMbot only asks.",
+    reason: "In review (#2104); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
@@ -371,6 +377,12 @@ export const held: Held[] = [
     what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
     reason:
       "Held until it has been seen working on the test server (#1403).",
+  },
+  {
+    date: "2026-10-20",
+    title: "When you say a secret name",
+    what: "When you, the game master, say a name you marked secret out loud at the table, DMbot asks you at once whether it is revealed now. Press Yes, players know now, and DMbot may use the name in answers to players (you can make it secret again from the name's card). Press No, keep it secret, and DMbot won't ask about it again this session. DMbot never decides for you, and only the campaign's DMs can answer.",
+    reason: "Waits for the deploy of #2094 (#2088, #2102).",
   },
   {
     date: "2026-10-16",
