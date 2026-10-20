@@ -15,7 +15,7 @@ from dmbot.config import Settings
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.secret_aloud import SecretName, secret_names
 from dmbot.memory.secret_reveal import RevealSession, revealed_in
-from dmbot.transcript.topics import GAME, OFF_TOPIC
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK
 from dmbot.ui.secret_reveal import (
     PRIVATE_NOTE,
     RevealButton,
@@ -155,7 +155,9 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
     async def test_consent_withdrawn_between_the_waits_asks_nothing(self) -> None:
         table = fake_table()
         bot = fake_bot(table)
-        answers = iter([True, False, False, False])  # recorded at the start, stopped by the end
+        # has_consent is asked at the start, after the stored lookups and before posting: the
+        # first answer is True and every later one False, so the last check stops it.
+        answers = iter([True, False, False, False])
         bot.consent = SimpleNamespace(has_consent=lambda g, u: next(answers, False))
         await ask(bot, table, "the Arcane Brotherhood", [BROTHERHOOD])
         bot.post.assert_not_awaited()
@@ -211,7 +213,15 @@ class AHeldLine(unittest.IsolatedAsyncioTestCase):
     """A DM line the off-topic filter held is asked about once the filter calls it game talk
     (#2101), and only then."""
 
-    async def label(self, topic: str, *, user: int = DM_ID, consenting: bool = True) -> list[str]:
+    async def label(
+        self,
+        topic: str,
+        *,
+        user: int = DM_ID,
+        stops_after_labelling: bool = False,
+        on: bool = True,
+    ) -> list[tuple[Any, ...]]:
+        """The `_reveal_ask` calls the labelling made, as their arguments."""
         from unittest import mock
 
         from dmbot.ai import Reply
@@ -222,33 +232,41 @@ class AHeldLine(unittest.IsolatedAsyncioTestCase):
         table.topic_calls, table.topic_failures, table.heard = 0, 0, []
         table.topic_tokens = [0, 0]
         table.vocabulary = MagicMock()
-        names: list[str] = []
+        calls: list[tuple[Any, ...]] = []
         bot = MagicMock()
         bot.topic_ai = object()
-        bot.settings = SimpleNamespace(secret_reveal_ask=True)
-        bot.consent = SimpleNamespace(has_consent=lambda g, u: consenting)
+        bot.settings = SimpleNamespace(secret_reveal_ask=on)
+        # Consent is asked twice by the labelling (before the call, then per line): the DM stops
+        # between the two when asked to.
+        answers = iter([True, not stops_after_labelling])
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: next(answers, True))
 
-        def track(coro: Any, name: str) -> None:
-            names.append(name)
-            coro.close()
+        def reveal(*args: Any) -> None:
+            calls.append(args)
 
-        bot._track = track
+        bot._reveal_ask = reveal
+        bot._track = lambda result, name: None
+        bot._suggest_after_label = lambda *a: None
         bot._save_topic = AsyncMock()
         bot._hide_lines = AsyncMock()
         answer = ([topic], Reply("x", False, 1, 1, "m"))
         with mock.patch("dmbot.bot.classify", AsyncMock(return_value=answer)):
             await DMBot._label_topics(bot, table, [Waiting(user, 5, "the Arcane Brotherhood")])
-        return names
+        return [(table, *c[1:]) if c and c[0] is table else c for c in calls]
 
-    async def test_game_talk_by_the_dm_asks(self) -> None:
-        self.assertIn("secret-reveal-ask", await self.label(GAME))
+    async def test_game_talk_by_the_dm_asks_with_the_line_as_it_was_held(self) -> None:
+        calls = await self.label(GAME)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1:], (DM_ID, "the Arcane Brotherhood"))
 
-    async def test_off_topic_talk_does_not_ask(self) -> None:
-        self.assertNotIn("secret-reveal-ask", await self.label(OFF_TOPIC))
+    async def test_table_talk_asks_too_and_off_topic_does_not(self) -> None:
+        self.assertEqual(len(await self.label(TABLE_TALK)), 1)
+        self.assertEqual(await self.label(OFF_TOPIC), [])
 
-    async def test_a_player_or_a_stopped_dm_does_not_ask(self) -> None:
-        self.assertNotIn("secret-reveal-ask", await self.label(GAME, user=PLAYER))
-        self.assertNotIn("secret-reveal-ask", await self.label(GAME, consenting=False))
+    async def test_a_player_the_switch_and_a_dm_who_stopped_ask_nothing(self) -> None:
+        self.assertEqual(await self.label(GAME, user=PLAYER), [])
+        self.assertEqual(await self.label(GAME, on=False), [])
+        self.assertEqual(await self.label(GAME, stops_after_labelling=True), [])
 
 
 class TheSwitch(unittest.TestCase):
