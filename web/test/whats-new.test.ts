@@ -76,6 +76,7 @@ describe("What's new", () => {
       "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Recaps stick to what happened", // with recaps (RECAPS_LIVE, #2064, #2067)
       "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
+      "Approve the text before any audio", // with narration (RECAP_AUDIO_LIVE, #2084)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "Play a recap's voice and music together", // with it (#2017)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
@@ -84,6 +85,7 @@ describe("What's new", () => {
       "Choose what recaps do",
       "New names from what was said",
       "A note before tonight's session",
+      "When you say a secret name", // until #2094 is deployed (SECRET_REVEAL_LIVE, #2102)
       "When a player says a secret name",
       "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
       "Heads-up when a fallen character speaks", // until dev1 has seen it working (DMBOT_LIVE_HEADS_UP, #2068)

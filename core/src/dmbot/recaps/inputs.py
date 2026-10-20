@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from dmbot.recaps.pipeline import Inputs
-from dmbot.recaps.style import StyleStore
+from dmbot.recaps.style import NoteStore, StyleStore
 from dmbot.recaps.text import strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
 
@@ -30,6 +30,7 @@ async def load_inputs(
     campaign_id: str,
     session_at: int,
     styles: StyleStore | None = None,
+    notes: NoteStore | None = None,
 ) -> Inputs | None:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -60,4 +61,7 @@ async def load_inputs(
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
         # The campaign's example recaps, or the defaults: for the writer's tone only (#2075).
         style=await styles.examples_for(guild_id, campaign_id) if styles is not None else (),
+        notes=[n.text for n in await notes.notes(guild_id, campaign_id)]
+        if notes is not None
+        else (),
     )
