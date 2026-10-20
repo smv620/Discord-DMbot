@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   againLabel,
   allowanceLines,
+  cueProblemLine,
+  cueWords,
   errors,
   sessionDay,
   statusLine,
@@ -18,6 +20,8 @@ import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
+  type CueProblem,
+  type CueWords,
   type Recap,
   type RecapAction,
   type RecapMonth,
@@ -30,6 +34,45 @@ import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
 
 const POLL_MS = 5000;
+
+/** The words a cue may use, in a small panel the DM can open (#2084). The API says them, so the
+ * page shows exactly what it checks; a synonym reads "sad → somber". */
+function CueWordsHelp({ words }: { words: CueWords }) {
+  const synonyms = Object.entries(words.synonyms).map(([from, to]) => `${from} (${to})`);
+  return (
+    <details class="cue-help">
+      <summary>{cueWords.help}</summary>
+      <p class="muted small">{cueWords.helpLead}</p>
+      <p>
+        <strong>{cueWords.moods}:</strong> {words.moods.join(", ")}
+      </p>
+      {synonyms.length > 0 && (
+        <p>
+          <strong>{cueWords.synonyms}:</strong> {synonyms.join(", ")}
+        </p>
+      )}
+      <p>
+        <strong>{cueWords.pacing}:</strong> {words.pacing.join(", ")}
+      </p>
+    </details>
+  );
+}
+
+/** The cue problems a refused save found, under the text box (#2084). */
+function CueProblems({ problems }: { problems: CueProblem[] }) {
+  return (
+    <div id="recap-cue-problems" class="cue-problems">
+      <p>
+        <strong>{cueWords.problemsHeading}</strong>
+      </p>
+      <ul>
+        {problems.map((problem, i) => (
+          <li key={i}>{cueProblemLine(problem)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 
 type Load =
@@ -370,6 +413,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [editing, setEditing] = useState(false);
   const [summary, setSummary] = useState("");
   const [bullets, setBullets] = useState("");
+  const [cueProblems, setCueProblems] = useState<CueProblem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   // Where focus goes when the button that was pressed is disabled or gone (#1466).
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -458,6 +502,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const startEdit = () => {
     setSummary(recap.summary);
     setBullets(recap.housekeeping.join("\n"));
+    setCueProblems([]);
     setNote(null);
     setEditing(true);
   };
@@ -468,6 +513,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     inFlight.current = true;
     setBusy("save");
     setNote(null);
+    setCueProblems([]);
     try {
       const lines = bullets
         .split("\n")
@@ -477,6 +523,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       setEditing(false);
       setNote({ ok: true, message: text.saved });
     } catch (error) {
+      // The API decides what is wrong with a cue; the edit stays open and unsaved (#2084).
+      if (error instanceof ApiError && error.kind === "bad-cues") {
+        setCueProblems(error.cueProblems);
+      }
       setNote({ ok: false, message: messageFor(error) });
       await refresh(error);
     } finally {
@@ -567,8 +617,12 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             id="recap-text"
             rows={14}
             value={summary}
+            aria-invalid={cueProblems.length > 0 ? "true" : undefined}
+            aria-describedby={cueProblems.length > 0 ? "recap-cue-problems" : undefined}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
           />
+          {cueProblems.length > 0 && <CueProblems problems={cueProblems} />}
+          {RECAP_AUDIO_LIVE && recap.cueWords && <CueWordsHelp words={recap.cueWords} />}
           <label for="recap-housekeeping">{text.housekeepingLabel}</label>
           <textarea
             id="recap-housekeeping"

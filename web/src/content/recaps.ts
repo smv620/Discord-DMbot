@@ -3,7 +3,7 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
-import type { ApiErrorKind, Recap, RecapMonth } from "../account/api";
+import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -137,5 +137,39 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
+    "bad-cues":
+      "Some cues in the text need fixing. They are listed under the text box. Nothing was saved.",
     other: "Something went wrong on our side. Try again in a minute.",
   };
+
+// The cue checks on save (#2084). The API says where each problem is and what kind it is; these
+// are the words for it. A cue is the 《mood》 or ((pause)) marker in the text, so each line says
+// "cue", never "tag" or "syntax". "no_words" is read as a cue with no story words next to it:
+// check it against #2083's own meaning when that lands.
+export const cueWords = {
+  problemsHeading: "Fix these cues, then save again",
+  help: "Cue words",
+  helpLead:
+    "A mood cue looks like 《calm》. A pause or pace cue looks like ((long pause)). Only the words below work.",
+  moods: "Moods",
+  synonyms: "Other words that work for a mood",
+  pacing: "Pauses and pace",
+} as const;
+
+/** One cue problem as a plain sentence, with where it is. */
+export function cueProblemLine(problem: CueProblem): string {
+  const where = `Paragraph ${problem.paragraph}`;
+  const near = `“${problem.near}”`;
+  const cue = `“${problem.cue}”`;
+  const said: Record<CueProblem["kind"], string> = {
+    unknown: `${cue} is not a word DMbot knows.${
+      problem.suggest ? ` Did you mean “${problem.suggest}”?` : ""
+    }`,
+    unclosed: `A cue near ${near} is never closed.`,
+    mismatched: `A cue near ${near} starts one way and ends another.`,
+    empty: `There is an empty cue near ${near}.`,
+    no_words: `The cue ${cue} has no story words with it. Put it by the words it belongs to, or take it out.`,
+    inside_word: `The cue ${cue} is in the middle of a word. Move it to between words.`,
+  };
+  return `${where}: ${said[problem.kind] ?? `There is a problem with the cue near ${near}.`}`;
+}

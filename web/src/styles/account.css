@@ -470,3 +470,26 @@
   background: #32353b;
   color: #ddd;
 }
+
+/* The cue problems a refused save lists under the text box, and the cue words help (#2084). The
+   border carries the meaning, not colour alone, and the tokens follow the theme. */
+.account .cue-problems {
+  margin: 0.5rem 0 1rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: 0.4rem;
+}
+
+.account .cue-problems ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.account .cue-help {
+  margin: 0 0 1rem;
+}
+
+.account .cue-help summary {
+  cursor: pointer;
+}
