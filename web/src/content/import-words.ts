@@ -4,8 +4,8 @@
 // not built yet, so none of these words may show before then: Help would describe a page nobody
 // has, and What's new a feature nobody can use.
 //
-// HOW IT TURNS ON: when the importer is deployed and dev1 has seen a real import, the What's new
-// entry "Bring in older sessions" moves out of `held` (whats-new.ts) and IMPORT_LIVE becomes true
+// HOW IT TURNS ON: when the importer and #2143 (Google Doc links; an older API ignores `links`) are
+// deployed and dev1 has seen a real import, the What's new entry "Bring in older sessions" moves out of `held` (whats-new.ts) and IMPORT_LIVE becomes true
 // in the same change. A test ties the two together and fails until both are done.
 export const IMPORT_LIVE = false;
 
@@ -40,6 +40,7 @@ export const importPage = {
   working: "Working…",
   tooManyFiles: `That is more than ${IMPORT_MAX_FILES} files and links together. Choose fewer.`,
   fileTooBig: (name: string): string => `${name} is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
+  docNoAnswer: "DMbot gave no answer for one of your Google Docs. Press Preview again.",
   fileNameTaken: (name: string): string => `${name} has a name DMbot uses for Google Docs. Rename the file, then choose it again.`,
   fileNotTxt: (name: string): string => `${name} isn't a .txt file.`,
   fileError: {
@@ -49,13 +50,13 @@ export const importPage = {
     not_a_google_doc:
       "This isn't a Google Doc link. Open the doc, press Share, then Copy link, and paste that here. Or remove it.",
     doc_not_shared:
-      "This doc isn't shared yet. In the doc, press Share. Under General access choose Anyone with the link, set to Viewer. Then press Preview again.",
+      "DMbot couldn't open this doc. Check the link is right, and that Share → General access is Anyone with the link, Viewer. Then press Preview again.",
     doc_too_big: `This doc is over ${IMPORT_MAX_MB} MB of text. Split it into smaller docs, or paste the part you need into a new one.`,
-    doc_unreachable: "Google didn't answer just now. Press Preview again in a minute.",
+    doc_unreachable: "DMbot couldn't open this doc just now. Press Preview again in a minute.",
     repeated_link: "You added this doc twice. Remove one of them, then press Preview again.",
-    too_many_lines: "This file has too many lines. Split it into smaller files.",
-    too_many_speakers: "This file has too many different names. Check it is one session, or split it.",
-    empty: "This file is empty.",
+    too_many_lines: "This file or doc has too many lines. Split it into smaller ones.",
+    too_many_speakers: "This file or doc has too many different names. Check it is one session, or split it.",
+    empty: "This file or doc is empty.",
   } as Record<string, string>,
   fileErrorOther: "DMbot couldn't use this file.",
   linkLabel: "Or paste a Google Doc link",
@@ -67,7 +68,7 @@ export const importPage = {
     "Set it to Viewer.",
   ],
   linkHelpAfter:
-    "DMbot reads the doc without signing in to your Google account, and only when you press Preview, Check or Import. It never changes the doc. Anyone with the link can open it, so you can switch sharing off again afterwards.",
+    "DMbot reads the doc without signing in to your Google account, and only when you press Preview, Check or Import. It never changes the doc. Anyone with the link can open it. Keep sharing on until you press Import and it has started, then you can switch it off.",
   linkPlaceholder: "https://docs.google.com/document/d/…",
   notAGoogleDocLink: "That doesn't look like a Google Doc link. It starts with docs.google.com/document.",
   linkAlreadyAdded: "You already added this doc.",
@@ -78,7 +79,7 @@ export const importPage = {
   shownName: (name: string): string => name.replace(/^(Google Doc \d+)\.txt$/, "$1"),
   shortLink: (link: string): string => {
     const id = /\/d\/([\w-]+)/.exec(link)?.[1];
-    return id ? `docs.google.com/…/d/${id.slice(0, 8)}…` : link;
+    return id ? `docs.google.com/…/d/${id.length > 16 ? `${id.slice(0, 16)}…` : id}` : link;
   },
   addLink: "Add link",
   remove: "Remove",
@@ -152,8 +153,10 @@ export const importPage = {
     "too-many-speakers": "A file has too many different names. Check it is one session, or split it, then try again.",
     "try-it-campaign": "Importing isn't part of Try It. A paid plan has it.",
     "too-many-files": `That is more than ${IMPORT_MAX_FILES} files and links together. Choose fewer.`,
-    "too-big": `One of the files or links is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
+    "too-big": `One of the files is over ${IMPORT_MAX_MB} MB. Leave it out or split it.`,
     "bad-files": "DMbot couldn't read the files as sent. Choose them again.",
+    "bad-files-docs":
+      "One of your Google Docs couldn't be opened just now. Check it's still shared as Anyone with the link, then press Preview again.",
     "bad-mapping": "One of the choices of who is who doesn't fit. Check them and try again.",
     "bad-date": "One of the dates isn't a date. Check them and try again.",
     "no-lines-kept":

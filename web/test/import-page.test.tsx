@@ -252,6 +252,52 @@ describe("Google Doc links", () => {
     expect(screen.queryByText("Google Doc 1.txt")).toBeNull();
   });
 
+  it.each([
+    ["not_a_google_doc", docUrl("notadoc")],
+    ["doc_not_shared", docUrl("private")],
+    ["doc_unreachable", docUrl("unreachable")],
+    ["doc_too_big", docUrl("toobig")],
+    ["repeated_link", docUrl("repeat")],
+  ])("shows %s in words, never raw", async (code, url) => {
+    open();
+    add(url);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(await screen.findByText(w.fileError[code] ?? "")).toBeTruthy();
+    expect(screen.queryByText(code)).toBeNull();
+    expect(w.fileError[code]).toBeTruthy();
+  });
+
+  it("accepts a link with no scheme or with http", () => {
+    open();
+    add("docs.google.com/document/d/abc/edit");
+    add("http://docs.google.com/document/d/def/edit");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(w.linkName(2))).toBeTruthy();
+  });
+
+  it("shows a doc that stops opening at Check, and says so at Import", async () => {
+    const api = open();
+    add(docUrl("later"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.input(await screen.findByLabelText(w.dateLabel("Google Doc 1")), {
+      target: { value: "2026-09-21" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    expect(await screen.findByText(w.fileError.doc_not_shared ?? "")).toBeTruthy();
+    expect(screen.queryByText("doc_not_shared")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    expect(await screen.findByText(w.problem["bad-files-docs"] ?? "")).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("importStart"))).toBe(true);
+  });
+
+  it("says so when a link gets no answer at Preview", async () => {
+    const api = open();
+    api.importPreview = async () => ({ files: [] });
+    add(docUrl("abc"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(await screen.findByText(w.docNoAnswer)).toBeTruthy();
+  });
+
   it("refuses a link that is not a Google Doc, before anything is sent", () => {
     const api = open();
     add("https://example.com/notadoc");
@@ -292,7 +338,7 @@ describe("Google Doc links", () => {
     add(docUrl("good")); // opens, and becomes "Google Doc 1" in what is sent
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     fireEvent.input(
-      await screen.findByLabelText(w.dateLabel("Google Doc 2.txt")),
+      await screen.findByLabelText(w.dateLabel("Google Doc 2")),
       { target: { value: "2026-09-21" } },
     );
     fireEvent.click(screen.getByRole("button", { name: w.checkButton }));

@@ -415,13 +415,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       );
       const docs = links.map((link, i) => {
         const name = `Google Doc ${i + 1}.txt`;
-        const error = links.indexOf(link) !== i
+        const error = links.indexOf(link) !== i || link.includes("repeat")
           ? "repeated_link"
           : link.includes("notadoc")
             ? "not_a_google_doc"
             : link.includes("private")
               ? "doc_not_shared"
-              : null;
+              : link.includes("unreachable")
+                ? "doc_unreachable"
+                : link.includes("toobig")
+                  ? "doc_too_big"
+                  : null;
         return { name, text: error ? "" : "Cerric: Hello from the doc\nMira: And hello", error };
       });
       return {
@@ -477,9 +481,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
             const who = /^([^:]{1,40}):/.exec(line)?.[1];
             if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
           }
+          // A doc with "later" in its link opened at Preview but is not shared any more at Check.
+          const lostDoc = links.some((l, i) => l.includes("later") && f.name === `Google Doc ${i + 1}.txt`);
           return {
             name: f.name,
-            error: null,
+            error: lostDoc ? "doc_not_shared" : null,
             leftOut: 0,
             speakers: [...counts].map(([label, n]) => {
               const to = mapping[label] ?? "drop";
@@ -504,6 +510,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(
         `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
       );
+      if (links.some((l) => l.includes("later"))) throw new ApiError("bad-files");
       return {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),

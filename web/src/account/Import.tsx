@@ -97,7 +97,9 @@ export default function Import({
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
     // The message is announced by its role="alert"; moving focus too would read it twice.
-    setProblem(words.problem[kind] ?? words.problem.server ?? "");
+    // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
+    const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
+    setProblem(words.problem[key] ?? words.problem.server ?? "");
   };
 
   /** Runs one request at a time, with the busy state and the problem line every step shares. */
@@ -234,7 +236,7 @@ export default function Import({
     const link = linkText.trim();
     if (link === "" || busy) return;
     // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
-    if (!/^https:\/\/docs\.google\.com\/document\//i.test(link)) {
+    if (!/^(https?:\/\/)?docs\.google\.com\/document\//i.test(link)) {
       setLinkProblem(words.notAGoogleDocLink);
       return;
     }
@@ -283,13 +285,18 @@ export default function Import({
       // A link that did not open is left out from here on, so the ones that did are renamed by place.
       const opened: string[] = [];
       const names: Record<string, string> = {};
+      let unanswered = false;
       links.forEach((link, i) => {
         const shown = `${words.linkName(i + 1)}.txt`;
-        if (found.files.find((f) => f.name === shown)?.error === null) {
+        const answer = found.files.find((f) => f.name === shown);
+        // An older API ignores `links`; a link it never answered must not just vanish.
+        if (!answer) unanswered = true;
+        if (answer?.error === null) {
           opened.push(link);
           names[shown] = `${words.linkName(opened.length)}.txt`;
         }
       });
+      if (unanswered) setProblem(words.docNoAnswer);
       setSentLinks(opened);
       setSentNames(names);
       setTexts(files);
@@ -357,7 +364,7 @@ export default function Import({
       if (i < 0 || j < 0 || j >= now.length) return now;
       const next = [...now];
       [next[i], next[j]] = [next[j] as string, next[i] as string];
-      setMoved(words.moved(name, j + 1, now.length));
+      setMoved(words.moved(words.shownName(name), j + 1, now.length));
       return next;
     });
 
@@ -515,7 +522,7 @@ export default function Import({
           <button
             type="submit"
             class="button secondary"
-            disabled={linkText.trim() === ""}
+            disabled={linkText.trim() === "" || busy}
           >
             {words.addLink}
           </button>
@@ -696,6 +703,11 @@ export default function Import({
                         {check.files.map((f) => (
                           <li key={f.name}>
                             <span class="campaign-name">{shownApi(f.name)}</span>
+                            {f.error !== null && (
+                              <span class="small" role="alert">
+                                {words.fileError[f.error] ?? words.fileErrorOther}
+                              </span>
+                            )}
                             {f.leftOut > 0 && (
                               <span class="small">
                                 {words.leftOutFile(f.leftOut)}
@@ -748,7 +760,7 @@ export default function Import({
                         {words.position(i + 1, order.length)}
                       </span>
                       <label class="field">
-                        {words.dateLabel(name)}
+                        {words.dateLabel(words.shownName(name))}
                         <input
                           type="date"
                           value={dates[name] ?? ""}
@@ -766,7 +778,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveUp(name)}
+                          aria-label={words.moveUp(words.shownName(name))}
                           aria-disabled={i === 0}
                           onClick={() => move(name, -1)}
                         >
@@ -775,7 +787,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveDown(name)}
+                          aria-label={words.moveDown(words.shownName(name))}
                           aria-disabled={i === order.length - 1}
                           onClick={() => move(name, 1)}
                         >
