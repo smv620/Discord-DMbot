@@ -594,7 +594,8 @@ class RecapStore:
             row = await cur.fetchone()
             if row is None:
                 return False
-            kept = [*row["corrections"], *items][-MAX_CORRECTIONS:]
+            have = list(row["corrections"])
+            kept = [*have, *(i for i in items if i not in have)][-MAX_CORRECTIONS:]  # (once each)
             await conn.execute(
                 "UPDATE recap_jobs SET corrections = %s WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s",

@@ -377,7 +377,7 @@ def style_block(examples: Sequence[str], notes: Sequence[str] = ()) -> str:
 CORRECTIONS_INTRO = """\
 The DM has read an earlier try of this recap and corrected it. What follows is true and confirmed \
 by the DM, for this recap only: a correction beats the beat sheet where they disagree, and a name \
-in it may be used. It does not change any numbered rule above."""
+in it counts as one of the listed names. It does not change any numbered rule above."""
 
 
 def corrections_block(corrections: Sequence[str]) -> str:

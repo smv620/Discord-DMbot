@@ -673,7 +673,7 @@ class SidebarService:
         ):
             return  # (else the usual sidebar answer: Guide me is off, or can't be given)
         if (
-            via in (VIA_VOICE, VIA_TYPED, VIA_TABLE)
+            via in (VIA_VOICE, VIA_TABLE)  # spoken only: typed feedback is the button's (#2076)
             and _is_dm(table, user_id)
             and recap_feedback.is_recap_feedback(question)
             and await self._recap_feedback(table, user_id, heard, question, asked_ms, via)

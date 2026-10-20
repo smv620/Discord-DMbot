@@ -1333,6 +1333,11 @@ class RecapFeedback(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(len(self.answerer.asked), 1)
 
+    async def test_typed_feedback_is_the_buttons_not_the_sidebar(self) -> None:
+        self.sidebar.ask_in_chat(self.table, DM, "the recap was too long-winded")
+        await self.settle()
+        self.assertEqual(getattr(self.host, "feedback_asked", []), [])
+
     async def test_a_question_about_the_recap_is_an_ordinary_question(self) -> None:
         self.sidebar.ask_at_table(self.table, DM, "Hey DMbot, what was in the recap?")
         await self.settle()

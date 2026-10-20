@@ -4141,9 +4141,8 @@ class DMBot(commands.AutoShardedBot):
         if job is None:
             return False
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
-        if sorted_ is None:
-            await self.sidebar_send_dm(user_id, recap_feedback.BROKEN)
-            return True
+        if sorted_ is None or not (sorted_.style or sorted_.corrections or sorted_.replies):
+            return False  # nothing to act on (or the sort failed): it is an ordinary question
 
         async def send(message: str, view: discord.ui.View | None) -> None:
             await self.sidebar_send_dm(user_id, message, view)

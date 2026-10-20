@@ -75,6 +75,18 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((got.style, got.corrections), ((), ()), note)
             self.assertEqual(got.replies, (fb.STORY_HELP_REPLY,), note)
 
+    async def test_a_note_that_forbids_making_things_up_is_a_fine_style_note(self) -> None:
+        for note in ("Never make things up.", "Don't invent anything.", "Do not add drama."):
+            got = await fb.sort_feedback(FakeAI(answer(("style", note))), "x")
+            assert got is not None
+            self.assertEqual((got.style, got.replies), ((note,), ()), note)
+
+    async def test_more_ways_of_asking_for_invention_get_the_plain_no(self) -> None:
+        for note in ("Make up some drama.", "Exaggerate the fights.", "Add dramatic twists."):
+            got = await fb.sort_feedback(FakeAI(answer(("style", note))), "x")
+            assert got is not None
+            self.assertEqual((got.style, got.replies), ((), (fb.STORY_HELP_REPLY,)), note)
+
     async def test_a_story_help_request_stores_nothing_and_says_no(self) -> None:
         got = await fb.sort_feedback(FakeAI(answer(("story_help", "Decide what happens."))), "x")
         assert got is not None
@@ -135,6 +147,9 @@ class Spoken(unittest.TestCase):
             "read me the recap",
             "the keep was too long to cross",  # no recap in it
             "post the recap",  # no opinion in it
+            "Should the recap mention the dragon?",
+            "Can you read me the recap, I want the long version",
+            "Could the recap be posted tonight",
         ):
             self.assertFalse(fb.is_recap_feedback(said), said)
 

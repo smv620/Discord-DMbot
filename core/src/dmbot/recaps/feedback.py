@@ -41,12 +41,25 @@ BROKEN = "DMbot can't sort that right now. Please try again in a minute."
 # A note that asks DMbot to make things up is the same as asking it to build the story. Matched on
 # the note's words as well as the model's kind, because a model can be talked into calling it style.
 _INVENT = re.compile(
-    r"\b(make\w*\s+(?:things|stuff|it|them)\s+up|made[- ]up|invent\w*|fabricat\w*|embellish\w*|"
-    r"add\w*\s+(?:things|details|events|scenes|drama)|(?:fill|filling)\s+in\s+the\s+gaps|"
-    r"(?:ignore|break|skip|bend|loosen)\w*\s+(?:the\s+)?(?:rules|checks)|"
+    r"\b(make\w*\s+(?:things|stuff|it|them|some\s+\w+)\s+up|make\w*\s+up\b|made[- ]up|"
+    r"invent\w*|fabricat\w*|"
+    r"embellish\w*|exaggerat\w*|dramati[sz]\w*|add\w*\s+(?:\w+\s+)?(?:things|details|events|"
+    r"scenes|drama|twists?)|(?:fill|filling)\s+in\s+the\s+gaps|"
+    r"(?:ignore|break|skip|bend|loosen)\w*\s+(?:the\s+|any\s+)?(?:rules?|checks?)|"
     r"(?:use|allow)\w*\s+(?:any|other|new)\s+names)\b",
     re.IGNORECASE,
 )
+# "Never make things up" asks for the opposite: a standing note that agrees with the rules.
+_NEGATED = re.compile(
+    r"\b(never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)\b[^.;]*$", re.IGNORECASE
+)
+
+
+def asks_to_invent(text: str) -> bool:
+    """Does this note ask DMbot to make things up or loosen a rule? A note that forbids it
+    ("never make things up") does not."""
+    return any(not _NEGATED.search(text[: m.start()]) for m in _INVENT.finditer(text))
+
 
 SYSTEM = """\
 You sort a Dungeon Master's feedback on the recap of their D&D session into points. The feedback \
@@ -76,7 +89,8 @@ _OPINION = re.compile(
     re.IGNORECASE,
 )
 _QUESTION = re.compile(
-    r"^\s*(what|when|where|who|why|how|which|did|does|do|is|are|was|read|show|play|tell|give)\b",
+    r"^\s*(what|when|where|who|why|how|which|did|does|do|is|are|was|were|can|could|will|would|"
+    r"should|shall|may|might|has|have|had|read|show|play|tell|give|post|recap)\b",
     re.IGNORECASE,
 )
 
@@ -171,7 +185,7 @@ def route(points: Sequence[Point]) -> Sorted:
             replies.append(text)
 
     for p in points:
-        if p.kind in ("style", "accuracy", "content") and _INVENT.search(p.text):
+        if p.kind in ("style", "accuracy", "content") and asks_to_invent(p.text):
             reply(STORY_HELP_REPLY)
         elif p.kind == "style":
             style.append(p.text)

@@ -209,6 +209,21 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.call(bot))
         bot.sidebar_send_dm.assert_not_awaited()
 
+    async def test_a_sort_with_nothing_in_it_or_a_broken_one_is_an_ordinary_question(self) -> None:
+        empty = self.host()
+        self.assertFalse(await self.call(empty))
+        broken = self.host(("style", "x"))
+        broken.recap_feedback_ai = SimpleNamespace(complete=AsyncMock(side_effect=RuntimeError))
+        self.assertFalse(await self.call(broken))
+        for bot in (empty, broken):
+            bot.sidebar_send_dm.assert_not_awaited()
+
+    async def test_a_story_help_request_is_answered_even_when_nothing_is_kept(self) -> None:
+        bot = self.host(("story_help", "Decide the ending."))
+        self.assertTrue(await self.call(bot))
+        ((_, text, view),) = [c.args for c in bot.sidebar_send_dm.await_args_list]
+        self.assertEqual((text, view), (fb.STORY_HELP_REPLY, None))
+
     async def test_a_player_saying_it_is_not_handled(self) -> None:
         bot = self.host(("style", "x"))
         self.assertFalse(await self.call(bot, PLAYER))
