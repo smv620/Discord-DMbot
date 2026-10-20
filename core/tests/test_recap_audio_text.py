@@ -139,6 +139,16 @@ class Edges(unittest.TestCase):
         script.build("T", None, "《Calm》 Quiet.", secret_names=[SECRET])  # absent: fine
 
 
+class SpacedCues(unittest.TestCase):
+    def test_spaces_inside_a_pacing_cue_are_folded(self) -> None:
+        tagged = script.build(
+            "T", None, "《Calm》 One ((long   pause)) two ((Short\tPause)) three."
+        )
+        text = " ".join(p.tagged for p in tagged.paragraphs)
+        self.assertIn("[long pause]", text)
+        self.assertIn("[short pause]", text)
+
+
 class Pronunciation(unittest.TestCase):
     def test_a_rule_for_each_confirmed_name_with_a_spelling_and_none_for_the_rest(self) -> None:
         got = names.rules(

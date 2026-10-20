@@ -89,6 +89,13 @@ FEATURES: tuple[Feature, ...] = (
         ("live_heads_up", "live_heads_up_cooldown_s"),
     ),
     Feature(
+        "secret reveal",
+        "Asks when you say a secret",
+        "DMbot asks you or your co-DMs privately, at once, if a secret name you said is revealed.",
+        lambda s: s.secret_reveal_ask,
+        ("secret_reveal_ask",),
+    ),
+    Feature(
         "plan limits",
         "Plan limits",
         "",
