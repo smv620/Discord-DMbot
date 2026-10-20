@@ -33,12 +33,16 @@ let privacy: Document;
 beforeAll(async () => {
   const container = await AstroContainer.create();
   const render = async (live: boolean, audio: boolean): Promise<Document> =>
-    parsePage(await container.renderToString(RecapsPrivacy, { props: { live, audio } }));
+    parsePage(
+      await container.renderToString(RecapsPrivacy, { props: { live, audio } }),
+    );
   off = await render(false, false);
   on = await render(true, false);
   onAudio = await render(true, true);
   help = parsePage(
-    await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
+    await container.renderToString(Help, {
+      request: new Request("https://dmbot.example/help"),
+    }),
   );
   privacy = parsePage(
     await container.renderToString(Privacy, {
@@ -60,17 +64,27 @@ describe("the privacy section", () => {
     expect(t).toContain("The AI company named above (Anthropic)");
     expect(t).toContain(aiTrainingSentence);
     expect(t).toContain("never the ones marked secret");
-    expect(t).toContain("Only the game masters of that campaign, until one of them presses Post");
-    expect(t).toContain("the email has the title (or the reason) and a link, never the recap");
-    expect(t).toContain("DMbot won't post a recap if a player has stopped being recorded");
-    expect(t).toContain("are kept with the campaign and deleted when the campaign is deleted");
+    expect(t).toContain(
+      "Only the game masters of that campaign, until one of them presses Post",
+    );
+    expect(t).toContain(
+      "the email has the title (or the reason) and a link, never the recap",
+    );
+    expect(t).toContain(
+      "DMbot won't post a recap if a player has stopped being recorded",
+    );
+    expect(t).toContain(
+      "are kept with the campaign and deleted when the campaign is deleted",
+    );
     expect(t).toContain("with no words in it, and delete it after 90 days");
   });
 
   it("names ElevenLabs only when audio is live", () => {
     expect(text(on.body)).not.toContain("ElevenLabs");
     expect(text(onAudio.body)).toContain("go to ElevenLabs");
-    expect(text(onAudio.body)).toContain("We do not keep the audio files on our server");
+    expect(text(onAudio.body)).toContain(
+      "We do not keep the audio files on our server",
+    );
   });
 
   it("uses no technical terms", () => {
@@ -84,24 +98,36 @@ describe("Help and the emails list", () => {
   it("show nothing about recaps while recaps are off", () => {
     expect(help.querySelector("#recaps-heading")).toBeNull();
     expect(emailSteps.map((s) => s.text).join(" ")).not.toMatch(/recap/i);
-    expect(emailsIntroTail).toBe("The only others are two Try It emails, each sent once.");
+    expect(emailsIntroTail).toBe(
+      "The only others are two Try It emails, each sent once.",
+    );
   });
 
   it("pin the sentences for when they are on", () => {
     const all = recapSteps.map((s) => s.text).join(" ");
     expect(all).toContain("Recaps are for paid plans");
     expect(all).toContain("people who said yes to being recorded");
-    expect(all).toContain("Anything said out loud at the table can still be in it");
-    expect(all).toContain("Try again writes a new one and throws away your changes");
+    expect(all).toContain(
+      "Anything said out loud at the table can still be in it",
+    );
+    expect(all).toContain(
+      "Try again writes a new one and throws away your changes",
+    );
     expect(all).toContain("never the recap itself");
-    expect(all).toContain("Nothing goes to your players until you press Post to the table");
-    expect(all).toContain("if a player has stopped being recorded since it was written");
+    expect(all).toContain(
+      "Nothing goes to your players until you press Post to the table",
+    );
+    expect(all).toContain(
+      "if a player has stopped being recorded since it was written",
+    );
     expect(all).toContain("or it names something you keep secret");
     expect(all).toContain("checks each sentence against what was said");
     expect(all).toContain("If too little is left, there is no recap");
     expect(all).toContain("It also takes out compass directions");
     // Says no more than the check does: not "never wrong", and no technical words (#2072).
-    expect(all).not.toMatch(/never wrong|always right|wrong one|every detail|beats?\b|fact check|AI model/i);
+    expect(all).not.toMatch(
+      /never wrong|always right|wrong one|every detail|beats?\b|fact check|AI model/i,
+    );
     expect(all).not.toMatch(/narrat|music/i); // not built yet (#1383)
     expect(recapEmailStep).toContain("once for each recap");
   });
@@ -121,6 +147,7 @@ describe("the switches and What's new agree", () => {
     ["Recaps fit your session: a short game gets a short recap", RECAPS_LIVE],
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
+    ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {
@@ -129,7 +156,9 @@ describe("the switches and What's new agree", () => {
   });
 
   it("has what #1457 and #1462 ship (the DM-screen buttons) in the held recaps entry", () => {
-    const text = [...entries, ...held].find((e) => e.title === "Recaps for your table")?.what ?? "";
+    const text =
+      [...entries, ...held].find((e) => e.title === "Recaps for your table")
+        ?.what ?? "";
     expect(text).toContain("read, post or skip it right on the DM screen");
   });
 
@@ -139,7 +168,9 @@ describe("the switches and What's new agree", () => {
 
   it("never has the names to check live without recaps, and says them only while live (#2031)", () => {
     expect(!RECAP_NAMES_LIVE || RECAPS_LIVE).toBe(true);
-    const step = recapSteps.find((s) => s.names?.some((n) => n.name === "📝 Check new names"));
+    const step = recapSteps.find((s) =>
+      s.names?.some((n) => n.name === "📝 Check new names"),
+    );
     expect(step !== undefined).toBe(RECAP_NAMES_LIVE);
   });
 
@@ -151,9 +182,13 @@ describe("the switches and What's new agree", () => {
     expect(on.text).toContain("the narration never reads it");
     for (const step of [off, on]) {
       expect(step.text).toContain("📝 Check new names");
-      expect(step.text).toContain("Nothing is added to your game until you say so");
+      expect(step.text).toContain(
+        "Nothing is added to your game until you say so",
+      );
       expect(step.text).toContain("never posted to the table");
-      expect(step.names).toEqual([{ name: "📝 Check new names", file: "ui/names.py" }]);
+      expect(step.names).toEqual([
+        { name: "📝 Check new names", file: "ui/names.py" },
+      ]);
     }
   });
 });

@@ -9,7 +9,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { entries, formatDate, held, whatsNewHeading } from "../src/content/whats-new";
+import {
+  entries,
+  formatDate,
+  held,
+  whatsNewHeading,
+} from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 import Home from "../src/pages/index.astro";
 import WhatsNew from "../src/pages/whats-new.astro";
@@ -21,8 +26,15 @@ let home: Document;
 
 beforeAll(async () => {
   const container = await AstroContainer.create();
-  const render = async (component: Parameters<typeof container.renderToString>[0], path: string): Promise<Document> =>
-    parsePage(await container.renderToString(component, { request: new Request(`https://dmbot.example${path}`) }));
+  const render = async (
+    component: Parameters<typeof container.renderToString>[0],
+    path: string,
+  ): Promise<Document> =>
+    parsePage(
+      await container.renderToString(component, {
+        request: new Request(`https://dmbot.example${path}`),
+      }),
+    );
   page = await render(WhatsNew, "/whats-new");
   help = await render(Help, "/help");
   home = await render(Home, "/");
@@ -32,16 +44,21 @@ describe("What's new", () => {
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
     const shown = [...page.querySelectorAll(".entry")];
-    expect(shown.map((e) => e.querySelector("h2")?.textContent)).toEqual(entries.map((e) => e.title));
-    expect(shown.map((e) => e.querySelector("time")?.getAttribute("datetime"))).toEqual(
-      entries.map((e) => e.date),
+    expect(shown.map((e) => e.querySelector("h2")?.textContent)).toEqual(
+      entries.map((e) => e.title),
     );
+    expect(
+      shown.map((e) => e.querySelector("time")?.getAttribute("datetime")),
+    ).toEqual(entries.map((e) => e.date));
   });
 
   it("shows the two things dev1 deployed as 4d7aea9b (#1373, #1370)", () => {
     const titles = entries.map((e) => e.title);
     expect(titles).toEqual(
-      expect.arrayContaining(["Your questions to the team", "Quick answers use your facts"]),
+      expect.arrayContaining([
+        "Your questions to the team",
+        "Quick answers use your facts",
+      ]),
     );
   });
 
@@ -55,7 +72,9 @@ describe("What's new", () => {
       "Players can look up rules",
     ])
       expect(titles, t).toContain(t);
-    expect(held.map((h) => h.title)).not.toContain("Delete my past transcripts");
+    expect(held.map((h) => h.title)).not.toContain(
+      "Delete my past transcripts",
+    );
     expect(held.map((h) => h.title)).not.toContain("Your own homebrew");
   });
 
@@ -76,6 +95,7 @@ describe("What's new", () => {
       "Recaps fit your session: a short game gets a short recap", // with recaps (RECAPS_LIVE, #2018)
       "Recaps stick to what happened", // with recaps (RECAPS_LIVE, #2064, #2067)
       "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
+      "Approve the text before any audio", // with narration (RECAP_AUDIO_LIVE, #2084)
       "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
       "Play a recap's voice and music together", // with it (#2017)
       "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
@@ -129,7 +149,11 @@ describe("What's new", () => {
       expect(e.date, e.title).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       // Round-trip, because "2026-02-31" parses (as 3 March) and would pass a plain parse.
       expect(new Date(e.date).toISOString().slice(0, 10), e.title).toBe(e.date);
-      if (i > 0) expect(e.date <= (entries[i - 1]?.date ?? ""), `${e.title} is newer than the one above it`).toBe(true);
+      if (i > 0)
+        expect(
+          e.date <= (entries[i - 1]?.date ?? ""),
+          `${e.title} is newer than the one above it`,
+        ).toBe(true);
     }
   });
 
@@ -145,14 +169,18 @@ describe("What's new", () => {
       expect(e.title.split(/\s+/).length, e.title).toBeLessThanOrEqual(6);
       // A sentence ends at . ! or ? followed by a space or the end; keep abbreviations ("e.g.")
       // and decimals out of the entries, or this counts them as extra sentences.
-      const sentences = e.what.split(/[.!?](?:\s|$)/).filter((s) => s.trim() !== "");
+      const sentences = e.what
+        .split(/[.!?](?:\s|$)/)
+        .filter((s) => s.trim() !== "");
       expect(sentences.length, e.title).toBeGreaterThanOrEqual(1);
       expect(sentences.length, e.title).toBeLessThanOrEqual(2);
     }
   });
 
   it("claims nothing that isn't live, and uses no hard-rule banned term", () => {
-    const all = [...entries, ...held].map((e) => `${e.title} ${e.what}`).join(" ");
+    const all = [...entries, ...held]
+      .map((e) => `${e.title} ${e.what}`)
+      .join(" ");
     // Alive-or-dead is stored but nothing records it until the extractor is on (#1284), and
     // who-carries-what likewise (#1319; docs/STORY_MEMORY.md, 5a): they wait for their own entry,
     // which stays held (help.test.ts ties it to STORY_STATES_LIVE), so nothing else may say them.
@@ -178,28 +206,39 @@ describe("What's new", () => {
     const all = [...entries, ...held].map((e) => e.what).join(" ");
     for (const [needle, file] of named) {
       expect(all, `${needle} is in an entry`).toContain(needle);
-      expect(readFileSync(join(botDir, file), "utf8"), `${needle} in ${file}`).toContain(needle);
+      expect(
+        readFileSync(join(botDir, file), "utf8"),
+        `${needle} in ${file}`,
+      ).toContain(needle);
     }
   });
 
   it("says the same as the Help page and the account page about the emailed link and the move code", () => {
     const text = (title: string): string =>
       [...entries, ...held].find((e) => e.title.startsWith(title))?.what ?? "";
-    expect(text("Sign in")).toContain("works once and stops working after 15 minutes");
+    expect(text("Sign in")).toContain(
+      "works once and stops working after 15 minutes",
+    );
     expect(text("Move to")).toContain("emailed code");
     expect(text("Move to")).toContain("say yes to being recorded again"); // account.ts moveSent
     expect(text("Share house rules")).toContain("paid plan");
     expect(text("Suggest")).toContain("It goes with no name");
-    expect(text("Suggest")).toContain("nothing changes until that game master adds it");
+    expect(text("Suggest")).toContain(
+      "nothing changes until that game master adds it",
+    );
   });
 
   it("is linked from the footer and from the top of the Help page", () => {
-    const footer = [...home.querySelectorAll("footer a")].map((a) => a.getAttribute("href"));
+    const footer = [...home.querySelectorAll("footer a")].map((a) =>
+      a.getAttribute("href"),
+    );
     expect(footer).toContain("/whats-new");
     const link = help.querySelector('main a[href="/whats-new"]');
     expect(link).not.toBeNull();
     // At the top: before the first section heading.
     const firstHeading = help.querySelector("main h2");
-    expect(link && firstHeading && link.compareDocumentPosition(firstHeading) & 4).toBeTruthy(); // 4: the heading follows
+    expect(
+      link && firstHeading && link.compareDocumentPosition(firstHeading) & 4,
+    ).toBeTruthy(); // 4: the heading follows
   });
 });
