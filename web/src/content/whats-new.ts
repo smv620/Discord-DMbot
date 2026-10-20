@@ -205,6 +205,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-20",
+    title: "A heads-up when the dead speak",
+    what: "While you play, DMbot tells you on your DM screen when someone you said is dead is voiced at the table. You can say they are alive after all, say it was not really them, or ignore it. Only you see it, and nothing changes unless you press a button.",
+    reason: "In review (#2068); off by default until dev1's live check at the test table.",
+  },
+  {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
     what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
