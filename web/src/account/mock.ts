@@ -407,10 +407,28 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric
     // is suggested as Stormy (who agreed) and Ash has not agreed to be recorded.
-    async importPreview(ref, files) {
-      calls.push(`importPreview:${ref}:${files.map((f) => f.name).join(",")}`);
+    // A Google Doc link (#2140) is read as a file named "Google Doc N.txt". A link with "private" in
+    // it is not shared, "notadoc" is not a Google Doc, and a link pasted twice is flagged the second time.
+    async importPreview(ref, files, links = []) {
+      calls.push(
+        `importPreview:${ref}:${files.map((f) => f.name).join(",")}${links.length ? `|links:${links.length}` : ""}`,
+      );
+      const docs = links.map((link, i) => {
+        const name = `Google Doc ${i + 1}.txt`;
+        const error = links.indexOf(link) !== i
+          ? "repeated_link"
+          : link.includes("notadoc")
+            ? "not_a_google_doc"
+            : link.includes("private")
+              ? "doc_not_shared"
+              : null;
+        return { name, text: error ? "" : "Cerric: Hello from the doc\nMira: And hello", error };
+      });
       return {
-        files: files.map((f) => {
+        files: [...files, ...docs.map((d) => ({ name: d.name, text: d.text }))].map((f) => {
+          const bad = docs.find((d) => d.name === f.name)?.error;
+          if (bad)
+            return { name: f.name, format: null, error: bad, suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           if (!f.name.toLowerCase().endsWith(".txt"))
             return { name: f.name, format: null, error: "not_txt", suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           const counts = new Map<string, number>();
@@ -433,7 +451,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
             })),
           };
         }),
-        estimate: { sessions: files.length, fastCalls: 14 * files.length },
+        estimate: { sessions: files.length + links.length, fastCalls: 14 * (files.length + links.length) },
       };
     },
     async importMembers(ref, q) {
@@ -445,8 +463,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       ];
       return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
     },
-    async importCheck(ref, files, mapping) {
-      calls.push(`importCheck:${ref}`);
+    async importCheck(ref, files, mapping, links = []) {
+      calls.push(`importCheck:${ref}${links.length ? `|links:${links.length}` : ""}`);
+      files = [
+        ...files,
+        ...links.map((_, i) => ({ name: `Google Doc ${i + 1}.txt`, text: "Cerric: Hello from the doc\nMira: And hello" })),
+      ];
       const members: Record<string, boolean> = { "1": true, "2": false, "3": true };
       return {
         files: files.map((f) => {
@@ -478,8 +500,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         estimate: { sessions: files.length, fastCalls: 14 * files.length },
       };
     },
-    async importStart(ref, _files, plan) {
-      calls.push(`importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}`);
+    async importStart(ref, _files, plan, links = []) {
+      calls.push(
+        `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
+      );
       return {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),

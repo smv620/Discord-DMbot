@@ -727,17 +727,23 @@ export interface AccountApi {
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** Importing older sessions (#2107): look at the files, find people to match, check what would be
    * kept, start, and follow the work. Missing from an API older than #2105. */
-  importPreview?(ref: string, files: ImportFileIn[]): Promise<ImportPreview>;
+  importPreview?(
+    ref: string,
+    files: ImportFileIn[],
+    links?: string[],
+  ): Promise<ImportPreview>;
   importMembers?(ref: string, q: string): Promise<ImportMember[]>;
   importCheck?(
     ref: string,
     files: ImportFileIn[],
     mapping: Record<string, string>,
+    links?: string[],
   ): Promise<ImportCheck>;
   importStart?(
     ref: string,
     files: ImportFileIn[],
     plan: ImportPlan,
+    links?: string[],
   ): Promise<ImportStarted>;
   importProgress?(ref: string, importId: string): Promise<ImportProgress>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
@@ -819,6 +825,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_date: "bad-date",
   no_lines_kept: "no-lines-kept",
 };
+
+/** An import request's body with its Google Doc links, only when there are any (#2140). */
+function withLinks<T extends object>(
+  body: T,
+  links: string[] | undefined,
+): T & { links?: string[] } {
+  return links && links.length > 0 ? { ...body, links } : body;
+}
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
 export function httpApi(
@@ -1080,11 +1094,12 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
-    importPreview: async (ref, files) =>
+    // Google Doc links ride along with the files (#2140); the API opens each and names it "Google Doc N.txt".
+    importPreview: async (ref, files, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/preview`,
-        { files },
+        withLinks({ files }, links),
       )) as ImportPreview,
     importMembers: async (ref, q) =>
       (
@@ -1093,17 +1108,17 @@ export function httpApi(
           `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
         )) as { members: ImportMember[] }
       ).members,
-    importCheck: async (ref, files, mapping) =>
+    importCheck: async (ref, files, mapping, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
-        { files, mapping },
+        withLinks({ files, mapping }, links),
       )) as ImportCheck,
-    importStart: async (ref, files, plan) =>
+    importStart: async (ref, files, plan, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
-        { files, plan },
+        withLinks({ files, plan }, links),
       )) as ImportStarted,
     importProgress: async (ref, importId) =>
       (await call(

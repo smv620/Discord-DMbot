@@ -59,6 +59,13 @@ export default function Import({
 }) {
   const ref = campaignFromPath(path);
   const [picked, setPicked] = useState<File[]>([]);
+  // Google Doc links (#2140) sit in the same list as the files, 20 items in all.
+  const [links, setLinks] = useState<string[]>([]);
+  const [linkText, setLinkText] = useState("");
+  // The links that opened, in the order they are sent from here on, and what each one is called
+  // there: the API names a link by its place in the list it is sent, so dropping a bad link renames the rest.
+  const [sentLinks, setSentLinks] = useState<string[]>([]);
+  const [sentNames, setSentNames] = useState<Record<string, string>>({});
   const [texts, setTexts] = useState<ImportFileIn[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [known, setKnown] = useState<Record<string, ImportMember>>({});
@@ -170,12 +177,9 @@ export default function Import({
       return next;
     });
 
-  const choose = (event: Event): void => {
-    const list = Array.from((event.target as HTMLInputElement).files ?? []);
-    setPicked(list);
+  /** Everything after Preview comes from one snapshot of the files and links, so a change clears it all. */
+  const forgetPreview = (): void => {
     setProblem(null);
-    setPickProblem(null);
-    // Everything after Preview comes from one snapshot of the files, so new files clear it all.
     setPreview(null);
     setTexts([]);
     setCheck(null);
@@ -184,13 +188,49 @@ export default function Import({
     setDates({});
     setGuessed({});
     setKnown({});
-    if (list.length > IMPORT_MAX_FILES) setPickProblem(words.tooManyFiles);
-    else {
-      const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
-      const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
-      if (big) setPickProblem(words.fileTooBig(big.name));
-      else if (odd) setPickProblem(words.fileNotTxt(odd.name));
+    setSentLinks([]);
+    setSentNames({});
+  };
+
+  /** The problem with the chosen files and links as they stand, if there is one. */
+  const checkPicked = (list: File[], linkList: string[]): void => {
+    if (list.length + linkList.length > IMPORT_MAX_FILES) {
+      setPickProblem(words.tooManyFiles);
+      return;
     }
+    const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
+    const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
+    setPickProblem(
+      big
+        ? words.fileTooBig(big.name)
+        : odd
+          ? words.fileNotTxt(odd.name)
+          : null,
+    );
+  };
+
+  const choose = (event: Event): void => {
+    const list = Array.from((event.target as HTMLInputElement).files ?? []);
+    setPicked(list);
+    forgetPreview();
+    checkPicked(list, links);
+  };
+
+  const addLink = (): void => {
+    const link = linkText.trim();
+    if (link === "") return;
+    const next = [...links, link];
+    setLinks(next);
+    setLinkText("");
+    forgetPreview();
+    checkPicked(picked, next);
+  };
+
+  const removeLink = (at: number): void => {
+    const next = links.filter((_, i) => i !== at);
+    setLinks(next);
+    forgetPreview();
+    checkPicked(picked, next);
   };
 
   const lookAtFiles = (): Promise<void> =>
@@ -198,8 +238,20 @@ export default function Import({
       const files: ImportFileIn[] = await Promise.all(
         picked.map(async (f) => ({ name: f.name, text: await f.text() })),
       );
-      const found = await api.importPreview!(ref, files);
+      const found = await api.importPreview!(ref, files, links);
       const good = found.files.filter((f) => f.error === null);
+      // A link that did not open is left out from here on, so the ones that did are renamed by place.
+      const opened: string[] = [];
+      const names: Record<string, string> = {};
+      links.forEach((link, i) => {
+        const shown = `${words.linkName(i + 1)}.txt`;
+        if (found.files.find((f) => f.name === shown)?.error === null) {
+          opened.push(link);
+          names[shown] = `${words.linkName(opened.length)}.txt`;
+        }
+      });
+      setSentLinks(opened);
+      setSentNames(names);
       setTexts(files);
       setPreview(found);
       setCheck(null);
@@ -255,7 +307,7 @@ export default function Import({
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      setCheck(await api.importCheck(ref, sentFiles(), mapping));
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -274,18 +326,28 @@ export default function Import({
   const start = (): Promise<void> =>
     run(async () => {
       if (!api.importStart) return;
-      const started = await api.importStart(ref, sentFiles(), {
-        mapping,
-        sessions: order.map((file, i) => ({
-          file,
-          date: dates[file] ?? "",
-          order: i + 1,
-        })),
-      });
+      // A Google Doc goes by the name it will have in the list that is sent now.
+      const sentName = (file: string): string => sentNames[file] ?? file;
+      const sentDates = Object.fromEntries(
+        order.map((file) => [sentName(file), dates[file] ?? ""]),
+      );
+      const started = await api.importStart(
+        ref,
+        sentFiles(),
+        {
+          mapping,
+          sessions: order.map((file, i) => ({
+            file: sentName(file),
+            date: dates[file] ?? "",
+            order: i + 1,
+          })),
+        },
+        sentLinks,
+      );
       setProgress({
         sessions: started.sessions.map((s) => ({
           file: s.file,
-          date: dates[s.file] ?? "",
+          date: sentDates[s.file] ?? "",
           state: s.state,
           reason: null,
         })),
@@ -389,16 +451,60 @@ export default function Import({
           onChange={choose}
           aria-label={words.pickLabel}
         />
-        {picked.length > 0 && (
-          <p class="small">{words.chosen(picked.length)}</p>
+        <label class="field">
+          {words.linkLabel}
+          <input
+            type="url"
+            value={linkText}
+            autoComplete="off"
+            spellcheck={false}
+            aria-describedby="import-link-help"
+            onInput={(e) => setLinkText((e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <button
+          type="button"
+          class="button secondary"
+          disabled={linkText.trim() === ""}
+          onClick={addLink}
+        >
+          {words.addLink}
+        </button>
+        <p class="muted small" id="import-link-help">
+          {words.linkHelp}
+        </p>
+        {links.length > 0 && (
+          <ul class="campaigns">
+            {links.map((link, i) => (
+              <li key={`${i}-${link}`}>
+                <span class="campaign-name">{words.linkName(i + 1)}</span>
+                <span class="small">{link}</span>
+                <button
+                  type="button"
+                  class="button secondary"
+                  aria-label={words.removeLink(i + 1)}
+                  onClick={() => removeLink(i)}
+                >
+                  {words.remove}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {picked.length + links.length > 0 && (
+          <p class="small">
+            {links.length > 0
+              ? words.chosenItems(picked.length, links.length)
+              : words.chosen(picked.length)}
+          </p>
         )}
         <button
           type="button"
           class="button"
           disabled={
             busy ||
-            picked.length === 0 ||
-            picked.length > IMPORT_MAX_FILES ||
+            picked.length + links.length === 0 ||
+            picked.length + links.length > IMPORT_MAX_FILES ||
             // Only a problem with the chosen files blocks Preview. An answer from the API (a busy
             // moment, a refusal) must not leave it locked: the DM can press it again.
             pickProblem !== null
