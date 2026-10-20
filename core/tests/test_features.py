@@ -110,6 +110,7 @@ class TheDMsListTest(unittest.TestCase):
             elevenlabs_voice_id="v",
             sidebar_on=True,
             story_extractor_on=True,
+            live_heads_up=True,
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)

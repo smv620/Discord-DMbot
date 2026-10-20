@@ -6,9 +6,10 @@ per server come later (#50).
 **Tiers, not models (#1006, owner decision 2026-10-10).** Every call names a tier: FAST
 (Haiku: simple jobs), CAREFUL (Sonnet: house-rule changes) or DEEP (Opus: PlotBot, later).
 The settings say which model each tier uses (`AI_MODEL_FAST`, `AI_MODEL_CAREFUL`,
-`AI_MODEL_DEEP`); no other file names a model. If a model is refused (not found, or no
-permission) the call goes to the next tier down, once logged for that model. Running out
-of money never falls back. Each call logs one line: tier, model, tokens, never content.
+`AI_MODEL_DEEP`, `AI_MODEL_CREATIVE`, `AI_MODEL_FORMATTING`); no other file names a model. If a
+model is refused (not found, or no permission) the call goes to the next tier down, once logged
+for that model. Running out of money never falls back. Each call logs one line: tier, model,
+tokens, never content.
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ class AIModelTier(enum.Enum):
     FAST = "fast"  # simple jobs
     CAREFUL = "careful"  # house-rule changes
     DEEP = "deep"  # PlotBot (phase 5c); nothing uses it yet
+    # The recap's two models (#2074, docs/PLAN.md "Two models, and style kept apart from content"):
+    # a creative one writes it as plain text, a small one shapes the text into sections.
+    CREATIVE = "creative"
+    FORMATTING = "formatting"
 
 
 # What a refused tier falls back to: the next one down.
@@ -48,9 +53,16 @@ TIER_TIMEOUT_S = {
     AIModelTier.FAST: REQUEST_TIMEOUT_S,
     AIModelTier.CAREFUL: SLOW_TIER_TIMEOUT_S,
     AIModelTier.DEEP: SLOW_TIER_TIMEOUT_S,
+    AIModelTier.CREATIVE: SLOW_TIER_TIMEOUT_S,
+    AIModelTier.FORMATTING: REQUEST_TIMEOUT_S,
 }
 
-NEXT_DOWN = {AIModelTier.DEEP: AIModelTier.CAREFUL, AIModelTier.CAREFUL: AIModelTier.FAST}
+NEXT_DOWN = {
+    AIModelTier.DEEP: AIModelTier.CAREFUL,
+    AIModelTier.CAREFUL: AIModelTier.FAST,
+    AIModelTier.CREATIVE: AIModelTier.CAREFUL,
+    AIModelTier.FORMATTING: AIModelTier.FAST,
+}
 
 
 class Feature(enum.StrEnum):
@@ -74,6 +86,8 @@ class Feature(enum.StrEnum):
     SUPPORT = "support"  # DMbot's helper answering a support ticket (#1431); the website's job
     PLAN_READER = "plan_reader"  # the story plan read from an adventure (#1714); the DM's press
     TIME_SUGGEST = "time_suggest"  # a time jump suggested from vague narration (#1758)
+    RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
+    RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -96,6 +110,8 @@ FEATURE_TIERS = {
     Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
+    Feature.RECAP_WRITE: AIModelTier.CREATIVE,
+    Feature.RECAP_FORMAT: AIModelTier.FORMATTING,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -103,6 +119,8 @@ TIER_SETTINGS = {
     AIModelTier.FAST: "AI_MODEL_FAST",
     AIModelTier.CAREFUL: "AI_MODEL_CAREFUL",
     AIModelTier.DEEP: "AI_MODEL_DEEP",
+    AIModelTier.CREATIVE: "AI_MODEL_CREATIVE",
+    AIModelTier.FORMATTING: "AI_MODEL_FORMATTING",
 }
 REFUSED_RETRY_S = 900.0  # a model that wasn't available is tried again after this long
 
@@ -114,24 +132,30 @@ class AIModels:
     fast: str
     careful: str
     deep: str
+    creative: str = "claude-opus-5-5"
+    formatting: str = "claude-haiku-5-5"
 
     def of(self, tier: AIModelTier) -> str:
         return {
             AIModelTier.FAST: self.fast,
             AIModelTier.CAREFUL: self.careful,
             AIModelTier.DEEP: self.deep,
+            AIModelTier.CREATIVE: self.creative,
+            AIModelTier.FORMATTING: self.formatting,
         }[tier]
 
     @classmethod
     def same(cls, model: str) -> AIModels:
         """One model for every tier (tests and tools)."""
-        return cls(model, model, model)
+        return cls(model, model, model, model, model)
 
 
 DEFAULT_MODELS = AIModels(
     fast="claude-haiku-4-5-20251001",
     careful="claude-sonnet-5-5",
     deep="claude-opus-5-5",
+    creative="claude-opus-5-5",  # writes the recap as plain text (#2074)
+    formatting="claude-haiku-5-5",  # shapes the text into sections; no word of it changes (#2074)
 )
 # The model the fast tier is measured against, for the comparison tool only (#2055): never a
 # default, and not used by the bot. A job names a tier, so this is the one place the id is written.
@@ -140,13 +164,15 @@ CONNECT_TIMEOUT_S = 15
 
 # List prices in dollars per million tokens, (input, output), base tokens, from
 # https://platform.claude.com/docs/en/about-claude/pricing (Sonnet 5.5 checked 2026-10-15, Haiku 5.5
-# 2026-10-19: its prompts over 100,000 tokens pay $0.50 and $2.50; DMbot's calls are far shorter).
+# 2026-10-19: its prompts over 100,000 tokens pay $0.50 and $2.50; DMbot's calls are far shorter;
+# Opus 5.5 checked 2026-10-20).
 # For the money caps on reading an adventure (`dmbot.memory.story_plan`). A model that is not here
 # (an override in .env, or the strongest tier) is priced at DEFAULT_PRICE, high on purpose.
 PRICE_PER_MILLION: dict[str, tuple[float, float]] = {
     "claude-sonnet-5-5": (2, 10),
     "claude-haiku-4-5-20251001": (1, 5),
     "claude-haiku-5-5": (0.10, 0.50),  # measured against the fast tier's model (#2055), not live
+    "claude-opus-5-5": (4, 20),  # the recap's creative model (#2074)
 }
 DEFAULT_PRICE = (15, 75)
 
@@ -379,7 +405,7 @@ class AnthropicClient:
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
         chain = self._chain(tier)
-        unavailable: list[str] = []  # refused on this call: only noted once a lower tier answers
+        unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
         for position, (step, model) in enumerate(chain):
             lower = chain[position + 1] if position + 1 < len(chain) else None
             try:
@@ -398,13 +424,13 @@ class AnthropicClient:
             except _ModelRefused as refused:
                 if lower is None:
                     raise AIError(FAILED) from None
-                unavailable.append(model)
+                unavailable.append((step, model))
                 log.debug("Model %s was refused (HTTP %s)", model, refused.status)
                 continue
             self._refused.pop(model, None)  # it works (again)
             # A lower tier answering proves the key is fine, so the model above it really
             # isn't available to it. Said once for each model.
-            for gone in unavailable:
+            for gone_tier, gone in unavailable:
                 if gone not in self._said:
                     self._said.add(gone)
                     log.warning(
@@ -412,10 +438,10 @@ class AnthropicClient:
                         "for now; it is tried again in %d minutes. To fix it, check %s in .env "
                         "or your Anthropic access.",
                         gone,
-                        step_of(self.models, gone),
+                        gone_tier.value,
                         model,
                         REFUSED_RETRY_S // 60,
-                        TIER_SETTINGS[step_of_tier(self.models, gone)],
+                        TIER_SETTINGS[gone_tier],
                     )
                 self._refused[gone] = self._clock()
             return reply

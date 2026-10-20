@@ -61,7 +61,7 @@ class CallEvent:
     """One AI call. The worker makes it when the call returns and fills in the rest as the
     answer is checked, so an observer holding it sees the whole story."""
 
-    stage: str  # beats, prose, facts, grade or title
+    stage: str  # beats, prose (or write and format), facts, grade or title
     attempt: int  # the try, from 1
     tier: str  # fast or careful
     tokens_in: int
@@ -98,7 +98,7 @@ def line(event: CallEvent) -> str:
 def which_draft(events: Sequence[CallEvent]) -> str:
     """Which prose draft became the recap, in fixed words; "" when none did."""
     for event in events:
-        if event.stage == "prose" and event.outcome:
+        if event.stage in ("prose", "write") and event.outcome:
             how = "" if event.outcome == FINAL else f" ({event.outcome})"
             return f"Draft that became the recap: try {event.attempt}{how}"
     return ""
