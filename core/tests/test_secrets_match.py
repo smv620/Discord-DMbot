@@ -115,6 +115,11 @@ ROWS = [
     ("The Ox", [], "box", False),
     ("The Ox", [], "anoxen", False),
     ("The Ox", [], "aox", False),
+    ("The N", [], "and then we left", False),  # "the" + "n" is the ordinary word "then"
+    ("The M", [], "tell them", False),
+    ("The Y", [], "they ran", False),
+    ("An D", [], "bread and butter", False),
+    ("An T", [], "an ant crawled", False),
     ("The Go", [], "long ago", False),  # no bare "a" + word: it spells ordinary words
     ("The Id", [], "some aid arrived", False),
     # a title in the secret but not the text, and the reverse
@@ -207,16 +212,49 @@ class Speed(unittest.TestCase):
         self.assertTrue(sm.names_a_secret(said, secrets, allowed))
         self.assertLess(time.perf_counter() - started, 0.2)
 
-    def test_every_match_inside_an_allowed_name_is_fast(self) -> None:
+    def test_every_match_inside_an_allowed_name_looks_the_allowed_name_up_once(self) -> None:
         """The contrived text of #2100: the secret stands only inside the allowed name, thousands
-        of times. Each hit once looked for the allowed name again (about 0.6 s); now once."""
+        of times. Counted, not timed, so a slow runner can't fail it: each name is searched for
+        once per reading, however many hits there are."""
+        from unittest import mock
+
         text = "Black Gate Keep " * 3000
-        best = min(self.timed(text, ["Black Gate"], ["Black Gate Keep"]) for _ in range(3))
-        self.assertLess(best, 0.25)
-        self.assertFalse(sm.names_a_secret(text, ["Black Gate"], ["Black Gate Keep"]))
+        with mock.patch.object(sm._Text, "_find", autospec=True, wraps=sm._Text._find) as find:
+            self.assertFalse(sm.names_a_secret(text, ["Black Gate"], ["Black Gate Keep"]))
+        readings = len(sm._variants(text))
+        self.assertLessEqual(find.call_count, 2 * readings)  # the secret and the allowed name
         self.assertTrue(
             sm.names_a_secret(text + " Black Gate", ["Black Gate"], ["Black Gate Keep"])
         )
+
+    def test_three_hundred_allowed_names_cost_one_lookup_each_not_one_per_hit(self) -> None:
+        from unittest import mock
+
+        allowed = [f"Black Gate Keep{n}" for n in range(300)]
+        text = "Black Gate Keep7 " * 2000
+        with mock.patch.object(sm._Text, "_find", autospec=True, wraps=sm._Text._find) as find:
+            self.assertFalse(sm.names_a_secret(text, ["Black Gate"], allowed))
+        self.assertLessEqual(find.call_count, 301 * len(sm._variants(text)))
+
+    def test_inside_longer_agrees_with_a_plain_scan(self) -> None:
+        import random
+
+        rng = random.Random(7)
+        for _ in range(200):
+            seen = [rng.choice("abc") for _ in range(30)]
+            reading = sm._Text(seen)
+            allowed = [
+                n for t in (["a", "b"], ["b", "c", "a"], ["a", "b", "c", "a"]) if (n := sm._name(t))
+            ]
+            assert all(allowed)
+            start = rng.randrange(0, 28)
+            end = start + rng.randrange(1, 3)
+            expected = any(
+                len(n.words) > end - start and a <= start and end <= b
+                for n in allowed
+                for a, b in reading.spans(n)
+            )
+            self.assertEqual(reading.inside_longer(allowed, start, end), expected)
 
     @staticmethod
     def timed(text: str, secrets: list[str], allowed: list[str]) -> float:

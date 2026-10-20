@@ -75,6 +75,39 @@ def _variants(text: str) -> list[list[str]]:
     return [folded] if folded == spaced else [folded, spaced]
 
 
+# Ordinary words that "the" or "an" plus a one or two letter name would spell ("The N" is "then",
+# "An D" is "and"): such a joined form is never looked for, since it would flag everyday text.
+ORDINARY = frozenset(
+    [
+        "and",
+        "ands",
+        "any",
+        "ant",
+        "ants",
+        "anti",
+        "anew",
+        "anno",
+        "ana",
+        "anus",
+        "they",
+        "then",
+        "them",
+        "thee",
+        "there",
+        "their",
+        "theirs",
+        "these",
+        "theme",
+        "themes",
+        "theft",
+        "thefts",
+        "theta",
+        "thy",
+        "thus",
+    ]
+)
+
+
 @functools.lru_cache(maxsize=4096)  # the same words come up in every name and every text
 def _endings(word: str) -> tuple[str, ...]:
     long = len(word) >= LONG_WORD
@@ -129,7 +162,7 @@ class _Text:
         self._spans: dict[_Name, list[tuple[int, int]]] = {}  # per name, once per reading
         # Keyed by the name itself, never id(): a freed name's id is reused by the next one, which
         # would hand back another secret's spans and miss it.
-        self._starts: dict[_Name, list[int]] = {}
+        self._cover: tuple[list[int], list[int], dict[int, int]] | None = None
         self.index: dict[str, list[int]] = {}
         for i, word in enumerate(seen):
             self.index.setdefault(word, []).append(i)
@@ -144,16 +177,28 @@ class _Text:
             found = self._spans[name] = self._find(name)
         return found
 
-    def inside(self, outer: _Name, start: int, end: int) -> bool:
-        """Whether the words [start, end) stand inside one occurrence of `outer`. Its occurrences
-        all have the same length, so they are searched by where they start (a bisect), not
-        one by one: a text with thousands of hits stays quick."""
-        n = len(outer.words)
-        starts = self._starts.get(outer)
-        if starts is None:  # sorted: the spans come from sorted starts
-            starts = self._starts[outer] = [a for a, _ in self.spans(outer)]
-        i = bisect.bisect_left(starts, end - n)
-        return i < len(starts) and starts[i] <= start
+    def inside_longer(self, allowed: Sequence[_Name], start: int, end: int) -> bool:
+        """Whether the words [start, end) stand inside a longer occurrence of any allowed name.
+        All the allowed names' occurrences are sorted once by where they start, with the furthest
+        end reached so far, so a hit costs one bisect however many names are allowed and however
+        many hits the text has (#2100). An occurrence that holds [start, end) and is not exactly
+        it is longer."""
+        if self._cover is None:
+            spans = sorted((a, b) for name in allowed for a, b in self.spans(name))
+            starts = [a for a, _ in spans]
+            reach: list[int] = []
+            furthest = 0
+            last_end: dict[int, int] = {}
+            for a, b in spans:
+                furthest = max(furthest, b)
+                reach.append(furthest)
+                last_end[a] = max(last_end.get(a, 0), b)
+            self._cover = (starts, reach, last_end)
+        starts, reach, last_end = self._cover
+        i = bisect.bisect_left(starts, start)  # occurrences starting before `start` are [:i]
+        if i and reach[i - 1] >= end:
+            return True
+        return last_end.get(start, 0) > end  # one starting at the same word, running further
 
     def _find(self, name: _Name) -> list[tuple[int, int]]:
         n = len(name.words)
@@ -228,10 +273,7 @@ def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collect
                         allowed_cache = [
                             a for n in allowed_names for t in _variants(n) if (a := _name(t))
                         ]
-                    if not any(
-                        len(a.words) > len(name.words) and reading.inside(a, start, end)
-                        for a in allowed_cache
-                    ):
+                    if not reading.inside_longer(allowed_cache, start, end):
                         return WHOLE_NAME
             words = tokens[1:] if len(tokens) > 1 and tokens[0] in ARTICLES else tokens
             if (
@@ -244,7 +286,10 @@ def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collect
                 # "theox", "anox" and their endings, never the bare "ox". Not "a" + word: it
                 # would match ordinary words ("a" + "go" is "ago").
                 run_together |= {
-                    art + words[0] + e for art in ("the", "an") for e in _endings(words[0])
+                    joined
+                    for art in ("the", "an")
+                    for e in _endings(words[0])
+                    if (joined := art + words[0] + e) not in ORDINARY
                 }
             if len(words) > 1:
                 run_together |= _joined(words, article="the") | _joined(words, article="a")
