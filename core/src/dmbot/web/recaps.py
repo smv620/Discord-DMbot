@@ -15,6 +15,7 @@ website's role cannot read the campaign's names.
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from dmbot.consent import TERMS_VERSION
@@ -35,7 +36,7 @@ _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
-    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers"
+    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -96,6 +97,11 @@ def _approval_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
     }
 
 
+def _share_view(row: dict[str, Any]) -> dict[str, Any]:
+    token = row.get("share_token") if row["status"] == "posted" else None
+    return {"on": bool(token), "path": f"/r/{token}" if token else None}
+
+
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     state, status = row["state"], row["status"]
     ready = state == "ready" and status == "draft"
@@ -128,6 +134,9 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # The DM's approval of the text (#2083). It counts only while the text is what they
         # approved: an edit ends it. `choice` is what they picked (voice, music, both or text).
         "approval": _approval_view(row, ready=ready),
+        # The public link of a posted recap (#2118): `path` is the page's address for it (the
+        # page adds its own origin); null when the link is off.
+        "share": _share_view(row),
         # The words the cue check allows, so the page shows exactly what the API checks.
         "cue_words": cues.allowed_words(),
         # When the session's transcript was deleted by the campaign's "Keep transcripts for"
@@ -368,6 +377,30 @@ async def approve_recap(
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
     return _view(row)
+
+
+SHARE_ACTIONS = ("on", "off", "new")
+
+
+async def share_recap(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
+    """Turn a posted recap's public link on, off, or make a new one (#2118). Only through the
+    database's door, which holds it to a DM of the campaign. The token is made here (256 random
+    bits, URL-safe) and is stored only with the recap. A draft or skipped recap has no link."""
+    if action not in SHARE_ACTIONS:
+        raise RecapError("bad_action")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_share(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, action, secrets.token_urlsafe(32)),
+        )
+        found = (await cur.fetchone() or {}).get("r")
+        if found is None:
+            raise RecapError("not_found")
+        if found["status"] == "not_posted":
+            raise RecapError("not_posted")
+        token = found["token"]
+    return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
 async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any]:

@@ -1,0 +1,81 @@
+"""A posted recap's public, read-only link (#2118): `GET /recaps/{token}` and its audio.
+
+Anyone with the link can read the recap, no sign-in. The token is the whole key (256 random bits,
+made when a DM turns the link on, `recaps.share_recap`); it finds one recap and nothing else about
+its campaign or server. The website's database role reads it through one door
+(`dmbot_recap_shared`), which answers only for a posted recap whose link is on.
+
+What is public is the table version only: the title and the story with its cues removed. Never
+the facts still to be confirmed, the numbers-and-items list, a footer or who was at the table.
+Before every answer the text is checked for the campaign's secret names again, as at Post; if it
+fails (or the names cannot be read), the answer is the same "not found" as for a wrong token, so
+nothing tells a turned-off link from a link that never was. The audio is served from the bot's
+folder by the same token, never by a path from the request.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from dmbot.db import Database
+from dmbot.recaps.audio.files import KINDS, AudioFiles
+from dmbot.recaps.text import names_a_secret, strip_cues
+
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+async def _find(db: Database, token: str) -> dict[str, Any] | None:
+    """The posted recap this token names whose text passes the secret check, else None."""
+    if not _TOKEN.match(token):
+        return None
+    async with db.anonymous() as conn:
+        cur = await conn.execute("SELECT dmbot_recap_shared(%s) AS r", (token,))
+        found = (await cur.fetchone() or {}).get("r")
+    if found is None:
+        return None
+    text = "\n".join([found["title"], strip_cues(found["summary"])])
+    if names_a_secret(text, found["secret"], found["allowed"]):
+        return None
+    return found
+
+
+async def read_shared(
+    db: Database, files: AudioFiles | None, token: str, api_url: str
+) -> dict[str, Any] | None:
+    """The public page's data, or None (one answer for every way it can fail)."""
+    found = await _find(db, token)
+    if found is None:
+        return None
+    audio: dict[str, str] = {}
+    if files is not None:
+        try:
+            present = files.present(int(found["guild"]), found["campaign"], int(found["at"]))
+        except ValueError:
+            present = {}
+        audio = {
+            kind: f"{api_url.rstrip('/')}/recaps/{token}/audio/{kind}"
+            for kind in KINDS
+            if kind in present
+        }
+    return {
+        "title": found["title"],
+        "text": strip_cues(found["summary"]),
+        "postedAt": found["postedAt"],
+        "audio": audio,
+    }
+
+
+async def audio_for(db: Database, files: AudioFiles | None, token: str, kind: str) -> Path | None:
+    """The audio file a token names (the same checks as the page), or None."""
+    if files is None or kind not in KINDS:
+        return None
+    found = await _find(db, token)
+    if found is None:
+        return None
+    try:
+        path = files.path(int(found["guild"]), found["campaign"], int(found["at"]), kind)
+    except ValueError:
+        return None
+    return path if path.is_file() else None
