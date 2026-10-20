@@ -20,6 +20,7 @@ from dmbot.ui.names import ReviewButton
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
+OFF_EVERYWHERE = "Recaps are switched off for all of DMbot right now. No recap was written."
 WRITING = "Writing the recap."
 ALREADY = "Already being written."
 
@@ -59,6 +60,9 @@ class WriteNowButton(
             return
         await interaction.response.defer()  # the checks below make several calls and a post
         result = await bot.recap_hold_write_now(guild.id, campaign.id, self.session_at)
+        if result == "off":
+            await _tell(interaction, OFF_EVERYWHERE)
+            return
         if result == "refused":
             await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
             return

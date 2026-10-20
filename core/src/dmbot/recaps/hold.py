@@ -6,6 +6,11 @@ list would repeat the same questions. So at the end of a session with open quest
 held instead of queued: a row here, no job and no cost. It is released, and the job made in the
 same transaction, when the last question is answered (the recap round checks) or when the DM
 presses "Write the recap now". A hold never expires on its own.
+
+A session whose story extractor is still to run is held at once, even with nothing open: the
+names it proposes are name questions too (#2169, Supervisor's ruling). That hold is silent
+(`asked` false) until the extractor is done and the questions are counted again; if that never
+happens the round releases it after `QUIET_WAIT_S` rather than leave the recap waiting.
 """
 
 from __future__ import annotations
@@ -25,9 +30,11 @@ class Hold:
     dm_user_id: int
     channel_id: int  # the DM screen, where the question and the "writing it now" line go
     created_at: int
+    asked: bool = True  # the DM was told; False while the story extractor may still add names
 
 
 QUEUED, ALREADY, GONE = "queued", "already", "gone"
+QUIET_WAIT_S = 3 * 60 * 60  # a silent hold the extractor never reopened is let go after this
 
 
 def question_text(count: int) -> str:
@@ -40,6 +47,9 @@ class HoldStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+        # Servers last seen holding nothing, so a round asks the database about the others only.
+        # This process is the only one that holds, so a hold made here clears the mark.
+        self._empty: set[int] = set()
 
     async def hold(
         self,
@@ -50,13 +60,15 @@ class HoldStore:
         session_id: str,
         dm_user_id: int,
         channel_id: int,
+        asked: bool = True,
     ) -> bool:
         """Hold this session's recap. False when it is held already, or a recap job exists for the
         session (a repeat of the end of the session): one wait, and never after a job."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO recap_holds (guild_id, campaign_id, session_at, session_id,"
-                " dm_user_id, channel_id, created_at) SELECT %s, %s, %s, %s, %s, %s, %s"
+                " dm_user_id, channel_id, created_at, asked)"
+                " SELECT %s, %s, %s, %s, %s, %s, %s, %s"
                 " WHERE NOT EXISTS (SELECT 1 FROM recap_jobs WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s)"
                 " ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
@@ -68,21 +80,40 @@ class HoldStore:
                     dm_user_id,
                     channel_id,
                     int(self._now()),
+                    asked,
                     guild_id,
                     campaign_id,
                     session_at,
                 ),
             )
+            made = bool(cur.rowcount)
+        if made:
+            self._empty.discard(guild_id)
+        return made
+
+    async def mark_asked(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """The DM has now been told. False when it was already (or the hold is gone)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_holds SET asked = TRUE WHERE campaign_id = %s AND session_at = %s"
+                " AND NOT asked",
+                (campaign_id, session_at),
+            )
             return bool(cur.rowcount)
 
     async def held(self, guild_id: int) -> list[Hold]:
-        """Every held recap in the server, oldest first."""
+        """Every held recap in the server, oldest first. A server last seen with none is not asked
+        again until a hold is made in it (the round runs every minute for every server)."""
+        if guild_id in self._empty:
+            return []
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at"
-                " FROM recap_holds ORDER BY created_at, session_at"
+                "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
+                " asked FROM recap_holds ORDER BY created_at, session_at"
             )
             rows = await cur.fetchall()
+        if not rows:
+            self._empty.add(guild_id)
         return [
             Hold(
                 r["campaign_id"],
@@ -91,6 +122,7 @@ class HoldStore:
                 int(r["dm_user_id"]),
                 int(r["channel_id"]),
                 int(r["created_at"]),
+                bool(r["asked"]),
             )
             for r in rows
         ]
@@ -98,7 +130,7 @@ class HoldStore:
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Hold | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT session_id, dm_user_id, channel_id, created_at FROM recap_holds"
+                "SELECT session_id, dm_user_id, channel_id, created_at, asked FROM recap_holds"
                 " WHERE campaign_id = %s AND session_at = %s",
                 (campaign_id, session_at),
             )
@@ -112,6 +144,7 @@ class HoldStore:
             int(r["dm_user_id"]),
             int(r["channel_id"]),
             int(r["created_at"]),
+            bool(r["asked"]),
         )
 
     async def release(

@@ -7151,6 +7151,9 @@ RECAP_HOLDS = f"""
         dm_user_id  BIGINT NOT NULL CHECK (dm_user_id > 0),
         channel_id  BIGINT NOT NULL,
         created_at  BIGINT NOT NULL,
+        -- The DM has been told on the DM screen. A hold made while the story extractor still had
+        -- names to propose is silent until it is done: there may be nothing to ask.
+        asked       BOOLEAN NOT NULL DEFAULT TRUE,
         PRIMARY KEY (guild_id, campaign_id, session_at)
     );
     """ + _isolate("recap_holds")
