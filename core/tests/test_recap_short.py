@@ -155,6 +155,7 @@ class WhenTheSessionEnds(unittest.IsolatedAsyncioTestCase):
 
 def press_on(bot: Any, act: str, user: int = DM) -> tuple[Any, Any]:
     button = screen.ShortRecapButton(act, CID, AT)
+    done = {"yes": False}
     message = SimpleNamespace(id=9, content="This session was short")
     interaction = SimpleNamespace(
         client=bot,
@@ -163,8 +164,11 @@ def press_on(bot: Any, act: str, user: int = DM) -> tuple[Any, Any]:
         channel_id=66,
         message=message,
         response=SimpleNamespace(
-            is_done=lambda: False, send_message=AsyncMock(), edit_message=AsyncMock()
+            is_done=lambda: done["yes"],
+            send_message=AsyncMock(),
+            defer=AsyncMock(side_effect=lambda: done.update(yes=True)),
         ),
+        edit_original_response=AsyncMock(),
         followup=SimpleNamespace(send=AsyncMock()),
     )
     return button, interaction
@@ -178,8 +182,8 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         bot.recaps.enqueue.assert_awaited_once_with(GUILD, CID, AT, dm_user_id=DM)
         self.assertIn("Writing a recap", bot.post.await_args.args[1])
         self.assertEqual(bot.post.await_args.args[0], 66)
-        self.assertIsNone(i.response.edit_message.await_args.kwargs["view"])
-        self.assertIn("Writing the recap.", i.response.edit_message.await_args.kwargs["content"])
+        self.assertIsNone(i.edit_original_response.await_args.kwargs["view"])
+        self.assertIn("Writing the recap.", i.edit_original_response.await_args.kwargs["content"])
 
     async def test_no_recap_writes_nothing(self) -> None:
         bot = fake_bot([said(0, 10)])
@@ -187,7 +191,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
         bot.post.assert_not_awaited()
-        self.assertIn("No recap written.", i.response.edit_message.await_args.kwargs["content"])
+        self.assertIn("No recap written.", i.edit_original_response.await_args.kwargs["content"])
 
     async def test_a_player_who_is_not_a_dm_is_refused(self) -> None:
         bot = fake_bot([said(0, 10)])
@@ -195,7 +199,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             button, i = press_on(bot, act, user=BOB)
             await button.callback(i)
             bot.recaps.enqueue.assert_not_awaited()
-            i.response.edit_message.assert_not_awaited()
+            i.edit_original_response.assert_not_awaited()
             self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_YOURS)
 
     async def test_a_press_after_a_newer_session_says_expired(self) -> None:
@@ -205,7 +209,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         bot.recaps.enqueue.assert_not_awaited()
         self.assertIn(
             "Expired: a newer session started.",
-            i.response.edit_message.await_args.kwargs["content"],
+            i.edit_original_response.await_args.kwargs["content"],
         )
 
     async def test_a_plan_that_lost_recaps_refuses_politely(self) -> None:
@@ -218,15 +222,15 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         button, i = press_on(bot, "go")
         await button.callback(i)
         bot.recaps.enqueue.assert_not_awaited()
-        self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_NOW)
-        i.response.edit_message.assert_not_awaited()  # the buttons stay on
+        self.assertEqual(i.followup.send.await_args.args[0], screen.NOT_NOW)
+        i.edit_original_response.assert_not_awaited()  # the buttons stay on
 
     async def test_a_second_press_when_it_is_already_queued_says_so(self) -> None:
         bot = fake_bot([said(0, 10)])
         bot.recaps.enqueue = AsyncMock(return_value=False)
         button, i = press_on(bot, "go")
         await button.callback(i)
-        self.assertIn(screen.ALREADY, i.response.edit_message.await_args.kwargs["content"])
+        self.assertIn(screen.ALREADY, i.edit_original_response.await_args.kwargs["content"])
         bot.post.assert_not_awaited()
 
 

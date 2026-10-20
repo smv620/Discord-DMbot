@@ -27,10 +27,6 @@ ALREADY = "Already being written."
 NONE_WRITTEN = "No recap written."
 
 _TEMPLATE = r"dmbot:recapask:(?P<act>go|skip):(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
-_LABELS = {
-    "go": ("Write a recap", discord.ButtonStyle.primary),
-    "skip": ("No recap", discord.ButtonStyle.secondary),
-}
 
 
 def ask_key(campaign_id: str, session_at: int) -> tuple[str, str, int]:
@@ -42,14 +38,17 @@ class ShortRecapButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE
 ):
     def __init__(self, act: str, campaign_id: str, session_at: int) -> None:
-        label, style = _LABELS[act]
-        super().__init__(
-            discord.ui.Button(
-                label=label,
-                style=style,
-                custom_id=f"dmbot:recapask:{act}:{campaign_id}:{session_at}",
+        custom_id = f"dmbot:recapask:{act}:{campaign_id}:{session_at}"
+        # (the labels are written out here so the site's button-label test can find them)
+        if act == "go":
+            button = discord.ui.Button(
+                label="Write a recap", style=discord.ButtonStyle.primary, custom_id=custom_id
             )
-        )
+        else:
+            button = discord.ui.Button(
+                label="No recap", style=discord.ButtonStyle.secondary, custom_id=custom_id
+            )
+        super().__init__(button)
         self.act, self.campaign_id, self.session_at = act, campaign_id, session_at
 
     @classmethod
@@ -71,12 +70,15 @@ class ShortRecapButton(
         if interaction.user.id not in campaign.dm_user_ids:
             await _tell(interaction, NOT_YOURS)
             return
+        # Answered at once: the checks below make several database calls and a post, which can
+        # take longer than Discord waits for an answer.
+        await interaction.response.defer()
         key = ask_key(self.campaign_id, self.session_at)
         message = interaction.message
         bot.decision_lines.remember_pressed(key, interaction)
         if await bot.recap_short_expired(guild.id, campaign.id, self.session_at):
             await self._close(interaction, EXPIRED)
-            await interaction.followup.send(EXPIRED_TELL, ephemeral=True, allowed_mentions=NO_PINGS)
+            await _tell(interaction, EXPIRED_TELL)
             await bot.decision_lines.close(
                 key, EXPIRED, pressed_id=message.id if message is not None else None
             )
@@ -101,7 +103,7 @@ class ShortRecapButton(
 
     async def _close(self, interaction: discord.Interaction, outcome: str) -> None:
         message = interaction.message
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=with_outcome(message.content, outcome) if message is not None else outcome,
             view=None,
             allowed_mentions=NO_PINGS,
