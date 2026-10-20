@@ -536,14 +536,14 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const heldTitle = held.map((h) => h.title).includes("A note before tonight's session");
     expect(heldTitle).toBe(!PRESESSION_NOTE_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
-    expect(shown.includes("short note on your DM screen, for you alone")).toBe(PRESESSION_NOTE_LIVE);
+    expect(shown.includes("read it before you begin")).toBe(PRESESSION_NOTE_LIVE);
     // Hidden while the switch is false, but the step itself is still checked.
     const words = presessionNoteSteps.map((x) => x.text).join(" ");
-    for (const part of ["last time's recap", "wait for your check", "Players never see it"]) expect(words).toContain(part);
+    for (const part of ["last time's recap", "wait for your check", "DMbot never sends it to players", "If there is nothing to say, there is no note"]) expect(words).toContain(part);
     // Only what the built note holds: no button, no story-thread or guide line behind another switch.
     expect(words).not.toMatch(/\bpress\b|thread|promise|What's next/i);
     const entry = held.find((h) => h.title === "A note before tonight's session")?.what ?? "";
-    for (const part of ["last time's recap", "anything lost or ended", "wait for your check", "Players do not see it"]) {
+    for (const part of ["last time's recap", "anything lost or ended", "wait for your check"]) {
       expect(entry, part).toContain(part);
     }
   });
@@ -554,11 +554,11 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const shown = dmSteps.map((x) => x.text).join(" ");
     expect(shown.includes("Press Not secret any more")).toBe(SECRET_SAID_LIVE);
     const words = secretSaidSteps.map((x) => x.text).join(" ");
-    for (const part of ["five at most", "To make it secret again", "DMbot never decides for you"]) expect(words).toContain(part);
+    for (const part of ["five at most", "make it secret again from the name's card", "covers every copy", "Only the campaign's DMs can answer", "DMbot never decides for you"]) expect(words).toContain(part);
     // The buttons are named as the code labels them, with the file the label check reads.
     expect(secretSaidSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Keep it secret", "Not secret any more"]);
     const entry = held.find((h) => h.title === "When a player says a secret name")?.what ?? "";
-    for (const part of ["one name at a time (up to five)", "Only you can answer", "never decides for you"]) {
+    for (const part of ["one name at a time (up to five)", "never decides for you"]) {
       expect(entry, part).toContain(part);
     }
   });

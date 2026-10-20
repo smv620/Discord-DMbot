@@ -92,13 +92,13 @@ export const SECRET_SAID_LIVE = false;
 
 export const presessionNoteSteps: Step[] = [
   {
-    text: "When a session starts, DMbot can post a short note on your DM screen, for you alone. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. If you have confirmed nothing yet, there is no note. It comes once a session, not again if DMbot restarts mid-game. Players never see it, and it is not in the transcript.",
+    text: "When a session starts, if your plan includes story memory, DMbot can post a short note on your DM screen: read it before you begin. It has last time's recap, what you confirmed about the names heard last time, who or what is dead, lost, destroyed, missing or captured, and how many things said at the table wait for your check. If there is nothing to say, there is no note. It comes once a session, not again if DMbot restarts mid-game. DMbot never sends it to players, and it is not in the transcript.",
   },
 ];
 
 export const secretSaidSteps: Step[] = [
   {
-    text: "If a player says a name you keep secret, it lands in the transcript, which anyone in your server can read. After the session, DMbot asks you privately, one name at a time and five at most, whether it stays secret. Press Keep it secret and nothing changes, and DMbot asks again if a player says it in a later session. Press Not secret any more and DMbot may use the name in answers to players. To make it secret again, use the name's card. Only you can answer, and DMbot never decides for you.",
+    text: "After a session, DMbot asks you privately about each secret name a player said, one at a time and five at most. A name you marked secret is now in the transcript, which anyone in your server can read. Press Keep it secret and DMbot still will not use it in answers to players, and asks again if it is said in a later session. Press Not secret any more and DMbot may use it in answers to players; you can make it secret again from the name's card. If DMbot has the name more than once, your answer covers every copy. If more than five were said, DMbot asks about the rest next session. Only the campaign's DMs can answer, and DMbot never decides for you.",
     names: [
       { name: "Keep it secret", file: "ui/secret_aloud.py" },
       { name: "Not secret any more", file: "ui/secret_aloud.py" },
