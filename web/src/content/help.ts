@@ -95,7 +95,7 @@ export const SECRET_SAID_LIVE = false;
 // core ui/secret_reveal.py). It is on by default on the server (DMBOT_SECRET_REVEAL_ASK), so it
 // goes live with the deploy. The step is held with the What's new entry "When you say a secret
 // name"; set the switch to true in the same change that moves the entry out of `held`.
-export const SECRET_REVEAL_LIVE = false;
+export const SECRET_REVEAL_LIVE = true;
 
 export const secretRevealSteps: Step[] = [
   {

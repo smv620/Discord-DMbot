@@ -19,6 +19,31 @@ export const whatsNewIntro =
 
 export const entries: Entry[] = [
   {
+    date: "2026-10-20",
+    title: "Recaps for your table",
+    what: "After a session, DMbot can write a short story-style recap that you read and change if you like, on the DM screen or the website, and post to the table when you choose. Nothing goes to your players until you do, and recaps are for paid plans only.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Recaps fit your session",
+    what: "A recap's length now follows your session: about 200 words for a one-hour game, about 400 for three hours, and about 700 for a game of six hours or more.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Recaps stick to what happened",
+    what: "Before you see a recap, DMbot checks the sentences against what was said at the table, has it written again once if one doesn't match, cuts any that still don't, and takes out compass directions. The checking can miss things, so you still read the recap first.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Choose what recaps do",
+    what: "In ⚙️ Settings, the game master can choose, for each campaign, whether DMbot writes a recap after a session, and whether it emails them when it is ready. DMbot never posts one without them.",
+  },
+  {
+    date: "2026-10-20",
+    title: "When you say a secret name",
+    what: "When you, the game master, say a name you marked secret out loud, DMbot asks you at once whether it is revealed now. Press Yes, players know now to let DMbot use it in answers to players (you can make it secret again from the name's card), or No, keep it secret to leave it alone for this session.",
+  },
+  {
     date: "2026-10-19",
     title: "My Account puts sign-in first",
     what: "When you are not signed in, My Account now says so and puts Sign in with Discord and the email link at the top. The plans come after, under New to DMbot?.",
@@ -296,30 +321,18 @@ export const held: Held[] = [
     reason: "Held until it has been seen working on the test server (#1491, #1499).",
   },
   {
-    date: "2026-10-16",
-    title: "Recaps for your table",
-    what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do. You can also read, post or skip it right on the DM screen, and the next session start reminds you once if you forgot. If your plan reads recaps aloud, you can tell the narrator how to say a name. On the recap page you choose what recaps do. Paid plans only.",
-    reason:
-      "Recaps are off until dev1 has checked a real one (#1382). When they are on, move this up and turn on the recap words (RECAPS_LIVE in recap-words.ts).",
-  },
-  {
-    date: "2026-10-19",
-    title: "Recaps fit your session: a short game gets a short recap",
-    what: "A recap's length now follows your session: about 200 words for a one-hour game, about 400 for three hours, and about 700 for a game of six hours or more.",
-    reason: "Held with recaps (RECAPS_LIVE, #2018).",
-  },
-  {
-    date: "2026-10-20",
-    title: "Recaps stick to what happened",
-    what: "Before you see a recap, DMbot checks each sentence against what was said at the table, including the place and the people. If a sentence doesn't match, DMbot has the recap written again once, then cuts any sentence that still doesn't match. If too little is left, you get no recap at all. It also takes out any compass direction (north, south, east or west). The checking can miss things, so you still read the recap first.",
-    reason: "Held with recaps (RECAPS_LIVE, #2064, #2067). The compass rule is #2071: merge it before this goes live.",
-  },
-  {
     date: "2026-10-19",
     title: "New names from your recap",
     what: "When a recap uses a name DMbot didn't know, it asks you to check it, on your DM screen and by private message. Nothing is added to your game until you say so.",
     reason:
       "Held until dev1 deploys #2030 (#2027, #2031). When it is on, move this up and turn on RECAP_NAMES_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
+  },
+  {
+    date: "2026-10-20",
+    title: "Share a recap by a link",
+    what: "On a posted recap's page, a game master can choose Make a link to share it. Anyone who has the link can read the recap without signing in, even people outside your Discord server, and they can pass it on. You can turn the link off or make a new one whenever you like; the old link then stops opening the recap, though anyone who already read it may keep a copy. Treat the link like a password.",
+    reason:
+      "Waits for the link API (#2118) to deploy and for the page (#2119). When it is live, move this up and turn on RECAP_SHARE_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },
   {
     date: "2026-10-20",
@@ -364,13 +377,6 @@ export const held: Held[] = [
       "The move code goes to the payment email, and payments stay off until the Stripe account exists (#1096), so nobody can use it yet.",
   },
   {
-    date: "2026-10-16",
-    title: "Choose what recaps do",
-    what: "In ⚙️ Settings, the game master can choose, for each campaign, whether DMbot writes a recap after a session, whether it makes the narration and music (where the plan includes them), and whether it emails them when it is ready. DMbot never posts one without them.",
-    reason:
-      "Goes with the recap, which stays off until the first check on a real session (#1382).",
-  },
-  {
     date: "2026-10-15",
     title: "New names from what was said",
     what: "After a session, DMbot can spot a name it does not know yet and ask the game master who or what it is. Anything said about that name waits until the game master has checked it. A name they turn down is forgotten, along with what was said about it.",
@@ -383,12 +389,6 @@ export const held: Held[] = [
     what: "When a session starts, DMbot can post a short note on the DM screen, for the game master only. It lists last time's recap, what you confirmed about the names heard last time, anything lost or ended, and how many things said at the table wait for your check. It shows nothing until you have confirmed something. Players do not see it.",
     reason:
       "Held until it has been seen working on the test server (#1403).",
-  },
-  {
-    date: "2026-10-20",
-    title: "When you say a secret name",
-    what: "When you, the game master, say a name you marked secret out loud at the table, DMbot asks you at once whether it is revealed now. Press Yes, players know now, and DMbot may use the name in answers to players (you can make it secret again from the name's card). Press No, keep it secret, and DMbot won't ask about it again this session. DMbot never decides for you, and only the campaign's DMs can answer.",
-    reason: "Waits for the deploy of #2094 (#2088, #2102).",
   },
   {
     date: "2026-10-16",

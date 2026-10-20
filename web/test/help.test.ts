@@ -34,7 +34,7 @@ describe("Help", () => {
 
   it("says what DMbot knows when the game master asks it a quick question (#1379)", () => {
     expect(help.querySelector("#quick-heading")?.textContent).toBe(quickAnswersHeading);
-    const items = [...help.querySelectorAll("#quick-heading ~ ul li")].map((li) => li.textContent);
+    const items = [...help.querySelectorAll("#quick-heading + ul li")].map((li) => li.textContent);
     expect(items).toEqual(quickAnswers.map((s) => s.text));
     const all = items.join(" ");
     expect(all).toContain("the story facts you have confirmed about the names in your question");
