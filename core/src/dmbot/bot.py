@@ -220,6 +220,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
+from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.memory import definitions, document_reader, extractor, plan_reader
@@ -850,6 +851,7 @@ class DMBot(commands.AutoShardedBot):
         npcs_messages: MessageMap | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
+        installs: InstallStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -902,6 +904,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
@@ -3440,6 +3443,8 @@ class DMBot(commands.AutoShardedBot):
                 gaps = install.missing(me.guild_permissions)
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
+        if self.installs is not None:  # servers joined before this was recorded (#2163)
+            self._track(self.installs.present([g.id for g in self.guilds]), "installs")
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
@@ -3566,6 +3571,13 @@ class DMBot(commands.AutoShardedBot):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
         self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
+        if self.installs is not None:  # the row "Link this server" looks for (#2163)
+            self._track(self.installs.joined(guild.id), "install-joined")
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """DMbot was removed from a server (or the server was deleted): note when."""
+        if self.installs is not None:
+            self._track(self.installs.left(guild.id), "install-left")
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
@@ -9784,6 +9796,7 @@ async def run(settings: Settings) -> None:
             npcs_messages=NpcMessageStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
+            installs=InstallStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:
