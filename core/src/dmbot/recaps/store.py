@@ -25,6 +25,7 @@ from psycopg.types.json import Jsonb
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.recaps.allowance import Usage, month_bounds
+from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -41,7 +42,8 @@ COLUMNS = (
     " window_done, spent, last_error,"
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
-    " audio_credits, audio_error, audio_text_hash, to_confirm, names_state"
+    " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, approved_by,"
+    " approved_at, approved_hash, audio_choice"
 )
 
 
@@ -85,9 +87,21 @@ class Job:
         0  # 0 none, 1 the DM was told of the names to confirm, 2 and reminded (#2027)
     )
 
+    approved_by: int = 0  # the DM who approved the text (#2083); 0: nobody yet
+    approved_at: int = 0
+    approved_hash: str = ""  # the fingerprint of the text they approved
+    audio_choice: str = ""  # voice, music, both or text, once approved
+
     @property
     def finished(self) -> bool:
         return self.state in TERMINAL
+
+    @property
+    def approved(self) -> bool:
+        """Whether the DM has approved the text as it is now: an edit since ends it."""
+        return bool(self.approved_hash) and self.approved_hash == text_hash(
+            self.title, self.summary
+        )
 
 
 def _job(r: dict[str, Any]) -> Job:
@@ -127,6 +141,10 @@ def _job(r: dict[str, Any]) -> Job:
         r["audio_text_hash"],
         tuple(r["to_confirm"]),
         int(r["names_state"]),
+        int(r["approved_by"]),
+        int(r["approved_at"]),
+        r["approved_hash"],
+        r["audio_choice"],
     )
 
 
@@ -398,6 +416,47 @@ class RecapStore:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(sets)}, updated_at = %s" + where,
                 (*values, int(self._now()), *args),
+            )
+            return bool(cur.rowcount)
+
+    async def approve(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        user_id: int,
+        choice: str,
+        *,
+        expected: str,
+    ) -> bool:
+        """The DM approved the text as it is now and picked what to make (#2083). Records who and
+        when, and the hash of the text, and for any choice but text queues the audio. `expected`:
+        the hash (`approval.text_hash`) of the text whose cues, names and consent were just
+        checked; if the text has changed since, nothing is approved. False: not allowed now (not
+        ready, already decided, a different text, or its audio is under way). Audio made from
+        older text may be made again. The caller has checked the DM."""
+        if choice not in CHOICES:
+            raise ValueError(choice)
+        queue = choice != TEXT
+        now_hash = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+        sets = f"approved_by = %s, approved_at = %s, approved_hash = {now_hash}, audio_choice = %s"
+        if queue:
+            sets += ", audio = 'queued', audio_tries = 0, audio_next_at = 0, audio_error = ''"
+        # Nothing is approved over audio that is queued or being made, text only included: the
+        # spend so far would be lost and the caps dodged.
+        where = (
+            f" WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
+            f" AND status = 'draft' AND audio <> 'queued' AND {now_hash} = %s"
+        )
+        if queue:
+            where += (
+                " AND (audio IN ('off', 'failed')"
+                f" OR (audio = 'ready' AND audio_text_hash <> {now_hash}))"
+            )
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"UPDATE recap_jobs SET {sets}" + where,
+                (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
             return bool(cur.rowcount)
 
