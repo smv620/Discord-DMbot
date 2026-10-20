@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.bot import DMBot
@@ -462,6 +462,6 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
             ),
             followup=SimpleNamespace(send=AsyncMock()),
         )  # fmt: skip
-        await RevealButton("n", self.c, alias.value.id, GUILD_A).callback(interaction)
+        await RevealButton("n", self.c, alias.value.id, GUILD_A).callback(cast(Any, interaction))
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), before)
         bot.lookup.drop.assert_not_called()  # nothing changed, so nothing to refresh
