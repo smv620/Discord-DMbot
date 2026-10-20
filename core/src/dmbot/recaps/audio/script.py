@@ -18,9 +18,8 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from dmbot.memory.models import name_key
-from dmbot.recaps.text import CUE, PERFORMANCE, SMALL_WORDS
-from dmbot.recaps.text import secret_rule as text_rule
+from dmbot.recaps.text import CUE, PERFORMANCE
+from dmbot.secrets_match import secret_rule as matcher
 
 MAX_CHARS = 4000  # one request's limit for the voice
 NEIGHBOUR_CHARS = 300  # how much of the next or the last paragraph the voice is shown
@@ -224,64 +223,13 @@ RUN_TOGETHER = "run-together"
 RUN_MIN = 3  # letters; a shorter key is too likely to sit inside an ordinary word
 
 
-def _segments(token: str, keys: Collection[str]) -> bool:
-    """Whether the token is nothing but secret names written one after the other ("RaeAegis")."""
-    reach = [True] + [False] * len(token)
-    for end in range(1, len(token) + 1):
-        reach[end] = any(
-            reach[end - len(k)] and token.endswith(k, 0, end) for k in keys if len(k) <= end
-        )
-    return reach[-1]
-
-
 def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collection[str]) -> str:
-    """Which rule finds a secret name in the text meant for the voice, or "" for none. It finds
-    everything the recap text's own check (`text.secret_rule`) finds, so the two locks can never
-    disagree about a name, and a little more.
-
-    1. The text's rules, as written (whole names with a possessive or plural, one word of a name)
-       and again on the text and names folded the way names are compared everywhere (`name_key`:
-       accents, apostrophes and hyphens ignored), so "Zoe" is "Zoë" and "RaeLi" is "Rae-Li".
-    2. `run-together`: a name run across a word gap or a hyphen ("SilasVane" for "Silas Vane") or
-       several secret names glued into one word ("RaeAegis"), found with the spaces taken out but
-       only where the match starts at the start of a word and ends at the end of one. Without
-       those edges a three-letter secret matched inside ordinary words across a gap ("there
-       aegis" for "rae"), so the voice was refused for text the recap check had passed (#2050).
-       What this gives up: a secret glued to other letters ("MrSilasVane", "Vexahlia" for
-       "Vex"), which the old substring check caught; a leak costs far more than a false alarm, so
-       the run-together pass stays for every name of three letters or more, and a secret whose
-       words are all confirmed names too is left to the text rule's exemption."""
-    folded = name_key(text)
-    secrets = [name_key(n) for n in secret_names]
-    allowed = [name_key(n) for n in allowed_names]
-    found = text_rule(text, secret_names, allowed_names) or text_rule(folded, secrets, allowed)
-    if found:
-        return found
-    open_words = {w for n in allowed for w in n.split()} | SMALL_WORDS
-    keys: set[str] = set()
-    for name in secrets:
-        parts = name.split()
-        if len(name.replace(" ", "")) < RUN_MIN or all(p in open_words for p in parts):
-            continue  # nothing to look for, or every word is a confirmed name too
-        keys.add(name.replace(" ", ""))
-        keys.update(p for p in parts if len(p) >= RUN_MIN and p not in open_words)
-    keys = {k for k in keys if len(k) >= RUN_MIN}
-    parts = folded.split()
-    compact = "".join(parts)
-    starts: set[int] = set()
-    ends: set[int] = set()
-    at = 0
-    for part in parts:
-        starts.add(at)
-        at += len(part)
-        ends.add(at)
-    for key in keys:
-        i = compact.find(key)
-        while i != -1:
-            if i in starts and i + len(key) in ends:
-                return RUN_TOGETHER
-            i = compact.find(key, i + 1)
-    return RUN_TOGETHER if any(len(t) >= RUN_MIN and _segments(t, keys) for t in parts) else ""
+    """Which rule finds a secret name in the text meant for the voice, or "" for none. It is the
+    one shared matcher (`dmbot.secrets_match`), the very one the recap text's own check uses, so
+    the two locks can never disagree about a name (#2050, #2087): the whole name with its
+    differences (case, articles, endings, titles, accents, hyphens), the name run together at
+    word edges ("WhiteDeath"), or several secret names glued into one word ("RaeAegis")."""
+    return matcher(text, secret_names, allowed_names)
 
 
 def _chunks(block: str, room: int) -> list[str]:
