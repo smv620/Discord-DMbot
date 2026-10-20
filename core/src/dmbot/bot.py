@@ -253,10 +253,11 @@ from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import cues
 from dmbot.recaps import post as recap_post
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
-from dmbot.recaps.audio.worker import AudioInputs, AudioWorker, text_hash
+from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker

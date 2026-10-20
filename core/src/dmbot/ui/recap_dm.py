@@ -65,6 +65,10 @@ APPROVED = {
     approval.TEXT: "✅ Approved. No voice-over or music will be made.",
 }
 TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
+NO_AUDIO = (
+    "Voice-over and music can't be made for this campaign right now (the plan, the narration "
+    "switch or the key). You can approve it as text only."
+)
 MAX_SHOWN = 8  # cue problems listed in one message
 
 
@@ -202,6 +206,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         """✅ Approve the text (#2083), then what to make. Every press checks the cues and the
         secret names again, so a choice taken from an old message approves nothing the text no
         longer earns. Counts only in the log, never the text."""
+        expected = approval.text_hash(job.title, job.summary)  # the text the checks below read
         problems = await bot.recap_approval_problems(campaign, job)
         if problems:
             shown = problems[:MAX_SHOWN]
@@ -234,11 +239,18 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             )
             return
         choice = _CHOICE[self.act]
-        wanted = choice == approval.TEXT or await bot.recap_audio_wanted(
+        if choice != approval.TEXT and not await bot.recap_audio_wanted(
             campaign.guild_id, campaign.id, job
-        )
-        if not wanted or not await bot.recaps.approve(
-            campaign.guild_id, campaign.id, self.session_at, interaction.user.id, choice
+        ):
+            await _tell(interaction, NO_AUDIO)
+            return
+        if not await bot.recaps.approve(
+            campaign.guild_id,
+            campaign.id,
+            self.session_at,
+            interaction.user.id,
+            choice,
+            expected=expected,
         ):
             await _tell(interaction, TOO_LATE)
             return

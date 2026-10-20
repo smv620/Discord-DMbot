@@ -156,6 +156,8 @@ class Renderer:
         sections as the text's cues share it."""
         await asyncio.to_thread(_fresh, into)  # nothing left by a stopped earlier try
         before = self._provider.credits
+        if mode not in (approval.VOICE, approval.MUSIC, approval.BOTH):
+            raise ValueError(mode)  # a choice that makes no audio never reaches a paid call
         speaking = mode != approval.MUSIC
         scoring = mode != approval.VOICE
         # 1. The voice, a paragraph at a time; the moods' times come from its timestamps.

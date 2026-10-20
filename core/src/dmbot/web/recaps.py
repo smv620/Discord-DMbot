@@ -326,8 +326,9 @@ async def approve_recap(
         if refusal := cue_refusal(row["summary"]):
             raise refusal
         cur = await conn.execute(
-            "SELECT dmbot_recap_approve(%s, %s, %s, %s) AS r", (gid, cid, at, choice)
-        )
+            "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, choice, text_hash(row["title"], row["summary"])),
+        )  # (the hash of the very text whose cues were just checked)
         outcome = (await cur.fetchone() or {}).get("r")
         if outcome != "approved":
             raise RecapError("not_allowed")

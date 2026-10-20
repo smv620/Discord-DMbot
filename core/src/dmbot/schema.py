@@ -2076,7 +2076,8 @@ RECAP_APPROVAL = """
     -- of the text as it is now, and, for any choice but text, queues the audio the way the bot
     -- does. The page checks the cues first; the secret names and the plan are checked again by the
     -- audio step before a paid call, as for every audio.
-    CREATE FUNCTION dmbot_recap_approve(g BIGINT, c TEXT, at_ BIGINT, choice TEXT) RETURNS TEXT
+    CREATE FUNCTION dmbot_recap_approve(
+        g BIGINT, c TEXT, at_ BIGINT, choice TEXT, expected TEXT) RETURNS TEXT
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         job recap_jobs%ROWTYPE;
@@ -2098,8 +2099,19 @@ RECAP_APPROVAL = """
         IF NOT FOUND OR job.state <> 'ready' OR job.status <> 'draft' THEN
             RETURN 'not_allowed';
         END IF;
-        -- Audio that is being made, or was made, is not started over by a second approval.
-        IF choice <> 'text' AND job.audio NOT IN ('off', 'failed') THEN
+        -- The page checked the cues of one text; only that text is approved. An edit committed
+        -- since (a different hash) approves nothing.
+        IF expected <> encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')),
+                              'hex') THEN
+            RETURN 'not_allowed';
+        END IF;
+        -- Audio that is being made is not started over by a second approval. Audio made from
+        -- older text (the DM has edited since) may be made again from the new text.
+        IF choice <> 'text' AND NOT (
+            job.audio IN ('off', 'failed')
+            OR (job.audio = 'ready' AND job.audio_text_hash <> encode(
+                sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex'))
+        ) THEN
             RETURN 'not_allowed';
         END IF;
         UPDATE recap_jobs SET
@@ -2118,12 +2130,12 @@ RECAP_APPROVAL = """
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
 """
 
 STORY_MODE = """
@@ -2815,7 +2827,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
     # Approving a recap's text and picking its audio (#2083): the only write to those columns.
-    ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT)"),
+    ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),

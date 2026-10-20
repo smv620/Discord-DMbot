@@ -20,8 +20,8 @@ import psycopg
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.recaps import notify
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
-from dmbot.recaps.audio.worker import text_hash
 from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.store import TranscriptStore
@@ -723,6 +723,36 @@ class TheApproval(Base):
                     async with conn.transaction():
                         await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
 
+    async def door(self, expected: str, user: Any = None, choice: str = "text") -> str:
+        who = user or ALICE
+        async with self.web.user(who.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, 100, choice, expected),
+            )
+            return str((await cur.fetchone() or {})["r"])
+
+    async def test_the_door_approves_only_the_text_that_was_checked(self) -> None:
+        job = await self.state(self.one.id)
+        self.assertEqual(await self.door("0" * 64), "not_allowed")  # an edit slipped in between
+        self.assertEqual(await self.door(text_hash(job.title, job.summary)), "approved")
+        # The SQL fingerprint is the Python one, for a title with multi-byte characters too.
+        await self.store.update(THURSDAY.id, self.one.id, 100, title="Le château d'Æthelred 《x》")
+        job = await self.state(self.one.id)
+        self.assertEqual(await self.door(text_hash(job.title, job.summary)), "approved")
+        self.assertTrue((await self.state(self.one.id)).approved)
+
+    async def test_the_door_refuses_a_non_dm_a_bad_choice_and_a_recap_not_ready(
+        self,
+    ) -> None:
+        job = await self.state(self.one.id)
+        good = text_hash(job.title, job.summary)
+        self.assertEqual(await self.door(good, BOB), "not_allowed")
+        self.assertEqual(await self.door(good, choice="loud"), "not_allowed")
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
+        self.assertEqual(await self.door(good), "not_allowed")
+
     async def test_the_door_has_one_caller(self) -> None:
         self.assertEqual(callers("dmbot_recap_approve"), {"schema.py", "web/recaps.py"})
 
@@ -875,7 +905,7 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["allowed_mentions"].users, False)
 
     def ready(self, **kw: Any) -> Job:
-        from dmbot.recaps.audio.worker import text_hash
+        from dmbot.recaps.approval import text_hash
 
         base = self.job()
         return self.job(audio="ready", audio_text_hash=text_hash(base.title, base.summary), **kw)

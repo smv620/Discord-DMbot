@@ -17,11 +17,11 @@ import re
 from dataclasses import dataclass
 
 from dmbot.recaps.audio.music import SYNONYMS
-from dmbot.recaps.audio.script import _PERFORMANCE_TAGS, EMOTION_VOICE
+from dmbot.recaps.audio.script import EMOTION_VOICE, PERFORMANCE_WORDS
 
 KINDS = ("unknown", "unclosed", "mismatched", "empty", "no_words", "inside_word")
 MOODS = tuple(EMOTION_VOICE)  # the 18 mood words
-PACING = tuple(_PERFORMANCE_TAGS)  # pause, short pause, beat, long pause, hushed, whisper, ...
+PACING = tuple(PERFORMANCE_WORDS)  # pause, short pause, beat, long pause, hushed, whisper, ...
 NEAR_WORDS = 3  # words of the text on each side that say where a problem is
 MAX_CUE_CHARS = 60  # the longest a cue can be (`text.CUE`): longer is never read as a cue
 
@@ -152,9 +152,8 @@ def cue_problems(summary: str) -> list[Problem]:
     found: list[Problem] = []
     paragraphs = _paragraphs(summary)
     joined = "\n\n".join(paragraphs)
-    marks: list[
-        tuple[int, int, int, str, str]
-    ] = []  # paragraph, start, end (whole text), cue, text
+    # (paragraph, start and end in the whole text, start in the paragraph, the cue, the paragraph)
+    marks: list[tuple[int, int, int, int, str, str]] = []
     base = 0
     for number, text in enumerate(paragraphs, start=1):
         problems, moods = _check_paragraph(number, text)

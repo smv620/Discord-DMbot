@@ -31,7 +31,7 @@ from dmbot.recaps.approval import VOICE as VOICE_CHOICE
 from dmbot.recaps.audio import names as nm
 from dmbot.recaps.audio import script as sc
 from dmbot.recaps.audio.eleven import ElevenLabs, Locator, ProviderError
-from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
+from dmbot.recaps.audio.files import FILE_NAMES, AudioFiles
 from dmbot.recaps.audio.render import Renderer, RenderError, estimate_credits, kinds_for
 from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
 
@@ -131,6 +131,7 @@ class AudioWorker:
         self._now = clock
         self._one = asyncio.Lock()  # one recap's audio at a time: memory, credits, the counter
         self._start = 0  # the provider's credit count when this job began
+        self._choice = ""  # the approved choice read by the last check (#2083)
 
     async def run(self, gid: int, cid: str, session_at: int) -> Job | None:
         """Make the audio of one recap, if it is waiting and nobody else has it. None if it
@@ -203,6 +204,7 @@ class AudioWorker:
         fresh = await self._store.get(gid, cid, job.session_at)
         if fresh is None or not fresh.approved or fresh.audio_choice not in AUDIO_CHOICES:
             raise Off
+        self._choice = fresh.audio_choice  # what is made is what the DM approved just now
         if self._switched is not None and not await self._switched(gid, cid, job):
             raise Off  # the DM chose no narration and music; the plan gate below still wins
         if not await self._allowed(gid, cid, job):
@@ -242,8 +244,7 @@ class AudioWorker:
             raise Stop(SECRET) from None
         # The estimate assumes a new ambience bed: the cap is a ceiling, not a forecast.
         if (
-            job.audio_credits
-            + estimate_credits(script, ambience_needed=True, mode=job.audio_choice)
+            job.audio_credits + estimate_credits(script, ambience_needed=True, mode=self._choice)
             > self._max
         ):
             raise Stop(OVER_CAP)
@@ -274,7 +275,7 @@ class AudioWorker:
                 seed=job.session_at,
                 dictionary=dictionary,
                 guard=guard,
-                mode=job.audio_choice,
+                mode=self._choice,
             )
             await guard()  # and once more after the last call, before anything is kept
             now_job = await self._store.get(gid, cid, job.session_at)
@@ -285,7 +286,7 @@ class AudioWorker:
                 or (now_job.title, now_job.summary) != (job.title, job.summary)
             ):
                 raise Stop(EDITED, permanent=False)  # the recap went, or the DM changed the text
-            await asyncio.to_thread(_put_in_place, temp, folder, kinds_for(job.audio_choice))
+            await asyncio.to_thread(_put_in_place, temp, folder, kinds_for(self._choice))
         finally:
             await asyncio.to_thread(shutil.rmtree, temp, True)
         kept = await self._store.set_audio(
@@ -325,7 +326,7 @@ class AudioWorker:
         return locator
 
 
-def _put_in_place(temp: Path, folder: Path, kinds: Sequence[str] = (VOICE, MUSIC)) -> None:
+def _put_in_place(temp: Path, folder: Path, kinds: Sequence[str]) -> None:
     """The finished files replace the old ones: the old folder is moved aside first, so a reader
     never finds the recap with no files."""
     for kind in kinds:

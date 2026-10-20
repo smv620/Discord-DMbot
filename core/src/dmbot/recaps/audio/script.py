@@ -41,6 +41,7 @@ _PERFORMANCE_TAGS = {
     "sigh": "[sighs]",
     "whispered": "[whispers]",
 }
+PERFORMANCE_WORDS = tuple(_PERFORMANCE_TAGS)  # the pacing words the cue check allows
 SCENE_BREAK_TAG = "[long pause]"
 
 # The voice's delivery tag for each mood the music has a style for (#1983), keyed by the music

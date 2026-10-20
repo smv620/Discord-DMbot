@@ -23,6 +23,8 @@ from dmbot.ui.recap_dm import (
 )
 from tests.test_recap_dm import AT, CID, DM_ID, PLAYER, job, press, told
 
+TEXT_HASH = approval.text_hash("The Silver Lock", "《Tense》 Mira drew her blade.")
+
 
 def armed(act: str, user: int = DM_ID, *, problems: list[str] | None = None, audio: bool = True,
           found: Any = "default", approved: bool = True) -> Any:  # fmt: skip
@@ -101,14 +103,21 @@ class TheApproveButton(unittest.IsolatedAsyncioTestCase):
         for act, choice in (("cv", "voice"), ("cm", "music"), ("cb", "both"), ("ct", "text")):
             button, bot, interaction = armed(act, found=with_text())
             await button.callback(interaction)
-            bot.recaps.approve.assert_awaited_once_with(5, "c" * 32, AT, DM_ID, choice)
+            bot.recaps.approve.assert_awaited_once_with(
+                5,
+                "c" * 32,
+                AT,
+                DM_ID,
+                choice,
+                expected=approval.text_hash("The Silver Lock", "《Tense》 Mira drew her blade."),
+            )
             self.assertEqual(told(interaction), APPROVED[choice])
 
     async def test_a_voice_or_music_choice_without_audio_in_the_plan_is_refused(self) -> None:
         for act in ("cv", "cm", "cb"):
             button, bot, interaction = armed(act, audio=False, found=with_text())
             await button.callback(interaction)
-            self.assertEqual(told(interaction), TOO_LATE)
+            self.assertEqual(told(interaction), screen.NO_AUDIO)
             bot.recaps.approve.assert_not_awaited()
         button, bot, interaction = armed("ct", audio=False, found=with_text())
         await button.callback(interaction)

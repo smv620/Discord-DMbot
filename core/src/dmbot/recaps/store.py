@@ -420,29 +420,41 @@ class RecapStore:
             return bool(cur.rowcount)
 
     async def approve(
-        self, guild_id: int, campaign_id: str, session_at: int, user_id: int, choice: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        user_id: int,
+        choice: str,
+        *,
+        expected: str,
     ) -> bool:
         """The DM approved the text as it is now and picked what to make (#2083). Records who and
-        when, and the hash of the text, and for any choice but text queues the audio. False: not
-        allowed now (the recap is not ready, was already decided, or its audio is under way). The
-        caller has checked the DM, the cues and the names."""
+        when, and the hash of the text, and for any choice but text queues the audio. `expected`:
+        the hash (`approval.text_hash`) of the text whose cues, names and consent were just
+        checked; if the text has changed since, nothing is approved. False: not allowed now (not
+        ready, already decided, a different text, or its audio is under way). Audio made from
+        older text may be made again. The caller has checked the DM."""
         if choice not in CHOICES:
             raise ValueError(choice)
         queue = choice != TEXT
+        now_hash = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+        sets = f"approved_by = %s, approved_at = %s, approved_hash = {now_hash}, audio_choice = %s"
+        if queue:
+            sets += ", audio = 'queued', audio_tries = 0, audio_next_at = 0, audio_error = ''"
+        where = (
+            f" WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
+            f" AND status = 'draft' AND {now_hash} = %s"
+        )
+        if queue:
+            where += (
+                " AND (audio IN ('off', 'failed')"
+                f" OR (audio = 'ready' AND audio_text_hash <> {now_hash}))"
+            )
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE recap_jobs SET approved_by = %s, approved_at = %s,"
-                " approved_hash = encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')),"
-                " 'hex'), audio_choice = %s"
-                + (
-                    ", audio = 'queued', audio_tries = 0, audio_next_at = 0, audio_error = ''"
-                    if queue
-                    else ""
-                )
-                + " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
-                " AND state = 'ready' AND status = 'draft'"
-                + (" AND audio IN ('off', 'failed')" if queue else ""),
-                (user_id, int(self._now()), choice, guild_id, campaign_id, session_at),
+                f"UPDATE recap_jobs SET {sets}" + where,
+                (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
             return bool(cur.rowcount)
 
