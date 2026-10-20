@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import math
+import time
 from typing import TYPE_CHECKING
 
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
@@ -47,10 +48,23 @@ def meter_minutes(clip_seconds: float) -> int:
     return max(1, math.ceil(clip_seconds / 60))
 
 
-def decode(data: bytes) -> bytes:
+# The only containers read, by the type the page sent: ffmpeg would probe any format it knows on
+# bytes a stranger chose, so the demuxer is named.
+FORMATS = {"audio/webm": "matroska,webm", "audio/ogg": "ogg"}
+DECODE_BUDGET_S = 20.0  # a clip that takes longer than this to read is refused, not waited for
+PROBE_OPTIONS = {"probesize": "65536", "analyzeduration": "1000000"}
+
+
+def decode(data: bytes, content_type: str = "audio/webm") -> bytes:
     """The clip as 16 kHz mono s16le PCM. Blocking: run it off the event loop. Stops reading as
-    soon as the clip is past the limit, so a small file that expands to hours costs little."""
+    soon as the clip is past the length limit or the time budget, so a small file that expands to
+    hours, or a crafted stream that decodes slowly, costs little."""
     import av
+
+    demuxer = FORMATS.get(content_type)
+    if demuxer is None:
+        raise ClipError(BAD_CLIP)
+    started = time.monotonic()
 
     if not data or len(data) > MAX_CLIP_BYTES:
         raise ClipError(BAD_CLIP)
@@ -59,9 +73,7 @@ def decode(data: bytes) -> bytes:
     total = 0
     limit = int(MAX_CLIP_S * SAMPLE_RATE * BYTES_PER_SAMPLE)
     try:
-        # The container is probed from the bytes (webm from a browser, ogg), not taken on trust
-        # from the type the caller sent.
-        with av.open(io.BytesIO(data), "r") as container:
+        with av.open(io.BytesIO(data), "r", format=demuxer, options=PROBE_OPTIONS) as container:
             if not container.streams.audio:
                 raise ClipError(BAD_CLIP)
             for frame in container.decode(audio=0):
@@ -70,6 +82,8 @@ def decode(data: bytes) -> bytes:
                     total += len(chunks[-1])
                 if total > limit:
                     raise ClipError(TOO_LONG)
+                if time.monotonic() - started > DECODE_BUDGET_S:
+                    raise ClipError(BAD_CLIP)
         chunks.extend(_samples(out) for out in resampler.resample(None))
     except (av.FFmpegError, ValueError) as exc:
         raise ClipError(BAD_CLIP) from exc

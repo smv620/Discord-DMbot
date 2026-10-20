@@ -57,7 +57,7 @@ class WithClips(WithRequests):
         assert row is not None
         return None if row["clip"] is None else bytes(row["clip"])
 
-    async def work(self, write: Any, gate: Any = None) -> tuple[str, str]:
+    async def work(self, write: Any, gate: Any = None, meter: Any = None) -> tuple[str, str]:
         rid = await self.send_clip()
         request = await self.requests.claim_next(THURSDAY.id)
         assert request is not None and request.kind == "voice" and request.clip == CLIP
@@ -67,6 +67,7 @@ class WithClips(WithRequests):
             request,
             gate=gate or AsyncMock(return_value=None),
             write=write,
+            meter=meter or AsyncMock(),
         )
         return rid, outcome
 
@@ -126,8 +127,11 @@ class TheDoors(WithClips):
 
 class TheBot(WithClips):
     async def test_the_words_come_back_and_the_clip_is_gone_in_the_same_change(self) -> None:
-        write = AsyncMock(return_value="Mira did not draw her blade.")
-        rid, outcome = await self.work(write)
+        write = AsyncMock(return_value=("Mira did not draw her blade.", 90.0))
+        meter = AsyncMock()
+        rid, outcome = await self.work(write, meter=meter)
+        meter.assert_awaited_once()
+        self.assertEqual(meter.await_args.args[1], 90.0)
         self.assertEqual(outcome, "done")
         self.assertIsNone(await self.clip_in_row(rid))
         self.assertEqual(
@@ -141,7 +145,7 @@ class TheBot(WithClips):
             (AsyncMock(side_effect=voice.ClipError(voice.BAD_CLIP)), voice.BAD_CLIP),
             (AsyncMock(side_effect=voice.ClipError(voice.NO_CONSENT)), voice.NO_CONSENT),
             (AsyncMock(side_effect=RuntimeError("Mira's words")), voice.TRANSCRIBE_FAILED),
-            (AsyncMock(return_value="   "), voice.NO_WORDS),
+            (AsyncMock(return_value=("   ", 3.0)), voice.NO_WORDS),
         ]
         for write, expected in cases:
             async with self.db.guild(THURSDAY.id) as conn:  # earlier ones are out of the limit
@@ -151,6 +155,29 @@ class TheBot(WithClips):
             self.assertIsNone(await self.clip_in_row(rid), expected)
             got = await web.read_voice(self.web, self.session, self.ref, rid)
             self.assertEqual(got, {"state": "failed", "error": expected})
+
+    async def test_a_retaken_claim_is_not_billed_and_changes_nothing(self) -> None:
+        import dataclasses
+
+        rid = await self.send_clip()
+        request = await self.requests.claim_next(THURSDAY.id)
+        assert request is not None
+        stale = dataclasses.replace(request, claimed_at=request.claimed_at + 1)  # not the claim
+        meter = AsyncMock()
+        outcome = await rq.run_voice(
+            self.requests,
+            THURSDAY.id,
+            stale,
+            gate=AsyncMock(return_value=None),
+            write=AsyncMock(return_value=("words", 30.0)),
+            meter=meter,
+        )
+        self.assertEqual(outcome, "done")  # (what this worker saw)
+        meter.assert_not_awaited()  # the row was not its to finish, so no minutes either
+        self.assertEqual(await self.clip_in_row(rid), CLIP)
+        self.assertEqual(
+            await web.read_voice(self.web, self.session, self.ref, rid), {"state": "working"}
+        )
 
     async def test_a_gate_that_says_no_transcribes_nothing_and_deletes_the_clip(self) -> None:
         write = AsyncMock()
@@ -194,19 +221,36 @@ class TheBot(WithClips):
 class TheClip(WithClips):
     def test_a_browsers_clip_is_read_in_memory(self) -> None:
         for fmt in ("webm", "ogg"):
-            pcm = voice.decode(tone(fmt))
+            pcm = voice.decode(tone(fmt), f"audio/{fmt}")
             self.assertAlmostEqual(voice.seconds(pcm), 1.5, delta=0.1)
+
+    def test_only_the_named_containers_are_read(self) -> None:
+        for data, kind in ((tone("webm"), "audio/ogg"), (tone("ogg"), "audio/webm"),
+                           (tone("webm"), "audio/mpeg"), (tone("webm"), "")):  # fmt: skip
+            with self.assertRaises(voice.ClipError) as err:
+                voice.decode(data, kind)
+            self.assertEqual(err.exception.code, voice.BAD_CLIP, kind)
+
+    def test_a_clip_that_takes_too_long_to_read_is_refused(self) -> None:
+        from unittest import mock
+
+        with (
+            mock.patch.object(voice, "DECODE_BUDGET_S", -1.0),
+            self.assertRaises(voice.ClipError) as err,
+        ):
+            voice.decode(tone("webm", 2.0))
+        self.assertEqual(err.exception.code, voice.BAD_CLIP)
 
     def test_what_is_not_audio_or_too_short_or_too_long_is_refused(self) -> None:
         for bad in (b"", CLIP, b"\x00" * 5000):
             with self.assertRaises(voice.ClipError) as err:
-                voice.decode(bad)
+                voice.decode(bad, "audio/webm")
             self.assertEqual(err.exception.code, voice.BAD_CLIP)
         with self.assertRaises(voice.ClipError) as err:
-            voice.decode(tone("webm", 0.1))
+            voice.decode(tone("webm", 0.1), "audio/webm")
         self.assertEqual(err.exception.code, voice.BAD_CLIP)
         with self.assertRaises(voice.ClipError) as err:
-            voice.decode(tone("webm", 130))
+            voice.decode(tone("webm", 130), "audio/webm")
         self.assertEqual(err.exception.code, voice.TOO_LONG)
 
     def test_the_meter_rounds_up_to_a_whole_minute_and_never_less_than_one(self) -> None:
@@ -218,7 +262,7 @@ class TheClip(WithClips):
         import tempfile
 
         before = set(os.listdir(tempfile.gettempdir()))
-        voice.decode(tone("webm", 1.0))
+        voice.decode(tone("webm", 1.0), "audio/webm")
         self.assertEqual(set(os.listdir(tempfile.gettempdir())) - before, set())
 
 
@@ -243,15 +287,16 @@ def fake_bot(*, consent: bool = True, heard: str = "we met Cara Dinval today") -
 
 class TheEngineSide(WithClips):
     def request(self, data: bytes) -> rq.Request:
-        return rq.Request("a" * 32, "c" * 32, 100, 7, "", 1, "voice", data)
+        return rq.Request("a" * 32, "c" * 32, 100, 7, "", 1, "voice", data, "audio/webm")
 
     async def test_the_note_is_written_with_the_campaigns_names_and_fixed(self) -> None:
         bot = fake_bot()
         got = await DMBot.recap_voice_text(bot, THURSDAY.id, self.request(tone("webm", 1.5)))
-        self.assertEqual(got, "we met Caradinval today")  # a split name made whole
+        text, seconds = got
+        self.assertEqual(text, "we met Caradinval today")  # a split name made whole
+        self.assertAlmostEqual(seconds, 1.5, delta=0.1)
         hints = bot.transcribe.await_args.args[1]
         self.assertEqual(hints, ["Caradinval"])  # the name hints a live session would send
-        bot._meter_voice.assert_awaited_once()
 
     async def test_without_agreement_nothing_is_decoded_or_sent(self) -> None:
         bot = fake_bot(consent=False)
@@ -267,7 +312,21 @@ class TheEngineSide(WithClips):
         with self.assertRaises(voice.ClipError) as err:
             await DMBot.recap_voice_text(bot, THURSDAY.id, self.request(tone("webm", 1.5)))
         self.assertEqual(err.exception.code, voice.NO_CONSENT)
-        bot._meter_voice.assert_not_awaited()  # not billed for words that were thrown away
+
+    async def test_consent_withdrawn_while_the_names_load_sends_no_audio(self) -> None:
+        state = {"agreed": True}
+        bot = fake_bot()
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: state["agreed"])
+
+        async def hints(*_: Any) -> Any:
+            state["agreed"] = False  # "Stop recording me" pressed during the wait
+            return ["Caradinval"], None, []
+
+        bot._recap_voice_hints = hints
+        with self.assertRaises(voice.ClipError) as err:
+            await DMBot.recap_voice_text(bot, THURSDAY.id, self.request(tone("webm", 1.5)))
+        self.assertEqual(err.exception.code, voice.NO_CONSENT)
+        bot.transcribe.assert_not_awaited()  # nothing was sent out
 
     async def test_a_ninety_second_clip_adds_two_minutes_to_the_meter(self) -> None:
         added: list[dict[str, Any]] = []
@@ -295,3 +354,34 @@ class TheEngineSide(WithClips):
         )
         with self.assertLogs("dmbot.bot", level="WARNING"):
             await DMBot._meter_voice(cast(Any, bot), THURSDAY.id, self.request(CLIP), 30.0)
+
+
+class TheHints(WithClips):
+    async def hints(self, found: Any) -> Any:
+        bot = SimpleNamespace(
+            _hint_people=AsyncMock(return_value=(["Mia"], ["Dee"])),
+            lookup=SimpleNamespace(get_within=AsyncMock(return_value=found)),
+        )
+        return await DMBot._recap_voice_hints(cast(Any, bot), THURSDAY.id, "c" * 32)
+
+    async def test_a_secret_name_is_never_a_hint(self) -> None:
+        hints, found, people = await self.hints(lookup())  # Belleros has a secret alias
+        self.assertIsNotNone(found)
+        self.assertTrue(any("Belleros" in h for h in hints))
+        self.assertFalse(any("hooded" in h.lower() for h in hints))
+        self.assertEqual(people, ["Mia", "Dee"])
+
+    async def test_names_that_will_not_load_leave_people_only_and_no_fixing(self) -> None:
+        hints, found, _people = await self.hints(None)
+        self.assertEqual((hints, found), (["Mia", "Dee"], None))
+
+
+class TheBackups(WithClips):
+    def test_the_requests_are_left_out_of_backups(self) -> None:
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "src" / "dmbot"
+        files = [p for p in root.rglob("*.py") if "backup" in p.name]
+        self.assertTrue(files)  # the backup code is found
+        for path in files:
+            self.assertNotIn("recap_requests", path.read_text(), path.name)

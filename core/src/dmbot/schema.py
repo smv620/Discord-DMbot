@@ -7256,8 +7256,8 @@ RECAP_VOICE = r"""
             RETURN jsonb_build_object('status', 'not_editable');
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
-        -- The promises hold for a server the bot has left too: a clip older than ten minutes
-        -- and any row older than an hour go here.
+        -- A clip older than ten minutes and any row older than an hour go here, for this
+        -- campaign, whenever a new clip comes (the bot's own sweep covers the servers it is in).
         UPDATE recap_requests r SET clip = NULL
             WHERE r.guild_id = g AND r.campaign_id = c AND r.clip IS NOT NULL
               AND r.created_at < now_s - 600;
@@ -7284,6 +7284,11 @@ RECAP_VOICE = r"""
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
         SELECT * INTO r FROM recap_requests x

@@ -45,6 +45,7 @@ class Request:
     claimed_at: int = 0  # this worker's claim: only it may finish the row
     kind: str = "instructions"  # or "voice": a clip to write down (#2113)
     clip: bytes = b""  # a voice request's audio: in memory only, gone from the row when it ends
+    clip_type: str = ""  # its container type (audio/webm or audio/ogg)
 
 
 def answer_of(sorted_: Sorted) -> dict[str, Any]:
@@ -76,7 +77,7 @@ class RequestStore:
                 " = (SELECT guild_id, id FROM recap_requests WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, session_at, user_id, body, kind, clip",
+                " RETURNING id, campaign_id, session_at, user_id, body, kind, clip, clip_type",
                 (now, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
@@ -91,6 +92,7 @@ class RequestStore:
             now,
             row["kind"],
             bytes(row["clip"] or b""),
+            row["clip_type"],
         )
 
     async def finish(
@@ -188,7 +190,8 @@ async def run_one(
 
 VOICE_ANSWER_MAX = 2000  # characters of speech kept from one clip (two minutes of talk is less)
 
-Writer = Callable[[Request], Awaitable[str]]
+Writer = Callable[[Request], Awaitable[tuple[str, float]]]
+Meter = Callable[[Request, float], Awaitable[None]]
 
 
 async def run_voice(
@@ -198,22 +201,26 @@ async def run_voice(
     *,
     gate: Gate,
     write: Writer,
+    meter: Meter,
 ) -> str:
     """Do one claimed voice request. `gate` is as for `run_one`; `write` turns the clip into
-    words (decode, speech-to-text with the campaign's name hints, name fixing, the hours meter)
-    and raises `voice.ClipError` for a clip it can't use. The clip is deleted in the same
-    statement that stores the outcome (`RequestStore.finish`). Returns the outcome word for the
-    log (never the words). Never raises."""
+    words and its length in seconds (decode, speech-to-text with the campaign's name hints, name
+    fixing) and raises `voice.ClipError` for a clip it can't use. The clip is deleted in the same
+    statement that stores the outcome (`RequestStore.finish`). `meter` adds the clip's minutes
+    to the hours meter, and only runs when this worker's claim was the one that finished the row,
+    so a retaken claim is not billed twice. Returns the outcome word for the log (never the
+    words). Never raises."""
     try:
         stopped = await gate(request)
         if stopped is not None:
             await store.finish(guild_id, request, answer=None, error=stopped)
             return stopped
-        text = await asyncio.wait_for(write(request), VOICE_TIMEOUT_S)
+        text, seconds = await asyncio.wait_for(write(request), VOICE_TIMEOUT_S)
         if not text.strip():
             await store.finish(guild_id, request, answer=None, error=voice.NO_WORDS)
             return voice.NO_WORDS
-        await store.finish(guild_id, request, answer={"text": text[:VOICE_ANSWER_MAX]})
+        if await store.finish(guild_id, request, answer={"text": text[:VOICE_ANSWER_MAX]}):
+            await meter(request, seconds)
         return "done"
     except voice.ClipError as exc:
         await _fail(store, guild_id, request, exc.code)

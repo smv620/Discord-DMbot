@@ -8507,6 +8507,7 @@ class DMBot(commands.AutoShardedBot):
                             request,
                             gate=lambda req, gid=guild.id: self._voice_gate(gid, req),  # type: ignore[misc]
                             write=lambda req, gid=guild.id: self.recap_voice_text(gid, req),  # type: ignore[misc]
+                            meter=lambda req, secs, gid=guild.id: self._meter_voice(gid, req, secs),  # type: ignore[misc]
                         )
                         log.info("Recap voice request: %s", outcome)  # the word only
                     continue
@@ -8553,21 +8554,24 @@ class DMBot(commands.AutoShardedBot):
             request, campaign, job, has_ai=True, feedback_gate=allowed
         )
 
-    async def recap_voice_text(self, guild_id: int, request: RecapRequest) -> str:
+    async def recap_voice_text(self, guild_id: int, request: RecapRequest) -> tuple[str, float]:
         """A DM's spoken note on the recap page, written down (#2113): decoded in memory, sent
         to the table's speech-to-text with the campaign's name hints (never a secret name), names
         the Cleaner is sure of fixed, and its length added to the hours meter. Only a DM who has
         agreed to be recorded; consent is asked again after every wait. The audio is never
-        written anywhere here; the caller deletes the clip with the outcome. Raises
-        `voice.ClipError` for a clip it can't use."""
+        written anywhere here; the caller deletes the clip with the outcome and adds the minutes
+        to the meter once its own claim has finished the row. Returns the words and the clip's
+        length. Raises `voice.ClipError` for a clip it can't use."""
         gid, cid, user = guild_id, request.campaign_id, request.user_id
         if not self.consent.has_consent(gid, user):
             raise voice.ClipError(voice.NO_CONSENT)
-        pcm = await asyncio.to_thread(voice.decode, request.clip)
+        pcm = await asyncio.to_thread(voice.decode, request.clip, request.clip_type)
         seconds = voice.seconds(pcm)
         if not self.consent.has_consent(gid, user):
             raise voice.ClipError(voice.NO_CONSENT)
         hints, lookup, people = await self._recap_voice_hints(gid, cid)
+        if not self.consent.has_consent(gid, user):  # asked again right before the audio leaves
+            raise voice.ClipError(voice.NO_CONSENT)
         now_ms = int(time.time() * 1000)
         utterance = Utterance(gid, user, now_ms - int(seconds * 1000), now_ms, pcm, 0)
         if self.settings.transcription.sends_audio_out:  # billed by the outside company
@@ -8584,14 +8588,13 @@ class DMBot(commands.AutoShardedBot):
             raise voice.ClipError(voice.NO_CONSENT)  # they stopped meanwhile: nothing is kept
         text = str(heard).strip() if heard else ""
         if not text:
-            return ""
+            return "", seconds
         if lookup is not None:
             try:
                 text = clean(lookup, text, people=people, unsure=False).text
             except Exception:
                 log.warning("Couldn't fix names in a spoken note; kept it as heard")
-        await self._meter_voice(gid, request, seconds)
-        return text
+        return text, seconds
 
     async def _recap_voice_hints(
         self, guild_id: int, campaign_id: str
