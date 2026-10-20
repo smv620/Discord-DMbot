@@ -236,7 +236,9 @@ class TheHook(unittest.TestCase):
 
 
 def press(act: str, user: int, *, in_server: bool = True, guild: int = GUILD) -> Any:
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_screen_visibility="private"
+    )
     written = SimpleNamespace(value=[object()])
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),

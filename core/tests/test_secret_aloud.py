@@ -247,16 +247,23 @@ def fake_table(*, session: str | None = "s1") -> Any:
     )
 
 
-def fake_bot(lines: list[Line], secrets: list[SecretName], agreed: set[int]) -> Any:
+def fake_bot(
+    lines: list[Line], secrets: list[SecretName], agreed: set[int], visibility: str = "private"
+) -> Any:
     memory = MagicMock()
     bot = SimpleNamespace(
         memory=memory,
         transcripts=SimpleNamespace(lines=AsyncMock(return_value=lines)),
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({DM_ID})))
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM_ID}), dm_screen_visibility=visibility
+                )
+            )
         ),
         consent=SimpleNamespace(consenting=AsyncMock(return_value=agreed)),
         post=AsyncMock(return_value=True),
+        sidebar_send_dm=AsyncMock(return_value="sent"),
     )
     return bot
 
@@ -334,9 +341,19 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
 
 
 def press(
-    act: str, user: int, *, manager: bool = False, memory: Any = "default"
+    act: str,
+    user: int,
+    *,
+    manager: bool = False,
+    memory: Any = "default",
+    visibility: str = "private",
 ) -> tuple[Any, Any]:
-    campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD_A,
+        id="c" * 32,
+        dm_user_ids=frozenset({DM_ID}),
+        dm_screen_visibility=visibility,
+    )
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         memory=(
@@ -359,6 +376,27 @@ def press(
         followup=SimpleNamespace(send=AsyncMock()),
     )
     return SecretAloudButton(act, "c" * 32, "a" * 32), (bot, interaction)
+
+
+class WhenTheScreenIsOpen(unittest.IsolatedAsyncioTestCase):
+    async def test_the_question_goes_to_the_dms_privately_when_players_may_peek(self) -> None:
+        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="peek")
+        from unittest import mock
+
+        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
+            await DMBot.ask_about_secrets(bot, fake_table())
+        bot.post.assert_not_awaited()  # the name is not on the screen
+        bot.sidebar_send_dm.assert_awaited_once()
+        self.assertEqual(bot.sidebar_send_dm.await_args.args[0], DM_ID)
+
+    async def test_a_button_pressed_on_a_screen_that_has_opened_up_writes_no_name(self) -> None:
+        from dmbot.dm_screen import secret_posts
+
+        button, (bot, interaction) = press("keep", DM_ID, visibility="open")
+        await button.callback(interaction)
+        kw = interaction.response.edit_message.await_args.kwargs
+        self.assertEqual(kw["content"], secret_posts.HIDDEN)
+        bot.memory.make_name_not_secret.assert_not_awaited()
 
 
 class TheButtons(unittest.IsolatedAsyncioTestCase):

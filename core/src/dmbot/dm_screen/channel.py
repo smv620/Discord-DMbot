@@ -361,10 +361,11 @@ async def setup_dm_screen(
     from dmbot.dm_screen import npcs_channel, secret_posts
     from dmbot.dm_screen.rules_channel import follow_screen
 
-    if visibility is not None and campaign.dm_screen_visibility != "private":
-        # Players may now look at the screen: a question there that shows a secret name must not
-        # (#2097). After the lock is free, since it edits messages.
-        await secret_posts.hide(guild.id, campaign_id)
+    if campaign.dm_screen_visibility != "private":
+        # Players may look at the screen: a question there that shows a secret name must not
+        # (#2097). Decided from the state, not from whoever changed it, so a backup restored with
+        # an open screen is covered too, and a question a restart forgot is found by its buttons.
+        await secret_posts.hide(guild.id, campaign_id, channel=channel, bot_id=me.id)
 
     await follow_screen(guild, campaign, channel)
     await npcs_channel.follow_screen(guild, campaign, channel)

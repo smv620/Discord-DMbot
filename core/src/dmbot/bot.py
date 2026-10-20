@@ -3737,7 +3737,12 @@ class DMBot(commands.AutoShardedBot):
         pulled back if the DM screen opens up (#2097)."""
         sent = await self.post_message(channel_id, text, view, remember=remember)
         if sent is not None and secret_of is not None:
-            secret_posts.remember(*secret_of, sent)
+            # Asked again after the send: if the screen opened up meanwhile, pull it back at once.
+            campaign = await self.campaigns.get(*secret_of)
+            if campaign is None or campaign.dm_screen_visibility != "private":
+                await secret_posts.hide_one(sent)
+            else:
+                secret_posts.remember(*secret_of, sent)
         return sent is not None
 
     async def post_message(
@@ -8176,7 +8181,16 @@ class DMBot(commands.AutoShardedBot):
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
             every = spoken(secrets, players_lines(lines, players=players))
             found = every[:MAX_ASKED]
+            alone = campaign.dm_screen_visibility != "private"
             for said in found:
+                if alone:  # players may look at the screen: the name goes to the DMs only
+                    for dm_id in sorted(campaign.dm_user_ids):
+                        await self.sidebar_send_dm(
+                            dm_id,
+                            question_text(said.text, said.entries),
+                            secret_aloud_view(cid, said.alias_id),
+                        )
+                    continue
                 await self.post(
                     table.screen_channel_id,
                     question_text(said.text, said.entries),

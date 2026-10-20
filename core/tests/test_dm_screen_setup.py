@@ -79,8 +79,11 @@ class SetupTests(DatabaseTest):
         await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="private")
         asked.edit.assert_not_awaited()  # still private: nothing changes
         await setup_dm_screen(self.guild, self.campaign.id, self.store)
-        asked.edit.assert_not_awaited()  # no visibility change asked for
-        await setup_dm_screen(self.guild, self.campaign.id, self.store, visibility="peek")
+        asked.edit.assert_not_awaited()  # still private, nothing asked for
+        # The screen is opened some other way (a restored backup): the state decides, not who
+        # asked, so the next set-up with no visibility given still pulls the question back.
+        await self.store.set_dm_screen_visibility(GUILD, self.campaign.id, "open")
+        await setup_dm_screen(self.guild, self.campaign.id, self.store)
         asked.edit.assert_awaited_once()
         self.assertEqual(asked.edit.await_args.kwargs["content"], secret_posts.HIDDEN)
 

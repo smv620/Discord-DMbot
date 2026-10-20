@@ -36,11 +36,58 @@ def pending(guild_id: int, campaign_id: str) -> int:
     return len(_posts.get((guild_id, campaign_id), ()))
 
 
-async def hide(guild_id: int, campaign_id: str) -> int:
+async def hide_one(message: Any) -> bool:
+    """Edit one question straight away (it was posted just as the screen opened up)."""
+    try:
+        await message.edit(content=HIDDEN, view=None, allowed_mentions=NO_PINGS)
+    except Exception:
+        log.warning("A secret question could not be pulled back")
+        return False
+    return True
+
+
+def is_exposed(visibility: str, in_server_channel: bool) -> bool:
+    """A question on the DM screen (a server channel, not a private message) while players may
+    look at the screen. A button pressed then must not write the name back."""
+    return in_server_channel and visibility != "private"
+
+
+# What a question's buttons start with: the keep-it-secret question and the reveal question.
+BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:rv:")
+SCAN = 50  # how many recent messages of the screen to look through
+
+
+async def _scan(channel: Any, bot_id: int) -> list[Any]:
+    """The bot's own recent messages on the screen that carry a secret question's buttons: what a
+    restart forgot. Matched by the buttons' ids, since the text alone can't be told apart."""
+    found: list[Any] = []
+    try:
+        async for message in channel.history(limit=SCAN):
+            if getattr(getattr(message, "author", None), "id", None) != bot_id:
+                continue
+            ids = [
+                str(getattr(child, "custom_id", "") or "")
+                for row in getattr(message, "components", ())
+                for child in getattr(row, "children", ())
+            ]
+            if any(i.startswith(BUTTON_PREFIXES) for i in ids):
+                found.append(message)
+    except Exception:
+        log.warning("Could not look through the DM screen for secret questions")
+    return found
+
+
+async def hide(
+    guild_id: int, campaign_id: str, *, channel: Any = None, bot_id: int | None = None
+) -> int:
     """Edit every remembered question of this campaign so it no longer shows the name, and forget
-    them. A message that is gone or can't be edited is skipped (logged as a count only). Returns
-    how many were changed."""
+    them. With the screen `channel`, also the ones a restart forgot (still-open questions are
+    found by their buttons). A message that is gone or can't be edited is skipped (logged as a
+    count only). Returns how many were changed."""
     messages = _posts.pop((guild_id, campaign_id), [])
+    if channel is not None and bot_id is not None:
+        known = {getattr(m, "id", None) for m in messages}
+        messages += [m for m in await _scan(channel, bot_id) if getattr(m, "id", None) not in known]
     changed = failed = 0
     for message in messages:
         try:
