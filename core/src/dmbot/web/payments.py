@@ -68,6 +68,11 @@ class PaymentError(RuntimeError):
     """The payment company refused or couldn't be reached. No personal data inside."""
 
 
+class NotResumable(PaymentError):
+    """The subscription is not one that can be resumed (it has ended, or its payment is
+    overdue): Renew answers "not ending" (#2165)."""
+
+
 class ResumeRefused(PaymentError):
     """The company would not undo a cancellation by a direct update (a plan change is scheduled
     for the period's end, say): the person renews on its billing page instead (#2165)."""
@@ -195,6 +200,7 @@ class FakeProvider:
         self._site_url = site_url.rstrip("/")
         self.cancelled: list[str] = []
         self.refuse_resume = False  # a test can have the company refuse a direct resume
+        self.cannot_resume = False  # ...or say the subscription has ended
         self.resumed: list[str] = []  # subscriptions whose cancellation was undone (#2165)
         self.owners: dict[str, int] = {}  # a subscription's person, for the events that lack one
         # What each checkout was given, so tests can see the DMbot ID and customer travel.
@@ -263,6 +269,8 @@ class FakeProvider:
     async def resume(self, *, subscription_id: str) -> None:
         if self.refuse_resume:
             raise ResumeRefused("the fake company will not resume")
+        if self.cannot_resume:
+            raise NotResumable("the fake subscription has ended")
         self.resumed.append(subscription_id)
 
     async def subscription_owner(self, *, subscription_id: str) -> int | None:

@@ -21,7 +21,7 @@ from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
-from dmbot.web.payments import PaymentError, ResumeRefused
+from dmbot.web.payments import NotResumable, PaymentError, ResumeRefused
 from dmbot.web.settings import load_web_settings
 from dmbot.web.stripe import API_VERSION, HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
@@ -939,13 +939,19 @@ class Provider(unittest.IsolatedAsyncioTestCase):
         # Ended, or overdue (its failed invoice would be retried): never resumed.
         for status in ("canceled", "incomplete_expired", "past_due", "unpaid", "incomplete"):
             self.http.answers[path] = (200, {"status": status, "cancel_at_period_end": True})
-            with self.assertRaises(PaymentError, msg=status):
+            with self.assertRaises(NotResumable, msg=status):
                 await self.provider.resume(subscription_id="sub_55")
         self.assertEqual([c[0] for c in self.http.calls], ["GET"] * 5)  # no write
         self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
         self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (400, None)
         with self.assertRaises(ResumeRefused):  # a scheduled change can refuse a direct update
             await self.provider.resume(subscription_id="sub_55")
+        # Only a 400 is that refusal: a 401, 403, 429 or 5xx is an error.
+        for code in (401, 403, 429, 500):
+            self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (code, None)
+            with self.assertRaises(PaymentError) as caught:
+                await self.provider.resume(subscription_id="sub_55")
+            self.assertNotIsInstance(caught.exception, ResumeRefused, code)
         self.http.answers[path] = (200, {"status": "canceled"})
         self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
         self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (500, None)

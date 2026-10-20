@@ -437,6 +437,99 @@ class Payments(DatabaseTest):
         self.assertEqual(late.status_code, 409)
         self.assertEqual(self.provider.resumed, [])
 
+    async def test_a_schedule_event_never_makes_the_real_plan_change_look_stale(self) -> None:
+        # At a downgrade's start the schedule's "released" arrives in the same moment as the
+        # change itself, sometimes a second later: the change must still be applied.
+        await self.start_table()
+        self.provider.owners["sub_1"] = ALICE.id
+        start = self.now + 30 * DAY
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=start,
+            subscription_id="sub_1",
+            occurred_at=start + 1,
+        )
+        changed = await self.start_table(
+            kind="subscription_renewed",
+            plan="guild",
+            occurred_at=start,  # one second before the schedule event
+            period_start=start,
+            period_end=start + 30 * DAY,
+        )
+        self.assertEqual(changed.status_code, 200)
+        got = await self.plan()
+        self.assertEqual((got.plan, got.next_plan), ("guild", None))
+        # An older schedule event arriving late does not bring the old news back.
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="table",
+            period_start=start,
+            subscription_id="sub_1",
+            occurred_at=start - 5,
+        )
+        self.assertEqual((await self.plan()).next_plan, None)
+
+    async def test_schedule_events_apply_in_the_order_the_company_made_them(self) -> None:
+        await self.start_table()
+        self.provider.owners["sub_1"] = ALICE.id
+        await self.send(
+            kind="plan_unscheduled", user_id=0, subscription_id="sub_1", occurred_at=self.now + 10
+        )
+        # A "scheduled" that was made before that "unscheduled" and arrived after it is old news.
+        await self.send(
+            kind="plan_scheduled",
+            user_id=0,
+            plan="guild",
+            period_start=self.now + 30 * DAY,
+            subscription_id="sub_1",
+            occurred_at=self.now + 5,
+        )
+        self.assertEqual((await self.plan()).next_plan, None)
+
+    async def test_renew_does_not_make_the_companys_real_events_look_stale(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        self.now += 100
+        await self.post("/billing/renew")
+        # The company said this just before the Renew; it is delivered after it.
+        late = await self.send(
+            kind="payment_failed", subscription_id="sub_1", occurred_at=self.now - 50
+        )
+        self.assertEqual(late.status_code, 200)
+        self.assertEqual((await self.plan()).status, "grace")
+
+    async def test_renewing_an_ended_subscription_is_not_ending_and_twice_is_harmless(self) -> None:
+        await self.start_table()
+        await self.send(
+            kind="subscription_cancelled",
+            subscription_id="sub_1",
+            period_end=self.now + 30 * DAY,
+            occurred_at=self.now + 1,
+        )
+        self.provider.cannot_resume = True
+        with self.assertLogs("dmbot.web.app", "WARNING"):
+            ended = await self.post("/billing/renew")
+        self.assertEqual((ended.status_code, ended.json()), (409, {"error": "not_ending"}))
+        self.provider.cannot_resume = False
+        self.assertEqual((await self.post("/billing/renew")).json(), {"ok": True})
+        again = await self.post("/billing/renew")  # a second press
+        self.assertEqual((again.status_code, again.json()), (409, {"error": "not_ending"}))
+        self.assertEqual(self.provider.resumed, ["sub_1"])  # the company was asked once
+
+    async def test_renew_shares_the_billing_limit(self) -> None:
+        await self.start_table()
+        statuses = [(await self.post("/billing/renew")).status_code for _ in range(11)]
+        self.assertEqual(statuses[-1], 429)
+        self.assertEqual((await self.post("/billing/portal")).status_code, 429)  # same group
+
     async def test_renew_needs_a_plan_and_a_signed_in_person(self) -> None:
         # Try It has no subscription at the company.
         self.assertEqual((await self.post("/plan/try-it")).status_code, 204)

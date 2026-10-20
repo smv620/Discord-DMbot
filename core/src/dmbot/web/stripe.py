@@ -50,7 +50,7 @@ import aiohttp
 
 from dmbot.alerts import Problem, raise_alert
 from dmbot.plans import Plan
-from dmbot.web.payments import EventKind, PaymentError, PaymentEvent, ResumeRefused
+from dmbot.web.payments import EventKind, NotResumable, PaymentError, PaymentEvent, ResumeRefused
 
 log = logging.getLogger(__name__)
 
@@ -422,7 +422,7 @@ class StripeProvider:
         # Only a subscription that is paid up and running: an overdue one (past_due, unpaid) would
         # have its failed invoice retried, and one that has ended cannot be brought back.
         if current.get("status") not in ("active", "trialing"):
-            raise PaymentError("the subscription is not active and cannot be resumed")
+            raise NotResumable("the subscription is not active and cannot be resumed")
         if current.get("cancel_at_period_end") is not True and current.get("cancel_at") is None:
             return  # not cancelled: nothing to undo
         form = {"cancel_at_period_end": "false"}
@@ -431,8 +431,9 @@ class StripeProvider:
         status, _ = await self._http("POST", path, form)
         if status != 200:
             # A subscription with a plan change scheduled for the period's end can refuse a
-            # direct update (4xx): the person is sent to the billing page then.
-            if 400 <= status < 500:
+            # direct update (a 400): the person is sent to the billing page then. Any other
+            # answer (401, 403, 429, 5xx) is an error, not that refusal.
+            if status == 400:
                 raise ResumeRefused(f"Stripe refused a resume ({status})")
             raise PaymentError(f"Stripe answered {status} to a resume")
 

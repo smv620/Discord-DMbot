@@ -69,7 +69,13 @@ from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
-from dmbot.web.payments import PaymentError, PaymentProvider, ResumeRefused, paid_plan_ids
+from dmbot.web.payments import (
+    NotResumable,
+    PaymentError,
+    PaymentProvider,
+    ResumeRefused,
+    paid_plan_ids,
+)
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import (
     RecapError,
@@ -1382,6 +1388,10 @@ def create_app(
             raise HTTPException(status_code=409, detail="not_ending")  # it has run out already
         try:
             await provider.resume(subscription_id=subscription)
+        except NotResumable as exc:
+            # Ended, or its payment is overdue: nothing to renew from here.
+            log.warning("Renew not possible: %s", exc)
+            raise HTTPException(status_code=409, detail="not_ending") from exc
         except ResumeRefused as exc:
             # The company won't undo it from here (a plan change is scheduled, say): its billing
             # page can. The page says so.

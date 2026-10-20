@@ -139,6 +139,7 @@ LIMITS: dict[str, Group] = {
         (
             "/billing/checkout",
             "/billing/portal",
+            "/billing/renew",
             "/billing/extra-hours",
             "/billing/recap-audio",
         ),
