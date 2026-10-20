@@ -292,7 +292,7 @@ describe("Google Doc links", () => {
 
   it("says so when a link gets no answer at Preview", async () => {
     const api = open();
-    api.importPreview = async () => ({ files: [] });
+    api.importPreview = async () => ({ files: [], estimate: { sessions: 0, fastCalls: 0 } });
     add(docUrl("abc"));
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     expect(await screen.findByText(w.docNoAnswer)).toBeTruthy();
