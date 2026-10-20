@@ -262,6 +262,15 @@ class TheStore(WithImports):
         self.assertEqual(refused.exception.code, "no_lines_kept")
         self.assertEqual(await self.sessions(), 0)
 
+    async def test_session_dates_must_be_from_2000_to_2100(self) -> None:
+        cases = {"1999-12-31": False, "2000-01-01": True, "2100-01-01": True, "2100-01-02": False}
+        for day, ok in cases.items():
+            if ok:
+                self.assertIsInstance(imports._started_at(day, 0), int, day)
+            else:
+                with self.assertRaises(RecapError, msg=day):
+                    imports._started_at(day, 0)
+
     async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
         await self.confirm(
             {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 0}]},
