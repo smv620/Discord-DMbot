@@ -25,8 +25,9 @@ const { live, audio, share = false } = Astro.props;
         <li>
           <strong>Who writes it.</strong> The AI company named above (Anthropic). It gets the text of
           what people who said yes said in that session (marked only "DM" or "Player"), the names
-          the game master confirmed (never the ones marked secret), the game's last posted recap and
-          the day in the story. It does not get sound. {aiTrainingSentence}
+          the game master confirmed (never the ones marked secret), the game's last posted recap, the
+          day in the story, and anything the game master wrote for recaps: example recaps, style
+          notes, and corrections typed for that recap. It does not get sound. {aiTrainingSentence}
         </li>
         <li>
           <strong>Who sees it.</strong> Only the game masters of that campaign, until one of them

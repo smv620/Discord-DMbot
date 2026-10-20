@@ -3,6 +3,7 @@
 // appears in core/src/dmbot, so the page can't drift. Only built features; no game trademarks
 // (CLAUDE.md), so the character-sheet steps name no company.
 import { QA_URL } from "./account";
+import { IMPORT_LIVE, importSteps } from "./import-words";
 import { minimumAge } from "./legal";
 import { price as narrationPrice } from "./recap-audio";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
@@ -94,7 +95,7 @@ export const SECRET_SAID_LIVE = false;
 // core ui/secret_reveal.py). It is on by default on the server (DMBOT_SECRET_REVEAL_ASK), so it
 // goes live with the deploy. The step is held with the What's new entry "When you say a secret
 // name"; set the switch to true in the same change that moves the entry out of `held`.
-export const SECRET_REVEAL_LIVE = false;
+export const SECRET_REVEAL_LIVE = true;
 
 export const secretRevealSteps: Step[] = [
   {
@@ -842,6 +843,7 @@ export const dmSteps: Step[] = [
   ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
   ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
+  ...(IMPORT_LIVE ? importSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [

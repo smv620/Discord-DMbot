@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 from collections.abc import Iterator
@@ -58,6 +59,36 @@ def set_log_context(*, guild_id: int | None = None, campaign_id: str | None = No
         _campaign.set(campaign_id)
 
 
+# A shared recap's address holds its secret token (#2118); a log line with one is a working link.
+# Any segment after /recaps/ or /r/ that looks like a token is hidden, whichever logger wrote it.
+_TOKEN_IN_PATH = re.compile(r"(/(?:recaps|r)/)[A-Za-z0-9_-]{16,}")
+
+
+def mask_tokens(text: str) -> str:
+    return _TOKEN_IN_PATH.sub(r"\1<token>", text)
+
+
+class TokenMaskFilter(logging.Filter):
+    """Hides shared-recap tokens in the message and in a traceback's text. Any new handler must
+    carry this filter (`configure_logging` adds it); the two formatters mask again as a backstop."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # a bad format string is the formatter's to report, not ours
+            message = ""
+        masked = mask_tokens(message)
+        if message and masked != message:
+            record.msg, record.args = masked, None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = mask_tokens(record.exc_text)
+        if record.stack_info:
+            record.stack_info = mask_tokens(record.stack_info)
+        return True
+
+
 class ContextFilter(logging.Filter):
     """Adds shard_id / guild_id / campaign_id to every record (None if unknown)."""
 
@@ -89,7 +120,7 @@ class JsonFormatter(logging.Formatter):
             + f".{int(record.msecs):03d}Z",
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": mask_tokens(record.getMessage()),
         }
         for name in CONTEXT_FIELDS:
             value = getattr(record, name, None)
@@ -97,7 +128,11 @@ class JsonFormatter(logging.Formatter):
                 # Discord IDs exceed JavaScript's safe integer range; keep them as text.
                 entry[name] = str(value) if name == "guild_id" else value
         if record.exc_info:
-            entry["exc"] = self.formatException(record.exc_info)
+            # Masked here too, not only by the filter: this formatter re-formats exc_info itself,
+            # so a handler without the filter would still write a token from a traceback (#2138).
+            entry["exc"] = mask_tokens(record.exc_text or self.formatException(record.exc_info))
+        if record.stack_info:
+            entry["stack"] = mask_tokens(record.stack_info)
         return json.dumps(entry, ensure_ascii=False)
 
 
@@ -116,7 +151,7 @@ class TextFormatter(logging.Formatter):
             if value is not None
         ]
         record.ctx = f" [{' '.join(parts)}]" if parts else ""
-        return super().format(record)
+        return mask_tokens(super().format(record))  # message, traceback and stack alike (#2138)
 
 
 # discord.py logs raw gateway events at DEBUG, which include usernames and what people
@@ -132,6 +167,7 @@ def configure_logging(fmt: str, level: str, shards: ShardSettings) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter() if fmt == "json" else TextFormatter())
     handler.addFilter(ContextFilter(shards))
+    handler.addFilter(TokenMaskFilter())
     root = logging.getLogger()
     for old in list(root.handlers):
         root.removeHandler(old)
