@@ -894,6 +894,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
@@ -4123,6 +4124,30 @@ class DMBot(commands.AutoShardedBot):
     async def sidebar_tell_screen(self, table: Table, text: str) -> None:
         await self.post(table.screen_channel_id, text)
 
+    async def recap_feedback_gate(self, campaign: Campaign, job: Job) -> str | None:
+        """Why a DM's feedback on this recap is not sorted now, in plain words, or None: the
+        recap's switch and plan (as at every stage) and a limit per campaign, both before the
+        AI call that sorts it costs anything (#2076)."""
+        if not await self.recap_allowed(campaign.guild_id, campaign.id, job):
+            return recap_feedback_screen.NO_FEEDBACK
+        if not self.recap_feedback_limit.allow(campaign.id, time.monotonic()):
+            return recap_feedback.TOO_OFTEN
+        return None
+
+    async def _dm_message(
+        self, user_id: int, text: str, view: discord.ui.View | None
+    ) -> discord.Message | None:
+        """A private message that can be edited later (a view's buttons are taken away when they
+        time out). None when it could not be sent."""
+        try:
+            user = self.get_user(user_id) or await self.fetch_user(user_id)
+            if view is None:
+                return await user.send(text, allowed_mentions=NO_PINGS)
+            return await user.send(text, view=view, allowed_mentions=NO_PINGS)
+        except discord.HTTPException as exc:
+            log.info("Couldn't message user %s privately: %s", user_id, exc)
+            return None
+
     async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool:
         """The DM said what they thought of the recap that is waiting for them (#2076): sort it
         and answer in their private messages. False when no recap is waiting or the feedback
@@ -4140,12 +4165,16 @@ class DMBot(commands.AutoShardedBot):
         job = await self.recaps.latest_draft(table.guild_id, campaign.id)
         if job is None:
             return False
+        stopped = await self.recap_feedback_gate(campaign, job)
+        if stopped is not None:
+            await self.sidebar_send_dm(user_id, stopped)
+            return True
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
         if sorted_ is None or not (sorted_.style or sorted_.corrections or sorted_.replies):
             return False  # nothing to act on (or the sort failed): it is an ordinary question
 
-        async def send(message: str, view: discord.ui.View | None) -> None:
-            await self.sidebar_send_dm(user_id, message, view)
+        async def send(message: str, view: discord.ui.View | None) -> Any:
+            return await self._dm_message(user_id, message, view)
 
         await recap_feedback_screen.present(send, sorted_, self.recaps, campaign, job.session_at)
         return True

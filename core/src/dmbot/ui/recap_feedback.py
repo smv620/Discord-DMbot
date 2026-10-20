@@ -14,6 +14,7 @@ never logged: counts only (CLAUDE.md: DM authority; the bot never invents story)
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this recap any more. Nothing was changed."
 DECIDED = "This recap was already posted or skipped, so nothing was changed."
+TIMED_OUT = "These buttons timed out. Tell DMbot again to get new ones."
 NO_FEEDBACK = "Feedback isn't available right now. Try again in a minute."
 SAVED = "Saved. DMbot will remember this for your next recaps."
 SAVED_DROPPED = " That was one note too many, so the oldest one was removed."
@@ -103,6 +105,10 @@ async def handle(
     if job.status != "draft":
         await _tell(interaction, DECIDED)
         return
+    stopped = await bot.recap_feedback_gate(campaign, job)
+    if stopped is not None:  # the plan and the limit, before the AI call costs anything
+        await _tell(interaction, stopped)
+        return
     await interaction.response.defer(ephemeral=True, thinking=True)
     sorted_ = await fb.sort_feedback(ai, feedback)
     if sorted_ is None:
@@ -148,22 +154,33 @@ async def present(
             await send(DECIDED, None)
         else:
             lines = "\n".join(f"• {c}" for c in sorted_.corrections)
-            await send(
-                f"{ASK_AGAIN}\n{lines}", AgainView(campaign.guild_id, campaign.id, session_at)
-            )
+            again = AgainView(campaign.guild_id, campaign.id, session_at)
+            again.message = await send(f"{ASK_AGAIN}\n{lines}", again)
     for note in sorted_.style:
-        await send(
-            f"I would keep this note for your next recaps:\n• {note}",
-            NoteView(campaign.guild_id, campaign.id, note),
-        )
+        view = NoteView(campaign.guild_id, campaign.id, note)
+        view.message = await send(f"I would keep this note for your next recaps:\n• {note}", view)
 
 
-class AgainView(discord.ui.View):
+class _Timed(discord.ui.View):
+    """A view that says so when its buttons stop working, rather than failing silently: the
+    message it is on (set by `present` from what `send` returned) is edited to take them away."""
+
+    message: Any = None
+
+    async def on_timeout(self) -> None:
+        if self.message is None:
+            return
+        # The message may be gone, or the private reply's 15 minutes over: nothing to take away.
+        with contextlib.suppress(discord.HTTPException):
+            await self.message.edit(content=TIMED_OUT, view=None)
+
+
+class AgainView(_Timed):
     """Try again, with what the DM corrected. A private message that can't outlive itself, so it
     needs no stored button IDs; the DM is checked again on the press."""
 
     def __init__(self, guild_id: int, campaign_id: str, session_at: int) -> None:
-        super().__init__(timeout=900)
+        super().__init__(timeout=840)
         self.guild_id, self.campaign_id, self.session_at = guild_id, campaign_id, session_at
 
     @discord.ui.button(label="Try again", style=discord.ButtonStyle.primary)
@@ -181,11 +198,11 @@ class AgainView(discord.ui.View):
         )
 
 
-class NoteView(discord.ui.View):
+class NoteView(_Timed):
     """Save / Edit / Don't keep for one style note. Saved only on Save."""
 
     def __init__(self, guild_id: int, campaign_id: str, note: str) -> None:
-        super().__init__(timeout=900)
+        super().__init__(timeout=840)
         self.guild_id, self.campaign_id, self.note = guild_id, campaign_id, note
 
     async def _save(self, interaction: discord.Interaction, note: str) -> None:

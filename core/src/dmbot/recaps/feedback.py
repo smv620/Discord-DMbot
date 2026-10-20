@@ -43,16 +43,43 @@ BROKEN = "DMbot can't sort that right now. Please try again in a minute."
 _INVENT = re.compile(
     r"\b(make\w*\s+(?:things|stuff|it|them|some\s+\w+)\s+up|make\w*\s+up\b|made[- ]up|"
     r"invent\w*|fabricat\w*|"
-    r"embellish\w*|exaggerat\w*|dramati[sz]\w*|add\w*\s+(?:\w+\s+)?(?:things|details|events|"
-    r"scenes|drama|twists?)|(?:fill|filling)\s+in\s+the\s+gaps|"
+    r"embellish\w*|exaggerat\w*|dramati[sz]\w*|add\w*\s+(?:\w+\s+)?(?:things|drama|twists?)|"
+    # "add more details about the fight" asks for what happened, which is fine; bare "add details"
+    # or "add events" asks for new ones.
+    r"add\w*\s+(?:\w+\s+)?(?:details?|events|scenes)\b(?!\s+(?:about|on|of|from|for|to\s+the)\b)|(?:fill|filling)\s+in\s+the\s+gaps|"
     r"(?:ignore|break|skip|bend|loosen)\w*\s+(?:the\s+|any\s+)?(?:rules?|checks?)|"
     r"(?:use|allow)\w*\s+(?:any|other|new)\s+names)\b",
     re.IGNORECASE,
 )
 # "Never make things up" asks for the opposite: a standing note that agrees with the rules.
+# A negation counts only when it governs the match: nothing between them that ends the clause (a
+# comma, a colon, "but", "instead"), or "Never be dull, make things up" would pass as a ban.
 _NEGATED = re.compile(
-    r"\b(never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)\b[^.;]*$", re.IGNORECASE
+    r"\b(never|don'?t|do\s+not|doesn'?t|stop|without|avoid|no\s+more|not)\b"
+    r"(?:(?![.;,:!?\n])(?!\b(?:but|instead|rather|except|yet|then|so)\b).)*$",
+    re.IGNORECASE,
 )
+
+
+class FeedbackLimit:
+    """At most `count` sorted pieces of feedback per campaign in `seconds` (the AI call costs
+    money and a DM can press a button, or talk, as fast as they like). Kept in memory: a restart
+    forgets it, which is fine for a safety limit."""
+
+    def __init__(self, seconds: float = 600.0, count: int = 6) -> None:
+        self.seconds, self.count = seconds, count
+        self._at: dict[str, list[float]] = {}
+
+    def allow(self, campaign_id: str, now: float) -> bool:
+        recent = [t for t in self._at.get(campaign_id, []) if now - t < self.seconds]
+        if len(recent) >= self.count:
+            self._at[campaign_id] = recent
+            return False
+        self._at[campaign_id] = [*recent, now]
+        return True
+
+
+TOO_OFTEN = "That's a lot of feedback at once. Give it a few minutes, then tell me again."
 
 
 def asks_to_invent(text: str) -> bool:

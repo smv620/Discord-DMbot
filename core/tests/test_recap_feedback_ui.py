@@ -46,6 +46,7 @@ def bot_with(*points: tuple[str, str], status: str = "draft", state: str = "read
             add=AsyncMock(return_value=(SimpleNamespace(id=1, text="x"), False))
         ),
         recap_feedback_ai=FakeAI(*points),
+        recap_feedback_gate=AsyncMock(return_value=None),
         decision_lines=SimpleNamespace(remember_pressed=lambda *a: None),
     )
 
@@ -189,6 +190,7 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         if not draft:
             bot.recaps.latest_draft = AsyncMock(return_value=None)
         bot.settings = SimpleNamespace(recaps_on=True)
+        bot._dm_message = AsyncMock(return_value=None)
         bot.sidebar_send_dm = AsyncMock(return_value="sent")
         return bot
 
@@ -199,7 +201,7 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
     async def test_a_dm_hears_back_in_a_private_message_with_the_buttons(self) -> None:
         bot = self.host(("style", "Keep recaps short."))
         self.assertTrue(await self.call(bot))
-        ((_, text, view),) = [c.args for c in bot.sidebar_send_dm.await_args_list]
+        ((_, text, view),) = [c.args for c in bot._dm_message.await_args_list]
         self.assertIn("Keep recaps short.", text)
         self.assertEqual(len(view.children), 3)
         bot.recap_notes.add.assert_not_awaited()
@@ -207,7 +209,7 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
     async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
         bot = self.host(("style", "x"), draft=False)
         self.assertFalse(await self.call(bot))
-        bot.sidebar_send_dm.assert_not_awaited()
+        bot._dm_message.assert_not_awaited()
 
     async def test_a_sort_with_nothing_in_it_or_a_broken_one_is_an_ordinary_question(self) -> None:
         empty = self.host()
@@ -216,23 +218,23 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         broken.recap_feedback_ai = SimpleNamespace(complete=AsyncMock(side_effect=RuntimeError))
         self.assertFalse(await self.call(broken))
         for bot in (empty, broken):
-            bot.sidebar_send_dm.assert_not_awaited()
+            bot._dm_message.assert_not_awaited()
 
     async def test_a_story_help_request_is_answered_even_when_nothing_is_kept(self) -> None:
         bot = self.host(("story_help", "Decide the ending."))
         self.assertTrue(await self.call(bot))
-        ((_, text, view),) = [c.args for c in bot.sidebar_send_dm.await_args_list]
+        ((_, text, view),) = [c.args for c in bot._dm_message.await_args_list]
         self.assertEqual((text, view), (fb.STORY_HELP_REPLY, None))
 
     async def test_a_player_saying_it_is_not_handled(self) -> None:
         bot = self.host(("style", "x"))
         self.assertFalse(await self.call(bot, PLAYER))
-        bot.sidebar_send_dm.assert_not_awaited()
+        bot._dm_message.assert_not_awaited()
 
     async def test_the_private_message_buttons_work_without_a_server(self) -> None:
         bot = self.host(("style", "Keep recaps short."))
         await self.call(bot)
-        view = bot.sidebar_send_dm.await_args_list[0].args[2]
+        view = bot._dm_message.await_args_list[0].args[2]
         await view.children[0].callback(interaction(bot, in_server=False))
         bot.recap_notes.add.assert_awaited_once()
 
@@ -273,3 +275,45 @@ class TheStylePanel(unittest.IsolatedAsyncioTestCase):
         bot.recap_notes.remove.assert_not_awaited()
         await button.callback(dm)
         bot.recap_notes.remove.assert_awaited_once_with(GUILD, CID, DM_ID, 9)
+
+
+class Gate(unittest.IsolatedAsyncioTestCase):
+    async def test_a_stopped_feedback_never_reaches_the_ai(self) -> None:
+        bot = bot_with(("style", "Keep it short."))
+        bot.recap_feedback_gate = AsyncMock(return_value=fb.TOO_OFTEN)
+        bot.recap_feedback_ai.complete = AsyncMock()
+        i = interaction(bot)
+        await screen.handle(i, CID, AT, "shorter please")
+        bot.recap_feedback_ai.complete.assert_not_awaited()
+        i.response.send_message.assert_awaited_once()
+        self.assertEqual(i.response.send_message.await_args.args[0], fb.TOO_OFTEN)
+
+    def test_the_limit_counts_per_campaign_and_forgets_with_time(self) -> None:
+        limit = fb.FeedbackLimit(seconds=60, count=2)
+        self.assertTrue(limit.allow("a", 0))
+        self.assertTrue(limit.allow("a", 1))
+        self.assertFalse(limit.allow("a", 2))
+        self.assertTrue(limit.allow("b", 2))  # another campaign
+        self.assertTrue(limit.allow("a", 70))  # the old ones are past
+
+    async def test_buttons_that_time_out_are_taken_away_with_a_note(self) -> None:
+        view = screen.NoteView(GUILD, CID, "Keep it short.")
+        view.message = SimpleNamespace(edit=AsyncMock())
+        await view.on_timeout()
+        view.message.edit.assert_awaited_once_with(content=screen.TIMED_OUT, view=None)
+
+    async def test_a_timeout_with_no_message_to_edit_does_nothing(self) -> None:
+        await screen.AgainView(GUILD, CID, AT).on_timeout()
+
+
+class Wording(unittest.TestCase):
+    def test_a_ban_with_a_comma_before_the_ask_is_not_a_ban(self) -> None:
+        self.assertTrue(fb.asks_to_invent("Never be dull, make things up"))
+        self.assertTrue(fb.asks_to_invent("Stop being boring but make stuff up"))
+        self.assertFalse(fb.asks_to_invent("Never make things up"))
+        self.assertFalse(fb.asks_to_invent("Don't invent or embellish"))
+
+    def test_more_details_about_what_happened_is_not_an_invention(self) -> None:
+        self.assertFalse(fb.asks_to_invent("Add more details about the fight"))
+        self.assertTrue(fb.asks_to_invent("Add details"))
+        self.assertTrue(fb.asks_to_invent("Add some twists"))

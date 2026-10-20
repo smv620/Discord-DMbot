@@ -77,7 +77,9 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
             "Nothing has gone to the players.",
         )
         ids = [cast(Any, i).custom_id for i in kwargs["view"].children]
-        self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:300" for a in ("read", "post", "drop")])
+        self.assertEqual(
+            ids, [f"dmbot:recap:{a}:{'c' * 32}:300" for a in ("read", "post", "drop", "tell")]
+        )
         self.assertEqual(bot.post.await_count, 1)
 
     async def test_at_most_two_one_line_each_newest_first(self) -> None:
