@@ -195,13 +195,18 @@ def direct_url(link: str) -> yarl.URL:
 
 def google_doc_export(link: str) -> yarl.URL | None:
     """The plain-text export address of a Google Doc link (docs.google.com/document/d/<id>),
-    or None for any other link: the strict reader a caller uses when only Google Docs are
-    allowed (#2140)."""
+    or None for any other link, a spreadsheet or form on the same host included: the strict
+    reader a caller uses when only Google Docs are allowed (#2140)."""
     try:
         url = direct_url(link)
     except LinkError:
         return None
-    if (url.host or "").casefold() == "docs.google.com" and url.path.endswith("/export"):
+    if (
+        (url.host or "").casefold() == "docs.google.com"
+        and _GDOC.match(url.path)
+        and url.path.endswith("/export")
+        and dict(url.query) == {"format": "txt"}
+    ):
         return url
     return None
 

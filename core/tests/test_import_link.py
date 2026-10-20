@@ -82,6 +82,11 @@ class TheFetchChanges(unittest.TestCase):
         self.assertTrue(url.path.endswith("/export"))
         self.assertEqual(url.query["format"], "txt")
         self.assertIsNone(fetch.google_doc_export("https://example.com/x"))
+        for other in (  # same host, not a document's text export
+            "https://docs.google.com/spreadsheets/d/" + "a" * 30 + "/export?format=csv",
+            "https://docs.google.com/forms/d/" + "a" * 30 + "/export?format=txt",
+        ):
+            self.assertIsNone(fetch.google_doc_export(other), other)
         self.assertIsNone(fetch.google_doc_export("nonsense"))
 
 

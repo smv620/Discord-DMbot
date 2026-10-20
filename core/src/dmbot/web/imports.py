@@ -117,28 +117,64 @@ def read_files(
     return out
 
 
+LINKS_DEADLINE_S = 45  # all the links of one request together, under any proxy's timeout
+_links_open = asyncio.Semaphore(2)  # of the reader's 3 places, at most 2 for imports at once
+
+
 async def read_links(
     raw_files: object, raw_links: object
 ) -> list[tuple[str, str | None, str | None]]:
     """Each Google Doc link read once, in order, named "Google Doc N.txt" (the export has no
     title). A doc that can't be read carries its error code instead of text; nothing is kept
-    and the link is never logged. Links count with the files toward the 20."""
+    and the link is never logged. Links count with the files toward the 20. The uploads are
+    checked first (a bad request fetches nothing), the same link is read once, and the whole
+    batch has one deadline, so one request can't hold the reader's places for minutes."""
     if raw_links is None:
         return []
     if not isinstance(raw_links, list):
         raise RecapError("bad_files")
-    files = len(raw_files) if isinstance(raw_files, list) else 0
-    if files + len(raw_links) > MAX_FILES:
+    uploads = raw_files if isinstance(raw_files, list) else []
+    if raw_files is not None and not isinstance(raw_files, list):
+        raise RecapError("bad_files")
+    if len(uploads) + len(raw_links) > MAX_FILES:
         raise RecapError("too_many_files")
+    names = [i.get("name") if isinstance(i, dict) else None for i in uploads]
+    if not all(isinstance(n, str) for n in names) or len(set(names)) != len(names):
+        raise RecapError("bad_files")
+    named = [f"Google Doc {n}.txt" for n in range(1, len(raw_links) + 1)]
+    if set(named) & set(names):
+        raise RecapError("bad_files")  # an upload already has a doc's name
 
-    async def one(n: int, link: object) -> tuple[str, str | None, str | None]:
-        name = f"Google Doc {n}.txt"
+    async def one(link: object) -> tuple[str | None, str | None]:
         try:
-            return name, await import_link.read_doc(link), None
+            async with _links_open:
+                return await import_link.read_doc(link), None
         except import_link.DocError as err:
-            return name, None, err.code
+            return None, err.code
 
-    return list(await asyncio.gather(*(one(n, link) for n, link in enumerate(raw_links, 1))))
+    unique = list(dict.fromkeys(link for link in raw_links if isinstance(link, str)))
+    tasks = {link: asyncio.ensure_future(one(link)) for link in unique}
+    done: set[asyncio.Future[tuple[str | None, str | None]]] = set()
+    pending: set[asyncio.Future[tuple[str | None, str | None]]] = set()
+    if tasks:
+        done, pending = await asyncio.wait(tasks.values(), timeout=LINKS_DEADLINE_S)
+    for task in pending:
+        task.cancel()
+    got: dict[str, tuple[str | None, str | None]] = {}
+    for link, task in tasks.items():
+        try:
+            got[link] = task.result() if task in done else (None, import_link.UNREACHABLE)
+        except Exception:  # never a 500 from one doc; the link is not logged
+            got[link] = (None, import_link.UNREACHABLE)
+    out = []
+    for name, link in zip(named, raw_links, strict=True):
+        text, error = (
+            got.get(link, (None, import_link.NOT_A_GOOGLE_DOC))
+            if isinstance(link, str)
+            else (None, import_link.NOT_A_GOOGLE_DOC)
+        )
+        out.append((name, text, error))
+    return out
 
 
 async def read_files_off_loop(raw: object, raw_links: object = None) -> list[File]:

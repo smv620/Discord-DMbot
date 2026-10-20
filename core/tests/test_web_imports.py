@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -142,6 +143,47 @@ class TheLinks(WithImports):
                 await imports.preview(
                     self.web, self.session, self.ref_c, files_, links=links, **self.kw
                 )
+
+    async def test_a_bad_request_fetches_nothing(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        bad = (
+            ("x", [self.DOC]),  # files is not a list
+            ([{"name": "Google Doc 1.txt", "text": CRAIG}], [self.DOC]),  # a name taken
+            ([{"name": "a.txt", "text": ""}, {"name": "a.txt", "text": ""}], [self.DOC]),
+            ([{"text": "no name"}], [self.DOC]),
+        )
+        with unittest.mock.patch.object(imports.import_link, "read_doc", fake):
+            for files_, links in bad:
+                with self.assertRaises(RecapError):
+                    await imports.preview(
+                        self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                    )
+        fake.assert_not_awaited()
+
+    async def test_the_same_link_is_read_once(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        with unittest.mock.patch.object(imports.import_link, "read_doc", fake):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC, self.DOC], **self.kw
+            )
+        self.assertEqual(fake.await_count, 1)
+        self.assertEqual(
+            [f["name"] for f in got["files"]], ["Google Doc 1.txt", "Google Doc 2.txt"]
+        )
+
+    async def test_a_slow_google_marks_the_unfinished_docs_unreachable(self) -> None:
+        async def slow(_link: object) -> str:
+            await asyncio.sleep(5)
+            return CRAIG
+
+        with (
+            unittest.mock.patch.object(imports.import_link, "read_doc", slow),
+            unittest.mock.patch.object(imports, "LINKS_DEADLINE_S", 0.05),
+        ):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+        self.assertEqual(got["files"][0]["error"], "doc_unreachable")
 
     async def test_a_non_dm_reads_no_doc(self) -> None:
         from dmbot.web import sessions as web_sessions
