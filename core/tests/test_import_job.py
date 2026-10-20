@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest.mock import AsyncMock
 
 from dmbot.ai import Reply
 from dmbot.campaigns import CampaignStore
@@ -115,6 +116,51 @@ class TheJob(DatabaseTest):
         self.assertFalse(await self.store.claim(GUILD, self.session))
         self.assertEqual(await self.store.resume(GUILD), 1)
         self.assertEqual(await self.state(), ("waiting", ""))
+
+    async def test_someone_who_stopped_being_recorded_is_not_cleaned_or_sent_to_the_ai(
+        self,
+    ) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM consent WHERE user_id = %s", (MIRA,))
+        ai = FakeAI("1. game\n2. game")
+        await self.job(ai).run_round(GUILD)
+        self.assertEqual(ai.calls, 0)
+        self.assertEqual(await self.state(), ("done", ""))
+        first = (await self.transcripts.lines(GUILD, self.session))[0]
+        self.assertEqual(first.text, first.heard)
+
+    async def test_an_error_never_leaves_the_session_working(self) -> None:
+        self.store.rows = AsyncMock(side_effect=RuntimeError("db blip"))  # type: ignore[method-assign]
+        await self.job(None).run_round(GUILD)
+        self.assertEqual(await self.state(), ("failed", "error"))
+
+    async def test_a_stopped_bot_puts_the_session_back_in_the_queue(self) -> None:
+        import asyncio
+
+        self.store.rows = AsyncMock(side_effect=asyncio.CancelledError)  # type: ignore[method-assign]
+        with self.assertRaises(asyncio.CancelledError):
+            await self.job(None).run_round(GUILD)
+        self.assertEqual(await self.state(), ("waiting", ""))
+
+    async def test_an_ai_that_keeps_failing_is_left_alone(self) -> None:
+        from dmbot.transcript.import_job import TOPIC_FAILURES_BEFORE_REST
+        from dmbot.transcript.models import Line
+
+        await self.transcripts.add_lines(
+            GUILD,
+            self.session,
+            [Line(1_700_000_100_000 + n * 1000, MIRA, f"line {n}", f"line {n}") for n in range(60)],
+        )
+        ai = FakeAI(fail=True)
+        await self.job(ai).run_round(GUILD)
+        self.assertEqual(ai.calls, TOPIC_FAILURES_BEFORE_REST)
+        self.assertEqual(await self.state(), ("done", ""))
+
+    async def test_a_session_gets_at_most_so_many_ai_windows(self) -> None:
+
+        job = self.job(FakeAI("1. game"))
+        topics, left, _failures = await job._topics(["a line"] * 30, 2, 0)
+        self.assertEqual((len(topics), left), (30, 0))
 
     async def test_nothing_of_the_transcript_is_logged(self) -> None:
         with self.assertLogs("dmbot.transcript.import_job", level="INFO") as logs:

@@ -568,6 +568,8 @@ def create_app(
         "bad_mapping": (422, "bad_mapping"),
         "bad_date": (422, "bad_date"),
         "no_lines_kept": (422, "no_lines_kept"),
+        "too_many_lines": (413, "too_many_lines"),
+        "too_many_speakers": (413, "too_many_speakers"),
         "not_in_plan": (409, "not_in_plan"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
@@ -733,12 +735,27 @@ def create_app(
 
     # Importing older sessions (#2105): DMs of the campaign only (the doors check), paid plans only.
     # The files travel in the JSON body as text ({name, text}); nothing is kept or logged.
-    async def import_body(request: Request) -> dict[str, Any]:
+    # Importing is the heaviest thing the API does: a few a minute for a person is plenty.
+    import_limit = RateLimit(60, count=6)
+
+    async def import_body(request: Request, session: Session) -> dict[str, Any]:
+        """The JSON body, read with a running size cap (a declared length is not trusted) and
+        parsed away from the event loop. Counted per account before anything is read."""
+        key = f"import:{session.user_id}"
+        if import_limit.take(key) != "ok":
+            raise HTTPException(status_code=429, detail="slow_down")
         length = request.headers.get("content-length", "")
         if length.isdecimal() and int(length) > imports.MAX_BODY_BYTES:
             raise HTTPException(status_code=413, detail="too_big")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > imports.MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="too_big")
+            chunks.append(chunk)
         try:
-            body = await request.json()
+            body = await asyncio.to_thread(json.loads, b"".join(chunks))
         except ValueError:
             raise HTTPException(status_code=422, detail="bad_files") from None
         if not isinstance(body, dict):
@@ -752,7 +769,7 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports/preview")
     async def me_import_preview(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
-        body = await import_body(request)
+        body = await import_body(request, session)
         try:
             return await imports.preview(
                 db, session, ref, body.get("files"), outside=settings.outside_engine,
@@ -775,7 +792,7 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports/check")
     async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
-        body = await import_body(request)
+        body = await import_body(request, session)
         try:
             return await imports.check(
                 db, session, ref, body.get("files"), body.get("mapping"),
@@ -788,7 +805,7 @@ def create_app(
     @app.post("/me/campaigns/{ref}/imports", status_code=202)
     async def me_import(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
-        body = await import_body(request)
+        body = await import_body(request, session)
         try:
             return await imports.confirm(
                 db, session, ref, body.get("files"), body.get("plan"),

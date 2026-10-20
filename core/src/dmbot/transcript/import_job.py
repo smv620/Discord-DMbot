@@ -31,6 +31,10 @@ log = logging.getLogger(__name__)
 PER_ROUND = 3  # sessions cleaned in one round for one server
 TOPIC_CALL_TIMEOUT_S = 30.0
 FAILED_NAMES = "names_failed"  # the campaign's names couldn't be read
+FAILED_ERROR = "error"  # anything else that stopped it
+CHUNK_LINES = 120  # lines cleaned between two yields to the bot's other work, and between saves
+MAX_WINDOWS = 400  # AI windows (WINDOW_LINES lines each) for one session; the rest stays game talk
+TOPIC_FAILURES_BEFORE_REST = 3  # windows failing one after another before the AI is left alone
 
 Lookup = Callable[[int, str], Awaitable[CampaignLookup]]
 
@@ -40,6 +44,7 @@ class Row:
     id: int
     user_id: int
     heard: str
+    agreed: bool = True  # still recorded now; a line of someone who stopped is left as heard
 
 
 class ImportStore:
@@ -84,11 +89,24 @@ class ImportStore:
     async def rows(self, guild_id: int, session_id: str) -> list[Row]:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, user_id, heard FROM transcript_lines WHERE session_id = %s"
-                " AND sidebar IS NULL ORDER BY started_ms, id",
+                "SELECT l.id, l.user_id, l.heard, EXISTS (SELECT 1 FROM consent c"
+                " WHERE c.guild_id = l.guild_id AND c.user_id = l.user_id) AS agreed"
+                " FROM transcript_lines l WHERE l.session_id = %s AND l.sidebar IS NULL"
+                " ORDER BY l.started_ms, l.id",
                 (session_id,),
             )
-            return [Row(int(r["id"]), int(r["user_id"]), r["heard"]) for r in await cur.fetchall()]
+            return [
+                Row(int(r["id"]), int(r["user_id"]), r["heard"], bool(r["agreed"]))
+                for r in await cur.fetchall()
+            ]
+
+    async def back_to_waiting(self, guild_id: int, session_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET state = 'waiting' WHERE session_id = %s"
+                " AND state = 'working'",
+                (session_id,),
+            )
 
     async def apply(
         self, guild_id: int, session_id: str, cleaned: Sequence[tuple[int, str | None, str]]
@@ -124,6 +142,18 @@ class ImportJob:
         return done
 
     async def run(self, guild_id: int, campaign_id: str, session_id: str) -> None:
+        """Clean one claimed session. Whatever goes wrong, it never stays `working`: it fails with
+        a reason, or (if the bot is stopping) goes back to waiting."""
+        try:
+            await self._run(guild_id, campaign_id, session_id)
+        except asyncio.CancelledError:
+            await asyncio.shield(self.store.back_to_waiting(guild_id, session_id))
+            raise
+        except Exception:
+            log.exception("Import: a session could not be cleaned")
+            await self.store.finish(guild_id, session_id, ok=False, reason=FAILED_ERROR)
+
+    async def _run(self, guild_id: int, campaign_id: str, session_id: str) -> None:
         try:
             lookup = await self.lookup(guild_id, campaign_id)
         except Exception:
@@ -131,36 +161,65 @@ class ImportJob:
             await self.store.finish(guild_id, session_id, ok=False, reason=FAILED_NAMES)
             return
         rows = await self.store.rows(guild_id, session_id)
-        texts: list[str | None] = []
-        for row in rows:
-            try:
-                fixed = clean(lookup, row.heard, unsure=False).text
-            except Exception:
-                fixed = row.heard  # a line the cleaner can't read stays as heard
-            texts.append(None if fixed == row.heard else fixed)
-        topics = await self._topics([t or r.heard for t, r in zip(texts, rows, strict=True)])
-        await self.store.apply(
-            guild_id,
-            session_id,
-            [(r.id, t, topic) for r, t, topic in zip(rows, texts, topics, strict=True)],
-        )
+        windows_left = MAX_WINDOWS
+        failures = 0
+        for start in range(0, len(rows), CHUNK_LINES):
+            chunk = rows[start : start + CHUNK_LINES]
+            texts: list[str | None] = []
+            for row in chunk:
+                fixed = row.heard
+                if row.agreed:  # someone who stopped being recorded is not worked on at all
+                    try:
+                        fixed = clean(lookup, row.heard, unsure=False).text
+                    except Exception:
+                        fixed = row.heard  # a line the cleaner can't read stays as heard
+                texts.append(None if fixed == row.heard else fixed)
+            topics = [GAME] * len(chunk)
+            if self.topic_ai is not None:
+                topics, windows_left, failures = await self._topics(
+                    [
+                        (t or r.heard) if r.agreed else None
+                        for t, r in zip(texts, chunk, strict=True)
+                    ],
+                    windows_left,
+                    failures,
+                )
+            await self.store.apply(
+                guild_id,
+                session_id,
+                [(r.id, t, topic) for r, t, topic in zip(chunk, texts, topics, strict=True)],
+            )
+            await asyncio.sleep(0)  # the live table's work goes first between chunks
         await self.store.finish(guild_id, session_id, ok=True)
         log.info("Import: cleaned a session of %d lines", len(rows))  # counts only
 
-    async def _topics(self, lines: Sequence[str]) -> list[str]:
-        """The topic of every line, a window of lines at a time. Without an AI, or when a window
-        fails, its lines are game talk (nothing is left out on a guess)."""
+    async def _topics(
+        self, lines: Sequence[str | None], windows_left: int, failures: int
+    ) -> tuple[list[str], int, int]:
+        """The topics of these lines, a window at a time (a line that is None is not sent). A
+        window that fails, a session out of windows, or an AI that failed several windows in a row
+        leaves its lines as game talk: nothing is left out on a guess. Returns the topics and the
+        windows and failures left over."""
         out = [GAME] * len(lines)
-        if self.topic_ai is None:
-            return out
         for start in range(0, len(lines), WINDOW_LINES):
-            window = list(lines[start : start + WINDOW_LINES])
+            if windows_left <= 0 or failures >= TOPIC_FAILURES_BEFORE_REST:
+                break
+            window = lines[start : start + WINDOW_LINES]
+            sent = [(i, t) for i, t in enumerate(window) if t is not None]
+            if not sent:
+                continue
+            windows_left -= 1
             try:
                 topics, _reply = await asyncio.wait_for(
-                    classify(self.topic_ai, window), TOPIC_CALL_TIMEOUT_S
+                    classify(self.topic_ai, [t for _, t in sent]), TOPIC_CALL_TIMEOUT_S
                 )
             except Exception:
+                failures += 1
                 log.warning("Import: a window of lines wasn't labelled")
                 continue
-            out[start : start + len(topics)] = topics
-        return out
+            failures = 0
+            if len(topics) != len(sent):
+                continue
+            for (i, _), topic in zip(sent, topics, strict=True):
+                out[start + i] = topic
+        return out, windows_left, failures

@@ -35,6 +35,14 @@ class WithImports(Base):
         await super().asyncSetUp()
         consent = ConsentStore(self.db)
         await consent.grant(THURSDAY.id, MIRA)  # Tomas has not agreed
+        async with self.db.guild(THURSDAY.id) as conn:  # both are the campaign's people
+            for n, who in enumerate((MIRA, TOMAS)):
+                await conn.execute(
+                    "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name,"
+                    " description, status, source, created_at, played_by)"
+                    " VALUES (%s, %s, %s, 'person', %s, '', 'confirmed', 'dm', 0, %s)",
+                    (THURSDAY.id, self.one.id, f"{n:032x}", f"Player {n}", who),
+                )
         self.transcripts = TranscriptStore(self.db)
         self.kw: dict[str, Any] = {"outside": None, "now": NOW, "enforce_plans": False}
 
@@ -146,6 +154,74 @@ class TheStore(WithImports):
         self.assertEqual(
             [line.heard for line in await self.transcripts.lines(THURSDAY.id, stored.id)], ["kept"]
         )
+
+    async def test_the_door_refuses_old_terms_whatever_the_caller_passes(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL) AS r",
+                (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
+                 json.dumps([{"ms": 0, "user": MIRA, "text": "hi", "dur": 1}])),
+            )  # fmt: skip
+            self.assertIsNone((await cur.fetchone() or {})["r"])
+        self.assertEqual(await self.sessions(), 0)
+
+    async def test_the_floor_in_the_door_is_the_bots_terms_or_older(self) -> None:
+        from dmbot import schema
+
+        self.assertLessEqual(schema.IMPORT_TERMS_FLOOR, TERMS_VERSION)
+        self.assertIn(f"terms < {schema.IMPORT_TERMS_FLOOR} OR", schema.SESSION_IMPORTS)
+
+    async def test_words_can_only_be_given_to_the_campaigns_own_people(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            await ConsentStore(self.db).grant(
+                THURSDAY.id, NOBODY
+            )  # agreed, but not in this campaign
+            cur = await conn.execute(
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
+                 json.dumps([{"ms": 0, "user": NOBODY, "text": "stranger", "dur": 1},
+                             {"ms": 1, "user": MIRA, "text": "mine", "dur": 1}]), TERMS_VERSION),
+            )  # fmt: skip
+            got = (await cur.fetchone() or {})["r"]
+        self.assertEqual((got["kept"], got["dropped"]), (1, 1))
+
+    async def test_a_list_of_sessions_longer_than_the_files_or_repeating_one_is_refused(
+        self,
+    ) -> None:
+        for sessions in (
+            [{"file": "a.txt", "date": "2026-09-14"}] * 2,
+            [{"file": "a.txt", "date": "2026-09-14"}, {"file": "b.txt", "date": "2026-09-15"}],
+            [{"file": ["a.txt"], "date": "2026-09-14"}],
+        ):
+            with self.assertRaises(RecapError):
+                await self.confirm({"mapping": MAPPING, "sessions": sessions}, ("a.txt", CRAIG))
+        self.assertEqual(await self.sessions(), 0)
+
+    async def test_two_uploaded_files_with_one_name_are_refused(self) -> None:
+        with self.assertRaises(RecapError):
+            await self.preview(("a.txt", CRAIG), ("a.txt", SECOND))
+
+    async def test_a_file_with_too_many_lines_or_speakers_is_marked(self) -> None:
+        many_lines = "Mira: hi there friend\n" * (imports.MAX_LINES + 1)
+        many_speakers = "".join(
+            f"Speaker{n}: hello there\n" for n in range(imports.MAX_SPEAKERS + 1)
+        )
+        got = await self.preview(("l.txt", many_lines), ("s.txt", many_speakers))
+        self.assertEqual(
+            [f["error"] for f in got["files"]], ["too_many_lines", "too_many_speakers"]
+        )
+
+    async def test_a_caller_without_a_plan_gets_no_parsing_on_preview(self) -> None:
+        from unittest.mock import patch
+
+        with patch.object(imports, "read_files") as parsed, self.assertRaises(RecapError):
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                outside=None, now=int(time.time()), enforce_plans=True,
+            )  # fmt: skip
+        parsed.assert_not_called()
 
     async def test_consent_under_old_terms_does_not_count(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:

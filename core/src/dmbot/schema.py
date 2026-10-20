@@ -6784,6 +6784,10 @@ MORE_HOMEBREW_KINDS = """
 """
 
 
+# Consent given under older wording never counts for an import: the store door refuses a caller
+# that passes less (the SQL says 6; a test checks the two agree and are not above TERMS_VERSION).
+IMPORT_TERMS_FLOOR = 6
+
 SESSION_IMPORTS = (
     f"""
     -- Sessions a DM loaded from a file instead of recording them (#2105). The transcript itself is
@@ -6828,8 +6832,9 @@ SESSION_IMPORTS = (
     -- session's list, and the store door keeps only lines of members who have agreed under the
     -- terms and outside engine the caller passes (the bot's own rule, consent._select).
 
-    -- dmbot_import_agreed: the members recorded now and the campaign's owner (for the plan rule),
-    -- for the preview and the check. NULL unless a DM.
+    -- dmbot_import_agreed: the campaign's people (the only ones words may be given to: its
+    -- confirmed table people and whoever spoke in an earlier session), which of them are recorded
+    -- now, and the campaign's owner (for the plan rule). NULL unless a DM.
     CREATE FUNCTION dmbot_import_agreed(g BIGINT, c TEXT, terms INT, outside TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -6841,10 +6846,24 @@ SESSION_IMPORTS = (
             RETURN NULL;
         END IF;
         RETURN jsonb_build_object(
+            'members', COALESCE((SELECT jsonb_agg(m::TEXT) FROM (
+                SELECT e.played_by AS m FROM memory_entities e
+                WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                  AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                UNION
+                SELECT unnest(t.speakers) FROM transcript_sessions t
+                WHERE t.guild_id = g AND t.campaign_id = c) u), '[]'::jsonb),
             'agreed', COALESCE((
                 SELECT jsonb_agg(x.user_id::TEXT) FROM consent x
                 WHERE x.guild_id = g AND x.terms_version = terms
-                  AND (outside IS NULL OR x.outside_to = outside)), '[]'::jsonb),
+                  AND (outside IS NULL OR x.outside_to = outside)
+                  AND (x.user_id IN (SELECT e.played_by FROM memory_entities e
+                                     WHERE e.guild_id = g AND e.campaign_id = c
+                                       AND e.type = 'person' AND e.status = 'confirmed'
+                                       AND e.played_by IS NOT NULL)
+                       OR x.user_id IN (SELECT unnest(t.speakers) FROM transcript_sessions t
+                                        WHERE t.guild_id = g AND t.campaign_id = c))
+                ), '[]'::jsonb),
             'owner', (SELECT k.owner_user_id::TEXT FROM campaigns k
                       WHERE k.guild_id = g AND k.id = c));
     END
@@ -6874,6 +6893,10 @@ SESSION_IMPORTS = (
                           WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = who) THEN
             RETURN NULL;
         END IF;
+        IF terms < 6 OR jsonb_typeof(lines) IS DISTINCT FROM 'array' THEN
+            RETURN NULL;  -- old consent never counts, whatever the caller says (IMPORT_TERMS_FLOOR)
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('import:' || g::TEXT || c, 0));
         total := jsonb_array_length(lines);
         SELECT coalesce(jsonb_agg(jsonb_build_object(
                    'ms', l.ms, 'user', l."user", 'text', l.text, 'dur', l.dur)
@@ -6881,11 +6904,18 @@ SESSION_IMPORTS = (
                count(*)
             INTO keep, kept
             FROM jsonb_to_recordset(lines) AS l(ms BIGINT, "user" BIGINT, text TEXT, dur INT)
-            WHERE l.text IS NOT NULL AND length(l.text) > 0 AND l.ms >= 0 AND l.dur >= 0
+            WHERE l.text IS NOT NULL AND length(l.text) > 0
+              AND l.ms BETWEEN 0 AND 10000000000 AND l.dur BETWEEN 0 AND 600000
               AND EXISTS (SELECT 1 FROM consent x
                           WHERE x.guild_id = g AND x.user_id = l."user"
                             AND x.terms_version = terms
-                            AND (outside IS NULL OR x.outside_to = outside));
+                            AND (outside IS NULL OR x.outside_to = outside))
+              AND (l."user" IN (SELECT e.played_by FROM memory_entities e
+                                WHERE e.guild_id = g AND e.campaign_id = c
+                                  AND e.type = 'person' AND e.status = 'confirmed'
+                                  AND e.played_by IS NOT NULL)
+                   OR l."user" IN (SELECT unnest(t.speakers) FROM transcript_sessions t
+                                   WHERE t.guild_id = g AND t.campaign_id = c));
         IF kept = 0 THEN
             RETURN jsonb_build_object('session', NULL, 'kept', 0, 'dropped', total);
         END IF;
@@ -6939,7 +6969,8 @@ SESSION_IMPORTS = (
                   WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
                     AND e.status = 'confirmed' AND e.played_by IS NOT NULL
                     AND (q = '' OR position(lower(q) IN lower(e.name)) > 0)
-                  ORDER BY lower(e.name) LIMIT 25) m), '[]'::jsonb);
+                  ORDER BY (lower(e.name) = lower(q)) DESC, lower(e.name)
+                  LIMIT 25) m), '[]'::jsonb);
     END
     $fn$;
 
@@ -6978,11 +7009,13 @@ SESSION_IMPORTS = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        IF put IS NOT NULL THEN
+        IF put IS NOT NULL AND jsonb_typeof(put) = 'object' THEN
             INSERT INTO import_speakers (guild_id, campaign_id, label, user_id, updated_at)
                 SELECT g, c, left(p.key, 80), p.value::BIGINT, now_s
                 FROM jsonb_each_text(put) AS p(key, value)
                 WHERE p.key <> '' AND p.value ~ '^[0-9]{1,18}$' AND p.value::BIGINT > 0
+                  AND (SELECT count(*) FROM import_speakers s2
+                       WHERE s2.guild_id = g AND s2.campaign_id = c) < 200
                 ON CONFLICT (guild_id, campaign_id, label)
                 DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = EXCLUDED.updated_at;
         END IF;

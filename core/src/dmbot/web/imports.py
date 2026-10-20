@@ -15,7 +15,9 @@ Paid plans only, judged by the campaign owner's plan, and never Try It.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import json
 import math
 import re
 import uuid
@@ -38,6 +40,10 @@ MAX_FILES = 20
 MAX_BYTES = 2 * 1024 * 1024
 MAX_BODY_BYTES = MAX_FILES * MAX_BYTES + 256 * 1024  # all the files, and the plan around them
 MAX_LABEL = 80  # the table's own limit on a remembered label
+MAX_LINES = 20_000  # lines in one file; each is a stored row and a share of an AI call
+MAX_LINES_ALL = 60_000  # lines in one import
+MAX_SPEAKERS = 50  # labels in one file (each is a lookup)
+MAX_SPEAKERS_ALL = 100  # labels in one import
 _DATE = re.compile(r"(?<!\d)(\d{4})[-_.](\d{2})[-_.](\d{2})(?!\d)")
 
 
@@ -47,7 +53,7 @@ class File:
 
     name: str
     transcript: importer.Transcript | None
-    error: str | None  # unreadable, too_big, not_txt or empty
+    error: str | None  # unreadable, too_big, not_txt, empty, too_many_lines or too_many_speakers
     date: str | None  # a date found in the name or the head of the text, YYYY-MM-DD
 
 
@@ -77,6 +83,10 @@ def read_file(name: str, text: object) -> File:
         transcript = importer.parse(text)
     except importer.TranscriptError:
         return File(name, None, "unreadable", None)
+    if len(transcript.utterances) > MAX_LINES:
+        return File(name, None, "too_many_lines", None)
+    if len(transcript.speakers) > MAX_SPEAKERS:
+        return File(name, None, "too_many_speakers", None)
     return File(name, transcript, None, _suggested_date(name, text))
 
 
@@ -91,14 +101,29 @@ def read_files(raw: object) -> list[File]:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
             raise RecapError("bad_files")
         out.append(read_file(item["name"], item.get("text")))
+    if len({f.name for f in out}) != len(out):
+        raise RecapError("bad_files")  # two files with one name can't be told apart in a plan
     return out
+
+
+async def read_files_off_loop(raw: object) -> list[File]:
+    """`read_files` on a worker thread: parsing up to 40 MB must not hold up the API's other
+    requests. Only after the caller is known to be a DM of the campaign on a paid plan."""
+    files = await asyncio.to_thread(read_files, raw)
+    total = sum(len(f.transcript.utterances) for f in files if f.transcript)
+    if total > MAX_LINES_ALL:
+        raise RecapError("too_many_lines")
+    if sum(len(f.transcript.speakers) for f in files if f.transcript) > MAX_SPEAKERS_ALL:
+        raise RecapError("too_many_speakers")
+    return files
 
 
 @dataclass(frozen=True, slots=True)
 class Campaign:
     guild_id: int
     campaign_id: str
-    agreed: frozenset[int]
+    agreed: frozenset[int]  # the campaign's people who are recorded now
+    members: frozenset[int]  # the campaign's people: the only ones words may be given to
     owner: int | None
 
 
@@ -125,6 +150,7 @@ async def _open(conn: Conn, session: Session, ref: str, *, outside: str | None) 
         gid,
         cid,
         frozenset(int(u) for u in found["agreed"]),
+        frozenset(int(u) for u in found["members"]),
         int(owner) if isinstance(owner, str) and owner.isdecimal() else None,
     )
 
@@ -185,14 +211,14 @@ async def search_members(
 ) -> dict[str, Any]:
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-        members = await _members(conn, c, q, outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        members = await _members(conn, c, q, outside)
     return {"members": members}
 
 
 async def _remembered(conn: Conn, c: Campaign, put: Mapping[str, int] | None) -> dict[str, str]:
-    import json
-
     cur = await conn.execute(
         "SELECT dmbot_import_mapping(%s, %s, %s::jsonb) AS r",
         (c.guild_id, c.campaign_id, json.dumps(put) if put else None),
@@ -223,7 +249,10 @@ async def preview(
 ) -> dict[str, Any]:
     """What is in the files: format, date, speakers with their line counts and a suggested member
     for each. Stores nothing."""
-    files = read_files(raw_files)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    files = await read_files_off_loop(raw_files)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         remembered = await _remembered(conn, c, None)
@@ -240,7 +269,6 @@ async def preview(
                         {"label": s.label, "lines": s.lines, "suggested": seen[s.label]}
                     )
             out.append(view)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
     return {"files": out, "estimate": estimate(files)}
 
 
@@ -282,7 +310,7 @@ def _plans(
     files: Sequence[File], mapping: Mapping[str, int | str | None], c: Campaign
 ) -> dict[str, ip.Plan]:
     return {
-        f.name: ip.make_plan(f.transcript, mapping, agreed=c.agreed)
+        f.name: ip.make_plan(f.transcript, mapping, agreed=c.agreed, members=c.members)
         for f in files
         if f.transcript is not None
     }
@@ -301,11 +329,11 @@ async def check(
 ) -> dict[str, Any]:
     """The mapping applied to the files, without storing: per speaker, the lines kept and the
     lines dropped by reason."""
-    files = read_files(raw_files)
     mapping = mapping_of(raw_mapping)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    files = await read_files_off_loop(raw_files)
     plans = _plans(files, mapping, c)
     return {
         "files": [
@@ -354,29 +382,32 @@ async def confirm(
 ) -> dict[str, Any]:
     """Store the sessions. Everything is checked before anything is stored, and all the files are
     stored in one transaction: all of them, or none."""
-    files = read_files(raw_files)
     if not isinstance(raw_plan, dict):
         raise RecapError("bad_mapping")
     mapping = mapping_of(raw_plan.get("mapping"))
     entries = raw_plan.get("sessions")
     if not isinstance(entries, list) or not entries:
         raise RecapError("bad_date")
-    by_name = {f.name: f for f in files}
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    files = await read_files_off_loop(raw_files)
+    if len(entries) > len(files):
+        raise RecapError("bad_files")  # one session for each file, no more
+    by_name = {f.name: f for f in files}
     plans = _plans(files, mapping, c)
     chosen: list[tuple[File, ip.Plan, int]] = []
+    named: set[str] = set()
     for entry in entries:
-        found = by_name.get(entry.get("file")) if isinstance(entry, dict) else None
-        if found is None or found.transcript is None:
+        name = entry.get("file") if isinstance(entry, dict) else None
+        found = by_name.get(name) if isinstance(name, str) else None
+        if found is None or found.transcript is None or found.name in named:
             raise RecapError("bad_files")
+        named.add(found.name)
         plan = plans[found.name]
         if plan.kept == 0:
             raise RecapError("no_lines_kept")
         chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
-    import json
-
     batch = uuid.uuid4().hex
     stored: list[dict[str, str]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -410,7 +441,8 @@ async def confirm(
             if not done["session"]:
                 raise RecapError("no_lines_kept")
             stored.append({"file": f.name, "state": "waiting"})
-        remembered = {k: v for k, v in mapping.items() if isinstance(v, int)}
+        labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
+        remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered)
     return {
         "importId": batch,
