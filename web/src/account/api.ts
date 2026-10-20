@@ -361,6 +361,81 @@ export interface TranscriptCampaign {
   keepDays?: number | null;
 }
 
+/** Importing older sessions (#2107; core #2105). The files travel as text; nothing a speaker said
+ * comes back, only names and counts. */
+export interface ImportFileIn {
+  name: string;
+  text: string;
+}
+export interface ImportSuggestion {
+  userId: string;
+  name: string;
+  /** Why this person: "remembered" from an earlier import, or the "display_name" matched. */
+  why: string;
+}
+export interface ImportSpeaker {
+  /** Exactly as written in the file. */
+  label: string;
+  lines: number;
+  suggested: ImportSuggestion | null;
+}
+export interface ImportPreviewFile {
+  name: string;
+  format: string | null;
+  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  error: string | null;
+  suggestedDate: string | null;
+  lineCount: number;
+  /** Lines of talk that is not the game (Craig's placeholders). */
+  leftOut: number;
+  speakers: ImportSpeaker[];
+}
+export interface ImportPreview {
+  files: ImportPreviewFile[];
+  estimate: { sessions: number; fastCalls: number };
+}
+export interface ImportMember {
+  userId: string;
+  name: string;
+  /** Whether they are recorded now: lines of a member who has not agreed are dropped. */
+  agreed: boolean;
+}
+export interface ImportDropped {
+  not_matched: number;
+  not_agreed: number;
+  bot: number;
+  left_out: number;
+}
+export interface ImportCheckFile {
+  name: string;
+  error: string | null;
+  leftOut: number;
+  speakers: { label: string; kept: number; dropped: ImportDropped }[];
+}
+export interface ImportCheck {
+  files: ImportCheckFile[];
+  estimate: { sessions: number; fastCalls: number };
+}
+/** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
+export interface ImportPlan {
+  mapping: Record<string, string>;
+  sessions: { file: string; date: string; order: number }[];
+}
+export type ImportState = "waiting" | "working" | "done" | "failed";
+export interface ImportStarted {
+  importId: string;
+  sessions: { file: string; state: ImportState }[];
+  estimate: { sessions: number; fastCalls: number };
+}
+export interface ImportProgress {
+  sessions: {
+    file: string;
+    date: string;
+    state: ImportState;
+    reason: string | null;
+  }[];
+}
+
 /** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
  * still running or stopped early. */
 export interface TranscriptSessionItem {
@@ -518,6 +593,12 @@ export type ApiErrorKind =
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
+  | "try-it-campaign" // importing is not part of Try It (#2107)
+  | "too-many-files" // more than 20 files in one import (#2107)
+  | "bad-files" // the files could not be read as sent (#2107)
+  | "bad-mapping" // the speaker choices don't fit the files (#2107)
+  | "bad-date" // a session's date is not a date (#2107)
+  | "no-lines-kept" // every line of a file would be dropped (#2107)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -641,6 +722,21 @@ export interface AccountApi {
   ): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** Importing older sessions (#2107): look at the files, find people to match, check what would be
+   * kept, start, and follow the work. Missing from an API older than #2105. */
+  importPreview?(ref: string, files: ImportFileIn[]): Promise<ImportPreview>;
+  importMembers?(ref: string, q: string): Promise<ImportMember[]>;
+  importCheck?(
+    ref: string,
+    files: ImportFileIn[],
+    mapping: Record<string, string>,
+  ): Promise<ImportCheck>;
+  importStart?(
+    ref: string,
+    files: ImportFileIn[],
+    plan: ImportPlan,
+  ): Promise<ImportStarted>;
+  importProgress?(ref: string, importId: string): Promise<ImportProgress>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
@@ -709,6 +805,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  not_a_dm: "not-allowed",
+  not_on_a_paid_plan: "no-paid-plan",
+  try_it_campaign: "try-it-campaign",
+  too_many_files: "too-many-files",
+  bad_files: "bad-files",
+  bad_mapping: "bad-mapping",
+  bad_date: "bad-date",
+  no_lines_kept: "no-lines-kept",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -745,7 +849,11 @@ export function httpApi(
       let cueProblems: CueProblem[] = [];
       try {
         const body: unknown = await response.json();
-        code = String((body as { error?: unknown }).error ?? "");
+        // Most routes answer {"error": code}; the import routes' refusals are {"detail": code}.
+        const found = body as { error?: unknown; detail?: unknown };
+        code = String(
+          found.error ?? (typeof found.detail === "string" ? found.detail : ""),
+        );
         cueProblems = readCueProblems(body);
       } catch {
         // No JSON body: a plain server error.
@@ -967,6 +1075,36 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    importPreview: async (ref, files) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/preview`,
+        { files },
+      )) as ImportPreview,
+    importMembers: async (ref, q) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
+        )) as { members: ImportMember[] }
+      ).members,
+    importCheck: async (ref, files, mapping) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
+        { files, mapping },
+      )) as ImportCheck,
+    importStart: async (ref, files, plan) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports`,
+        { files, plan },
+      )) as ImportStarted,
+    importProgress: async (ref, importId) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}`,
+      )) as ImportProgress,
     decideRecap: async (ref, action) =>
       (await call(
         "POST",

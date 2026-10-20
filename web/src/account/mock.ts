@@ -405,6 +405,93 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       r.approval = { approved: true, choice, approvedAt: 1791000100, canApprove: false };
       return { ...r };
     },
+    // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric
+    // is suggested as Stormy (who agreed) and Ash has not agreed to be recorded.
+    async importPreview(ref, files) {
+      calls.push(`importPreview:${ref}:${files.map((f) => f.name).join(",")}`);
+      return {
+        files: files.map((f) => {
+          if (!f.name.toLowerCase().endsWith(".txt"))
+            return { name: f.name, format: null, error: "not_txt", suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
+          const counts = new Map<string, number>();
+          for (const line of f.text.split("\n")) {
+            const who = /^([^:]{1,40}):/.exec(line)?.[1];
+            if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
+          }
+          const day = /(\d{4}-\d{2}-\d{2})/.exec(f.name)?.[1] ?? null;
+          return {
+            name: f.name,
+            format: "plain",
+            error: counts.size === 0 ? "empty" : null,
+            suggestedDate: day,
+            lineCount: [...counts.values()].reduce((a, b) => a + b, 0),
+            leftOut: 0,
+            speakers: [...counts].map(([label, lines]) => ({
+              label,
+              lines,
+              suggested: label === "Cerric" ? { userId: "1", name: "Stormy", why: "remembered" } : null,
+            })),
+          };
+        }),
+        estimate: { sessions: files.length, fastCalls: 14 * files.length },
+      };
+    },
+    async importMembers(ref, q) {
+      calls.push(`importMembers:${ref}:${q}`);
+      const all = [
+        { userId: "1", name: "Stormy", agreed: true },
+        { userId: "2", name: "Ash", agreed: false },
+        { userId: "3", name: "Mira", agreed: true },
+      ];
+      return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
+    },
+    async importCheck(ref, files, mapping) {
+      calls.push(`importCheck:${ref}`);
+      const members: Record<string, boolean> = { "1": true, "2": false, "3": true };
+      return {
+        files: files.map((f) => {
+          const counts = new Map<string, number>();
+          for (const line of f.text.split("\n")) {
+            const who = /^([^:]{1,40}):/.exec(line)?.[1];
+            if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
+          }
+          return {
+            name: f.name,
+            error: null,
+            leftOut: 0,
+            speakers: [...counts].map(([label, n]) => {
+              const to = mapping[label] ?? "drop";
+              const kept = to !== "drop" && members[to] ? n : 0;
+              return {
+                label,
+                kept,
+                dropped: {
+                  not_matched: to === "drop" ? n : 0,
+                  not_agreed: to !== "drop" && !members[to] ? n : 0,
+                  bot: 0,
+                  left_out: 0,
+                },
+              };
+            }),
+          };
+        }),
+        estimate: { sessions: files.length, fastCalls: 14 * files.length },
+      };
+    },
+    async importStart(ref, _files, plan) {
+      calls.push(`importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}`);
+      return {
+        importId: "imp1",
+        sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
+        estimate: { sessions: plan.sessions.length, fastCalls: 14 * plan.sessions.length },
+      };
+    },
+    async importProgress(ref, importId) {
+      calls.push(`importProgress:${ref}:${importId}`);
+      const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
+      const state = seen < 2 ? ("working" as const) : ("done" as const);
+      return { sessions: [{ file: "session-1-2026-09-14.txt", date: "2026-09-14", state, reason: null }] };
+    },
     async recapChoices(campaignRef) {
       calls.push(`recapChoices:${campaignRef}`);
       await reachable();
