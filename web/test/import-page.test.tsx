@@ -338,6 +338,54 @@ describe("progress reasons", () => {
   });
 });
 
+describe("a busy moment during Check", () => {
+  it("shows the too-soon words and leaves Check usable", async () => {
+    const api = mockApi("table");
+    let n = 0;
+    api.importCheck = async (ref, files, mapping) => {
+      n += 1;
+      if (n === 1) throw new ApiError("too-soon");
+      return mockApi("table").importCheck!(ref, files, mapping);
+    };
+    open(api);
+    await pick([s1]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.click(await screen.findByRole("button", { name: w.checkButton }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      w.problem["too-soon"],
+    );
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+  });
+
+  it("does not end a progress line with a bare separator when the reason is unknown", async () => {
+    const api = mockApi("table");
+    api.importStart = async () => ({
+      importId: "x",
+      sessions: [],
+      estimate: { sessions: 1, fastCalls: 1 },
+    });
+    api.importProgress = async () => ({
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done",
+          reason: "something_new",
+        },
+      ],
+    });
+    open(api);
+    await pick([s1]);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.click(await screen.findByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    const row = await screen.findByText(/2026-09-14 · Done/);
+    expect(row.textContent?.trim().endsWith("·")).toBe(false);
+  });
+});
+
 describe("more refusals", () => {
   it("has words for a file with too many lines or names, in the file list and as a refusal", async () => {
     const api = mockApi("table");
@@ -371,9 +419,7 @@ describe("more refusals", () => {
       await screen.findByText(w.fileError.too_many_lines ?? ""),
     ).toBeTruthy();
     expect(screen.getByText(w.fileError.too_many_speakers ?? "")).toBeTruthy();
-    expect(w.problem["too-soon"]).toBe(
-      "Wait a minute, then press Check again.",
-    );
+    expect(w.problem["too-soon"]).toBe("Wait a minute, then try again.");
     for (const kind of ["too-many-lines", "too-many-speakers"])
       expect(w.problem[kind], kind).toBeTruthy();
   });

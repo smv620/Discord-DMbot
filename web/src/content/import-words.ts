@@ -101,7 +101,7 @@ export const importPage = {
   } as Record<string, string>,
   failedReason: {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
-    partly_labelled: "Done, but DMbot couldn't sort every line, so the rest count as game talk.",
+    partly_labelled: "Some lines couldn't be sorted, so they count as game talk.",
   } as Record<string, string>,
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
@@ -111,7 +111,7 @@ export const importPage = {
   problem: {
     "not-allowed": "Only a game master of this campaign can import sessions. Ask them to do it.",
     "no-paid-plan": "Importing is part of the paid plans.",
-    "too-soon": "Wait a minute, then press Check again.",
+    "too-soon": "Wait a minute, then try again.",
     "too-many-lines": "A file has too many lines. Split it into smaller files, then try again.",
     "too-many-speakers": "A file has too many different names. Check it is one session, or split it, then try again.",
     "try-it-campaign": "Importing isn't part of Try It. A paid plan has it.",

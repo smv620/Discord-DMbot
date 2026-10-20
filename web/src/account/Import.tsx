@@ -41,7 +41,13 @@ interface Folded {
   lines: number;
   suggested: string | null;
   why: string | null;
-  suggestedName: string | null;
+}
+
+/** What to add after a session's state: its reason, or the plain fallback for a failure with no
+ * known reason. Nothing for any other state without one, so a line never ends in a bare " · ". */
+function reasonLine(state: string, reason: string | null): string {
+  const known = reason ? words.failedReason[reason] : undefined;
+  return known ?? (state === "failed" ? words.failedFallback : "");
 }
 
 export default function Import({
@@ -118,7 +124,6 @@ export default function Import({
             lines: s.lines,
             suggested: s.suggested?.userId ?? null,
             why: s.suggested?.why ?? null,
-            suggestedName: s.suggested?.name.trim() || s.label,
           });
       }
     }
@@ -341,8 +346,8 @@ export default function Import({
               <span class="small">
                 {s.date} · {words.state[s.state] ?? s.state}
                 {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
-                {s.reason || s.state === "failed"
-                  ? ` · ${(s.reason && words.failedReason[s.reason]) || (s.state === "failed" ? words.failedFallback : "")}`
+                {reasonLine(s.state, s.reason)
+                  ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
               </span>
             </li>
