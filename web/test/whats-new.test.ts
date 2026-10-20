@@ -61,6 +61,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Tell DMbot what to fix", // until the web routes (#2113) are deployed (RECAP_FIX_LIVE, #2114)
       "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)
       "A 📇 Names button", // until dev1 deploys it (#1987, #2002)

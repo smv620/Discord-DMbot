@@ -361,6 +361,32 @@ export interface TranscriptCampaign {
   keepDays?: number | null;
 }
 
+/** "Tell DMbot what to fix" (#2114; core #2113): the DM's note is queued, the bot sorts it into
+ * points, and the page polls for them. Ids are only good for the request that made them. */
+export interface FixPoint {
+  id: string;
+  text: string;
+}
+export interface FixPoints {
+  corrections: FixPoint[];
+  style: FixPoint[];
+  /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
+  replies: string[];
+}
+export type FixState = "waiting" | "working" | "done" | "failed";
+export interface FixResult {
+  state: FixState;
+  /** Only when `done`. */
+  points?: FixPoints;
+  /** Only when `failed`: "sort_failed" or "not_allowed". */
+  error?: string;
+}
+export interface Rewritten {
+  recap: Recap;
+  triesLeft: number;
+  needsApproval: boolean;
+}
+
 /** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
  * still running or stopped early. */
 export interface TranscriptSessionItem {
@@ -510,6 +536,8 @@ export type ApiErrorKind =
   | "ticket-too-long" // the message is over 4,000 letters (#1340)
   | "subject-too-long" // the subject is over 120 letters (#1340)
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
+  | "no-tries" // no Try again left, so no rewrite (#2114)
+  | "sort-failed" // DMbot could not sort the note into points (#2114)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
@@ -641,6 +669,16 @@ export interface AccountApi {
   ): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
+   * the DM kept. Missing from an API older than #2113. */
+  sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
+  fixResult?(ref: string, requestId: string): Promise<FixResult>;
+  rewriteWith?(
+    ref: string,
+    requestId: string,
+    corrections: string[],
+    style: string[],
+  ): Promise<Rewritten>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
@@ -709,6 +747,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  no_tries: "no-tries",
+  sort_failed: "sort-failed",
+  not_a_dm: "not-allowed",
 };
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
@@ -967,6 +1008,25 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    sendFix: async (ref, text) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/instructions`,
+        { text },
+      )) as { requestId: string },
+    fixResult: async (ref, requestId) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/instructions/${encodeURIComponent(requestId)}`,
+      )) as FixResult,
+    rewriteWith: async (ref, requestId, corrections, style) => {
+      const got = (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/rewrite`,
+        { requestId, corrections, style },
+      )) as Rewritten;
+      return { ...got, recap: recapFrom(got.recap) };
+    },
     decideRecap: async (ref, action) =>
       (await call(
         "POST",
