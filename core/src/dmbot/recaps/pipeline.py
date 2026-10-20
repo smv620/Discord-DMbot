@@ -37,9 +37,14 @@ from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-MAX_CALLS = 13  # AI calls for one recap: three stages, a retry each (two for the prose), the checks
+# AI calls for one recap: three stages, a retry each (two for the prose), the checks, and since
+# #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4.
+MAX_CALLS = 17
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
-DAILY_CALLS = 40  # AI calls for one campaign's recaps in a day (a Try again is a new recap)
+# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is six
+# calls now (beats, write, format, facts, grade, title), so 50 keeps the eight a day that 40 gave
+# five-call recaps (#2074).
+DAILY_CALLS = 50
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
@@ -83,6 +88,8 @@ class Inputs:
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
+# Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
+SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and keep every word"
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
@@ -140,7 +147,16 @@ class RecapWorker:
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
         on_call: Callable[[cl.CallEvent], None] | None = None,
+        creative: Client | None = None,
+        formatting: Client | None = None,
     ) -> None:
+        # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
+        # cuts it into the schema's sections without changing a word. With either missing, the one
+        # structured call of before writes and shapes it at once (tests and small tools).
+        self._creative = creative
+        self._formatting = formatting
+        self._two = creative is not None and formatting is not None
+        self._draft_stage = "write" if self._two else "prose"  # the stage the draft's call is in
         self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._on_note = on_note  # plain notes a test run puts in its report (#2013)
         # Each AI call as it returns, for a test run's "Calls" section (#2053): counts and fixed
@@ -301,6 +317,7 @@ class RecapWorker:
         text: str,
         max_tokens: int,
         schema: dict[str, Any] | None = None,
+        stage: str = "",
     ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns)."""
@@ -325,7 +342,7 @@ class RecapWorker:
                 error=type(exc).__name__,
             )
             return None
-        self._announce(gid, cid, job, client, max_tokens, reply)
+        self._announce(gid, cid, job, client, max_tokens, reply, stage=stage)
         return reply
 
     def _announce(
@@ -349,7 +366,7 @@ class RecapWorker:
         event = cl.CallEvent(
             stage,
             job.attempt + 1,
-            "fast" if client is self._fast else "careful",
+            self._tier_name(client),
             reply.input_tokens,
             reply.output_tokens,
             limit,
@@ -358,6 +375,17 @@ class RecapWorker:
         )
         self._last[(gid, cid, job.session_at, stage)] = event
         self._on_call(event)
+
+    def _tier_name(self, client: Client) -> str:
+        """The tier's name for the report: the fixed words, never a model."""
+        for name, known in (
+            ("creative", self._creative),
+            ("formatting", self._formatting),
+            ("fast", self._fast),
+        ):
+            if known is not None and client is known:
+                return name
+        return "careful"
 
     def _annotate(self, gid: int, cid: str, job: Job, stage: str, **fields: Any) -> None:
         """Add what a check found to the latest call of that stage."""
@@ -495,27 +523,40 @@ class RecapWorker:
             rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
         )
         if job.problems:
-            message += rd.prose_retry(job.problems, self._rejected_prose.get(key), length)
+            message += rd.prose_retry(
+                job.problems, self._rejected_prose.get(key), length, plain=self._two
+            )
+        stage = self._draft_stage
         raw = await self._call(
             gid,
             cid,
             job,
-            self._client(job),
-            rd.prose_system(inputs.setting, length),
+            self._creative if self._creative is not None and self._two else self._client(job),
+            rd.prose_system(inputs.setting, length, plain=self._two),
             message,
             more_room(length.max_tokens, job.attempt),
-            schema=rd.prose_schema(),
+            schema=None if self._two else rd.prose_schema(),
+            stage=stage if self._two else "",
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         if why := unusable(raw):
-            self._annotate(gid, cid, job, "prose", checks=cl.kinds([why]))
+            self._annotate(gid, cid, job, stage, checks=cl.kinds([why]))
             return await self._prose_failed(gid, cid, job, [why], inputs, sheet, length)
-        prose = rd.parse_prose(raw.text)
+        if self._two:
+            shaped = await self._shape(gid, cid, job, raw.text, length)
+            if isinstance(shaped, str):  # why it failed ("" : the call failed, the job is waiting)
+                if not shaped:
+                    return await self._store.get(gid, cid, job.session_at)
+                self._annotate(gid, cid, job, stage, checks=cl.kinds([shaped]))
+                return await self._prose_failed(gid, cid, job, [shaped], inputs, sheet, length)
+            prose: rd.Prose | None = shaped
+        else:
+            prose = rd.parse_prose(raw.text)
         if prose is None:
-            self._annotate(gid, cid, job, "prose", checks=["shape"])
+            self._annotate(gid, cid, job, stage, checks=["shape"])
             return await self._prose_failed(
                 gid, cid, job, ["answer with the sections JSON asked for"], inputs, sheet, length
             )
@@ -539,9 +580,7 @@ class RecapWorker:
         )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
-        self._annotate(
-            gid, cid, job, "prose", words=lambda: len(words(narration_of(prose.summary)))
-        )
+        self._annotate(gid, cid, job, stage, words=lambda: len(words(narration_of(prose.summary))))
 
         draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
 
@@ -571,7 +610,7 @@ class RecapWorker:
                     f"{round(rd.LAST_UP * 100)}% over the target {length.target}, and every "
                     "other check passed."
                 )
-        self._annotate(gid, cid, job, "prose", checks=lambda: cl.kinds(problems))
+        self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
             log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
@@ -604,7 +643,7 @@ class RecapWorker:
                 problems = rd.facts_problems(facts, prose.summary)
                 self._revised.add(key)
                 self._flags[key] = facts
-                self._fallback[key] = (prose, {}, self._last.get((*key, "prose")))
+                self._fallback[key] = (prose, {}, self._last.get((*key, stage)))
                 self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
                 if self._on_problems is not None:  # (a test report never shows the draft's words)
                     self._on_problems(
@@ -631,7 +670,7 @@ class RecapWorker:
         weak = rd.weak(grade) if grade else []
         if weak and job.attempt == 0:  # below the bar: one more try, told what fell short
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
-            self._fallback[key] = (prose, grade, self._last.get((*key, "prose")))
+            self._fallback[key] = (prose, grade, self._last.get((*key, stage)))
             await self._store.update(
                 gid, cid, job.session_at, attempt=1, problems=weak, grade=grade
             )
@@ -639,8 +678,39 @@ class RecapWorker:
         self._fallback.pop(key, None)
         return await self._accept_prose(
             gid, cid, job, key, prose, grade, inputs, sheet, transcript,
-            self._last.get((*key, "prose")), cl.FINAL,
+            self._last.get((*key, stage)), cl.FINAL,
         )  # fmt: skip
+
+    async def _shape(
+        self, gid: int, cid: str, job: Job, written: str, length: rd.Length
+    ) -> rd.Prose | str:
+        """The written text cut into the schema's sections by the formatting model, or why it
+        could not be (#2074). The check is in code: the formatted narration's words must be the
+        written text's words, in order. A mismatch runs the formatter once more; a second one
+        fails the try as "shape". The text is never repaired in code. "" means a call failed and
+        the job is waiting or failed already."""
+        assert self._formatting is not None
+        for _ in range(2):
+            reply = await self._call(
+                gid,
+                cid,
+                job,
+                self._formatting,
+                rd.FORMAT_SYSTEM,
+                rd.format_message(written),
+                more_room(length.max_tokens, job.attempt),
+                schema=rd.prose_schema(),
+                stage="format",
+            )
+            if reply is None:
+                return ""
+            ok = not unusable(reply)
+            prose = rd.parse_prose(reply.text) if ok else None
+            if prose is not None and rd.same_words(prose, written):
+                self._annotate(gid, cid, job, "format", checks=[])
+                return prose
+            self._annotate(gid, cid, job, "format", checks=["shape"])
+        return SHAPE_FAILED
 
     async def _prose_failed(
         self,
@@ -1058,7 +1128,7 @@ class RecapWorker:
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))
-        for stage in ("beats", "prose", "facts", "grade", "title"):
+        for stage in ("beats", "prose", "write", "format", "facts", "grade", "title"):
             self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:

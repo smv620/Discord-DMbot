@@ -1060,6 +1060,17 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client and settings.recaps_on
             else None
         )
+        # The recap's two models (#2074): a creative one writes the prose, a small one shapes it.
+        self.recap_write_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_WRITE], Feature.RECAP_WRITE)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
+        self.recap_format_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.RECAP_FORMAT], Feature.RECAP_FORMAT)
+            if self.ai_client and settings.recaps_on
+            else None
+        )
         self.recap_worker: RecapWorker | None = None
         if self.recap_ai is not None and self.recap_retry_ai is not None and recaps is not None:
             self.recap_worker = RecapWorker(
@@ -1072,6 +1083,8 @@ class DMBot(commands.AutoShardedBot):
                 notify=self.recap_told,
                 audio_wanted=self.recap_audio_wanted,
                 allowance=self.recap_text_allowance,
+                creative=self.recap_write_ai,
+                formatting=self.recap_format_ai,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.

@@ -126,6 +126,8 @@ class Outcome:
     inputs: pl.Inputs
     fast: Counting
     careful: Counting
+    creative: Counting | None = None  # the two-model recap's writer and formatter (#2074)
+    formatting: Counting | None = None
     stopped: str = ""  # why it did not finish, in plain words
     notes: list[str] = field(default_factory=list)
     sheets: list[list[dict[str, Any]]] = field(default_factory=list)  # each beat sheet tried
@@ -159,10 +161,16 @@ async def run_text(
     *,
     session_at: int = 1,
     models: tuple[str, str] = ("fast", "careful"),
+    creative: Client | None = None,
+    formatting: Client | None = None,
+    creative_models: tuple[str, str] = ("creative", "formatting"),
 ) -> Outcome:
-    """The recap worker on one session, in memory. Returns the job as it ended."""
+    """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
+    and `formatting` the prose is written and shaped by two models, as live (#2074)."""
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
+    creative_c = Counting(creative, creative_models[0]) if creative is not None else None
+    formatting_c = Counting(formatting, creative_models[1]) if formatting is not None else None
     failures: list[tuple[str, int, list[str]]] = []
     calls: list[cl.CallEvent] = []
     notes: list[str] = []
@@ -193,6 +201,8 @@ async def run_text(
         ),
         on_note=notes.append,
         on_call=calls.append,
+        creative=creative_c,
+        formatting=formatting_c,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -212,6 +222,8 @@ async def run_text(
         inputs,
         fast_c,
         careful_c,
+        creative_c,
+        formatting_c,
         stopped,
         notes=notes,
         sheets=store.sheets,
@@ -391,22 +403,29 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
             "Grader: " + ", ".join(f"{k} {v}" for k, v in job.grade.items()),
             "  below the bar: " + ("; ".join(weak) if weak else "nothing"),
         ]
-    tokens_in = out.fast.input_tokens + out.careful.input_tokens
-    tokens_out = out.fast.output_tokens + out.careful.output_tokens
+    counted = [
+        ("fast", out.fast),
+        ("careful", out.careful),
+        *(
+            (name, c)
+            for name, c in (("creative", out.creative), ("formatting", out.formatting))
+            if c is not None
+        ),
+    ]
+    tokens_in = sum(c.input_tokens for _, c in counted)
+    tokens_out = sum(c.output_tokens for _, c in counted)
     spend = dollars(
         prices.get(out.fast.model), out.fast.input_tokens, out.fast.output_tokens, out.fast.model
     )
-    if out.careful.calls:
-        spend += " + " + dollars(
-            prices.get(out.careful.model),
-            out.careful.input_tokens,
-            out.careful.output_tokens,
-            out.careful.model,
-        )
+    for _, c in counted[1:]:
+        if c.calls:
+            spend += " + " + dollars(prices.get(c.model), c.input_tokens, c.output_tokens, c.model)
+    split = ", ".join(f"{c.calls} {name}" for name, c in counted if name == "fast" or c.calls)
     lines += [
         "",
-        f"Calls: {out.fast.calls + out.careful.calls} ({out.fast.calls} fast, "
-        f"{out.careful.calls} careful); tokens in {tokens_in}, out {tokens_out}; spend {spend}",
+        "Models: " + ", ".join(f"{name} {c.model}" for name, c in counted),
+        f"Calls: {sum(c.calls for _, c in counted)} ({split}); "
+        f"tokens in {tokens_in}, out {tokens_out}; spend {spend}",
     ]
     return lines
 
@@ -585,6 +604,9 @@ async def _close_clients() -> None:
         await _OPEN_CLIENTS.pop().close()
 
 
+_WRITERS: dict[str, Any] = {}
+
+
 def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
@@ -597,6 +619,12 @@ def clients_from_env() -> tuple[Client, Client, tuple[str, str]] | None:
         return None
     ai = AnthropicClient(key, models)
     _OPEN_CLIENTS.append(ai)  # closed when the run ends, so no "unclosed session" warning (#1997)
+    # The recap's writer and formatter, as live (#2074): passed on to every `run_text` below.
+    _WRITERS.update(
+        creative=ai.tier(AIModelTier.CREATIVE),
+        formatting=ai.tier(AIModelTier.FORMATTING),
+        creative_models=(models.of(AIModelTier.CREATIVE), models.of(AIModelTier.FORMATTING)),
+    )
     return (
         ai.tier(AIModelTier.FAST),
         ai.tier(AIModelTier.CAREFUL),
@@ -620,7 +648,7 @@ async def run_golden(
             secret_names=list(session.secret), previous="", day=None,
             window_chars=session.window_chars,
         )  # fmt: skip
-        out = await run_text(inputs, fast, careful, models=models)
+        out = await run_text(inputs, fast, careful, models=models, **_WRITERS)
         job = out.job
         if names_a_secret_anywhere(job, inputs):
             rows.append(f"{session.name:<18} REFUSED: it names a secret")
@@ -651,7 +679,7 @@ async def main_async(args: argparse.Namespace) -> int:
     if got is None:
         return 2
     fast, careful, models = got
-    prices = prices_of(args.price, models)
+    prices = prices_of(args.price, (*models, *_WRITERS.get("creative_models", ())))
     if args.golden:
         try:
             sessions = load_golden()
@@ -795,7 +823,9 @@ async def _session(
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
-        out = await run_text(inputs, fast, careful, agreed, session_at=at, models=models)
+        out = await run_text(
+            inputs, fast, careful, agreed, session_at=at, models=models, **_WRITERS
+        )
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
@@ -887,7 +917,7 @@ async def _transcript(
     folder = Path(args.out) if args.out else None
     if folder is not None and folder.is_dir():
         rv.clear_old(folder)  # nothing of an earlier run is left to be mixed into this one
-    out = await run_text(inputs, fast, careful, session_at=1, models=models)
+    out = await run_text(inputs, fast, careful, session_at=1, models=models, **_WRITERS)
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)

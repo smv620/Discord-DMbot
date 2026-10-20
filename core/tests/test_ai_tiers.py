@@ -32,7 +32,13 @@ from dmbot.config import (
     parse_ai_models,
 )
 
-MODELS = AIModels(fast="claude-fast-1", careful="claude-careful-1", deep="claude-deep-1")
+MODELS = AIModels(
+    fast="claude-fast-1",
+    careful="claude-careful-1",
+    deep="claude-deep-1",
+    creative="claude-creative-1",
+    formatting="claude-formatting-1",
+)
 BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgres://x"}
 OK = {
     "content": [{"type": "text", "text": "the answer"}],
@@ -155,6 +161,8 @@ class Tiers(unittest.TestCase):
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
                 Feature.SUPPORT: AIModelTier.DEEP,
+                Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
+                Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -275,7 +283,10 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
         for tier in AIModelTier:
             reply = await client.complete("s", "t", tier=tier)
             self.assertEqual(reply.model, MODELS.of(tier))
-        self.assertEqual(service.asked, [MODELS.fast, MODELS.careful, MODELS.deep])
+        self.assertEqual(
+            service.asked,
+            [MODELS.fast, MODELS.careful, MODELS.deep, MODELS.creative, MODELS.formatting],
+        )
 
     async def test_a_model_that_is_not_available_falls_back_one_tier_down(self) -> None:
         for answer in (GONE, DENIED):
