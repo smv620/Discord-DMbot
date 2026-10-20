@@ -3884,7 +3884,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
 - **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
   liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
-  recaps) is where the DM reviews a recap before any voice-over or music. It already has the text,
+  recaps) is where the DM reviews a recap before any voice-over or music. **Discord opens it** (owner,
+  2026-10-20): the recap's line on the DM screen and its private message carry a **📝 Review the
+  recap** link button that opens this page. The richer tools live on the website, not in Discord
+  forms; editing inside Discord (#2110) is on hold. The page already has the text,
   the edit box with the cue check, and Approve with the four choices. It gains:
   1. **Edit it directly** (built): the edit box, as now.
   2. **Tell DMbot what to change, by typing:** a box, "Tell DMbot what to fix", for example: "The
