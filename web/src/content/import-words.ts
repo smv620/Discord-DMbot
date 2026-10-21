@@ -131,7 +131,7 @@ export const importPage = {
     plan: "Recaps aren't part of this campaign's plan.",
   } as Record<string, string>,
   // Only after the DM ticked recaps and the setting changed before the start: say it, don't stay silent.
-  recapsNotWritten: "No recaps will be written for these sessions.",
+  recapsNotWritten: "The recap setting changed before the start, so no recaps will be written for these sessions. Check the campaign's settings.",
   recapsPlans: "See the plans",
   recapsNote:
     "Nothing is written for a session you leave unticked. Recaps wait until you've answered DMbot's questions about names, like after a live session. You'll get one message in Discord when they start. Recaps are not in the estimate above.",

@@ -461,7 +461,7 @@ export default function Import({
           </button>
         )}
         {startedWithoutRecaps && (
-          <p class="small" role="note">
+          <p class="small" role="status">
             {words.recapsWhy[startedWithoutRecaps] ?? words.recapsNotWritten}
             {startedWithoutRecaps === "plan" && (
               <>
