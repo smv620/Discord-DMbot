@@ -866,6 +866,12 @@ def consent_timing_line(
     )
 
 
+def _joined_at(guild: discord.Guild) -> int | None:
+    """When the bot joined this server, as Discord says (None while the server is still loading)."""
+    me = cast(discord.Member | None, getattr(guild, "me", None))
+    return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
+
+
 class DMBotTree(app_commands.CommandTree["DMBot"]):
     """Tags every slash-command log line with the server it came from."""
 
@@ -3613,8 +3619,13 @@ class DMBot(commands.AutoShardedBot):
         return "Stopped. DMbot won't rejoin. See you next session! 👋"
 
     async def on_ready(self) -> None:
+        # A reconnect after a long outage can skip join events: every connect makes sure each
+        # server has its row, with the real join date (#2166).
+        first = not self._resume_started
+        if self.installs is not None:
+            self._track(self._note_present(first), "installs")
         # on_ready fires again after Discord reconnects; start resuming only once.
-        if self._resume_started:
+        if not first:
             return
         self._resume_started = True
         # A count, never names: answers "who has DMbot?" from the log (#426).
@@ -3629,13 +3640,28 @@ class DMBot(commands.AutoShardedBot):
                 gaps = install.missing(me.guild_permissions)
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
-        if self.installs is not None:  # servers joined before this was recorded (#2163)
-            self._track(self.installs.present([g.id for g in self.guilds]), "installs")
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
         self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
+
+    async def _note_present(self, first: bool) -> None:
+        """Write a row for every server the bot is in; at start-up also mark the ones it was
+        removed from while it was down (only then: a reconnect's list may still be filling)."""
+        assert self.installs is not None
+        servers = [(g.id, _joined_at(g)) for g in self.guilds]
+        await self.installs.present(servers, gone=lambda gid: self.get_guild(gid) is None)
+        if first:
+            try:
+                # The servers are read again here, after the writes above, so one added meanwhile
+                # is not marked left; an empty list marks nothing.
+                marked = await self.installs.left_except([g.id for g in self.guilds])
+            except Exception as exc:  # the type only
+                log.warning("Couldn't mark servers left while offline: %s", type(exc).__name__)
+            else:
+                if marked:
+                    log.info("Servers left while offline: %d", marked)  # a count
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -3753,8 +3779,17 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
-        if self.installs is not None:  # first: "Link this server" needs the row (#2163), and the
-            self._track(self.installs.joined(guild.id), "install-joined")  # welcome may fail
+        if self.installs is not None:
+            # First: "Link this server" needs the row (#2163), and the welcome may fail. A kick
+            # that follows at once wins: the write is skipped if the bot is gone by its turn.
+            self._track(
+                self.installs.joined(
+                    guild.id,
+                    _joined_at(guild),
+                    gone=lambda: self.get_guild(guild.id) is None,
+                ),
+                "install-joined",
+            )
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
@@ -3773,7 +3808,8 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id):
             if self.get_guild(guild_id) is not None:
                 return
-            await self.installs.left(guild_id)
+            # And again once this server's turn comes: a join queued behind may have come back.
+            await self.installs.left(guild_id, back=lambda: self.get_guild(guild_id) is not None)
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
