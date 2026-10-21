@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -12,9 +13,14 @@ from dmbot.dm_screen import secret_posts
 G, C = 5, "c" * 32
 
 
+_numbers = itertools.count(1)
+
+
 def message(answered: bool = False) -> SimpleNamespace:
     # An open question still has its buttons (components); an answered one has none.
-    return SimpleNamespace(edit=AsyncMock(), components=[] if answered else [object()])
+    return SimpleNamespace(
+        edit=AsyncMock(), components=[] if answered else [object()], id=next(_numbers)
+    )
 
 
 class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
@@ -77,6 +83,46 @@ class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
         for _ in range(secret_posts.KEPT_PER_CAMPAIGN + 5):
             secret_posts.remember(G, C, message())
         self.assertEqual(secret_posts.pending(G, C), secret_posts.KEPT_PER_CAMPAIGN)
+
+
+class TheListOfOpenQuestions(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+
+    async def test_an_answered_question_is_forgotten_and_only_that_one(self) -> None:
+        a, b = message(), message()
+        secret_posts.remember(G, C, a)
+        secret_posts.remember(G, C, b)
+        secret_posts.forget(G, C, a.id)
+        self.assertEqual(secret_posts.pending(G, C), 1)
+        self.assertEqual(await secret_posts.hide(G, C), 1)
+        a.edit.assert_not_awaited()
+        b.edit.assert_awaited_once()
+        secret_posts.forget(G, C, 99999)  # one that was never remembered: nothing happens
+        secret_posts.forget(G, "x" * 32, None)
+
+    async def test_another_campaigns_change_never_lists_or_hides_this_ones_questions(self) -> None:
+        other = "d" * 32
+        mine, theirs = message(), message()
+        secret_posts.remember(G, C, mine)
+        secret_posts.remember(G, other, theirs)
+        secret_posts.forget(G, other, mine.id)  # the same message number, another campaign
+        self.assertEqual(secret_posts.pending(G, C), 1)
+        self.assertEqual(await secret_posts.hide(G, other), 1)
+        mine.edit.assert_not_awaited()
+        self.assertEqual(secret_posts.pending(G, C), 1)
+        self.assertEqual(secret_posts.pending(G, other), 0)
+
+    async def test_nothing_remembered_and_a_screen_with_no_questions_edits_nothing(self) -> None:
+        channel = SimpleNamespace(id=7, history=lambda limit=None: _empty())
+        self.assertEqual(await secret_posts.hide(G, C, channel=channel, bot_id=1), 0)
+        self.assertEqual(await secret_posts.hide(G, C), 0)
+
+
+async def _empty() -> Any:
+    for _ in ():
+        yield _
 
 
 class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
@@ -275,6 +321,19 @@ class TheBotsPost(unittest.IsolatedAsyncioTestCase):
         fake.post_message = AsyncMock(return_value=None)  # a post that failed is not kept
         await DMBot.post(fake, 1, "secret", secret_of=(G, C))  # type: ignore[arg-type]
         self.assertEqual(secret_posts.pending(G, C), 1)
+
+    async def test_a_secret_post_whose_campaign_is_gone_is_not_remembered(self) -> None:
+        from dmbot.bot import DMBot
+
+        secret_posts._posts.clear()
+        sent = message()
+        fake = SimpleNamespace(
+            post_message=AsyncMock(return_value=sent),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=None)),
+        )
+        await DMBot.post(fake, 1, "secret", secret_of=(G, C))  # type: ignore[arg-type]
+        self.assertEqual(secret_posts.pending(G, C), 0)
+        sent.edit.assert_awaited_once()  # and the name is pulled back at once
 
 
 if __name__ == "__main__":
