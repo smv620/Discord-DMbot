@@ -250,6 +250,7 @@ def fake_bot(
     bot = SimpleNamespace(
         _group_made={},
         _group_locks={},
+        _group_started={},
         decision_lines=DecisionLines(),
         user=SimpleNamespace(id=1),
         _import_queued={},
@@ -409,6 +410,55 @@ class TheCap(IsolatedAsyncioTestCase):
         with patch("dmbot.bot.remind_the_dm", new=send):
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
         self.assertEqual(send.await_count, 2)
+
+    def import_round_bot(self) -> Any:
+        bot = fake_bot(proposed=2)
+        bot.mailer = object()
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        return bot
+
+    async def test_only_the_lead_hold_of_an_import_emails(self) -> None:
+        bot = self.import_round_bot()
+        first, second = (
+            hold.Hold(
+                "c" * 32, AT + i, f"s{i}", DM, 66, int(time.time()) - hold.HOLD_REMIND_S - 60,
+                names_open=2, asked=True, group_id=GROUP,
+            )
+            for i in range(2)
+        )  # fmt: skip
+        bot.recap_holds.held = AsyncMock(return_value=[first, second])
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            await bot.release_recap_holds(GUILD)
+        email.assert_awaited_once()  # (a round looks at each hold; only the oldest speaks)
+        assert email.await_args is not None
+        self.assertEqual(email.await_args.args[6], first.session_at)
+
+    async def test_nothing_is_emailed_for_a_hold_past_its_three_day_limit(self) -> None:
+        bot = self.import_round_bot()
+        late = self.aged(hold.HOLD_MAX_S + 60, asked=True)
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock()) as email:
+            await self.round_with(bot, late)
+        email.assert_not_awaited()  # it is written with the names as they are instead
+        bot.recap_holds.release.assert_awaited()
+
+    async def test_answering_the_oldest_session_does_not_start_the_days_over(self) -> None:
+        bot = self.import_round_bot()
+        old = hold.Hold(
+            "c" * 32, AT, "s0", DM, 66, int(time.time()) - hold.HOLD_REMIND_S * 2 - 60,
+            names_open=2, asked=True, group_id=GROUP,
+        )  # fmt: skip
+        newer = hold.Hold(
+            "c" * 32, AT + 1, "s1", DM, 66, int(time.time()) - hold.HOLD_REMIND_S - 60,
+            names_open=2, asked=True, group_id=GROUP,
+        )  # fmt: skip
+        days = []
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            for held in ([old, newer], [newer]):  # the oldest is answered between the rounds
+                bot.recap_holds.held = AsyncMock(return_value=held)
+                await bot.release_recap_holds(GUILD)
+                assert email.await_args is not None
+                days.append(email.await_args.args[-2])
+        self.assertEqual(days, [2, 2])  # (counted from the oldest, not reset to the newer hold's 1)
 
     async def test_no_email_in_the_first_day_when_off_or_without_a_mailer(self) -> None:
         for age, emails_on, mailer in (
