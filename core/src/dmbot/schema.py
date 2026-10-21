@@ -3175,6 +3175,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
     # The weekly support email's once-only mark, through the admin door only (#1514).
     ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
+    # The IDs of the emails sent for a ticket, to thread the next one (#2192): admin door only.
+    ("SELECT, INSERT", ("support_mail_ids",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # The improvement opt-out (#1609): the person's own row, through the website's switch.
     ("SELECT, INSERT, DELETE", ("improvement_opt_outs",)),
@@ -5601,6 +5603,26 @@ SUPPORT_WEEK_MAIL = """
     ALTER TABLE support_week_mail ENABLE ROW LEVEL SECURITY;
     ALTER TABLE support_week_mail FORCE ROW LEVEL SECURITY;
     CREATE POLICY support_admin_only ON support_week_mail
+        USING (dmbot_support_admin() = 'admin')
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    """
+
+SUPPORT_MAIL_IDS = """
+    -- The Message-ID of every email sent for a support ticket (#2192), so the next one can say
+    -- which it answers (In-Reply-To, References) and a mail program shows the whole chain as one
+    -- conversation. Random IDs only: no words, no addresses. They go with the ticket (the
+    -- cascade), and only the admin door reads or writes them, like the replies.
+    CREATE TABLE support_mail_ids (
+        id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ticket_id  BIGINT NOT NULL REFERENCES support_tickets (id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL
+            CHECK (message_id ~ '^<[^<>[:space:]@]{1,100}@[^<>[:space:]@]{1,100}>$'),
+        created_at BIGINT NOT NULL
+    );
+    CREATE INDEX support_mail_ids_by_ticket ON support_mail_ids (ticket_id, id);
+    ALTER TABLE support_mail_ids ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_mail_ids FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_only ON support_mail_ids
         USING (dmbot_support_admin() = 'admin')
         WITH CHECK (dmbot_support_admin() = 'admin');
     """
@@ -8566,6 +8588,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
     ("0147_said_as_suggestions", SAID_AS_SUGGESTIONS),  # say it this way? (#2171)
+    ("0148_support_mail_ids", SUPPORT_MAIL_IDS),  # email threading (#2192)
     (
         "0149_audio_again_posted",
         RECAP_AUDIO_AGAIN_POSTED,
@@ -8673,6 +8696,8 @@ USER_ISOLATED_TABLES = (
     "support_replies",
     # The week the weekly support email last went; only the admin door reads or writes it (#1514).
     "support_week_mail",
+    # The IDs of the emails sent for a ticket; only the admin door reads or writes them (#2192).
+    "support_mail_ids",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).

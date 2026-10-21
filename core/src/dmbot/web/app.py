@@ -1948,7 +1948,8 @@ def create_app(
         if found is None or not owner or sender_address(data.get("from")) != owner:
             return dropped("unknown_sender")
         text = data.get("text")
-        words = fresh_words(text) if isinstance(text, str) else ""
+        sent = await helper.sent_emails(ticket_id) if isinstance(text, str) else []
+        words = fresh_words(text, sent=sent) if isinstance(text, str) else ""
         if not words:
             return dropped("empty")
         if not await helper.customer_replied(ticket_id, words):
