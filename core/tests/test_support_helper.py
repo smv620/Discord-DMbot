@@ -54,6 +54,11 @@ MAIL = MailSettings(
 DAY = 86400
 
 
+def new_words(mail: EmailMessage) -> str:
+    """An email's own words, above the conversation it carries (#2192)."""
+    return str(mail.get_content()).split(ai.HISTORY_HEADING)[0].strip()
+
+
 def answer(text: str = "Open the menu and press Stop.", verdict: str = "satisfied") -> str:
     return json.dumps({"answer": text, "verdict": verdict})
 
@@ -332,7 +337,7 @@ class TheAnswers(HelperBase):
         self.assertEqual(await self.status(number), "answered")
         mail = self.mails(to_alice=True)[-1]
         self.assertEqual(str(mail["From"]), SUPPORT_FROM)
-        self.assertTrue(mail.get_content().strip().endswith(ai.ENDING))
+        self.assertTrue(new_words(mail).endswith(ai.ENDING))
         self.assertIn(f"Re: {SUBJECT}", str(mail["Subject"]))
         # Nothing waits for the helper any more.
         self.assertEqual(await self.helper.run_once(), 0)
@@ -377,7 +382,7 @@ class TheAnswers(HelperBase):
         self.assertIn("Still stuck 4.", text)
         self.assertIn(f"{SITE}/admin", text)
         last = self.mails(to_alice=True)[-1]
-        self.assertEqual(last.get_content().strip(), ai.ESCALATED_BODY)
+        self.assertEqual(new_words(last), ai.ESCALATED_BODY)
 
     async def test_an_unhappy_reply_goes_to_a_person_but_an_unhappy_first_message_does_not(
         self,
@@ -409,8 +414,8 @@ class TheAnswers(HelperBase):
         number = await self.ticket()
         self.fake.answers.append(answer("Open the menu."))
         await self.helper.run_once()
-        (sent,) = [m for m in self.mails(to_alice=True) if "Re:" in str(m["Subject"])]
-        self.assertTrue(sent.get_content().strip().endswith(ai.ENDING))  # in every answer
+        sent = self.mails(to_alice=True)[-1]  # (the thank-you came first)
+        self.assertTrue(new_words(sent).endswith(ai.ENDING))  # in every answer
         calls = len(self.fake.sent)
         to = str(sent["Reply-To"])
         await self.inbound(to, "PERSON")
@@ -842,9 +847,7 @@ class TheTeamsReply(HelperBase):
         self.assertEqual(sent.status_code, 204, sent.text)
         self.assertEqual(await self.status(number), "answered")
         mail = self.mails(to_alice=True)[-1]
-        self.assertEqual(
-            (str(mail["From"]), mail.get_content().strip()), (SUPPORT_FROM, "Hi, I fixed it.")
-        )
+        self.assertEqual((str(mail["From"]), new_words(mail)), (SUPPORT_FROM, "Hi, I fixed it."))
         listed = (await client.get("/admin/support")).json()["tickets"][0]
         self.assertEqual(
             [(r["who"], r["text"]) for r in listed["replies"]], [("person", "Hi, I fixed it.")]

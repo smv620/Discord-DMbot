@@ -79,7 +79,9 @@ _QUOTE_START = re.compile(
     r"^\s*(>|On .{5,120} wrote:\s*$|-{2,}\s*Original Message|From:\s.+|Sent from my "
     # DMbot's own closing line, which asks for the word PERSON: below it everything is quoted from
     # our email even if the mail program left no ">" (it would hand every ticket over, #1518).
-    r"|Want to talk to a person instead\?|Want a person instead\?|Didn't help\? Reply)",
+    r"|Want to talk to a person instead\?|Want a person instead\?|Didn't help\? Reply"
+    # The line that opens the conversation DMbot's emails carry (#2192).
+    r"|Earlier in this conversation:)",
     re.IGNORECASE,
 )
 

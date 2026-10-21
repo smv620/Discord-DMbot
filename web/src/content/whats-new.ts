@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "Support emails keep the whole conversation",
+    what: "When you write to DMbot support, every email back to you now carries the conversation so far below the new message, with who said what and when. The emails also line up as one conversation in your mail program, and when you reply, only your new words are kept.",
+    reason: "In review (#2192); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
