@@ -197,6 +197,7 @@ class FileStore:
 
     def __init__(self) -> None:
         self.added: list[str] = []
+        self.changed: list[int] = []
 
     async def list(self, guild_id: int, cid: str) -> list[Any]:
         return []
@@ -207,6 +208,12 @@ class FileStore:
         self.added.append(rule)
         return SimpleNamespace(number=kw["wanted"])
 
+    async def edit(
+        self, guild_id: int, cid: str, user_id: int, number: int, *a: Any, **kw: Any
+    ) -> Any:
+        self.changed.append(number)
+        return SimpleNamespace(number=number)
+
 
 class FromTheFile(unittest.IsolatedAsyncioTestCase):
     def item(self, number: int, words: str) -> Any:
@@ -215,7 +222,7 @@ class FromTheFile(unittest.IsolatedAsyncioTestCase):
     async def test_a_file_rule_that_disagrees_is_held_back_and_the_rest_added(self) -> None:
         store: Any = FileStore()
 
-        async def check(texts: Any) -> Checked:
+        async def check(texts: Any, changing: Any = frozenset()) -> Checked:
             self.assertEqual(len(texts), 2)  # one call for the whole file
             return Checked((Disagreement(2, Existing(1, "Rule number 1")),))
 
@@ -230,7 +237,7 @@ class FromTheFile(unittest.IsolatedAsyncioTestCase):
     async def test_a_file_check_that_fails_still_adds_and_says_so(self) -> None:
         store: Any = FileStore()
 
-        async def check(texts: Any) -> Checked:
+        async def check(texts: Any, changing: Any = frozenset()) -> Checked:
             return Checked(unchecked=True)
 
         done = await house_file_sync.apply(
@@ -273,3 +280,47 @@ class Positions(unittest.IsolatedAsyncioTestCase):
         with patch.object(conflicts, "TIMEOUT_S", 0.01):
             found = await conflicts.check(complete, ["New"], [Existing(1, "Old")])
         self.assertTrue(found.unchecked)
+
+    async def test_a_changed_rule_that_disagrees_is_held_back_and_the_rest_applied(self) -> None:
+        store: Any = FileStore()
+        seen: list[Any] = []
+
+        async def check(texts: Any, changing: Any) -> Checked:
+            seen.append((list(texts), changing))
+            return Checked((Disagreement(1, Existing(2, "Potions take an item interaction")),))
+
+        items = [
+            house_file_sync.Item(house_file_sync.CHANGE, 3, "Potions are a bonus action", None),
+            house_file_sync.Item(house_file_sync.CHANGE, 4, "Crits double", None),
+        ]
+        done = await house_file_sync.apply(store, 1, "c1", DM, items, check)
+        self.assertEqual(len(seen), 1)  # one call for the whole file
+        self.assertEqual(seen[0][1], frozenset({3, 4}))  # the old words are being replaced
+        self.assertEqual(store.changed, [4])
+        self.assertEqual(len(done.skipped), 1)
+        self.assertIn("wasn't changed", done.skipped[0])
+
+
+class Limits(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_rules_past_the_limit_are_said_to_be_unchecked(self) -> None:
+        async def complete(system: str, text: str, **_: Any) -> Reply:
+            return Reply(json.dumps({"checks": [{"new": 1, "disagrees_with": []}]}), cut=False)
+
+        many = [Existing(n, f"Rule {n}") for n in range(1, conflicts.MAX_EXISTING + 2)]
+        found = await conflicts.check(complete, ["New"], many)
+        self.assertTrue(found.unchecked)
+
+    async def test_a_plan_without_the_ai_makes_no_call_and_says_nothing(self) -> None:
+        from dmbot.ui import house_conflicts
+
+        ai = says(1)
+        bot = SimpleNamespace(
+            rule_conflict_ai=ai,
+            plan_allows=AsyncMock(return_value=False),
+            all_house_rules=AsyncMock(),
+        )
+        campaign = SimpleNamespace(guild_id=1, id="c1")
+        found = await house_conflicts.look(bot, campaign, ["New rule"])  # type: ignore[arg-type]
+        self.assertEqual(found, Checked())
+        ai.complete.assert_not_awaited()
+        bot.all_house_rules.assert_not_awaited()

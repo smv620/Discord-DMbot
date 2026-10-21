@@ -342,8 +342,8 @@ async def _checker(interaction: discord.Interaction, bot: Any, guild_id: int, pe
         await interaction.response.defer()  # the check is an AI call: Discord waits 3 seconds
     from dmbot.ui import house_conflicts  # (that module leads back here through the menus)
 
-    async def check(texts: Sequence[str]) -> Any:
-        return await house_conflicts.look(bot, campaign, texts)
+    async def check(texts: Sequence[str], changing: frozenset[int]) -> Any:
+        return await house_conflicts.look(bot, campaign, texts, skip=changing)
 
     return check
 

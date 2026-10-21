@@ -146,8 +146,9 @@ async def check(
     skipped_some = sum(1 for r in new if r.strip()) > len(asked)
     fresh = [r for _, r in asked]
     live = list(existing)[:MAX_EXISTING]
+    skipped_some = skipped_some or len(existing) > len(live)  # never silently left out
     if not fresh or not live:
-        return Checked(unchecked=skipped_some)
+        return Checked(unchecked=skipped_some and bool(fresh))
     try:
         async with asyncio.timeout(TIMEOUT_S):
             reply = await complete(

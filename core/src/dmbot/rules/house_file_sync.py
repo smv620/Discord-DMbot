@@ -181,7 +181,7 @@ async def apply(
     campaign_id: str,
     user_id: int,
     items: Sequence[Item],
-    check: Callable[[Sequence[str]], Awaitable[Checked]] | None = None,
+    check: Callable[[Sequence[str], frozenset[int]], Awaitable[Checked]] | None = None,
 ) -> Applied:
     """Do the items, one by one. One that can't be done is skipped and said, never forced:
     the store refuses it if another DM changed or removed the rule since it was compared.
@@ -196,12 +196,20 @@ async def apply(
             present = {(r.rule, r.supersedes) for r in await store.list(guild_id, campaign_id)}
         except Exception:
             log.exception("Couldn't read the house rules before adding from the file")
-    held: dict[int, str] = {}  # file rule number -> what it disagrees with
+    held: dict[tuple[str, int], str] = {}  # (kind, file rule number) -> what it disagrees with
     if check is not None:
-        fresh = [i for i in items if i.kind == ADD and (i.rule, i.instead) not in present]
-        found = await check([_checked_words(i) for i in fresh])
+        # New rules and changed ones, in one call. A changed rule's old words are not compared
+        # with (they are being replaced), like Edit's `skip`.
+        fresh = [
+            i
+            for i in items
+            if (i.kind == ADD and (i.rule, i.instead) not in present) or i.kind == CHANGE
+        ]
+        changing = frozenset(i.number for i in fresh if i.kind == CHANGE)
+        found = await check([_checked_words(i) for i in fresh], changing)
         for d in found.disagreements:
-            held.setdefault(fresh[d.new - 1].number, _named(d.other.number, d.other.from_set))
+            at = fresh[d.new - 1]
+            held.setdefault((at.kind, at.number), _named(d.other.number, d.other.from_set))
         if found.unchecked and fresh:
             out.skipped.append(UNCHECKED)
     for item in items:
@@ -210,9 +218,9 @@ async def apply(
                 if (item.rule, item.instead) in present:
                     out.done.append(f"Rule {item.number} was already there.")
                     continue
-                if item.number in held:
+                if (ADD, item.number) in held:
                     out.skipped.append(
-                        f"Rule {item.number} in the file may clash with {held[item.number]}"
+                        f"Rule {item.number} in the file may clash with {held[ADD, item.number]}"
                         ", so it wasn't added. To add it and pick a winner, use **Add a house "
                         "rule** in `/dmbot houserules`."
                     )
@@ -230,6 +238,13 @@ async def apply(
                         "(a number is never used twice, so old alerts stay right)."
                     )
             elif item.kind == CHANGE:
+                if (CHANGE, item.number) in held:
+                    out.skipped.append(
+                        f"Rule {item.number} in the file now says something that may clash with "
+                        f"{held[CHANGE, item.number]}, so it wasn't changed. To change it and pick "
+                        "a winner, use **Edit** in `/dmbot houserules`."
+                    )
+                    continue
                 await store.edit(
                     guild_id, campaign_id, user_id, item.number, item.rule, item.instead,
                     unchanged_since=item.version,

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -45,27 +45,32 @@ def _words(rule: HouseRule) -> str:
     return rule.rule + (f" (instead of: {rule.supersedes})" if rule.supersedes else "")
 
 
-async def existing_rules(bot: Any, campaign: Campaign, skip: int | None = None) -> list[Existing]:
+async def existing_rules(
+    bot: Any, campaign: Campaign, skip: Collection[int] = ()
+) -> list[Existing]:
     """The rules a new one is compared with: the campaign's own and the ones it follows.
     `skip`: the number of the own rule being edited, which is not compared with itself."""
     loaded: Sequence[HouseRule] = await bot.all_house_rules(campaign.guild_id, campaign.id)
     out: list[Existing] = []
     for rule in loaded:
         from_set = getattr(rule, "set_name", None) or None
-        if from_set is None and rule.number == skip:
+        if from_set is None and rule.number in skip:
             continue
         out.append(Existing(rule.number, _words(rule), from_set))
     return out
 
 
 async def look(
-    bot: Any, campaign: Campaign, texts: Sequence[str], *, skip: int | None = None
+    bot: Any, campaign: Campaign, texts: Sequence[str], *, skip: Collection[int] = ()
 ) -> Checked:
     """Do the new rules disagree with a rule already in force? No AI, or nothing to compare
     with, is no check and no note."""
     ai = getattr(bot, "rule_conflict_ai", None)
     if ai is None or not any(t.strip() for t in texts):
         return Checked()
+    allows = getattr(bot, "plan_allows", None)
+    if allows is not None and not await allows("ai", campaign.guild_id, campaign):
+        return Checked()  # a plan without the AI saves without a check, and says nothing
     try:
         existing = await existing_rules(bot, campaign, skip)
     except Exception:
@@ -240,7 +245,7 @@ class DisagreeView(_Menu):
             )
         return (
             f"{self._saved_note(self.saved)} Both rules stay, and your choice is remembered. "
-            "To change which wins, use `/dmbot houserules`."
+            "To change it, edit either rule in `/dmbot houserules`."
         )
 
     async def _on_cancel(self, interaction: discord.Interaction) -> None:

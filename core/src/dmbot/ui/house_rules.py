@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -546,7 +546,7 @@ class _RuleForm(discord.ui.Modal):
         await _redraw(interaction, self.campaign, note=note, page=self.page)
         await file_ui.send_after_change(interaction, self.campaign, note)
 
-    skip: int | None = None  # the own rule being edited: not compared with itself
+    skip: Collection[int] = ()  # the own rule being edited: not compared with itself
 
     async def store_rule(self, store: HouseRuleStore, user_id: int) -> HouseRule:
         raise NotImplementedError
@@ -742,7 +742,7 @@ class EditForm(_RuleForm, title="Edit a house rule"):
     def __init__(self, campaign: Campaign, rule: HouseRule, page: int) -> None:
         super().__init__(campaign)
         self.existing, self.page = rule, page
-        self.skip = rule.number
+        self.skip = (rule.number,)
         self.rule.default = rule.rule
         self.instead.default = rule.supersedes
 
