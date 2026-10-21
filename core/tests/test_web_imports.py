@@ -931,8 +931,8 @@ class TheRecapFacts(WithImports):
     async def test_a_check_that_cannot_be_made_hides_the_tick_and_never_fails_a_stored_import(
         self,
     ) -> None:
-        with unittest.mock.patch.object(
-            imports.recap_choices, "read_choices", AsyncMock(side_effect=RuntimeError("down"))
+        with unittest.mock.patch(
+            "dmbot.web.recap_choices.read_choices", AsyncMock(side_effect=RuntimeError("down"))
         ):
             got = await self.preview()
             done = await imports.confirm(
@@ -947,6 +947,41 @@ class TheRecapFacts(WithImports):
         self.assertNotIn("recapsWhy", got)
         self.assertEqual(done["recapsPossible"], False)
         self.assertEqual(await self.sessions(), 1)  # the import was stored all the same
+
+    async def test_the_facts_are_asked_before_the_import_is_stored(self) -> None:
+        stored_when_asked: list[int] = []
+        real = imports.recap_facts
+
+        async def ask(*a: Any, **k: Any) -> Any:
+            stored_when_asked.append(await self.sessions())
+            return await real(*a, **k)
+
+        with unittest.mock.patch.object(imports, "recap_facts", ask):
+            await imports.confirm(
+                self.web,
+                self.session,
+                self.ref_c,
+                files(("a.txt", CRAIG)),
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+                **{**self.kw, "site_recaps_on": True},
+            )
+        self.assertEqual(stored_when_asked, [0])  # nothing stored yet when it was asked
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_the_replies_carry_exactly_these_keys(self) -> None:
+        got = await self.preview()
+        self.assertEqual(set(got), {"files", "estimate", "recapsPossible"})
+        off = await self.preview(site_recaps_on=False)
+        self.assertEqual(set(off), {"files", "estimate", "recapsPossible", "recapsWhy"})
+        done = await imports.confirm(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            **{**self.kw, "site_recaps_on": True},
+        )
+        self.assertEqual(set(done), {"importId", "sessions", "estimate", "recapsPossible"})
 
     async def test_the_reasons_come_in_the_bots_order(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:
