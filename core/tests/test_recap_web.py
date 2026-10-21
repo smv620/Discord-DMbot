@@ -25,6 +25,7 @@ from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.draft import SUMMARY_MAX
+from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
@@ -95,6 +96,110 @@ class Base(DatabaseTest):
         job = await self.store.get(THURSDAY.id, campaign, 100)
         assert job is not None
         return job
+
+
+class TheHeldRecaps(Base):
+    """A recap waiting for the DM's name answers has no job yet, so the list and the page say it
+    from the hold alone (#2174): `waitingForNames` and `namesToAnswer`, for the DM only."""
+
+    async def hold(
+        self, campaign: str, at: int = 200, *, asked: bool = True, names: int = 3
+    ) -> None:
+        made = await HoldStore(self.db).hold(
+            THURSDAY.id, campaign, at, session_id="s1", dm_user_id=ALICE.id, channel_id=5,
+            asked=asked, names_open=names,
+        )  # fmt: skip
+        self.assertTrue(made)  # (a hold is never written for a session that has a job)
+
+    async def test_a_held_recap_is_listed_and_readable_with_how_many_answers_it_waits_on(
+        self,
+    ) -> None:
+        await self.hold(self.one.id)
+        listed = await list_recaps(self.web, self.session)
+        by_at = {r["sessionAt"]: r for r in listed}
+        held, real = by_at[200], by_at[100]
+        self.assertEqual((held["waitingForNames"], held["namesToAnswer"]), (True, 3))
+        self.assertEqual((real["waitingForNames"], real["namesToAnswer"]), (False, 0))
+        self.assertEqual(held["campaign"], "One")
+        self.assertFalse(held["canEdit"] or held["canPost"] or held["canDrop"])
+        page = await read_recap(self.web, self.session, held["ref"])
+        self.assertEqual((page["waitingForNames"], page["namesToAnswer"]), (True, 3))
+        self.assertEqual(page["ref"], held["ref"])
+
+    async def test_only_the_campaigns_dm_sees_it_and_a_silent_hold_is_not_shown(self) -> None:
+        await self.hold(self.two.id)  # Bob's campaign: Alice is not its DM
+        await self.hold(self.one.id, 300, asked=False)  # waiting for the extractor: nothing to say
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(sorted(r["sessionAt"] for r in listed), [100])
+        with self.assertRaises(RecapError):
+            await read_recap(self.web, self.session, notify.job_ref(THURSDAY.id, self.two.id, 200))
+        with self.assertRaises(RecapError):
+            await read_recap(self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 300))
+
+    async def test_a_released_hold_shows_its_job_and_not_a_second_entry(self) -> None:
+        await self.hold(self.one.id)
+        holds = HoldStore(self.db)
+        self.assertEqual(await holds.release(THURSDAY.id, self.one.id, 200), "queued")
+        listed = await list_recaps(self.web, self.session)
+        mine = [r for r in listed if r["sessionAt"] == 200]
+        self.assertEqual([(r["waitingForNames"], r["state"]) for r in mine], [(False, "queued")])
+
+    async def test_the_door_answers_nothing_for_a_server_that_is_not_the_sessions(self) -> None:
+        await self.hold(self.one.id)
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", ("999",))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (THURSDAY.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["r"], [])  # the server set is not the one asked about
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (THURSDAY.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual([h["namesOpen"] for h in row["r"]], [3])
+            self.assertEqual(set(row["r"][0]), {"campaignId", "campaign", "sessionAt", "namesOpen"})
+
+    async def test_a_job_in_another_campaign_with_the_same_time_does_not_hide_a_hold(self) -> None:
+        three = await self.campaigns.create(THURSDAY.id, "Three", ALICE.id)
+        await self.store.enqueue(THURSDAY.id, three.id, 400, dm_user_id=ALICE.id)
+        await self.hold(self.one.id, 400)  # One waits at the very time Three has a recap
+        listed = await list_recaps(self.web, self.session)
+        at_400 = sorted(
+            (r["campaign"], r["waitingForNames"]) for r in listed if r["sessionAt"] == 400
+        )
+        self.assertEqual(at_400, [("One", True), ("Three", False)])
+
+    async def test_a_hold_and_a_job_for_the_same_session_are_listed_once(self) -> None:
+        await self.hold(self.one.id, 300)  # held first ...
+        await self.store.enqueue(
+            THURSDAY.id, self.one.id, 300, dm_user_id=ALICE.id
+        )  # ... then a job
+        listed = await list_recaps(self.web, self.session)
+        mine = [r for r in listed if r["campaign"] == "One" and r["sessionAt"] == 300]
+        self.assertEqual([(r["waitingForNames"], r["state"]) for r in mine], [(False, "queued")])
+
+    async def test_a_hold_with_nothing_left_to_answer_is_not_shown_as_waiting(self) -> None:
+        await self.hold(self.one.id, names=0)  # answered; the next round releases it
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual([r["sessionAt"] for r in listed], [100])
+
+    async def test_the_door_refuses_a_server_set_right_but_not_on_the_sessions_list(self) -> None:
+        other = 5_150_000_000_000_001
+        away = await self.campaigns.create(other, "Away", ALICE.id)  # Alice DMs it, off her list
+        await HoldStore(self.db).hold(
+            other, away.id, 200, session_id="s", dm_user_id=ALICE.id, channel_id=5, names_open=2
+        )
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(other),))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (other,))
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["r"], [])
+
+    async def test_the_website_cannot_read_the_holds_table_itself(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT count(*) FROM recap_holds")
 
 
 class TheDmsPage(Base):
@@ -172,6 +277,20 @@ class TheDmsPage(Base):
             self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
         )
         self.assertIsNone(loose["transcriptsDeletedAt"])
+
+    async def test_a_recap_says_when_a_fixed_spelling_changed_its_text(self) -> None:
+        # Never respelled: null. The bot writes respelled_at when it carries a fixed spelling into
+        # the text (#2170); the page reads it and tells the DM (#2178).
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["respelledAt"])
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET respelled_at = 777 WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = 100",
+                (THURSDAY.id, self.one.id),
+            )
+        self.assertEqual((await read_recap(self.web, self.session, self.ref))["respelledAt"], 777)
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual({r["campaign"]: r["respelledAt"] for r in listed}["One"], 777)
 
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")

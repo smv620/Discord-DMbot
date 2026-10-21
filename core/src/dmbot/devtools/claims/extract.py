@@ -10,17 +10,14 @@ and anything else is dropped and counted.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 from dmbot.ai import Reply
-from dmbot.devtools.claims.scenes import HOWS, Line
+from dmbot.devtools.claims.scenes import Line
+from dmbot.memory.claims import parse_answer as read_answer
 from dmbot.memory.extractor import MAX_TOKENS, SYSTEM, transcript_of
-
-MAX_CLAIMS = 60
-MAX_FIELD = 200
 
 
 class Client(Protocol):
@@ -51,44 +48,16 @@ def transcript(lines: Sequence[Line]) -> str:
     return transcript_of([(str(line.number), line.speaker, line.text) for line in lines])
 
 
-def _field(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    text = " ".join(value.split())
-    return text[:MAX_FIELD] if text else None
-
-
 def parse_answer(text: str, numbers: set[int]) -> tuple[list[Claim], int]:
-    """The claims in an answer, and how many were dropped. Only line numbers that were
-    sent count; a claim citing none of them is dropped."""
-    start, end = text.find("{"), text.rfind("}")
-    try:
-        data = json.loads(text[start : end + 1]) if 0 <= start < end else None
-    except ValueError:
-        data = None
-    items = data.get("claims") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return [], 1
-    claims: list[Claim] = []
-    dropped = 0
-    for item in items[:MAX_CLAIMS]:
-        if not isinstance(item, dict):
-            dropped += 1
-            continue
-        subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
-        obj = _field(item.get("object")) or ""
-        details = _field(item.get("details")) or ""
-        how = item.get("how")
-        cited = item.get("lines")
-        lines = tuple(
-            n for n in (cited if isinstance(cited, list) else []) if type(n) is int and n in numbers
-        )
-        if subject is None or relationship is None or how not in HOWS or not lines:
-            dropped += 1
-            continue
-        assert isinstance(how, str)
-        claims.append(Claim(subject, relationship, obj, details, lines, how))
-    return claims, dropped + max(0, len(items) - MAX_CLAIMS)
+    """The claims in an answer, and how many were dropped. The bot's own reader
+    (`dmbot.memory.claims.parse_answer`) does the reading, so a measurement judges what the bot
+    would keep: the same checks, the same lenient reading of a cut-off answer (#2152). Only line
+    numbers that were sent count; a claim citing none of them is dropped."""
+    found, dropped = read_answer(text, {str(n) for n in numbers})
+    return [
+        Claim(c.subject, c.relationship, c.object, c.details, tuple(int(n) for n in c.lines), c.how)
+        for c in found
+    ], dropped
 
 
 async def extract(client: Client, lines: Sequence[Line]) -> Extraction:

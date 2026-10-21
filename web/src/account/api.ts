@@ -210,6 +210,11 @@ export interface Recap {
   housekeeping: string[];
   /** Names the recap kept that DMbot didn't know: the DM's copy only, never posted (#2027). */
   toConfirm?: string[];
+  /** Held until the DM answers DMbot's questions about names (#2169, #2210). Missing from an API
+   * older than that: then nothing is held. */
+  waitingForNames?: boolean;
+  /** How many of those questions are left. */
+  namesToAnswer?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -224,6 +229,9 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** When a fixed spelling changed this recap's text (Unix seconds), else null (#2178). A posted
+   * recap's Discord message keeps the old spelling. Missing from an older API. */
+  respelledAt?: number | null;
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
