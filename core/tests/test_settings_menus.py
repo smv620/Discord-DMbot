@@ -4,6 +4,7 @@ management, with Back, per viewer; and the words that point to them."""
 import re
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import discord
@@ -24,8 +25,12 @@ from tests.test_dm_screen_settings import CAMPAIGN, DM, PLAYER, campaign, press
 LIMIT = 25  # Discord: five rows of five
 
 
+def _label(item: Any) -> str:
+    return str(getattr(item, "item", item).label)
+
+
 def labels(view: discord.ui.View) -> list[str]:
-    return [str(getattr(i, "item", i).label) for i in view.children]
+    return [_label(i) for i in view.children]
 
 
 class Menus(unittest.TestCase):
@@ -60,7 +65,7 @@ class Menus(unittest.TestCase):
             rows = {i.row for i in view.children if i.row is not None}
             self.assertLessEqual(max(rows, default=0), 4)
             for item in view.children:
-                self.assertLessEqual(len(str(getattr(item, "item", item).label)), 25)
+                self.assertLessEqual(len(_label(item)), 25)
 
     def test_the_new_buttons_match_their_templates(self) -> None:
         for cls, item in (
