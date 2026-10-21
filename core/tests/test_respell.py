@@ -255,8 +255,12 @@ class ThePastTranscripts(NamesTest):
         ):
             await undo.callback(self.it())
         self.assertIn("Brannoch waits", (await self.texts())[0])  # the name is back, lines not
-        await undo.callback(self.it())
+        retry = self.it()
+        await undo.callback(retry)
         self.assertEqual((await self.texts())[0], "Branok waits at the gate")
+        self.assertIn("Spelling put back", retry.response.edited[0][0])
+        self.assertIn("Put Branok back", retry.response.edited[0][0])
+        self.assertNotIn("changed again", retry.response.edited[0][0])
 
     async def test_an_entry_only_some_people_know_is_never_written_into_the_transcript(
         self,
@@ -274,7 +278,7 @@ class ThePastTranscripts(NamesTest):
         await self.memory.add_knower(GUILD, cid, clue.id, mira.id, source="dm", from_session_at=100)
         await self.memory.set_audience_limited(GUILD, cid, clue.id, True, source="dm")
         await self.transcripts.add_lines(
-            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Branok's deed")]
+            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Brannoch's deed and Branok's deed")]
         )
         before = await self.texts()
         form = name_card.FixSpellingForm(self.campaign.id, clue.id, "Branok's deed")
@@ -287,7 +291,9 @@ class ThePastTranscripts(NamesTest):
     async def test_a_dm_only_entry_is_never_written_into_the_transcript(self) -> None:
         thread = await ui.save_name(self.memory, self.campaign, "Branok's quest", "thread", [], [])
         await self.transcripts.add_lines(
-            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Branok's quest")]
+            GUILD,
+            self.session,
+            [Line(MS + 8000, PLAYER, "x", "Brannoch's quest and Branok's quest")],
         )
         self.branok = thread
         before = await self.texts()
@@ -322,7 +328,7 @@ class ThePastTranscripts(NamesTest):
         with patch("dmbot.transcript.store.MAX_RESPELLED", 5):
             it = await self.fix()
             view = it.response.edited[0][1]
-            self.assertIn("more lines are still to change", it.response.edited[0][0])
+            self.assertIn("more lines may still change", it.response.edited[0][0])
             (finish,) = [
                 c for c in view.children if isinstance(c, name_card.FinishPastButton)
             ]  # fmt: skip
@@ -338,6 +344,62 @@ class ThePastTranscripts(NamesTest):
             await undo_part.callback(self.it())
             self.assertIn("Branok 6", await self.texts())  # only the second run went back
             self.assertIn("Brannoch waits at the gate", await self.texts())
+
+    async def test_an_old_finish_does_nothing_after_the_name_changed_again(self) -> None:
+        many = [Line(MS + 20_000 + i, PLAYER, "x", f"Branok {i}") for i in range(7)]
+        await self.transcripts.add_lines(GUILD, self.session, many)
+        with patch("dmbot.transcript.store.MAX_RESPELLED", 5):
+            it = await self.fix()
+        (finish,) = [
+            c for c in it.response.edited[0][1].children
+            if isinstance(c, name_card.FinishPastButton)
+        ]  # fmt: skip
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        again = name_card.FixSpellingForm(self.campaign.id, self.branok.id, "Brannoch")
+        again.name = SimpleNamespace(value="Brannok")  # type: ignore[assignment]
+        await again.on_submit(self.it())
+        before = await self.texts()
+        press = self.it()
+        await finish.callback(press)
+        self.assertEqual(await self.texts(), before)
+        self.assertIn("out of date", press.followup.send.await_args.args[0])
+
+    def test_the_buttons_are_registered_so_they_work_after_a_restart(self) -> None:
+        import inspect
+
+        from dmbot.bot import DMBot
+
+        source = inspect.getsource(DMBot)
+        for name in ("UndoSpellingButton", "FinishPastButton", "UndoRunButton"):
+            self.assertRegex(source, rf"add_dynamic_items\([^)]*{name}")
+
+    def test_the_card_draws_with_both_buttons_for_every_kind(self) -> None:
+        flags: list[dict[str, Any]] = [
+            {},
+            {"item": True},
+            {"thread": True},
+            {"thread": True, "promise": True},
+            {"clue": True, "standing": True, "deed": True, "led": True, "book": True},
+            {"sheet": True, "others": True, "led": True, "book": True, "item": True},
+        ]
+        for extra in flags:
+            with self.subTest(extra=extra):
+                card = name_card.NameCard(
+                    "c" * 32, "e" * 32, undo_spelling=3, finish_past=3, **extra
+                )  # raises if a row overflows
+                self.assertTrue(
+                    any(isinstance(c, name_card.FinishPastButton) for c in card.children)
+                )
+
+    async def test_a_curly_apostrophe_in_a_stored_line_is_found(self) -> None:
+        kaz = await ui.save_name(self.memory, self.campaign, "Ka'zeth", "npc", [], [])
+        await self.transcripts.add_lines(
+            GUILD, self.session, [Line(MS + 9000, PLAYER, "x", "Ka\u2019zeth rides out")]
+        )
+        form = name_card.FixSpellingForm(self.campaign.id, kaz.id, "Ka'zeth")
+        form.name = SimpleNamespace(value="Kazett")  # type: ignore[assignment]
+        await form.on_submit(self.it())
+        self.assertIn("Kazett rides out", await self.texts())
 
     async def test_only_a_dm_may_finish(self) -> None:
         many = [Line(MS + 20_000 + i, PLAYER, "x", f"Branok {i}") for i in range(7)]

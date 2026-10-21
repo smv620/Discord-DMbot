@@ -28,6 +28,7 @@ class Stopping(unittest.IsolatedAsyncioTestCase):
             _tell_dm_about_consent=MagicMock(),
             push_allowlist=AsyncMock(),
             heard_questions=None,
+            members=None,
             memory=SimpleNamespace(forget_learned=AsyncMock(side_effect=RuntimeError("db down"))),
         )
         with self.assertLogs("dmbot.bot", level=logging.ERROR) as logged:

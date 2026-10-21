@@ -87,13 +87,6 @@ class Recaps(Base):
             assert job is not None
             self.assertEqual(job.title, TITLE)
 
-    async def test_a_recap_being_posted_follows_too(self) -> None:
-        await self.make(self.one, 300, status="posting")
-        self.assertEqual((await self.respell()).waiting, 1)
-        job = await self.store.get(1, self.one.id, 300)
-        assert job is not None
-        self.assertEqual(job.title, "Brannoch at the gate")
-
     async def test_only_the_kept_original_having_it_counts_for_nothing(self) -> None:
         await self.make(self.one, 100, approved=True, audio="ready")
         async with self.db.guild(1) as conn:
@@ -156,3 +149,58 @@ class Recaps(Base):
         self.assertIn("An approval stays", note)
         self.assertIn("Posts already in Discord are not changed", note)
         self.assertIn("make it again on the website", note)
+
+    async def test_a_curly_apostrophe_in_the_recap_is_found(self) -> None:
+        await self.make(self.one, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET title = %s", ("Ka’zeth waits",))
+        done = await self.store.respell(1, self.one.id, "Ka'zeth", "Kazett", [])
+        self.assertEqual(done.waiting, 1)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.title, "Kazett waits")
+
+    async def test_a_line_the_fix_would_make_say_a_secret_name_is_left_as_it_was(self) -> None:
+        await self.make(self.one, 100)
+        done = await self.store.respell(
+            1, self.one.id, "Branok", "Brannoch", ["Branok Hall"], ["Brannoch waits"]
+        )  # "Brannoch waits" is a secret name: the new spelling would complete it
+        self.assertEqual((done.waiting, done.posted, done.skipped), (0, 0, 1))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.title, TITLE)  # whole, not half respelled
+        self.assertEqual(job.summary, TEXT)
+
+    async def test_the_names_to_check_follow_the_fix(self) -> None:
+        await self.make(self.one, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET to_confirm = %s", (["Branok", "Mirelle", "branok"],)
+            )
+        await self.respell()
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.to_confirm, ("Brannoch", "Mirelle"))  # joined into one, in order
+
+    async def test_a_recap_being_posted_is_left_alone(self) -> None:
+        await self.make(self.one, 100, status="posting")
+        self.assertEqual((await self.respell()).waiting, 0)
+
+    async def test_an_approved_recap_can_still_be_posted_after_the_fix(self) -> None:
+        await self.make(self.one, 100, approved=True)
+        await self.respell()
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertTrue(job.approved)
+        # The door's own check (SQL) agrees: the text it hashes is the text that was approved.
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                "SELECT encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+                " = approved_hash AS same FROM recap_jobs"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertTrue(row["same"])
+        self.assertTrue(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )  # the approval-gated post goes through
