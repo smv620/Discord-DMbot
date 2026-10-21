@@ -61,6 +61,8 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
+      "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
       "Link a server you added with a plain link", // until dev1 deploys it (#2163)
       "Names spelled out at the table", // until dev1 deploys it (#2168)

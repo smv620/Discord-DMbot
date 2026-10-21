@@ -231,6 +231,18 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Recaps for the older sessions you bring in",
+    what: "When you bring in older sessions on the website, you can ask for a recap of each one. DMbot first looks for new names in each session, in date order, then asks you about them on your DM screen the usual way. A recap waits for your answers about its names, like a recap of a live session, and counts toward your monthly recaps. Only you, the DM, can ask for it, and it only uses the words of people who agreed to be recorded.",
+    reason: "In review (#2106); held until dev1 deploys it and the import page offers the choice (IMPORT_LIVE).",
+  },
+  {
+    date: "2026-10-21",
+    title: "A recap won't wait forever for your name answers",
+    what: "If a recap is waiting for your answers about names, DMbot reminds you once after a day, on your DM screen, with 📝 Check new names and Write the recap now. If nobody answers, after three days it writes the recap with the names as it heard them, and says so on your DM screen. Also: pressing Write a recap on a short session now waits for your name answers too.",
+    reason: "In review (#2174); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Say a name your way, from its card",
     what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name. Leave it empty to have it said as written. It matches the field on the website's Names page, and it only shows when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
