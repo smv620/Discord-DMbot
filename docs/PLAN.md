@@ -4194,8 +4194,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       matters and which thread or fact it ties to. For example, "he wears an amulet with a shard of
       obsidian" ties to the obsidian faction, so it must stay in the recap.
     - **Secrets:** significance decides **what is kept and stressed**, never what is revealed.
-      The recap may say why something matters only when the players have heard it: said at the table
-      in a consented line, or in a posted recap. When only the DM knows (the faction is secret), the
+      The recap may say why something matters only when the players already know it: said at the
+      table in a consented line, in a posted recap, or shown in the **players' view** (what the NPC
+      list itself shows the table: confirmed, never secret, from `RecallService`'s players audience;
+      Supervisor, 2026-10-21, #2270, since the players can already read it there). When only the DM knows (the faction is secret), the
       recap keeps the detail and does not explain it. DM-only knowledge never reaches the text,
       as today's secret checks already ensure.
     - **Early campaigns:** with little confirmed memory, PlotBot leans on the earlier accepted
