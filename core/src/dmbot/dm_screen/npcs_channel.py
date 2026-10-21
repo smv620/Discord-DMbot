@@ -580,12 +580,14 @@ async def sync_campaign(
         if channel is None or me is None:
             return None
         entries = await recall.roster(guild.id, campaign.id)
+        saved = True
         if roster is not None:  # the page the buttons open shows what this pass lists (#2265)
             try:
                 await roster.save(guild.id, campaign.id, entries, now)
             except Exception:
                 log.warning("NPC channel: couldn't save the pages' view", exc_info=True)
-        return await sync_roster(
+                saved = False
+        done = await sync_roster(
             channel,
             me.id,
             entries,
@@ -595,3 +597,6 @@ async def sync_campaign(
             reorder=reorder,
             site_url=site_url,
         )
+        if not saved:  # run again soon: the page must not keep showing what the list no longer does
+            done.left_for_next_time += 1
+        return done

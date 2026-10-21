@@ -264,6 +264,20 @@ class TheLifeOfANote(WithNpcs):
         self.assertEqual(by_person["bob"], {keep.id: "bob on keep"})
         self.assertTrue(all(n["listed"] for n in await self.notes(self.carol)))
 
+    async def test_two_long_notes_are_not_cut_by_a_merge_the_second_is_kept_apart(self) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, keep.id, "k" * 3000)
+        await web.save_note(self.web, self.carol, ref, gone.id, "g" * 3000)
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        await self.listed(keep)
+        notes = {n["id"]: n for n in await self.notes(self.carol)}
+        self.assertEqual(notes[keep.id]["body"], "k" * 3000)  # unchanged
+        self.assertEqual((notes[gone.id]["body"], notes[gone.id]["listed"]), ("g" * 3000, False))
+
     async def test_a_rejected_name_keeps_the_note_thirty_days_then_it_goes(self) -> None:
         aldric = await self.npc()
         await self.listed(aldric)
@@ -495,3 +509,26 @@ class TheListPass(WithNpcs):
         page = await web.read_page(self.web, self.carol, f"{GUILD}.{self.one.id}", aldric.id)
         self.assertEqual(page["name"], "Brother Aldric")
         self.assertTrue(chan.messages)  # and the list message is out
+
+    async def test_a_failed_save_asks_for_another_pass_soon(self) -> None:
+        from unittest import mock
+        from unittest.mock import AsyncMock
+
+        class Broken(npg.NpcRosterStore):
+            async def save(self, *a: Any, **k: Any) -> None:
+                raise RuntimeError("database down")
+
+        aldric = await self.npc()
+        guild = SimpleNamespace(id=GUILD, me=SimpleNamespace(id=ME))
+        recall = SimpleNamespace(roster=AsyncMock(return_value=[aldric]))
+        with mock.patch.object(nc, "_fresh", AsyncMock(return_value=Chan())):
+            done = await nc.sync_campaign(
+                guild,
+                self.one,
+                recall,
+                MemMap(),
+                roster=Broken(self.db),
+                now=NOW,  # type: ignore[arg-type]
+            )
+        assert done is not None
+        self.assertGreaterEqual(done.left_for_next_time, 1)  # so the bot runs it again

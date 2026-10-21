@@ -1197,6 +1197,9 @@ def create_app(
         session, _token = signed
         if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > npc_pages.NOTE_MAX * 8:
+            raise HTTPException(status_code=413, detail="too_big")  # (read nothing bigger)
         try:
             body = await request.json()
         except ValueError:
