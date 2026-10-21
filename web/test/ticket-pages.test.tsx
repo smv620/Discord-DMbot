@@ -76,10 +76,11 @@ const many = (n: number, status: SupportTicketRow["status"] = "new"): SupportTic
 const nav = () => screen.findByRole("navigation", { name: text.ticketPagesNav });
 const button = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
 const shown = () => screen.queryAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-/** What a screen reader would hear last: a refusal if there is one, else the page number. */
+/** What a screen reader would hear last from the tickets' bar: a refusal if there is one, else the
+ * page number. Found by role inside the bar's own notes, not by where they sit. */
 const note = () => {
-  const alerts = screen.getAllByRole("alert").map((a) => a.textContent ?? "").join("");
-  return alerts || document.getElementById("tickets-page-note")?.textContent;
+  const notes = within(document.getElementById("tickets-page-notes") as HTMLElement);
+  return notes.getByRole("alert").textContent || notes.getByRole("status").textContent;
 };
 
 describe("the pages", () => {
@@ -89,22 +90,22 @@ describe("the pages", () => {
     expect(shown()).toHaveLength(20);
     expect(shown()[0]).toBe("Ticket 001");
     expect(note()).toBe(text.pageNow(1, 3));
-    expect(button(text.pageNewest).disabled).toBe(true);
-    expect(button(text.pageOlder).disabled).toBe(false);
+    expect(button(text.ticketPageFirst).disabled).toBe(true);
+    expect(button(text.ticketPageNext).disabled).toBe(false);
   });
 
   it("moves with Older, Oldest, Newer and Newest, and says what each page holds", async () => {
     const api = paged(many(45));
     await nav();
-    fireEvent.click(button(text.pageOlder));
+    fireEvent.click(button(text.ticketPageNext));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
     expect(shown()[0]).toBe("Ticket 021");
-    fireEvent.click(button(text.pageOldest));
+    fireEvent.click(button(text.ticketPageLast));
     await waitFor(() => expect(note()).toBe(text.pageNow(3, 3)));
     expect(shown()).toHaveLength(5);
-    fireEvent.click(button(text.pageNewer));
+    fireEvent.click(button(text.ticketPagePrevious));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
-    fireEvent.click(button(text.pageNewest));
+    fireEvent.click(button(text.ticketPageFirst));
     await waitFor(() => expect(note()).toBe(text.pageNow(1, 3)));
     expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[1])).toEqual([1, 2, 3, 2, 1]);
   });
@@ -141,7 +142,7 @@ describe("with a filter", () => {
     const api = paged(rows);
     await nav(); // the page starts on "new": 30 tickets, two pages
     expect(note()).toBe(text.pageNow(1, 2));
-    fireEvent.click(button(text.pageOlder));
+    fireEvent.click(button(text.ticketPageNext));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 2)));
     expect(shown()).toHaveLength(10);
     fireEvent.click(screen.getByRole("button", { name: /Answered/ }));
@@ -157,7 +158,7 @@ describe("keeping its place", () => {
     const rows = many(45);
     const api = paged(rows);
     await nav();
-    fireEvent.click(button(text.pageOlder));
+    fireEvent.click(button(text.ticketPageNext));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
     const ticket = document.querySelector('[data-ticket="25"]') as HTMLElement;
     fireEvent.click(within(ticket).getByRole("button", { name: text.closeTicket }));
@@ -168,11 +169,29 @@ describe("keeping its place", () => {
     expect(shown()).not.toContain("Ticket 025");
   });
 
+  it("stays on the same page after a reply is sent", async () => {
+    const rows = many(45);
+    const replyToTicket = vi.fn(async () => undefined);
+    const api = paged(rows, { replyToTicket } as unknown as Partial<AdminApi>);
+    await nav();
+    fireEvent.click(button(text.ticketPageNext));
+    await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
+    const ticket = document.querySelector('[data-ticket="25"]') as HTMLElement;
+    fireEvent.input(within(ticket).getByLabelText(text.replyLabel("Ticket 025")), {
+      target: { value: "Thanks, sorted." },
+    });
+    fireEvent.click(within(ticket).getByRole("button", { name: text.replySend }));
+    await waitFor(() => expect(replyToTicket).toHaveBeenCalled());
+    // The reload after the reply asks for the page the team is on, not page 1.
+    await waitFor(() => expect(api.tickets).toHaveBeenLastCalledWith("new", 2));
+    expect(note()).toBe(text.pageNow(2, 3));
+  });
+
   it("goes to the page before when the last ticket of the last page leaves the list", async () => {
     const rows = many(21);
     const api = paged(rows);
     await nav();
-    fireEvent.click(button(text.pageOldest));
+    fireEvent.click(button(text.ticketPageLast));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 2)));
     expect(shown()).toEqual(["Ticket 021"]);
     fireEvent.click(button(text.closeTicket));
@@ -216,9 +235,9 @@ describe("keeping its place", () => {
   it("puts the keyboard on the page box when the pressed button disables itself", async () => {
     paged(many(45));
     await nav();
-    fireEvent.click(button(text.pageOlder));
+    fireEvent.click(button(text.ticketPageNext));
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
-    const newer = button(text.pageNewer);
+    const newer = button(text.ticketPagePrevious);
     newer.focus();
     fireEvent.click(newer);
     await waitFor(() => expect(note()).toBe(text.pageNow(1, 3)));
@@ -239,7 +258,7 @@ describe("keeping its place", () => {
     } as unknown as Partial<AdminApi>);
     await nav();
     fail = true;
-    fireEvent.click(button(text.pageOlder));
+    fireEvent.click(button(text.ticketPageNext));
     await waitFor(() => expect(api.tickets).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(text.ticketsDown)).toBeTruthy();
     expect(shown()[0]).toBe("Ticket 001"); // still page 1

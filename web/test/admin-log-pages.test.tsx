@@ -78,9 +78,9 @@ const shown = () =>
     .map((li) => li.textContent ?? "");
 /** What a screen reader would hear last: a refusal if there is one, else the page number. */
 const status = () => {
-  const page = document.getElementById("log-page-note");
-  const refusal = page?.nextElementSibling?.textContent ?? "";
-  return { textContent: refusal || (page?.textContent ?? "") };
+  const notes = within(document.getElementById("log-page-notes") as HTMLElement);
+  const refusal = notes.getByRole("alert").textContent ?? "";
+  return { textContent: refusal || (notes.getByRole("status").textContent ?? "") };
 };
 
 describe("the window", () => {
@@ -243,7 +243,7 @@ describe("after a change, and when a page can't be read", () => {
     await nav();
     fireEvent.click(button(text.pageOlder));
     await waitFor(() => expect(grantsLog).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(document.getElementById("log-page-note")?.nextElementSibling?.textContent).toBe(text.pageGone));
+    await waitFor(() => expect(within(document.getElementById("log-page-notes") as HTMLElement).getByRole("alert").textContent).toBe(text.pageGone));
   });
 
   it("opens each page at its top, not where the last was scrolled to", async () => {

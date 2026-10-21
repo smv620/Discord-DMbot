@@ -461,6 +461,12 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
         <PageBar
           id="tickets-page"
           label={text.ticketPagesNav}
+          moves={{
+            first: text.ticketPageFirst,
+            previous: text.ticketPagePrevious,
+            next: text.ticketPageNext,
+            last: text.ticketPageLast,
+          }}
           page={page}
           pages={pages}
           busy={paging}

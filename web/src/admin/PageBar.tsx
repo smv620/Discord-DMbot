@@ -13,6 +13,9 @@ interface Props {
   id: string;
   /** Names this bar for a screen reader, so two bars on one page can be told apart. */
   label: string;
+  /** The four moves, in the words of the list that uses the bar: "Newest / Newer / Older /
+   * Oldest" for a log, "First / Previous / Next / Last" where the order isn't about age. */
+  moves: { first: string; previous: string; next: string; last: string };
   page: number;
   pages: number;
   /** Reading a page is under way: the Go button waits. */
@@ -24,7 +27,7 @@ interface Props {
   onGo: (page: number) => Promise<number>;
 }
 
-export default function PageBar({ id, label, page, pages, busy, notice, onGo }: Props) {
+export default function PageBar({ id, label, moves, page, pages, busy, notice, onGo }: Props) {
   const [typed, setTyped] = useState(String(page));
   const [pick, setPick] = useState<string | null>(null);
   // The box follows the page: a move, a jump, or the owner going back to page 1. Done while
@@ -72,7 +75,7 @@ export default function PageBar({ id, label, page, pages, busy, notice, onGo }: 
   }
 
   const showBar = pages > 1;
-  const noteId = `${id}-note`;
+  const noteId = `${id}-notes`;
   const problem = pick ?? notice;
   return (
     <>
@@ -85,7 +88,7 @@ export default function PageBar({ id, label, page, pages, busy, notice, onGo }: 
             onClick={() => void go(1)}
           >
             <span aria-hidden="true">«</span>
-            {text.pageNewest}
+            {moves.first}
           </button>
           <button
             type="button"
@@ -94,7 +97,7 @@ export default function PageBar({ id, label, page, pages, busy, notice, onGo }: 
             onClick={() => void go(page - 1)}
           >
             <span aria-hidden="true">‹</span>
-            {text.pageNewer}
+            {moves.previous}
           </button>
           <form class="page-jump" onSubmit={jump} noValidate>
             <label for={id}>{text.pageBox}</label>
@@ -123,7 +126,7 @@ export default function PageBar({ id, label, page, pages, busy, notice, onGo }: 
             disabled={page >= pages}
             onClick={() => void go(page + 1)}
           >
-            {text.pageOlder}
+            {moves.next}
             <span aria-hidden="true">›</span>
           </button>
           <button
@@ -132,19 +135,21 @@ export default function PageBar({ id, label, page, pages, busy, notice, onGo }: 
             disabled={page >= pages}
             onClick={() => void go(pages)}
           >
-            {text.pageOldest}
+            {moves.last}
             <span aria-hidden="true">»</span>
           </button>
         </nav>
       )}
       {/* Two notes that are always on the page, each with one role for good, so a screen reader
           hears the page change (status) and any refusal (alert); roles that change are missed. */}
-      <p id={noteId} class="visually-hidden" role="status">
-        {showBar ? text.pageNow(page, pages) : ""}
-      </p>
-      <p class={problem ? "warn small" : "visually-hidden"} role="alert">
-        {problem ?? ""}
-      </p>
+      <div id={noteId}>
+        <p class="visually-hidden" role="status">
+          {showBar ? text.pageNow(page, pages) : ""}
+        </p>
+        <p class={problem ? "warn small" : "visually-hidden"} role="alert">
+          {problem ?? ""}
+        </p>
+      </div>
     </>
   );
 }

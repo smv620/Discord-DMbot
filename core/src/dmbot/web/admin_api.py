@@ -429,9 +429,12 @@ def router(
 
     @api.get("/support")
     async def list_support(session: Admin, status: str = "all", page: str = "1") -> dict[str, Any]:
-        """Private tickets from signed-in people, newest first; `?status=new|answered|closed` keeps
-        one status and `all` (the default) every one (#1375). `counts` always covers all of them,
-        for the filter buttons. The words go to the signed-in admin only, and are never logged."""
+        """Private tickets from signed-in people, twenty a page (`?page=N` from 1, #2211). Newest
+        first, except `?status=escalated` (Needs the team), which is longest-waiting first (#1485).
+        `?status=new|answered|closed|escalated` keeps one status and `all` (the default) every one
+        (#1375); the pages are of that filtered list. `page` and `pages` come back, and a page that
+        isn't there answers 400 `bad_page`. `counts` always covers every ticket, for the filter
+        buttons. The words go to the signed-in admin only, and are never logged."""
         wanted = next((s for s in support.STATUSES if s == status), None)
         if status != "all" and wanted is None:
             raise HTTPException(status_code=400, detail="bad_status")

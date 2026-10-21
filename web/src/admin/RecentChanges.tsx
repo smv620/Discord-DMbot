@@ -108,7 +108,14 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
         </div>
       )}
       {api.grantsLog && (
-        <PageBar id="log-page" label={text.pagesNav} page={page} pages={total} busy={busy} notice={notice} onGo={go} />
+        <PageBar id="log-page" label={text.pagesNav}
+          moves={{
+            first: text.pageNewest,
+            previous: text.pageNewer,
+            next: text.pageOlder,
+            last: text.pageOldest,
+          }}
+          page={page} pages={total} busy={busy} notice={notice} onGo={go} />
       )}
     </>
   );

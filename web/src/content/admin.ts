@@ -94,6 +94,12 @@ export const text = {
   historyList: "Recent changes, newest first",
   pagesNav: "Pages of recent changes",
   ticketPagesNav: "Pages of tickets",
+  // The tickets are not "newer" and "older" (Needs the team reads longest-waiting first), so their
+  // bar says where it goes in the list.
+  ticketPageFirst: "First",
+  ticketPagePrevious: "Previous",
+  ticketPageNext: "Next",
+  ticketPageLast: "Last",
   pageNewest: "Newest",
   pageNewer: "Newer",
   pageOlder: "Older",
