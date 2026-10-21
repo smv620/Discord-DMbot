@@ -11,6 +11,7 @@ import { aiTrainingSentence } from "../src/content/legal";
 import { emailSteps } from "../src/content/help";
 import {
   RECAP_AUDIO_LIVE,
+  RECAP_FIX_LIVE,
   RECAP_NAMES_LIVE,
   RECAP_SHARE_LIVE,
   RECAPS_LIVE,
@@ -132,6 +133,15 @@ describe("Help and the emails list", () => {
 });
 
 describe("the switches and What's new agree", () => {
+  it("the Help step for fixing a recap says where kept style notes are removed", () => {
+    const step = recapSteps.map((x) => x.text).find((t) => t.includes("Tell DMbot what to fix")) ?? "";
+    expect(step !== "").toBe(RECAP_FIX_LIVE);
+    if (RECAP_FIX_LIVE) {
+      expect(step).toContain("this campaign's later recaps too. DMbot keeps the newest 10.");
+      expect(step).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+    }
+  });
+
   it("holds 'Recaps for your table' back exactly while recaps are not live", () => {
     const title = "Recaps for your table";
     expect(held.some((h) => h.title === title)).toBe(!RECAPS_LIVE);
@@ -145,6 +155,7 @@ describe("the switches and What's new agree", () => {
     ["Recaps fit your session", RECAPS_LIVE],
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
+    ["Tell DMbot what to fix", RECAP_FIX_LIVE],
     ["Share a recap by a link", RECAP_SHARE_LIVE],
     ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],

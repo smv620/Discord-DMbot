@@ -30,6 +30,7 @@ import {
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapApprove from "./RecapApprove";
+import RecapFix from "./RecapFix";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
@@ -692,6 +693,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
+      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && (
         <RecapShareControls
