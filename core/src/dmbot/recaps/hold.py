@@ -32,6 +32,7 @@ class Hold:
     channel_id: int  # the DM screen, where the question and the "writing it now" line go
     created_at: int
     asked: bool = True  # the DM was told; False while the story extractor may still add names
+    names_open: int = 0  # name questions it waits on when last counted; the website says it (#2174)
 
 
 QUEUED, ALREADY, GONE = "queued", "already", "gone"
@@ -63,14 +64,15 @@ class HoldStore:
         dm_user_id: int,
         channel_id: int,
         asked: bool = True,
+        names_open: int = 0,
     ) -> bool:
         """Hold this session's recap. False when it is held already, or a recap job exists for the
         session (a repeat of the end of the session): one wait, and never after a job."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO recap_holds (guild_id, campaign_id, session_at, session_id,"
-                " dm_user_id, channel_id, created_at, asked)"
-                " SELECT %s, %s, %s, %s, %s, %s, %s, %s"
+                " dm_user_id, channel_id, created_at, asked, names_open)"
+                " SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s"
                 " WHERE NOT EXISTS (SELECT 1 FROM recap_jobs WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s)"
                 " ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
@@ -83,6 +85,7 @@ class HoldStore:
                     channel_id,
                     int(self._now()),
                     asked,
+                    names_open,
                     guild_id,
                     campaign_id,
                     session_at,
@@ -98,7 +101,7 @@ class HoldStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
-                " asked FROM recap_holds ORDER BY created_at, session_at"
+                " asked, names_open FROM recap_holds ORDER BY created_at, session_at"
             )
             return list(await cur.fetchall())
 
@@ -106,6 +109,18 @@ class HoldStore:
         """Remember a server holds nothing, unless a hold was made while the read was running."""
         if self._made.get(guild_id, 0) == seen:
             self._empty.add(guild_id)
+
+    async def set_names_open(
+        self, guild_id: int, campaign_id: str, session_at: int, count: int
+    ) -> None:
+        """The latest count of name questions the hold waits on, for the website (#2174). Counts
+        only. Written when it changes, so a round that finds the same number writes nothing."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_holds SET names_open = %s WHERE campaign_id = %s AND session_at = %s"
+                " AND names_open <> %s",
+                (max(0, count), campaign_id, session_at, max(0, count)),
+            )
 
     async def mark_asked(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """The DM has now been told. False when it was already (or the hold is gone)."""
@@ -143,6 +158,7 @@ class HoldStore:
                 int(r["channel_id"]),
                 int(r["created_at"]),
                 bool(r["asked"]),
+                int(r["names_open"]),
             )
             for r in rows
         ]
@@ -150,7 +166,8 @@ class HoldStore:
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Hold | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT session_id, dm_user_id, channel_id, created_at, asked FROM recap_holds"
+                "SELECT session_id, dm_user_id, channel_id, created_at, asked, names_open"
+                " FROM recap_holds"
                 " WHERE campaign_id = %s AND session_at = %s",
                 (campaign_id, session_at),
             )
@@ -165,6 +182,7 @@ class HoldStore:
             int(r["channel_id"]),
             int(r["created_at"]),
             bool(r["asked"]),
+            int(r["names_open"]),
         )
 
     async def release(

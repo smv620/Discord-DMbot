@@ -89,6 +89,23 @@ class TheStore(DatabaseTest):
         self.assertEqual(await self.jobs(), 0)
         self.assertEqual(await self.holds.held(GUILD), [])
 
+    async def test_the_count_of_open_questions_is_kept_and_only_written_when_it_changes(
+        self,
+    ) -> None:
+        await self.holds.hold(
+            GUILD, self.campaign.id, AT, session_id="s1", dm_user_id=DM, channel_id=66, names_open=5
+        )
+        (held,) = await self.holds.held(GUILD)
+        self.assertEqual(held.names_open, 5)
+        await self.holds.set_names_open(GUILD, self.campaign.id, AT, 2)
+        got = await self.holds.get(GUILD, self.campaign.id, AT)
+        assert got is not None
+        self.assertEqual(got.names_open, 2)
+        await self.holds.set_names_open(GUILD, self.campaign.id, AT, -4)  # never below nothing
+        got = await self.holds.get(GUILD, self.campaign.id, AT)
+        assert got is not None
+        self.assertEqual(got.names_open, 0)
+
     async def test_a_silent_hold_is_told_once(self) -> None:
         self.assertTrue(
             await self.holds.hold(
@@ -176,6 +193,7 @@ def fake_bot(
         release=AsyncMock(return_value=hold.QUEUED),
         mark_asked=AsyncMock(return_value=True),
         unmark_asked=AsyncMock(),
+        set_names_open=AsyncMock(),
         get=AsyncMock(return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, 1)),
     )
     bot = SimpleNamespace(
@@ -210,6 +228,7 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         bot = fake_bot(proposed=3, did_they_mean=2)
         await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)
         bot.recap_holds.hold.assert_awaited_once()
+        self.assertEqual(bot.recap_holds.hold.await_args.kwargs["names_open"], 5)
         bot.recaps.enqueue.assert_not_awaited()
         channel, text = bot.post.await_args.args
         self.assertEqual((channel, text), (66, hold.question_text(5)))
@@ -286,6 +305,8 @@ class EachRound(IsolatedAsyncioTestCase):
         await bot.release_recap_holds(GUILD)
         bot.recap_holds.release.assert_not_awaited()
         bot.post.assert_not_awaited()
+        # Each round keeps the website's count current.
+        bot.recap_holds.set_names_open.assert_awaited_once_with(GUILD, "c" * 32, AT, 1)
 
     async def test_recaps_the_dm_switched_off_drop_the_hold_and_write_nothing(self) -> None:
         bot = fake_bot()

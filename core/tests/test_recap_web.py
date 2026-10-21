@@ -25,6 +25,7 @@ from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.draft import SUMMARY_MAX
+from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
@@ -95,6 +96,72 @@ class Base(DatabaseTest):
         job = await self.store.get(THURSDAY.id, campaign, 100)
         assert job is not None
         return job
+
+
+class TheHeldRecaps(Base):
+    """A recap waiting for the DM's name answers has no job yet, so the list and the page say it
+    from the hold alone (#2174): `waitingForNames` and `namesToAnswer`, for the DM only."""
+
+    async def hold(
+        self, campaign: str, at: int = 200, *, asked: bool = True, names: int = 3
+    ) -> None:
+        await HoldStore(self.db).hold(
+            THURSDAY.id, campaign, at, session_id="s1", dm_user_id=ALICE.id, channel_id=5,
+            asked=asked, names_open=names,
+        )  # fmt: skip
+
+    async def test_a_held_recap_is_listed_and_readable_with_how_many_answers_it_waits_on(
+        self,
+    ) -> None:
+        await self.hold(self.one.id)
+        listed = await list_recaps(self.web, self.session)
+        by_at = {r["sessionAt"]: r for r in listed}
+        held, real = by_at[200], by_at[100]
+        self.assertEqual((held["waitingForNames"], held["namesToAnswer"]), (True, 3))
+        self.assertEqual((real["waitingForNames"], real["namesToAnswer"]), (False, 0))
+        self.assertEqual(held["campaign"], "One")
+        self.assertFalse(held["canEdit"] or held["canPost"] or held["canDrop"])
+        page = await read_recap(self.web, self.session, held["ref"])
+        self.assertEqual((page["waitingForNames"], page["namesToAnswer"]), (True, 3))
+        self.assertEqual(page["ref"], held["ref"])
+
+    async def test_only_the_campaigns_dm_sees_it_and_a_silent_hold_is_not_shown(self) -> None:
+        await self.hold(self.two.id)  # Bob's campaign: Alice is not its DM
+        await self.hold(self.one.id, 300, asked=False)  # waiting for the extractor: nothing to say
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(sorted(r["sessionAt"] for r in listed), [100])
+        with self.assertRaises(RecapError):
+            await read_recap(self.web, self.session, notify.job_ref(THURSDAY.id, self.two.id, 200))
+        with self.assertRaises(RecapError):
+            await read_recap(self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 300))
+
+    async def test_a_released_hold_shows_its_job_and_not_a_second_entry(self) -> None:
+        await self.hold(self.one.id)
+        holds = HoldStore(self.db)
+        self.assertEqual(await holds.release(THURSDAY.id, self.one.id, 200), "queued")
+        listed = await list_recaps(self.web, self.session)
+        mine = [r for r in listed if r["sessionAt"] == 200]
+        self.assertEqual([(r["waitingForNames"], r["state"]) for r in mine], [(False, "queued")])
+
+    async def test_the_door_answers_nothing_for_a_server_that_is_not_the_sessions(self) -> None:
+        await self.hold(self.one.id)
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", ("999",))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (THURSDAY.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["r"], [])  # the server set is not the one asked about
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (THURSDAY.id,))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual([h["namesOpen"] for h in row["r"]], [3])
+            self.assertEqual(set(row["r"][0]), {"campaignId", "campaign", "sessionAt", "namesOpen"})
+
+    async def test_the_website_cannot_read_the_holds_table_itself(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT count(*) FROM recap_holds")
 
 
 class TheDmsPage(Base):

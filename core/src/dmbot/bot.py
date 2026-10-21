@@ -7773,7 +7773,7 @@ class DMBot(commands.AutoShardedBot):
                 if waiting > 0 or pending:
                     if not await store.hold(
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
-                        channel_id=channel_id, asked=waiting > 0,
+                        channel_id=channel_id, asked=waiting > 0, names_open=waiting,
                     ):  # fmt: skip
                         return  # held already, or a job exists: a repeat of the end of the session
                     held = True
@@ -7864,6 +7864,7 @@ class DMBot(commands.AutoShardedBot):
                 gid, held.campaign_id, held.session_id, held.session_at
             )
             if waiting:
+                await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
                 if held.asked:
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
