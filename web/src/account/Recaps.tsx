@@ -30,6 +30,7 @@ import {
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapApprove from "./RecapApprove";
+import RecapFix from "./RecapFix";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
@@ -309,7 +310,9 @@ function AudioPanel({
             ? panelWords.tooSoon
             : kind === "needs-approval"
               ? panelWords.needsApproval
-              : (errors[kind] ?? errors.other),
+              : kind === "audio-off"
+                ? panelWords.audioOff
+                : (errors[kind] ?? errors.other),
       });
     } finally {
       asking.current = false;
@@ -324,7 +327,9 @@ function AudioPanel({
       : audio.state === "failed"
         ? audio.error || panelWords.failed
         : audio.state === "ready" && !audio.current
-          ? panelWords.stale
+          ? audio.postedNote
+            ? panelWords.stalePosted
+            : panelWords.stale
           : audio.state === "off"
             ? panelWords.off
             : null;
@@ -688,6 +693,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
+      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {!editing && (
         <RecapShareControls
