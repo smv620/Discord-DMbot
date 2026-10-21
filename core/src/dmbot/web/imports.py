@@ -633,6 +633,7 @@ async def confirm(
 
 
 # The progress stages in which a session has a recap, or one held for the DM's answers (#2240).
+# They follow the stage list in `progress` and the SQL's `stage` CASE; the tests pin them.
 RECAP_STAGES = frozenset(
     ("waiting_for_names", "starting_recap", "writing_recap", "recap_ready", "recap_failed")
 )
