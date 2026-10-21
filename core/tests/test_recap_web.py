@@ -224,6 +224,21 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertEqual(listed[0]["toConfirm"], ["Zarathon Keep", "Yrsa"])
 
+    async def test_the_critics_notes_are_on_the_dms_page_only(self) -> None:
+        """(#2255) What the critics still asked when they could not agree is the DM's copy: never
+        part of the text that is edited or posted, and never on a shared link."""
+        from dmbot.recaps.critics import Loop
+
+        note = "the style: keep the stakes and the mood"
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, critics=Loop(round=4, done=True, notes=(note,)).to_json()
+        )
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["criticNotes"], [note])
+        self.assertNotIn("stakes", one["summary"] + one["text"])
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(listed[0]["criticNotes"], [note])
+
     async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
         """(#2022) The recap stays; its page says the transcript went, and when, and how long the
         table keeps them. Read through the transcripts page's own door, scoped to the recap's

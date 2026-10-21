@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Recaps are checked before you see them",
+    what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
+    reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
+  },
+  {
+    date: "2026-10-21",
     title: "Support emails show the whole chat",
     what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
     reason: "In review (#2192); held until dev1 deploys it.",

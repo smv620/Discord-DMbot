@@ -20,7 +20,7 @@ from typing import Any
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
-from dmbot.recaps import cues
+from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
@@ -37,7 +37,7 @@ _COLUMNS = (
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
-    " r.respelled_at"
+    " r.respelled_at, r.critics"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -128,6 +128,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "summary": row["summary"],
         "housekeeping": list(row["housekeeping"]),
         "toConfirm": list(row["to_confirm"]),  # the DM's copy only (#2027): never posted
+        # What the recap's critics still asked when they could not agree (#2255): the DM's copy
+        # only, never in a posted recap or on a shared link. Soft notes in the critics' own
+        # words (the plot kinds' wording passed the same word check as any note to the writer).
+        "criticNotes": list(critics.loop_from_json(row.get("critics")).notes),
         "error": row["last_error"],
         "canEdit": ready,
         "canPost": ready,
@@ -184,6 +188,7 @@ def _held_view(
         "summary": "",
         "housekeeping": [],
         "toConfirm": [],
+        "criticNotes": [],
         "error": "",
         "canEdit": False,
         "canPost": False,

@@ -8251,6 +8251,16 @@ RECAP_SPLIT = """
     ALTER TABLE recap_jobs ADD COLUMN split JSONB;
     """
 
+RECAP_CRITICS = """
+    -- Where a recap's critics loop is (#2255): the readings done, what the critics last asked for,
+    -- the best draft so far and, when it stopped without agreement, the notes left for the DM's
+    -- recap page. JSON, NULL until the loop begins. Each step is saved, so a restart never repays
+    -- for one that finished. It holds the draft text and the critics' notes about it, which are
+    -- the recap's own words on a table that already isolates by server and is deleted with the
+    -- campaign; none of it is logged. A new nullable column changes no rows.
+    ALTER TABLE recap_jobs ADD COLUMN critics JSONB;
+    """
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -8629,6 +8639,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # no two of a person's tickets share a time
     ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
     ("0158_recap_split", RECAP_SPLIT),  # a session's opening split into parts (#2253)
+    ("0162_recap_critics", RECAP_CRITICS),  # the critics loop's saved state (#2255)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

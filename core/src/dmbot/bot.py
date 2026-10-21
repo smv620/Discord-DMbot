@@ -1223,6 +1223,7 @@ class DMBot(commands.AutoShardedBot):
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
+                critics=True,  # the critics read each draft until they agree (#2255)
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
