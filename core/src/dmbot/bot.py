@@ -8046,11 +8046,15 @@ class DMBot(commands.AutoShardedBot):
                 await self._close_hold_lines(gid, [held], recap_hold.LINE_ANSWERED)
             if result == recap_hold.QUEUED:
                 if held.group_id:  # an import's recaps start one by one: the last says so, once
-                    made = self._group_made.setdefault(held.group_id, [])
-                    made.append(held.session_at)
+                    self._group_made.setdefault(held.group_id, []).append(held.session_at)
                     if recap_hold.group_of(await store.held(gid), held):
                         return
-                    del self._group_made[held.group_id]
+                    # The claim: popping the list is one step with no await, so a press that
+                    # wrote the rest of the import meanwhile (and told all of it, this list
+                    # included) leaves nothing here, and the DM gets one line, not two.
+                    made = self._group_made.pop(held.group_id, [])
+                    if not made:
+                        return
                     await self._say_group_writing(
                         campaign, held.channel_id, len(made), session_at=made[-1]
                     )
@@ -8214,10 +8218,12 @@ class DMBot(commands.AutoShardedBot):
         note: str = "",
         *,
         session_at: int = 0,
+        also: str = "",
     ) -> None:
         """One line for the recaps of an import that start together (#2106), not one for each.
-        A single one (`session_at`) is told like any recap, never as "1 recaps"."""
-        if count == 1 and session_at:
+        A single one (`session_at`) is told like any recap, never as "1 recaps". `also` is the
+        import's other news, the recaps that were not written, so the DM gets one line, not two."""
+        if count == 1 and session_at and not also:
             await self._say_writing(campaign, channel_id, session_at, note=note)
             return
         ready = (
@@ -8228,8 +8234,9 @@ class DMBot(commands.AutoShardedBot):
         lead = f"{note} " if note else ""
         await self.post(
             channel_id,
-            f"📜 {lead}Writing {count} recaps from your imported sessions. {ready} "
-            "Nothing goes to the table until you say so.",
+            f"📜 {lead}Writing {count} {'recap' if count == 1 else 'recaps'} from your imported "
+            f"sessions. {ready} Nothing goes to the table until you say so."
+            + (f"\n{also}" if also else ""),
         )
 
     async def recap_short_expired(self, gid: int, cid: str, session_at: int) -> bool:
@@ -9373,30 +9380,30 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
                 )
-        for cid in list(self._import_queued):
+        for cid in list(self._import_queued.keys() | self._import_unhonoured.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import
-            queued = self._import_queued.pop(cid)
+            queued = self._import_queued.pop(cid, [])
+            reasons = self._import_unhonoured.pop(cid, [])
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is not None and campaign.dm_screen_channel_id is not None:
-                await self._say_group_writing(
-                    campaign, campaign.dm_screen_channel_id, len(queued), session_at=queued[-1]
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                continue
+            channel = campaign.dm_screen_channel_id
+            if reasons:
+                head = (
+                    "1 recap you asked for from your imported sessions wasn't written"
+                    if len(reasons) == 1
+                    else f"{len(reasons)} recaps you asked for from your imported sessions "
+                    "weren't written"
                 )
-        for cid, reasons in list(self._import_unhonoured.items()):
-            if await store.pending_scans(gid, cid):
-                continue  # once, at the end of the import
-            campaign = await self.campaigns.get(gid, cid)
-            del self._import_unhonoured[cid]
-            if campaign is not None and campaign.dm_screen_channel_id is not None:
-                why = "; ".join(sorted(set(reasons)))
-                if len(reasons) == 1:
-                    head = "1 recap you asked for from your imported sessions wasn't written"
-                else:
-                    head = (
-                        f"{len(reasons)} recaps you asked for from your imported sessions "
-                        "weren't written"
-                    )
-                await self.post(campaign.dm_screen_channel_id, f"📜 {head}: {why}.")
+                missed = f"{head}: {'; '.join(sorted(set(reasons)))}."
+            if queued:  # one line for what is being written and what is not
+                await self._say_group_writing(
+                    campaign, channel, len(queued), session_at=queued[-1],
+                    also=missed if reasons else "",
+                )  # fmt: skip
+            elif reasons:
+                await self.post(channel, f"📜 {missed}")
 
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """The name scan of one imported session: the lines of people who still agree (asked after

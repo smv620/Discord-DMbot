@@ -337,6 +337,28 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("recaps are switched off", text)
         self.assertIn("your plan doesn't include recaps", text)
 
+    async def test_recaps_written_and_not_written_are_one_line(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._import_queued[campaign.id] = [100, 200, 300]
+        bot._import_unhonoured[campaign.id] = ["your plan doesn't include recaps"]
+        await bot._tell_import_news(GUILD, self.store)
+        told = [c.args[1] for c in bot.post.await_args_list if "📜" in c.args[1]]
+        self.assertEqual(len(told), 1)
+        self.assertIn("Writing 3 recaps", told[0])
+        self.assertIn("1 recap you asked for from your imported sessions wasn't written", told[0])
+        self.assertIn("your plan doesn't include recaps", told[0])
+
+    async def test_one_written_and_one_not_never_reads_1_recaps(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._import_queued[campaign.id] = [100]
+        bot._import_unhonoured[campaign.id] = ["recaps are switched off"]
+        await bot._tell_import_news(GUILD, self.store)
+        text = bot.post.await_args.args[1]
+        self.assertIn("Writing 1 recap from", text)
+        self.assertIn("wasn't written", text)
+
     async def test_sessions_with_nothing_open_give_one_line_for_the_whole_import(self) -> None:
         for day in (1, 2, 3):
             await self.imported(day, recap=True)

@@ -636,6 +636,23 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
         self.assertEqual(bot._group_made, {})
 
+    async def test_a_press_that_told_the_group_meanwhile_leaves_the_round_silent(self) -> None:
+        bot = fake_bot()  # no questions open: the last answer releases its recap
+        one = self.group(100, 1)
+        calls = 0
+
+        async def held(gid: int) -> list[Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return one
+            bot._group_made.clear()  # (the press wrote the rest and told them all, ours too)
+            return []
+
+        bot.recap_holds.held = held
+        await bot.release_recap_holds(GUILD)
+        bot.post.assert_not_awaited()  # one line came from the press, none from the round
+
     async def test_a_hold_made_without_saying_posts_nothing_at_all(self) -> None:
         bot = fake_bot()  # nothing to answer: the recap is queued at once
         result = await bot._hold_or_queue(campaign(), "s9", AT, 66, DM, say=False)
