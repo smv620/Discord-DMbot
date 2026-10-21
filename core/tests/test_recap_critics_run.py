@@ -45,14 +45,20 @@ class Smart(fx.Canned):
         super().__init__(*answers)
         self.says: list[dict[int, tuple[bool, list[int]]]] = []
         self.raw: list[str] = []
+        self.always: str | None = None  # an answer to every motive call, once `raw` is spent
+        self.down = False  # every motive call fails
         self.motive_sent: list[str] = []
 
     async def complete(self, system: str, text: str, **kw: Any) -> Reply:
         if system != mo.SYSTEM:
             return await super().complete(system, text, **kw)
         self.motive_sent.append(text)
+        if self.down:
+            raise AIError("down")
         if self.raw:
             return Reply(self.raw.pop(0), False, 10, 10, "m")
+        if self.always is not None:
+            return Reply(self.always, False, 10, 10, "m")
         said = self.says.pop(0) if self.says else {}
         block = text.split("<sentences>")[1].split("</sentences>")[0]
         asked = re.findall(r"^\[(\d+)\] (.*)$", block, re.MULTILINE)
@@ -393,7 +399,74 @@ class Criticising(WorkerHarness):
             job = await self.go()
         self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
         self.assertIn("avenge", job.summary)  # waiting for the call that can tell, not cut
-        self.assertIsNone(job.critics)  # the loop has not begun
+        self.assertEqual(job.critics["round"], 0)  # the loop has not read anything
+
+    async def drive(self, job: Job, cycles: int) -> Job:
+        """Let the recap try again each time it is due, `cycles` times (an outage lasts)."""
+        for _ in range(cycles):
+            if job.finished:
+                break
+            self.clock.now = max(self.clock.now, job.next_at) + 1
+            job = await self.worker.run(1, self.one.id, 100) or job
+        return job
+
+    async def test_an_outage_of_two_days_waits_without_failing_or_spending_the_jobs_calls(
+        self,
+    ) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        told = AsyncMock()
+        self.worker._unchecked = told
+        job = await self.drive(await self.go(), 6)  # the first holds
+        calls_at_first_hold, started = job.calls, self.clock.now
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        spent_then = job.spent
+        job = await self.drive(job, 30)  # well past two simulated days
+        self.assertGreater(self.clock.now - started, 2 * 86400)
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))  # still waiting
+        self.assertEqual(job.calls, calls_at_first_hold)  # not the job's own calls: no CAP
+        loop = cr.loop_from_json(job.critics)
+        # the waiting tries had their own budget: at most WAIT_CALLS a try, and a try is one wait
+        self.assertLessEqual(job.spent - spent_then, cr.WAIT_CALLS * 3 * (loop.waits + 1))
+        self.assertIn("avenge", job.summary)  # nothing cut, nothing shipped
+        # the backoff: 15 minutes, 1 hour, 4 hours, then every 12 hours
+        self.assertEqual([cr.wait_for(n) for n in range(5)], [900, 3600, 14400, 43200, 43200])
+        # after three days unchecked the DM is told, once
+        self.assertTrue(loop.told)
+        job = await self.drive(job, 10)
+        told.assert_awaited_once()
+        # the service answers: the check reads the draft, and the invented motive is fixed
+        fast.down = False
+        job = await self.drive(job, 6)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertNotIn("avenge", job.summary)
+
+    async def test_answers_that_keep_coming_back_incomplete_wait_within_their_budget(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        fast.always = json.dumps({"checks": []})  # every sentence left out
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.drive(await self.go(), 40)
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        self.assertLess(job.calls, pl.MAX_CALLS)  # waiting never spends the job's own calls
+        self.assertIn("avenge", job.summary)
+        fast.always = None  # the call answers properly again
+        job = await self.drive(job, 6)
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("avenge", job.summary)
+
+    async def test_an_answer_that_leaves_the_motive_sentence_out_is_asked_again(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        left_out = [
+            {"sentence": n, "reason": False, "lines": [], "recap": False}
+            for n in range(1, len(rd.sentences_of(WITH_MOTIVE)) + 1)
+            if n != MOTIVE_AT
+        ]
+        fast.raw = [json.dumps({"checks": left_out})]
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.settle(await self.go(), 6)
+        self.assertGreaterEqual(len(fast.motive_sent), 2)  # asked again, not taken as "no reason"
+        self.assertNotIn("avenge", job.summary)  # and the invented motive did not ship
 
     async def test_a_speaker_who_stops_between_the_replies_begins_the_loop_again(self) -> None:
         agreed = {fx.DM, fx.ALICE, fx.BOB}

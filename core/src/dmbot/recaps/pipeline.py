@@ -125,11 +125,10 @@ SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 PLOT_TOKENS = 1200  # room for up to eight changes as JSON
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
-CRITIC_ERRORS_MAX = 2  # service errors in the loop before it stops and the draft goes on
+CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
 # Why the loop stopped before any draft was read: the recap then waits for its check (below),
 # or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
 STOP_ERRORS, STOP_CEILING, STOP_TALLY = "service errors", "job ceiling", "day's tally"
-CHECK_RETRY_S = 900  # the check is tried again this long after the service failed
 CHECK_TALLY_RETRY_S = 3600  # and this long after the day's tally was reached (it is a rolling day)
 CHECK_WAIT = cr.CHECK_WAIT  # (the words live with the loop's other fixed wording)
 
@@ -182,6 +181,7 @@ class RecapWorker:
         consenting: Callable[[int], Consenting],
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
+        unchecked: Notify | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
@@ -234,6 +234,7 @@ class RecapWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._notify = notify
+        self._unchecked = unchecked  # tells the DM once that a recap could not be checked
         self._allowance = allowance
         self._now = clock
 
@@ -373,15 +374,19 @@ class RecapWorker:
         schema: dict[str, Any] | None = None,
         stage: str = "",
         soft: bool = False,
+        free: bool = False,
     ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns). `soft`: a call of the critics loop (#2255), whose
-        failure never fails a recap that is already written: it only waits, and the loop stops
-        after `CRITIC_ERRORS_MAX` of them."""
+        failure never fails a recap that is already written: it only waits, and after
+        `CRITIC_ERRORS_MAX` of them a draft not yet read waits for its check (`_hold`). `free`: a
+        call of a recap that waits for its check, which has its own small budget
+        (`cr.WAIT_CALLS` a try): counted in the day's tally (`spent`) but not against the job's
+        own calls, so waiting can never fail the job."""
         # Counted from the stored job, not the one handed in: a try can make several calls (the
         # writer, then the formatter and its re-run, #2074), and each one must count.
         now = await self._store.get(gid, cid, job.session_at) or job
-        calls, spent = now.calls + 1, now.spent + 1
+        calls, spent = now.calls + (0 if free else 1), now.spent + 1
         await self._store.update(gid, cid, job.session_at, calls=calls, spent=spent)
         try:
             if schema is None:
@@ -1222,10 +1227,11 @@ class RecapWorker:
         (the motive check, then PlotBot, and the grader's marks it already has); if every critic
         passes the loop is done; if not, the writer revises with all their changes at once and the
         revision is read in its turn, at most `cr.MAX_ROUNDS` readings in all. Each step is saved
-        before the next, so a restart never repays for one that finished. The loop is optional
-        like the grader: a service that keeps failing, or a ceiling nearly reached, stops it and
-        the draft goes on. What is never shipped (a motive nobody said, a secret PlotBot found)
-        is cut in code at the end, or the job fails as it does for any unfixable check."""
+        before the next, so a restart never repays for one that finished. A service that keeps
+        failing, or the day's tally within reach, makes a draft not yet read wait for its check
+        (`_hold`); one that was read keeps the best reading made. What is never shipped (a motive
+        nobody said, a secret PlotBot found) is cut in code at the end, or the job fails as it
+        does for any unfixable check."""
         loop = cr.loop_from_json(job.critics)
         today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
         if job.errors >= CRITIC_ERRORS_MAX:
@@ -1280,13 +1286,19 @@ class RecapWorker:
         draft was graded with. The motive check's result is saved before PlotBot is asked, so a
         PlotBot call that fails does not make the next try pay for it again."""
         lines = {s.number: s.text for s in play}
+        waiting = loop.waits > 0  # a try of a recap that waits: its own small budget of calls
         if loop.motives is None:
             asked = mo.candidates(sentences)
             found: list[cr.Change] = []
-            for batch in mo.batches(asked):
+            batches = mo.batches(asked)
+            if waiting and len(batches) + 1 > cr.WAIT_CALLS:
+                # The motive check and PlotBot would not fit the waiting budget: wait again.
+                return await self._hold(gid, cid, job, loop, STOP_ERRORS)
+            for batch in batches:
                 raw = await self._call(
                     gid, cid, job, self._fast, mo.SYSTEM, mo.message(batch, lines, inputs.previous),
                     mo.answer_tokens(len(batch)), schema=mo.SCHEMA, stage="motives", soft=True,
+                    free=waiting,
                 )  # fmt: skip
                 if raw is None:
                     return await self._store.get(gid, cid, job.session_at)
@@ -1304,7 +1316,12 @@ class RecapWorker:
             # draft that PlotBot has not read never takes the place of one that it has.
             first = cr.best_from(job.summary, job.music, job.grade, found)
             loop = replace(
-                loop, motives=tuple(found), best=first if loop.best is None else loop.best
+                loop,
+                motives=tuple(found),
+                best=first if loop.best is None else loop.best,
+                waits=0,  # a reading got through: the waiting is over
+                since=0,
+                told=False,
             )
             await self._save_loop(gid, cid, job, loop)
             job = await self._store.get(gid, cid, job.session_at) or job
@@ -1320,7 +1337,7 @@ class RecapWorker:
             raw = await self._call(
                 gid, cid, job, self._careful, cr.plot_system(),
                 cr.plot_message(sheet, memory, inputs.previous, sentences),
-                PLOT_TOKENS, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True,
+                PLOT_TOKENS, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
             )  # fmt: skip
             if raw is None:
                 return await self._store.get(gid, cid, job.session_at)
@@ -1497,6 +1514,36 @@ class RecapWorker:
         self._revised.discard(key)
         self._written.pop(key, None)
 
+    async def _hold(self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str) -> Job | None:
+        """No draft could be read (the service, or the day's tally): the recap waits for its check
+        and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
+        hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
+        (`cr.WAIT_CALLS`, kept out of the job's calls). After 3 days the DM is told once that
+        DMbot couldn't finish checking it, and may read and approve it themselves; players never
+        see an unchecked draft unless the DM approves it."""
+        now = int(self._now())
+        since = loop.since or now
+        delay = cr.wait_for(loop.waits)
+        if why == STOP_TALLY:
+            delay = max(delay, CHECK_TALLY_RETRY_S)  # the day's tally is a rolling day
+        told = loop.told
+        if not told and now - since >= cr.UNCHECKED_AFTER_S:
+            told = True
+            if self._unchecked is not None:
+                try:
+                    await self._unchecked(gid, cid, job)
+                except Exception:
+                    log.exception("Recap: the unchecked notice failed")
+        log.info(
+            "Recap: the check waits (%s), wait %d; tried again in %d s", why, loop.waits, delay
+        )
+        await self._store.update(
+            gid, cid, job.session_at,
+            critics=replace(loop, waits=loop.waits + 1, since=since, told=told).to_json(),
+            errors=0, next_at=now + delay, last_error=CHECK_WAIT,
+        )  # fmt: skip
+        return await self._store.get(gid, cid, job.session_at)
+
     async def _stop_critics(
         self, gid: int, cid: str, job: Job, loop: cr.Loop, inputs: Inputs, why: str
     ) -> Job | None:
@@ -1521,13 +1568,7 @@ class RecapWorker:
             # ceiling is the reason (waiting would never change it).
             if why == STOP_CEILING:
                 return await self._fail(gid, cid, job, CAP)
-            wait = CHECK_TALLY_RETRY_S if why == STOP_TALLY else CHECK_RETRY_S
-            log.info("Recap: the check waits (%s); tried again in %d s", why, wait)
-            await self._store.update(
-                gid, cid, job.session_at,
-                errors=0, next_at=int(self._now()) + wait, last_error=CHECK_WAIT,
-            )  # fmt: skip
-            return await self._store.get(gid, cid, job.session_at)
+            return await self._hold(gid, cid, job, loop, why)
         prose = rd.Prose(best.summary, best.music)
         cut = 0
         if best.hard:
@@ -1720,7 +1761,7 @@ class RecapWorker:
         self, gid: int, cid: str, job: Job, calls: int, spent: int, error: str
     ) -> None:
         """A critics-loop call failed: count it and wait, but never fail the job (the loop stops
-        by itself after `CRITIC_ERRORS_MAX`, and the draft goes on)."""
+        by itself after `CRITIC_ERRORS_MAX`: a draft not yet read then waits, `_hold`)."""
         errors = job.errors + 1
         await self._store.update(
             gid,
@@ -1728,7 +1769,8 @@ class RecapWorker:
             job.session_at,
             errors=errors,
             next_at=int(self._now()) + BACKOFF_S[min(errors, len(BACKOFF_S)) - 1],
-            last_error=SERVICE,
+            # (a recap that is waiting for its check keeps saying so between its tries)
+            last_error=CHECK_WAIT if cr.loop_from_json(job.critics).waits > 0 else SERVICE,
             calls=calls,
             spent=spent,
         )

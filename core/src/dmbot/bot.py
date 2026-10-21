@@ -273,7 +273,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, name_answers, short, voice
+from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -1235,6 +1235,7 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda gid: lambda: self.consent.consenting(gid),
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
+                unchecked=self.recap_unchecked,
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
@@ -8397,6 +8398,17 @@ class DMBot(commands.AutoShardedBot):
         if say:
             await self._say_writing(campaign, channel_id, session_at)
         return True
+
+    async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
+        """A recap that DMbot could not finish checking for three days (#2255): said once on the
+        DM screen, with the link to the recap page where the DM may read and approve it. Nothing
+        goes to the table. Fixed words only."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        link = page_link(self.settings.site_url, gid, cid, job.session_at)
+        where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+        await self.post(campaign.dm_screen_channel_id, f"{critics.UNCHECKED_TOLD}{where}")
 
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""

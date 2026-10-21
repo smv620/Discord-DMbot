@@ -47,6 +47,27 @@ CHECK_WAIT = (
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon "
     "as it can."
 )  # on a recap whose draft could not be read yet (the service, or the day's tally): it waits
+# How long a recap that cannot be checked waits between tries: 15 minutes, 1 hour, 4 hours, then
+# every 12 hours. It never fails for waiting. After 3 days the DM is told once that DMbot could
+# not finish checking it and may read and approve it on the recap page (the bot advises, the DM
+# decides).
+WAIT_SCHEDULE_S = (900, 3600, 14400)
+WAIT_LONG_S = 43200
+UNCHECKED_AFTER_S = 3 * 86400
+WAIT_CALLS = (
+    2  # AI calls a waiting try may make: not counted against the job's own, but in the day's
+)
+UNCHECKED_TOLD = (
+    "📜 Your recap is written but DMbot couldn't finish checking it. You can read it and approve "
+    "it yourself on the recap page."
+)
+
+
+def wait_for(waits: int) -> int:
+    """Seconds to wait before the next try, after `waits` waits."""
+    return WAIT_SCHEDULE_S[waits] if waits < len(WAIT_SCHEDULE_S) else WAIT_LONG_S
+
+
 STYLE_UNCHECKED = "Check: the style could not be checked this time."
 GENERIC = {
     "missed": "include what matters to the story so far that the draft leaves out",
@@ -223,6 +244,12 @@ class Loop:
     # The motive check's result for the draft being read, kept so a failed PlotBot call does not
     # make the next try pay for it again; None until it has run.
     motives: tuple[Change, ...] | None = None
+    # While no draft can be read, the recap waits for its check (the pipeline's `_hold`): how many
+    # waits so far (the backoff), when the first began, and whether the DM was told that it could
+    # not be finished (once). All cleared when a reading gets through.
+    waits: int = 0
+    since: int = 0
+    told: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -233,6 +260,9 @@ class Loop:
             "notes": list(self.notes),
             "cut": self.cut,
             "motives": None if self.motives is None else [c.to_json() for c in self.motives],
+            "waits": self.waits,
+            "since": self.since,
+            "told": self.told,
         }
 
 
@@ -257,6 +287,9 @@ def loop_from_json(raw: object) -> Loop:
         tuple(str(n) for n in notes) if isinstance(notes, list) else (),
         raw["cut"] if type(raw.get("cut")) is int else 0,
         motives,
+        raw["waits"] if type(raw.get("waits")) is int and raw["waits"] >= 0 else 0,
+        raw["since"] if type(raw.get("since")) is int and raw["since"] >= 0 else 0,
+        raw.get("told") is True,
     )
 
 

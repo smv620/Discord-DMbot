@@ -16,6 +16,7 @@ website's role cannot read the campaign's names.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from typing import Any
 
 from dmbot.consent import TERMS_VERSION
@@ -112,6 +113,23 @@ def _share_view(row: dict[str, Any]) -> dict[str, Any]:
     return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
+def _unchecked_since(row: Mapping[str, Any], ready: bool) -> int:
+    loop = critics.loop_from_json(row.get("critics"))
+    return 0 if ready or loop.waits == 0 else loop.since
+
+
+def _unchecked_sentences(row: Mapping[str, Any], ready: bool) -> list[int]:
+    if _unchecked_since(row, ready) == 0:
+        return []
+    from dmbot.recaps import draft, motives
+
+    return [
+        n
+        for n, text in enumerate(draft.sentences_of(strip_cues(row["summary"])), start=1)
+        if motives.states_purpose(text)
+    ]
+
+
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     state, status = row["state"], row["status"]
     ready = state == "ready" and status == "draft"
@@ -136,6 +154,12 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # The recap is written and waits for its last check (#2255): a note for the DM's card
         # (the words are `error`); not a failure and nothing to do.
         "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
+        # While it waits for its check: since when (Unix seconds, 0 before the first wait), and the
+        # sentences the word list marks as likely to state a reason or a plan (their numbers, from
+        # 1), which no check has read: for the DM's page, where they may read it and approve it
+        # themselves. Players never see an unchecked draft unless the DM approves it.
+        "uncheckedSince": _unchecked_since(row, ready),
+        "uncheckedSentences": _unchecked_sentences(row, ready),
         "canEdit": ready,
         "canPost": ready,
         "canTryAgain": status == "draft"
