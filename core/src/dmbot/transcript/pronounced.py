@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from typing import NamedTuple
 
 RECENT_S = 20.0  # a name said this recently is what "it" means
 MAX_PHRASE = 30  # characters of the pronunciation kept
@@ -40,7 +40,9 @@ _NOT_A_PRONUNCIATION = frozenset(
         "over", "just", "kind", "similar", "exactly", "weird", "void", "name", "word", "loud",
         "louder", "quickly", "slowly", "loudly", "quietly", "softly", "clearly", "fast", "slow",
         "strange", "funny", "different", "same", "tomorrow", "today", "tonight", "king",
-        "queen", "no", "whatever", "whichever", "however",
+        "queen", "whatever", "whichever", "sir", "lord", "lady", "dame", "prince", "princess",
+        "emperor", "empress", "hero", "mister", "mr", "mrs", "ms", "dr", "saint", "captain",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
     )
 )  # fmt: skip
 # What follows a person's name in "say it like Gandalf would".
@@ -57,10 +59,15 @@ _FUNCTION = frozenset(
 )  # fmt: skip
 
 
-@dataclass(frozen=True, slots=True)
-class Pronounced:
-    entity_id: str
+class Sound(NamedTuple):
+    """A pronunciation found in a line: the words, where its cue starts, and whether it has a
+    pronunciation's shape (a hyphen, an all-capitals syllable, or a word split in two as speech
+    to text writes "Kay el"). A sound without that shape counts only when it is close to the name
+    it belongs to (the caller checks): "was pronounced Tuesday" is not a pronunciation."""
+
     phrase: str
+    at: int
+    shaped: bool
 
 
 def sound_key(phrase: str) -> str:
@@ -73,7 +80,7 @@ def mentions_pronunciation(text: str) -> bool:
     return bool(_BARE.search(text) or _LIKE.search(text))
 
 
-def _phrase(text: str, start: int) -> tuple[str, int] | None:
+def _phrase(text: str, start: int) -> tuple[str, int, bool] | None:
     """The word after `start` (hyphens kept), plus a short second one when STT split it ("Kay
     el"). Shouted syllables ("KAY-el") are written as a name ("Kay-el")."""
     first = _WORD.match(text, start)
@@ -84,8 +91,6 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
     # slowly", "it's pronounced similar to…").
     if not (first.group()[0].isupper() or "-" in first.group()):
         return None
-    if first.group().lower().endswith("ly") and "-" not in first.group():
-        return None  # an adverb, not a sound
     words, end = [first.group()], first.end()
     second = re.match(r"[ \t]+([A-Za-z]{1,4})\b(?![-'’])", text[end:])
     if (
@@ -101,6 +106,11 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
     follow = _WORD.match(text, end + (gap.end() if gap else 0))
     if follow is not None and follow.group().lower() in _COMPARING:
         return None  # "say it like Gandalf would": a comparison, not a sound
+    shaped = (
+        len(words) > 1
+        or "-" in words[0]
+        or any(len(w) > 1 and w.isupper() for w in words)  # (a shouted syllable)
+    )
     pieces = [
         "-".join(p.capitalize() if p.isupper() and len(p) > 1 else p for p in w.split("-"))
         for w in words
@@ -108,18 +118,18 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
     phrase = " ".join(pieces)
     if len(phrase) > MAX_PHRASE:
         return None
-    return phrase[0].upper() + phrase[1:], end
+    return phrase[0].upper() + phrase[1:], end, shaped
 
 
-def find(text: str) -> list[tuple[str, int]]:
-    """(the pronunciation, where the phrase that introduced it starts) for each one in the line."""
-    out: list[tuple[str, int]] = []
+def find(text: str) -> list[Sound]:
+    """Each pronunciation in the line, in order."""
+    out: list[Sound] = []
     for pattern in (_BARE, _LIKE):
         for m in pattern.finditer(text):
             got = _phrase(text, m.end())
             if got is not None:
-                out.append((got[0], m.start()))
-    return sorted(out, key=lambda x: x[1])
+                out.append(Sound(got[0], m.start(), got[2]))
+    return sorted(out, key=lambda x: x.at)
 
 
 class PronunciationWatcher:
@@ -129,7 +139,7 @@ class PronunciationWatcher:
     def __init__(self) -> None:
         self._recent: deque[tuple[float, int, str]] = deque(maxlen=12)  # (time, speaker, name)
 
-    def parse(self, text: str, raw: str | None = None) -> list[tuple[str, int]]:
+    def parse(self, text: str, raw: str | None = None) -> list[Sound]:
         """The pronunciations in a line and where each cue starts. `text` is the cleaned line
         (the names are found in it); `raw` is the line as heard: the cleaner turns a misheard
         "Kale" into the name "Kael", so the sound is read from the raw line when it has the same
@@ -138,22 +148,20 @@ class PronunciationWatcher:
         if raw is not None and hits:
             heard = find(raw)
             if len(heard) == len(hits):
-                hits = [(h[0], at) for h, (_, at) in zip(heard, hits, strict=True)]
+                hits = [Sound(h.phrase, at.at, h.shaped) for h, at in zip(heard, hits, strict=True)]
         return hits
 
-    def attach(
-        self,
-        user_id: int,
-        hits: Sequence[tuple[str, int]],
-        names: Sequence[tuple[str, int]],
-        now: float,
-    ) -> list[Pronounced]:
-        """`names`: (entity id, where in the line) of each name said in its main spelling. A
-        pronunciation belongs to the one name said before it in the same line, else to the one
-        name said in the last few seconds; never to a guess between two."""
-        found: list[Pronounced] = []
-        for phrase, at in hits:
-            before = {eid for eid, where in names if where < at}
+    def resolve(
+        self, hits: Sequence[Sound], names: Sequence[tuple[str, int]], now: float
+    ) -> list[tuple[Sound, str]]:
+        """Which name each sound belongs to, changing nothing: the one name said before it in the
+        same line, else the one name said in the last few seconds; never a guess between two.
+        `names`: (entity id, where in the line) of each name said in its main spelling. A line the
+        off-topic filter holds is resolved when it is heard, so its find keeps the name it had
+        then, and is counted only if the line turns out to be game talk."""
+        found: list[tuple[Sound, str]] = []
+        for sound in hits:
+            before = {eid for eid, where in names if where < sound.at}
             if len(before) > 1:
                 continue
             if len(before) == 1:
@@ -163,9 +171,24 @@ class PronunciationWatcher:
                 if len(recent) != 1:
                     continue
                 target = next(iter(recent))
-            found.append(Pronounced(target, phrase))
+            found.append((sound, target))
+        return found
+
+    def remember(self, user_id: int, names: Sequence[tuple[str, int]], now: float) -> None:
+        """The names just said, for the next line's "it"."""
         for eid, _ in names:
             self._recent.append((now, user_id, eid))
+
+    def attach(
+        self,
+        user_id: int,
+        hits: Sequence[Sound],
+        names: Sequence[tuple[str, int]],
+        now: float,
+    ) -> list[tuple[Sound, str]]:
+        """`resolve`, then remember the names."""
+        found = self.resolve(hits, names, now)
+        self.remember(user_id, names, now)
         return found
 
     def note(
@@ -175,11 +198,10 @@ class PronunciationWatcher:
         names: Sequence[tuple[str, int]],
         now: float,
         raw: str | None = None,
-    ) -> list[Pronounced]:
+    ) -> list[tuple[Sound, str]]:
         """`parse` and `attach` in one."""
-        return self.attach(
-            user_id, self.parse(text, raw) if names or self._recent else [], names, now
-        )
+        hits = self.parse(text, raw) if names or self._recent else []
+        return self.attach(user_id, hits, names, now)
 
     def forget(self, user_id: int) -> None:
         kept = [x for x in self._recent if x[1] != user_id]

@@ -1557,6 +1557,39 @@ class SaveAndResume(SessionTests):
             await self.settle()
             self.assertEqual(counted, [], answer)
 
+    def pronounced_calls(self, table: Any) -> list[Any]:
+        """Every line is looked at for a name said with its pronunciation; the calls are kept."""
+        calls: list[Any] = []
+        self.fixing(table)
+        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign,assignment]
+            (user, kw.get("held_key"))
+        )
+        return calls
+
+    async def test_a_game_talk_line_is_looked_at_for_a_pronunciation_at_once(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [(PLAYER, None)])
+
+    async def test_a_held_line_is_looked_at_with_its_key_so_it_waits_for_its_label(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.said(table, "Kerr called about the spreadsheet")
+        self.said(table, "Cerric is pronounced Seh-rick", at_ms=5_000)
+        await self.settle()
+        self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
+        self.assertTrue(all(key is not None for _, key in calls))  # both are held
+
+    async def test_a_table_that_is_no_longer_live_is_not_looked_at(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None
+        self.bot.tables.pop(GUILD, None)  # the session has moved on
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [])
+
     async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
         table = await self.filtered("1 other\n2 game")
         self.said(table, "my boss called again")
