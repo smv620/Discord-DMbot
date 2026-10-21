@@ -94,6 +94,7 @@ class Inputs:
     corrections: Sequence[str] = ()
     # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
     campaign_name: str = ""
+    ending: int = 0  # which of the ten closing lines this recap takes (fixed_lines.ENDINGS)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -1070,7 +1071,9 @@ class RecapWorker:
             # are never counted or checked as story; the stored original has them too, so the
             # DM's edit is compared with the text they were shown.
             summary=(
-                wrapped := fixed_lines.wrap(job.summary, inputs.campaign_name, inputs.secret_names)
+                wrapped := fixed_lines.wrap(
+                    job.summary, inputs.campaign_name, inputs.secret_names, inputs.ending
+                )
             ),
             original=wrapped,
             title=finish.title,

@@ -61,6 +61,10 @@ async def load_inputs(
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,
+        # The next of the ten closing lines after last time's recap's (#2253).
+        ending=fixed_lines.next_ending(
+            fixed_lines.ending_of(bridge.summary) if bridge is not None else None
+        ),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
         # The campaign's example recaps, or the defaults: for the writer's tone only (#2075).
         style=await styles.examples_for(guild_id, campaign_id) if styles is not None else (),

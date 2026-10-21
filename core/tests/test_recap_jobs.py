@@ -264,7 +264,7 @@ class Working(Base):
         paragraphs = job.summary.split("\n\n")
         self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
         self.assertEqual(
-            paragraphs[-1], "And so the party continues the adventure of The Ember Road."
+            paragraphs[-1], "And so we continue, the epic adventure of The Ember Road."
         )
         self.assertEqual(fixed_lines.without(job.summary), fx.SUMMARY)  # the story is untouched
         self.assertEqual(job.original, job.summary)  # the DM's edit is compared with what they saw
@@ -277,7 +277,7 @@ class Working(Base):
         job = await self.go()
         self.assertNotIn("Ember", job.summary)
         self.assertTrue(job.summary.startswith("Previously…"))
-        self.assertTrue(job.summary.endswith("continues the adventure."))
+        self.assertTrue(job.summary.endswith("the epic adventure."))
 
     async def test_a_good_session_goes_all_the_way_and_the_dm_is_told_once(self) -> None:
         await self.setUpWorker(self.happy())

@@ -14,19 +14,23 @@ from dmbot.recaps.text import narration_of, words
 from tests import recap_fixtures as fx
 
 NAME = "The Ember Road"
+BARE_CLOSING = fl.CLOSING_BARE.format(ending=fl.ENDINGS[0])
 
 
 class TheLines(unittest.TestCase):
     def test_the_campaigns_name_is_in_both_lines(self) -> None:
         opening, closing = fl.lines(NAME)
         self.assertEqual(opening, "Previously, on The Ember Road…")
-        self.assertEqual(closing, "And so the party continues the adventure of The Ember Road.")
+        self.assertEqual(closing, "And so we continue, the epic adventure of The Ember Road.")
 
     def test_a_secret_name_is_never_spoken_the_lines_go_without_a_name(self) -> None:
         for secret in (("The Ember Road",), ("ember road",), ("Ember",)):
             with self.subTest(secret=secret):
-                self.assertEqual(fl.lines(NAME, secret), (fl.OPENING_BARE, fl.CLOSING_BARE))
-        self.assertEqual(fl.lines("", ()), (fl.OPENING_BARE, fl.CLOSING_BARE))
+                self.assertEqual(
+                    fl.lines(NAME, secret),
+                    (fl.OPENING_BARE, BARE_CLOSING),
+                )
+        self.assertEqual(fl.lines("", ()), (fl.OPENING_BARE, BARE_CLOSING))
         # a secret that is not this name changes nothing
         self.assertEqual(fl.lines(NAME, ("Vecnor",))[0], "Previously, on The Ember Road…")
 
@@ -39,16 +43,16 @@ class TheLines(unittest.TestCase):
         paragraphs = wrapped.split("\n\n")
         self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
         self.assertEqual(
-            paragraphs[-1], "And so the party continues the adventure of The Ember Road."
+            paragraphs[-1], "And so we continue, the epic adventure of The Ember Road."
         )
         self.assertEqual(paragraphs[1:-1], fx.SUMMARY.split("\n\n"))
 
     def test_wrapping_twice_or_a_text_with_a_line_already_changes_nothing(self) -> None:
         once = fl.wrap(fx.SUMMARY, NAME)
         self.assertEqual(fl.wrap(once, NAME), once)
-        closed = fx.SUMMARY + "\n\nAnd so the party continues the adventure of Somewhere."
+        closed = fx.SUMMARY + "\n\nAnd so we continue, the epic quest of Somewhere."
         only_opening = fl.wrap(closed, NAME)
-        self.assertEqual(only_opening.count("And so the party"), 1)
+        self.assertEqual(only_opening.count("And so we continue"), 1)
         self.assertTrue(only_opening.startswith("Previously, on The Ember Road…"))
 
     def test_without_takes_both_lines_off_and_leaves_the_story(self) -> None:
@@ -65,7 +69,7 @@ class TheLines(unittest.TestCase):
         built = script.build("The Silver Lock", 4, wrapped)
         spoken = " ".join(p.spoken for p in built.paragraphs)
         self.assertIn("Previously, on The Ember Road", spoken)
-        self.assertIn("And so the party continues the adventure of The Ember Road", spoken)
+        self.assertIn("And so we continue, the epic adventure of The Ember Road", spoken)
 
     def test_the_editor_has_room_for_the_longest_draft_with_both_lines(self) -> None:
         longest = round(length_for(8).last_high) * 8  # the most a draft may be, in characters
@@ -77,18 +81,49 @@ class TheLines(unittest.TestCase):
         story = "Previously on the road they walked… and on.\n\nMore."
         self.assertEqual(fl.without(story), story)
         self.assertTrue(fl.wrap(story, NAME).startswith("Previously, on The Ember Road…"))
-        ending = "The tale ends: And so the party continues the adventure of the Lost Mine."
+        ending = "The tale ends: And so we continue, the epic quest of the Lost Mine."
         self.assertEqual(fl.without(ending), ending)  # a sentence is not the closing paragraph
-        self.assertTrue(fl.wrap(ending, NAME).endswith("adventure of The Ember Road."))
+        self.assertTrue(fl.wrap(ending, NAME).endswith("epic adventure of The Ember Road."))
 
     def test_retyped_dots_still_count_and_a_name_cannot_break_the_shape(self) -> None:
         retyped = (
-            "Previously, on The Ember Road...\n\nStory.\n\n"
-            "And so the party continues the adventure."
+            "Previously, on The Ember Road...\n\nStory.\n\nAnd so we continue, the grand adventure."
         )
         self.assertEqual(fl.without(retyped), "Story.")
         self.assertEqual(fl.usable_name("Road… of Doom...", ()), "Road of Doom")
         self.assertEqual(fl.without(fl.wrap("Story.", "Dots… and (cues)")), "Story.")
+
+
+class TheTenEndings(unittest.TestCase):
+    def test_the_list_keeps_the_owners_order(self) -> None:
+        self.assertEqual(len(fl.ENDINGS), 10)
+        self.assertEqual(fl.ENDINGS[0], "epic adventure")
+        self.assertEqual(fl.ENDINGS[-1], "epic quest")
+
+    def test_each_variant_is_found_and_two_recaps_in_a_row_end_differently(self) -> None:
+        last: int | None = None
+        seen = []
+        for _ in range(12):  # past ten, so the rotation wraps
+            index = fl.next_ending(last)
+            wrapped = fl.wrap(fx.SUMMARY, NAME, (), index)
+            self.assertEqual(fl.without(wrapped), fx.SUMMARY)  # the finder finds this variant
+            self.assertEqual(fl.ending_of(wrapped), index)
+            self.assertNotEqual(index, last)
+            seen.append(index)
+            last = fl.ending_of(wrapped)
+        self.assertEqual(seen[:10], list(range(10)))
+        self.assertEqual(seen[10], 0)
+
+    def test_a_garbled_or_missing_ending_starts_the_rotation_again(self) -> None:
+        garbled = "Story.\n\nAnd so we continue the gret advnture of Ember Road!"
+        self.assertEqual(fl.without(garbled), "Story.")  # still found, loosely
+        self.assertIsNone(fl.ending_of(garbled))
+        self.assertIsNone(fl.ending_of("Story only."))
+        self.assertEqual(fl.next_ending(None), 0)
+        self.assertEqual(fl.next_ending(9), 0)
+
+    def test_no_name_still_ends_with_the_chosen_variant(self) -> None:
+        self.assertEqual(fl.lines("", (), 5)[1], "And so we continue, the epic tale.")
 
 
 class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
