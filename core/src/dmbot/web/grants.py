@@ -136,19 +136,42 @@ async def grants(db: Database) -> list[GrantRow]:
     ]
 
 
-async def log_entries(db: Database, limit: int = 200) -> list[LogEntry]:
-    """The newest changes first."""
+async def log_entries(db: Database, limit: int = 200, offset: int = 0) -> list[LogEntry]:
+    """The newest changes first; `offset` skips that many of the newest (a page of the log)."""
     async with db.grant_writer() as conn:
         cur = await conn.execute(
             "SELECT admin_email, action, discord_user_id, at FROM access_log"
-            " ORDER BY id DESC LIMIT %s",
-            (limit,),
+            " ORDER BY id DESC LIMIT %s OFFSET %s",
+            (limit, offset),
         )
         rows = await cur.fetchall()
     return [
         LogEntry(r["admin_email"], cast(Action, r["action"]), int(r["discord_user_id"]), r["at"])
         for r in rows
     ]
+
+
+async def log_page(db: Database, page: int, size: int) -> tuple[list[LogEntry], int]:
+    """Page `page` (from 1) of the log, newest first, and the number of pages (at least one).
+    The count and the rows come from one statement, so they share one snapshot: a change made
+    meanwhile can't make them disagree (a repeated row, or a last page that is missing). The
+    count is joined to the page, so it still comes back when the page is past the end."""
+    async with db.grant_writer() as conn:
+        cur = await conn.execute(
+            "SELECT c.n, l.id, l.admin_email, l.action, l.discord_user_id, l.at"
+            " FROM (SELECT count(*) AS n FROM access_log) c"
+            " LEFT JOIN LATERAL (SELECT id, admin_email, action, discord_user_id, at"
+            " FROM access_log ORDER BY id DESC LIMIT %s OFFSET %s) l ON true"
+            " ORDER BY l.id DESC NULLS LAST",
+            (size, (page - 1) * size),
+        )
+        rows = await cur.fetchall()
+    pages = max(1, -(-(int(rows[0]["n"]) if rows else 0) // size))
+    return [
+        LogEntry(r["admin_email"], cast(Action, r["action"]), int(r["discord_user_id"]), r["at"])
+        for r in rows
+        if r["action"] is not None
+    ], pages
 
 
 async def _lock(conn: Conn, discord_user_id: int) -> None:

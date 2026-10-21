@@ -42,7 +42,7 @@ ALICE_EMAIL: str = ALICE.email or ""
 WEBHOOK_KEY = b"k" * 24
 WEBHOOK_SECRET = "whsec_" + base64.b64encode(WEBHOOK_KEY).decode()
 SUPPORT_FROM = "DMbot support <info@example.org>"
-ALERTS_FROM = "DMbot alerts <jarvis@example.org>"
+ALERTS_FROM = "DMbot alerts <alerts@example.org>"
 MAIL = MailSettings(
     host="smtp.example.org",
     user="dmbot@example.org",
@@ -889,11 +889,11 @@ class TheSettings(unittest.TestCase):
             "SMTP_APP_PASSWORD": "p",
             "MAIL_FROM": "DMbot <accounts@example.org>",
             "MAIL_SUPPORT_FROM": "info@example.org",
-            "MAIL_ALERTS_FROM": "jarvis@example.org",
+            "MAIL_ALERTS_FROM": "alerts@example.org",
         }
         got = load_mail_settings(env)
         self.assertEqual(
-            (got.support_sender, got.alerts_sender), ("info@example.org", "jarvis@example.org")
+            (got.support_sender, got.alerts_sender), ("info@example.org", "alerts@example.org")
         )
         fallback = load_mail_settings({**env, "MAIL_SUPPORT_FROM": "", "MAIL_ALERTS_FROM": ""})
         self.assertEqual(fallback.support_sender, fallback.sender)
