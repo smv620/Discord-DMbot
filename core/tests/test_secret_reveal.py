@@ -240,6 +240,7 @@ class AHeldLine(unittest.IsolatedAsyncioTestCase):
 
         table = fake_table()
         table.held = {(user, 5): "the Arcane Brotherhood"}
+        table.held_spelled = {}  # (#2184: the labelling also releases a held spelled-out name)
         table.topic_calls, table.topic_failures, table.heard = 0, 0, []
         table.topic_tokens = [0, 0]
         table.vocabulary = MagicMock()
