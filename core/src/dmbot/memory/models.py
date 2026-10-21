@@ -18,7 +18,8 @@ ENTITY_STATUSES = (PROPOSED, CONFIRMED, REJECTED, MERGED)
 FACT_STATUSES = (PROPOSED, CONFIRMED, REJECTED)  # aliases and relations
 LIVE = (PROPOSED, CONFIRMED)
 
-ALIAS_KINDS = ("full", "short", "nickname", "title", "misheard")
+# "old": the spelling a name had before the DM fixed it (#2170): matched, never listened for.
+ALIAS_KINDS = ("full", "short", "nickname", "title", "misheard", "old")
 MENTION_METHODS = ("exact", "sound", "spelling", "context", "dm")
 FIX, KEEP = "fix", "keep"  # correction actions
 

@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from dmbot.dm_screen import secret_posts
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
@@ -36,8 +37,12 @@ def question_text(name: str, entries: int = 1, *, private: bool = False) -> str:
     )
 
 
-def kept_text(name: str) -> str:
-    return f"👍 **{name}** stays secret. DMbot won't ask about it again this session."
+def kept_text() -> str:
+    """The answer, without the name (#2097)."""
+    return (
+        "👍 It stays secret. You'll find it on the name's card. DMbot won't ask about it again "
+        "this session."
+    )
 
 
 def name_in(interaction: discord.Interaction) -> str:
@@ -90,10 +95,16 @@ class RevealButton(
         if interaction.user.id not in campaign.dm_user_ids:
             await _tell(interaction, NOT_YOURS)
             return
+        if secret_posts.is_exposed(campaign.dm_screen_visibility, interaction.guild is not None):
+            # The screen has opened up since this was asked: answer without writing the name back.
+            await interaction.response.edit_message(
+                content=secret_posts.HIDDEN, view=None, allowed_mentions=NO_PINGS
+            )
+            return
         name = name_in(interaction)
         if self.act == "n":
             await interaction.response.edit_message(
-                content=kept_text(name), view=None, allowed_mentions=NO_PINGS
+                content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
             return
         memory = bot.memory

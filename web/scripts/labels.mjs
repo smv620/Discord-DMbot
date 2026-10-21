@@ -128,6 +128,10 @@ export const siteButtons = [
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note
+  // The recap page's share controls (#2119), on the website, not in Discord.
+  "Make a link",
+  "Turn the link off",
+  "Make a new link",
 ];
 
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that

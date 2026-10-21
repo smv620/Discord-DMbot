@@ -30,13 +30,16 @@ from dmbot.account_id import from_dmbot_id, to_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
+from dmbot.logs import mask_tokens
 from dmbot.web import (
     admin_api,
     email_signin,
     entitlements_writer,
     feedback,
+    imports,
     offers,
     sessions,
+    shared_recaps,
     strays,
     support,
     tokens,
@@ -68,6 +71,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
+from dmbot.web.recap_requests import STATUS, read_instructions, rewrite, send_instructions
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -77,6 +81,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    share_recap,
 )
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
@@ -232,7 +237,7 @@ def create_app(
         except Exception:
             # Any crash is still JSON the website can read, inside the CORS wrapper below
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.
-            log.exception("Request failed: %s %s", request.method, request.url.path)
+            log.exception("Request failed: %s %s", request.method, mask_tokens(request.url.path))
             response = JSONResponse({"error": "server"}, status_code=500)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -559,10 +564,24 @@ def create_app(
         "too_soon": (429, "too_soon"),
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
+        # Importing older sessions (#2105)
+        "not_a_dm": (403, "not_a_dm"),
+        "not_on_a_paid_plan": (402, "not_on_a_paid_plan"),
+        "try_it_campaign": (402, "try_it_campaign"),
+        "too_many_files": (413, "too_many_files"),
+        "bad_files": (422, "bad_files"),
+        "bad_mapping": (422, "bad_mapping"),
+        "bad_date": (422, "bad_date"),
+        "no_lines_kept": (422, "no_lines_kept"),
+        "too_many_lines": (413, "too_many_lines"),
+        "too_many_speakers": (413, "too_many_speakers"),
+        "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
+        "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
+        "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -614,6 +633,63 @@ def create_app(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
+    # polled by the page. The words are never logged.
+    instructions_limit = RateLimit(60, count=12)
+    request_status = STATUS
+
+    async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
+        """A small JSON body, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            return json.loads(bytes(data))
+        except ValueError:
+            return None
+
+    @app.post("/me/recaps/{ref}/instructions", status_code=202)
+    async def me_recap_instructions(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if instructions_limit.take(f"instructions:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await send_instructions(
+                db, session, ref, body.get("text") if isinstance(body, dict) else None
+            )
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/instructions/{request_id}")
+    async def me_recap_instructions_state(
+        ref: str, request_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_instructions(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/rewrite")
+    async def me_recap_rewrite(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if instructions_limit.take(f"rewrite:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await rewrite(db, session, ref, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/recaps/{ref}/audio")
@@ -672,6 +748,64 @@ def create_app(
                 return JSONResponse(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The public, read-only link of a posted recap (#2118): no sign-in, the token is the key.
+    # Per address, because anyone can call it; the same answer for every way it can fail.
+    # The page itself is strict; the audio has its own, looser one (a player asks for a file in
+    # several ranges). Behind a proxy, settings.client_ip_header must be set or every visitor shares
+    # one address.
+    shared_limit = RateLimit(60, count=30)
+    shared_audio_limit = RateLimit(60, count=240)
+
+    def shared_gate(request: Request, limit: RateLimit = shared_limit) -> None:
+        verdict = limit.take(limit_key(client_address(request)))
+        if verdict != "ok":
+            raise HTTPException(
+                status_code=429 if verdict == "wait" else 503,
+                detail="slow_down" if verdict == "wait" else "busy",
+                headers={"Retry-After": "60"},
+            )
+
+    @app.get("/recaps/{token}")
+    async def shared_recap(token: str, request: Request) -> JSONResponse:
+        shared_gate(request)
+        found = await shared_recaps.read_shared(db, recap_files, token, settings.api_url)
+        if found is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return JSONResponse(
+            found, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"}
+        )
+
+    @app.get("/recaps/{token}/audio/{kind}")
+    async def shared_recap_audio(token: str, kind: str, request: Request) -> FileResponse:
+        shared_gate(request, shared_audio_limit)
+        path = await shared_recaps.audio_for(db, recap_files, token, kind)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return FileResponse(
+            path,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"},
+        )
+
+    @app.post("/me/recaps/{ref}/share")
+    async def me_recap_share(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Turn the link of a posted recap on or off, or make a new one: `{"action": "on" |
+        "off" | "new"}`. DMs of the campaign only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        try:
+            return await share_recap(
+                db, session, ref, action if isinstance(action, str) else "",
+                outside_engine=settings.outside_engine,
+            )  # fmt: skip
+        except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
@@ -762,6 +896,128 @@ def create_app(
                 db, session, now=clock(), enforce_plans=settings.enforce_plans
             )
         }
+
+    # Importing older sessions (#2105): DMs of the campaign only (the doors check), paid plans only.
+    # The files travel in the JSON body as text ({name, text}); nothing is kept or logged.
+    # Importing is the heaviest thing the API does: a few a minute for a person is plenty.
+    import_limit = RateLimit(60, count=6)
+
+    async def imports_enabled() -> None:
+        """Off by default (DMBOT_IMPORTS): the routes do not exist for anyone until dev1 has
+        checked a real import."""
+        if not settings.imports_on:
+            raise HTTPException(status_code=404, detail="not_found")
+
+    async def import_body(request: Request, session: Session) -> dict[str, Any]:
+        """The JSON body, read with a running size cap (a declared length is not trusted) and
+        parsed away from the event loop. Counted per account before anything is read."""
+        key = f"import:{session.user_id}"
+        if import_limit.take(key) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > imports.MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="too_big")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > imports.MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="too_big")
+            chunks.append(chunk)
+        try:
+            body = await asyncio.to_thread(json.loads, b"".join(chunks))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad_files") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="bad_files")
+        return body
+
+    def import_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.post("/me/campaigns/{ref}/imports/preview", dependencies=[Depends(imports_enabled)])
+    async def me_import_preview(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        body = await import_body(request, session)
+        try:
+            return await imports.preview(
+                db, session, ref, body.get("files"), links=body.get("links"),
+                outside=settings.outside_engine, now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/members", dependencies=[Depends(imports_enabled)])
+    async def me_import_members(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.search_members(
+                db, session, ref, q, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post("/me/campaigns/{ref}/imports/check", dependencies=[Depends(imports_enabled)])
+    async def me_import_check(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        body = await import_body(request, session)
+        try:
+            return await imports.check(
+                db, session, ref, body.get("files"), body.get("mapping"),
+                links=body.get("links"), outside=settings.outside_engine, now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post(
+        "/me/campaigns/{ref}/imports", status_code=202, dependencies=[Depends(imports_enabled)]
+    )
+    async def me_import(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        try:  # the DM and the plan come first: nothing is read for anyone who may not import
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        body = await import_body(request, session)
+        try:
+            return await imports.confirm(
+                db, session, ref, body.get("files"), body.get("plan"),
+                links=body.get("links"), outside=settings.outside_engine, now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/{import_id}", dependencies=[Depends(imports_enabled)])
+    async def me_import_progress(ref: str, import_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.progress(
+                db, session, ref, import_id, outside=settings.outside_engine
+            )
+        except RecapError as err:
+            raise import_refusal(err) from None
 
     @app.get("/me/campaigns/{ref}/transcripts")
     async def me_transcripts(ref: str, signed: Signed) -> dict[str, Any]:

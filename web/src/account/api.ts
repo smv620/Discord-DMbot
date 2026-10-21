@@ -202,6 +202,11 @@ export interface Recap {
   housekeeping: string[];
   /** Names the recap kept that DMbot didn't know: the DM's copy only, never posted (#2027). */
   toConfirm?: string[];
+  /** Held until the DM answers DMbot's questions about names (#2169, #2210). Missing from an API
+   * older than that: then nothing is held. */
+  waitingForNames?: boolean;
+  /** How many of those questions are left. */
+  namesToAnswer?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -216,10 +221,35 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** When a fixed spelling changed this recap's text (Unix seconds), else null (#2178). A posted
+   * recap's Discord message keeps the old spelling. Missing from an older API. */
+  respelledAt?: number | null;
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
   approval?: RecapApproval;
+  /** On a list row: a public link is on (#2118). Missing from an older API. */
+  shared?: boolean;
+  /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
+   * its own address. Missing from an older API. */
+  share?: RecapShare;
+}
+
+/** A recap's public link: on or off, and where it is. */
+export interface RecapShare {
+  on: boolean;
+  path: string | null;
+}
+export type ShareAction = "on" | "off" | "new";
+
+/** A shared recap as anyone with the link sees it: the table version only (#2118). */
+export interface PublicRecap {
+  title: string;
+  text: string;
+  /** Unix seconds. */
+  postedAt: number;
+  /** Only the kinds that exist; each is a full address that needs no sign-in. */
+  audio: { voice?: string; music?: string };
 }
 
 /** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
@@ -394,6 +424,82 @@ export interface Rewritten {
   needsApproval: boolean;
 }
 
+/** Importing older sessions (#2107; core #2105). The files travel as text; nothing a speaker said
+ * comes back, only names and counts. */
+export interface ImportFileIn {
+  name: string;
+  text: string;
+}
+export interface ImportSuggestion {
+  userId: string;
+  name: string;
+  /** Why this person: "remembered" from an earlier import, or the "display_name" matched. */
+  why: string;
+}
+export interface ImportSpeaker {
+  /** Exactly as written in the file. */
+  label: string;
+  lines: number;
+  suggested: ImportSuggestion | null;
+}
+export interface ImportPreviewFile {
+  name: string;
+  format: string | null;
+  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  error: string | null;
+  suggestedDate: string | null;
+  lineCount: number;
+  /** Lines of talk that is not the game (Craig's placeholders). */
+  leftOut: number;
+  speakers: ImportSpeaker[];
+}
+export interface ImportPreview {
+  files: ImportPreviewFile[];
+  estimate: { sessions: number; fastCalls: number };
+}
+export interface ImportMember {
+  userId: string;
+  name: string;
+  /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
+   * only a suggestion has named them: Check says what is dropped. */
+  agreed?: boolean;
+}
+export interface ImportDropped {
+  not_matched: number;
+  not_agreed: number;
+  bot: number;
+  left_out: number;
+}
+export interface ImportCheckFile {
+  name: string;
+  error: string | null;
+  leftOut: number;
+  speakers: { label: string; kept: number; dropped: ImportDropped }[];
+}
+export interface ImportCheck {
+  files: ImportCheckFile[];
+  estimate: { sessions: number; fastCalls: number };
+}
+/** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
+export interface ImportPlan {
+  mapping: Record<string, string>;
+  sessions: { file: string; date: string; order: number }[];
+}
+export type ImportState = "waiting" | "working" | "done" | "failed";
+export interface ImportStarted {
+  importId: string;
+  sessions: { file: string; state: ImportState }[];
+  estimate: { sessions: number; fastCalls: number };
+}
+export interface ImportProgress {
+  sessions: {
+    file: string;
+    date: string;
+    state: ImportState;
+    reason: string | null;
+  }[];
+}
+
 /** One saved session of a campaign (#1501); times are Unix seconds, `endedAt` null when it was
  * still running or stopped early. */
 export interface TranscriptSessionItem {
@@ -556,6 +662,16 @@ export type ApiErrorKind =
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
+  | "too-many-lines" // a file has more lines than one import takes (#2107)
+  | "too-many-speakers" // a file has more different names than one import takes (#2107)
+  | "try-it-campaign" // importing is not part of Try It (#2107)
+  | "too-many-files" // more than 20 files in one import (#2107)
+  | "bad-files" // the files could not be read as sent (#2107)
+  | "bad-mapping" // the speaker choices don't fit the files (#2107)
+  | "bad-date" // a session's date is not a date (#2107)
+  | "no-lines-kept" // every line of a file would be dropped (#2107)
+  | "not-posted" // only a posted recap can have a public link (#2118)
+  | "bad-action" // not one of on, off or new (#2118)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -693,6 +809,31 @@ export interface AccountApi {
     corrections: string[],
     style: string[],
   ): Promise<Rewritten>;
+  /** Importing older sessions (#2107): look at the files, find people to match, check what would be
+   * kept, start, and follow the work. Missing from an API older than #2105. */
+  importPreview?(
+    ref: string,
+    files: ImportFileIn[],
+    links?: string[],
+  ): Promise<ImportPreview>;
+  importMembers?(ref: string, q: string): Promise<ImportMember[]>;
+  importCheck?(
+    ref: string,
+    files: ImportFileIn[],
+    mapping: Record<string, string>,
+    links?: string[],
+  ): Promise<ImportCheck>;
+  importStart?(
+    ref: string,
+    files: ImportFileIn[],
+    plan: ImportPlan,
+    links?: string[],
+  ): Promise<ImportStarted>;
+  importProgress?(ref: string, importId: string): Promise<ImportProgress>;
+  /** Turn a posted recap's public link on, off, or make a new one (#2118). */
+  shareRecap?(ref: string, action: ShareAction): Promise<RecapShare>;
+  /** A shared recap by its link's secret, for anyone, signed in or not (#2118). */
+  publicRecap?(token: string): Promise<PublicRecap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
@@ -766,7 +907,27 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_type: "bad-type",
   bad_clip: "bad-clip",
   no_consent: "no-consent",
+  not_a_dm: "not-allowed",
+  not_on_a_paid_plan: "no-paid-plan",
+  too_many_lines: "too-many-lines",
+  too_many_speakers: "too-many-speakers",
+  try_it_campaign: "try-it-campaign",
+  too_many_files: "too-many-files",
+  bad_files: "bad-files",
+  bad_mapping: "bad-mapping",
+  bad_date: "bad-date",
+  no_lines_kept: "no-lines-kept",
+  not_posted: "not-posted",
+  bad_action: "bad-action",
 };
+
+/** An import request's body with its Google Doc links, only when there are any (#2140). */
+function withLinks<T extends object>(
+  body: T,
+  links: string[] | undefined,
+): T & { links?: string[] } {
+  return links && links.length > 0 ? { ...body, links } : body;
+}
 
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
 export function httpApi(
@@ -781,14 +942,19 @@ export function httpApi(
     body?: unknown,
     asFile = false,
     raw?: Blob,
+    anonymous = false,
   ): Promise<unknown> {
     let response: Response;
     try {
-      const init: RequestInit = {
-        method,
-        credentials: "include",
-        headers: { "X-DMbot-Request": "1", Accept: "application/json" },
-      };
+      // A call for someone who is not signed in (a shared recap's link) sends no cookie and no custom
+      // header: it needs neither, and a plain GET stays a simple request.
+      const init: RequestInit = anonymous
+        ? { method, credentials: "omit", headers: { Accept: "application/json" } }
+        : {
+            method,
+            credentials: "include",
+            headers: { "X-DMbot-Request": "1", Accept: "application/json" },
+          };
       if (raw !== undefined) {
         // A recorded clip goes as it is, with its own type; the API reads webm and ogg only.
         init.headers = { ...init.headers, "Content-Type": raw.type };
@@ -807,7 +973,11 @@ export function httpApi(
       let cueProblems: CueProblem[] = [];
       try {
         const body: unknown = await response.json();
-        code = String((body as { error?: unknown }).error ?? "");
+        // Most routes answer {"error": code}; the import routes' refusals are {"detail": code}.
+        const found = body as { error?: unknown; detail?: unknown };
+        code = String(
+          found.error ?? (typeof found.detail === "string" ? found.detail : ""),
+        );
         cueProblems = readCueProblems(body);
       } catch {
         // No JSON body: a plain server error.
@@ -1061,6 +1231,50 @@ export function httpApi(
       )) as Rewritten;
       return { ...got, recap: recapFrom(got.recap) };
     },
+    // Google Doc links ride along with the files (#2140); the API opens each and names it "Google Doc N.txt".
+    importPreview: async (ref, files, links) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/preview`,
+        withLinks({ files }, links),
+      )) as ImportPreview,
+    importMembers: async (ref, q) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
+        )) as { members: ImportMember[] }
+      ).members,
+    importCheck: async (ref, files, mapping, links) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
+        withLinks({ files, mapping }, links),
+      )) as ImportCheck,
+    importStart: async (ref, files, plan, links) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports`,
+        withLinks({ files, plan }, links),
+      )) as ImportStarted,
+    importProgress: async (ref, importId) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}`,
+      )) as ImportProgress,
+    shareRecap: async (ref, action) =>
+      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/share`, {
+        action,
+      })) as RecapShare,
+    publicRecap: async (token) =>
+      (await call(
+        "GET",
+        `/recaps/${encodeURIComponent(token)}`,
+        undefined,
+        false,
+        undefined,
+        true,
+      )) as PublicRecap,
     decideRecap: async (ref, action) =>
       (await call(
         "POST",

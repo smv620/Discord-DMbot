@@ -162,6 +162,8 @@ services:
       DMBOT_FREE_USERS: ${DMBOT_FREE_USERS:-}
       # The same switch as the bot's: the site's hand-over accept checks the campaign cap too.
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
+      # Importing older sessions (#2105): off until dev1 has checked a real import.
+      DMBOT_IMPORTS: ${DMBOT_IMPORTS:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the

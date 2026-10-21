@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { questions } from "../src/content/pricing";
 import {
+  RECAPS_LIVE,
   RECAPS_PER_MONTH,
   RECAP_AUDIO_PER_MONTH,
   allowanceSentence,
@@ -32,10 +33,10 @@ describe("the allowance sentence", () => {
 });
 
 describe("where it shows", () => {
-  it("is not in the plans FAQ today (recaps are off)", () => {
+  it("is in the plans FAQ only while recaps are live", () => {
     const answer = questions.find((f) => f.question === "What's different between the plans?")?.answer;
     expect(answer).toBeTruthy();
-    expect(answer).not.toMatch(/recaps a month/);
+    expect(/recaps a month/.test(answer ?? "")).toBe(RECAPS_LIVE);
   });
 
   it("is a Help step with what happens when the month is used, and no narration while it is off", () => {

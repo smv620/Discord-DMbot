@@ -79,7 +79,7 @@ describe("the recap steps (shown only while recaps are on, by the page)", () => 
   it("say the DM screen tells the DM, then email unless turned off, and the DM screen's buttons", async () => {
     const all = recaps(await help());
     expect(all).toContain("DMbot tells you on the DM screen when a recap is ready");
-    expect(all).toContain("It also emails you, unless you turn that off.");
+    expect(all).toContain("It also emails you, unless you turn that off, and the email says why if a recap couldn't be written");
     expect(all).toContain("Read it");
     expect(all).toContain("Press Post to the table to send it to your players; DMbot asks once first.");
     expect(all).toContain("Not this one");

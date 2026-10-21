@@ -16,10 +16,11 @@ const switchRecapsOn = {
     if (!/\/content\/recap-words\.ts$/.test((id.split("?")[0] ?? ""))) return null;
     let out = code;
     for (const name of SWITCHES) {
-      const off = `export const ${name} = false;`;
-      // Fail the build rather than smoke-test a site where the switch is still off.
-      if (!out.includes(off)) throw new Error(`smoke build: "${off}" not found in recap-words.ts`);
-      out = out.replace(off, `export const ${name} = true;`);
+      // A switch may already be on in the source (RECAPS_LIVE is, once recaps are live), so match
+      // either value. Fail the build rather than smoke-test a site where a switch can't be found.
+      const declaration = new RegExp(`export const ${name} = (?:false|true);`);
+      if (!declaration.test(out)) throw new Error(`smoke build: "export const ${name} = …;" not found in recap-words.ts`);
+      out = out.replace(declaration, `export const ${name} = true;`);
     }
     return { code: out, map: null };
   },
