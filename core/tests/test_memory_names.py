@@ -1031,6 +1031,48 @@ class NameCards(NamesTest):
         await card._same(self.it())
         self.assertTrue(card.is_finished())
 
+    async def test_the_flip_options_carry_the_state_they_change_to(self) -> None:
+        from dmbot.ui import name_card
+
+        view = name_card.Connect(
+            self.campaign.id, self.bell.id, "Belleros", [("r1", "a 🤫"), ("r2", "b")], secrets=True
+        )
+        self.assertEqual([o.value for o in view.flip.options], ["r1:show", "r2:hide"])
+
+    async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card, name_dropdown
+
+        corin, vessa = await self.two_names()  # (Belleros is not connected to either yet)
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True
+        )
+        self.fresh()
+        for who, first in ((DM, vessa.id), (MANAGER, corin.id)):
+            it = self.it(who)
+            await name_dropdown.show_dropdown(it, self.campaign.id, self.bell.id, "member_of")
+            options = it.response.edited[0][1].pick.options
+            order = [o.value for o in options]
+            self.assertEqual(order[0], first, who)  # (Corin sorts before Vessa, A to Z)
+
+    async def test_the_dropdown_pages_at_25_names(self) -> None:
+        from dmbot.ui import name_dropdown
+
+        for n in range(26):
+            await ui.save_name(self.memory, self.campaign, f"Extra {n:02}", "npc", [], [])
+        self.fresh()
+        it = self.it()
+        await name_dropdown.show_dropdown(
+            it, self.campaign.id, self.bell.id, "member_of", mode=name_dropdown.AZ
+        )
+        self.assertEqual(len(it.response.edited[0][1].pick.options), 25)
+        later = self.it()
+        await name_dropdown.show_dropdown(
+            later, self.campaign.id, self.bell.id, "member_of", mode=name_dropdown.AZ, page=99
+        )  # past the last page: the last one
+        self.assertGreaterEqual(len(later.response.edited[0][1].pick.options), 1)
+
     async def test_only_a_dm_is_offered_the_flip_and_a_manager_pressing_it_changes_nothing(
         self,
     ) -> None:
@@ -1174,7 +1216,7 @@ class NameCards(NamesTest):
         await dropdown._switch(again)
         self.assertEqual(again.response.edited[0][1].mode, "az")
         picked = SimpleNamespace(values=[corin.id])
-        dropdown.pick = picked  # type: ignore[assignment]
+        dropdown.pick = picked
         done = self.it()
         await dropdown._picked(done)
         self.assertIn("🧭 Saved:", done.response.edited[0][0])

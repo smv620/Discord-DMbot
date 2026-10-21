@@ -61,7 +61,10 @@ def ordered(
     found = candidates(names, entity_id)
     if mode == AZ:
         return alphabetical(found)
-    graph = names.neighbours if secrets else names.confirmed_neighbours
+    graph: dict[str, frozenset[str]] = dict(names.confirmed_neighbours)
+    if secrets:  # a DM's order also counts the connections they keep secret
+        for a, there in names.secret_neighbours.items():
+            graph[a] = graph.get(a, frozenset()) | there
     return by_closeness(found, distances(graph, entity_id))
 
 
