@@ -298,7 +298,9 @@ class ThePath(NamesTest):
 
     async def test_the_confirmation_is_recorded_as_the_dms_own_writing(self) -> None:
         await self.read()
-        self.assertEqual(self.confirmed.await_args.args[3], "own_writing")
+        call = self.confirmed.await_args
+        assert call is not None
+        self.assertEqual(call.args[3], "own_writing")
 
     async def test_a_disguise_ends_as_a_secret_name_of_the_real_one_after_add_all(self) -> None:
         text = "Brother Aldric is really the lich Vecnor in disguise."
