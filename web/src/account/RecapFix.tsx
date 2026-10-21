@@ -9,9 +9,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { FIX_MAX_LETTERS, fixWords as words } from "../content/recap-fix";
-import { RECAP_FIX_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { RECAP_FIX_LIVE, RECAP_VOICE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type FixPoints, type Recap } from "./api";
 import { keepFocus } from "./focus";
+import RecapVoice from "./RecapVoice";
+import { voiceWords } from "../content/recap-voice";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60; // about two minutes: a sort can take up to 90 seconds
@@ -46,6 +48,12 @@ export default function RecapFix({
   const [started, setStarted] = useState<"approve" | "plain" | null>(null);
   const inFlight = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [cutOff, setCutOff] = useState(false);
+  // The words in the box as they are now: a spoken note that comes back later is added after whatever
+  // was typed while it was being turned into words.
+  const textRef = useRef("");
+  textRef.current = text;
 
   const fail = (error: unknown): string => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -141,6 +149,7 @@ export default function RecapFix({
     setCorrections(new Set());
     setStyle(new Set());
     setStarted(null);
+    setCutOff(false);
     try {
       const { requestId: id } = await api.sendFix(recap.ref, text.trim());
       setSorting(true);
@@ -232,15 +241,39 @@ export default function RecapFix({
       >
         {status}
       </p>
+      {cutOff && (
+        <p class="note" role="status">
+          {voiceWords.cutOff}
+        </p>
+      )}
+      {RECAP_VOICE_LIVE && (
+        <RecapVoice
+          api={api}
+          recap={recap}
+          onHeard={(heard) => {
+            // The words are only put in the box: nothing is sent until the DM presses Send.
+            // Words already typed stay: the heard words are added after them.
+            const now = textRef.current;
+            const joined = now.trim() === "" ? heard : `${now.trimEnd()} ${heard}`;
+            setCutOff(joined.length > FIX_MAX_LETTERS);
+            setText(joined.slice(0, FIX_MAX_LETTERS));
+            noteRef.current?.focus();
+          }}
+        />
+      )}
       <label class="field">
         {words.label}
         <textarea
+          ref={noteRef}
           rows={4}
           maxLength={FIX_MAX_LETTERS}
           value={text}
           disabled={!recap.canEdit}
           aria-describedby="recap-fix-count"
-          onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => {
+            setText((e.target as HTMLTextAreaElement).value);
+            setCutOff(false);
+          }}
         />
       </label>
       <p class="muted small" id="recap-fix-count">
