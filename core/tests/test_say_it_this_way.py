@@ -616,3 +616,29 @@ class TheSpokenWay(SaidAsTest):
         table.name_lookup = SimpleNamespace(entities=None)  # whatever goes wrong inside
         with self.assertLogs("dmbot.bot", level="ERROR"):
             self.bot._count_pronounced(table, SPEAKER, [(pronounced.Sound("X", 0, True), "e")])
+
+    async def test_a_secret_name_of_another_entry_is_never_the_sound_even_when_it_would_pass(
+        self,
+    ) -> None:
+        """Each of these sounds passes the shape and closeness rules on its own, so only the secret
+        check keeps it out."""
+        from dmbot.ui import names as ui
+
+        for secret, line in (
+            ("Kerrick", "Cerric is pronounced Kerrick"),  # close to the name, a plain word
+            ("Sehrick", "Cerric is pronounced Seh-rick"),  # shaped; the secret is written plain
+            ("Rick", "Cerric is pronounced Seh-rick"),  # one word of the shaped sound is secret
+            ("Seh Rick", "Cerric is pronounced Seh-rick"),  # the secret has two words
+        ):
+            await ui.save_name(self.memory, self.campaign, f"Ser {secret}", "npc", [], [secret])
+            table = await self.said((SPEAKER, line))
+            self.assertEqual(table.pronounced, {}, (secret, line))
+
+    async def test_the_same_lines_pass_without_the_secret(self) -> None:
+        """The control: the sounds above are kept when nothing is secret."""
+        for line, key in (
+            ("Cerric is pronounced Kerrick", "kerrick"),
+            ("Cerric is pronounced Seh-rick", "sehrick"),
+        ):
+            table = await self.said((SPEAKER, line))
+            self.assertEqual(table.pronounced, self.sound(key, line.split()[-1]), line)
