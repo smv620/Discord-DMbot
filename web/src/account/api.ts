@@ -458,12 +458,14 @@ export interface ImportCheck {
 /** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
 export interface ImportPlan {
   mapping: Record<string, string>;
-  sessions: { file: string; date: string; order: number }[];
+  /** `writeRecap` is sent only as `true`, and only for a session the DM ticked (#2221); the API
+   * counts nothing else. */
+  sessions: { file: string; date: string; order: number; writeRecap?: true }[];
 }
 export type ImportState = "waiting" | "working" | "done" | "failed";
 export interface ImportStarted {
   importId: string;
-  sessions: { file: string; state: ImportState }[];
+  sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
   estimate: { sessions: number; fastCalls: number };
 }
 export interface ImportProgress {

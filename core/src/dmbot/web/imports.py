@@ -498,6 +498,7 @@ async def confirm(
     by_name = {f.name: f for f in files}
     plans = _plans(files, mapping, c)
     chosen: list[tuple[File, ip.Plan, int]] = []
+    recaps_on: dict[str, bool] = {}  # the DM's "Write recaps" choice for each file (#2106)
     named: set[str] = set()
     for entry in entries:
         name = entry.get("file") if isinstance(entry, dict) else None
@@ -509,8 +510,9 @@ async def confirm(
         if plan.kept == 0:
             raise RecapError("no_lines_kept")
         chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
+        recaps_on[found.name] = entry.get("writeRecap") is True  # only a plain true counts
     batch = uuid.uuid4().hex
-    stored: list[dict[str, str]] = []
+    stored: list[dict[str, str | bool]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         for f, plan, started in chosen:
@@ -541,7 +543,16 @@ async def confirm(
                 raise RecapError("not_a_dm")
             if not done["session"]:
                 raise RecapError("no_lines_kept")
-            stored.append({"file": f.name, "state": "waiting"})
+            if recaps_on.get(f.name):
+                cur = await conn.execute(
+                    "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                    (c.guild_id, c.campaign_id, done["session"]),
+                )
+                if not (await cur.fetchone() or {}).get("r"):
+                    raise RecapError("not_a_dm")
+            stored.append(
+                {"file": f.name, "state": "waiting", "writeRecap": recaps_on.get(f.name, False)}
+            )
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered, outside)
