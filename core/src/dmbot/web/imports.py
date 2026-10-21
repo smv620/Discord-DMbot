@@ -512,7 +512,7 @@ async def confirm(
         chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
         recaps_on[found.name] = entry.get("writeRecap") is True  # only a plain true counts
     batch = uuid.uuid4().hex
-    stored: list[dict[str, str]] = []
+    stored: list[dict[str, str | bool]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         for f, plan, started in chosen:

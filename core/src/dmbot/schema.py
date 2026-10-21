@@ -7631,7 +7631,11 @@ IMPORT_RECAPS = """
         -- failed tries of the scan (it is given up on after a few), and whether the recap for
         -- this session has been dealt with (made, held, or decided against).
         ADD COLUMN scan_tries  INTEGER NOT NULL DEFAULT 0,
-        ADD COLUMN recap_started BOOLEAN NOT NULL DEFAULT FALSE;
+        ADD COLUMN recap_started BOOLEAN NOT NULL DEFAULT FALSE,
+        -- `scanned` is the claim (scan_from is when it was taken); a claim that never finished
+        -- (the bot stopped) is taken again after a while.
+        ADD COLUMN scan_finished BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN recap_tries INTEGER NOT NULL DEFAULT 0;
 
     -- dmbot_import_write_recap: set the choice of one stored import, only while it waits to be
     -- cleaned and only by a DM of the campaign in a server on the session's list. True when set.

@@ -247,6 +247,7 @@ def fake_bot(
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         recap_worker=object(),
         import_job=None,
+        _writing_said={},
         recap_holds=store if holds == "default" else holds,
         recap_allowed=AsyncMock(return_value=True),
         post=AsyncMock(return_value=True),

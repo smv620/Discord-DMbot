@@ -322,7 +322,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
-from dmbot.transcript.import_job import ImportJob, ImportStore
+from dmbot.transcript.import_job import ImportJob, ImportStore, Ready
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
@@ -487,6 +487,7 @@ SECRET_QUESTION_WAITING = (
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
+IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -955,6 +956,9 @@ class DMBot(commands.AutoShardedBot):
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
+        self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
+        self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
+        self._writing_said: dict[str, float] = {}  # campaign -> when "Writing a recap" was said
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # The rules archive channel (#1752) hears about every change to a campaign's house rules
@@ -7774,6 +7778,7 @@ class DMBot(commands.AutoShardedBot):
         dm: int,
         *,
         extractor_to_come: bool = True,
+        quiet: bool = False,
     ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
@@ -7783,7 +7788,9 @@ class DMBot(commands.AutoShardedBot):
         (waiting for answers), "queued" or "already" (a repeat: held or queued before).
         `extractor_to_come` is False when the story extractor has already run or will never run
         for the session (the DM pressing "Write a recap" after the end-of-session steps, or an
-        imported session): only open questions hold it, never a silent wait."""
+        imported session): only open questions hold it, never a silent wait. `quiet`: the DM was
+        asked about another recap of the same import already, so this hold is made asked but its
+        question is not posted again."""
         gid, cid = campaign.guild_id, campaign.id
         store = self.recap_holds
         if store is not None:
@@ -7803,7 +7810,7 @@ class DMBot(commands.AutoShardedBot):
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
                         return "held"
-                    sent = await self.post(
+                    sent = quiet or await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
                         view=hold_view(cid, session_at),
@@ -8004,6 +8011,10 @@ class DMBot(commands.AutoShardedBot):
             else "Find it on your recap page when it's ready."
         )
         lead = f"{note} " if note else ""
+        now = time.monotonic()
+        if not note and now - self._writing_said.get(campaign.id, -1e9) < 120:
+            return  # an import's recaps start together: one line, not one for each
+        self._writing_said[campaign.id] = now
         await self.post(
             channel_id,
             f"📜 {lead}Writing a recap of this session. {ready} "
@@ -9059,18 +9070,18 @@ class DMBot(commands.AutoShardedBot):
                     await self.import_job.run_round(guild.id)
                     await self.run_import_followups(guild.id)
                 except Exception:
-                    log.exception("Import: cleaning failed for a server")
+                    log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
 
     async def run_import_followups(self, gid: int) -> int:
         """After an imported session is cleaned (#2106): in date order, one per campaign, its name
-        scan (once; the DM is asked about the new names the usual way), then, for the sessions
-        the DM chose Write recaps for, the recap through the same hold as a live session, so it
-        waits for the name answers. Returns how many scans were done. The scan is claimed before
-        it runs, so two bots never both propose names; a scan that fails is given back and tried
+        scan (once), then, for the sessions the DM chose Write recaps for, the recap through the
+        same hold as a live session, so it waits for the name answers. Returns how many scans were
+        done. The scan is claimed before it runs, so two bots never both propose names (a claim
+        that never finished is retaken after a while); a scan that fails is given back and tried
         again, and let go (empty window, no hold) after `IMPORT_SCAN_TRIES` so it never blocks the
-        sessions after it. A recap that fails to start is tried again next round. Counts only in
-        the log."""
+        sessions after it. The DM hears of new names once per import, when its last session is
+        scanned, never once per session. Counts only in the log."""
         assert self.import_job is not None
         store = self.import_job.store
         done = 0
@@ -9080,9 +9091,10 @@ class DMBot(commands.AutoShardedBot):
                 if not await store.claim_scan(gid, ready.session_id, began):
                     continue  # another round or bot has it
                 try:
-                    await self._scan_import(gid, ready)
+                    added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     done += 1
+                    self._import_names.setdefault(ready.campaign_id, []).extend(added)
                 except Exception:
                     log.exception("Import: a session's name scan failed")
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
@@ -9090,60 +9102,115 @@ class DMBot(commands.AutoShardedBot):
                         await store.give_up_scan(gid, ready.session_id)
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
-                try:
-                    campaign = await self.campaigns.get(gid, ready.campaign_id)
-                    if campaign is not None:
-                        await self._import_recap(campaign, ready)
-                    await store.mark_recap_started(gid, ready.session_id)
-                except Exception:
-                    log.exception("Import: a session's recap could not be started; trying again")
+                await self._start_import_recap(gid, store, ready)
+        await self._tell_import_news(gid, store)
         return done
 
-    async def _scan_import(self, gid: int, ready: Any) -> None:
+    async def _start_import_recap(self, gid: int, store: ImportStore, ready: Ready) -> None:
+        """Start the recap of one scanned import. One that cannot be started is tried again next
+        round, up to `IMPORT_RECAP_TRIES` times, so it never blocks the others for ever."""
+        try:
+            campaign = await self.campaigns.get(gid, ready.campaign_id)
+            if campaign is not None:
+                why = await self._import_recap(campaign, ready)
+                if why:
+                    self._import_unhonoured.setdefault(ready.campaign_id, []).append(why)
+            await store.mark_recap_started(gid, ready.session_id)
+        except Exception:
+            log.exception("Import: a session's recap could not be started")
+            if await store.note_recap_failure(gid, ready.session_id) >= IMPORT_RECAP_TRIES:
+                await store.mark_recap_started(gid, ready.session_id)  # let go
+                self._import_unhonoured.setdefault(ready.campaign_id, []).append(
+                    "it could not be started"
+                )
+
+    async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
+        """Say once, on the DM screen, what an import found: the new names (when its last session
+        has been scanned), and the recaps that were asked for and could not be written."""
+        for cid in list(self._import_names):
+            if await store.pending_scans(gid, cid):
+                continue  # the import is not over: say it once at the end
+            names = self._import_names.pop(cid)
+            campaign = await self.campaigns.get(gid, cid)
+            if names and campaign is not None and campaign.dm_screen_channel_id is not None:
+                await self.post(
+                    campaign.dm_screen_channel_id, after_session_text(names), view=review_view(cid)
+                )
+        for cid, reasons in list(self._import_unhonoured.items()):
+            if await store.pending_scans(gid, cid):
+                continue  # once, at the end of the import
+            campaign = await self.campaigns.get(gid, cid)
+            del self._import_unhonoured[cid]
+            if campaign is not None and campaign.dm_screen_channel_id is not None:
+                noun = "recap" if len(reasons) == 1 else "recaps"
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    f"📜 {len(reasons)} {noun} you asked for from your imported sessions "
+                    f"wasn't written: {reasons[0]}.",
+                )
+
+    async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """The name scan of one imported session: the lines of people who still agree (asked after
-        the lines are read, since a person can stop at any moment) and nobody else's."""
+        the lines are read, since a person can stop at any moment) and nobody else's. Returns the
+        names proposed."""
         assert self.import_job is not None
         campaign = await self.campaigns.get(gid, ready.campaign_id)
         if self.memory is None or campaign is None:
             log.info("Import: no name scan (names are off, or the campaign is gone)")
-            return
+            return []
         rows = await self.import_job.store.scan_lines(gid, ready.session_id)
         agreed = await self.consent.consenting(gid)
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
-            return
+            return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         added = await self._propose_new_names(gid, ready.campaign_id, [t for _, t in lines], users)
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
+        return added
 
-    async def _import_recap(self, campaign: Campaign, ready: Any) -> None:
+    async def _import_recap(self, campaign: Campaign, ready: Ready) -> str:
         """The recap of one scanned import the DM asked for: through the same gates as after a live
         session (the switch, the DM's own choice, the plan) and the same hold for the DM's name
         answers (#2174). Without a DM-screen channel to ask in, it is queued without a hold.
-        Raises when it could not be started, so the round tries again."""
+        Returns why it was not written ("" when it was started or held); raises when it could not
+        be tried (a plan that cannot be checked), so the round tries again."""
         gid = campaign.guild_id
         if self.recaps is None:
-            return
+            return ""
         if not self.settings.recaps_on:
             log.info("Import: no recap written (recaps are off)")
-            return
+            return "recaps are switched off"
         if not campaign.recaps_text:
             log.info("Import: no recap written (the DM chose none)")
-            return
+            return "recaps are off for this campaign"
         if not await self.plan_allows("recap", gid, campaign, fail_open=False):
-            log.info("Import: no recap written (not in the plan, or it can't be checked)")
-            return
+            if await self.plan_allows("recap", gid, campaign, fail_open=True):
+                raise RuntimeError("the plan could not be checked")  # not a no: try again
+            log.info("Import: no recap written (not in the plan)")
+            return "your plan doesn't include recaps"
         dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
         if dm <= 0:
             log.warning("Import: no recap written (the campaign has no DM)")
-            return
+            return "the campaign has no DM"
         channel = campaign.dm_screen_channel_id
         if channel is None:
             await self.recaps.enqueue(gid, campaign.id, ready.started_at, dm_user_id=dm)
-            return
-        await self._hold_or_queue(
-            campaign, ready.session_id, ready.started_at, channel, dm, extractor_to_come=False
+            return ""
+        # One question for the whole import, not one per session: when an earlier recap of this
+        # campaign is already waiting and was asked about, this one waits quietly beside it.
+        asked_before = self.recap_holds is not None and any(
+            h.campaign_id == campaign.id and h.asked for h in await self.recap_holds.held(gid)
         )
+        await self._hold_or_queue(
+            campaign,
+            ready.session_id,
+            ready.started_at,
+            channel,
+            dm,
+            extractor_to_come=False,
+            quiet=asked_before,
+        )
+        return ""
 
     async def _recap_audio_loop(self) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own

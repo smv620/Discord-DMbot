@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
-from dmbot.transcript.import_job import ImportStore
+from dmbot.transcript.import_job import STALE_SCAN_S, ImportStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
@@ -57,7 +57,8 @@ class TheStore(WithImports):
         early = await self.imported(1)
         ready = await self.store.ready_for_scan(GUILD)
         self.assertEqual([r.session_id for r in ready], [early])  # the later one waits its turn
-        self.assertTrue(await self.store.claim_scan(GUILD, early, 10))
+        self.assertTrue(await self.store.claim_scan(GUILD, early, int(time.time())))
+        await self.store.finish_scan(GUILD, early, int(time.time()))
         self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [late])
 
     async def test_an_earlier_session_still_being_cleaned_holds_the_later_ones_back(self) -> None:
@@ -73,18 +74,19 @@ class TheStore(WithImports):
     async def test_a_scan_is_claimed_once_and_its_window_is_kept(self) -> None:
         sid = await self.imported(1)
         self.assertIsNone(await self.store.window(GUILD, sid))
-        self.assertTrue(await self.store.claim_scan(GUILD, sid, 100))
-        self.assertFalse(await self.store.claim_scan(GUILD, sid, 300))  # once
-        await self.store.finish_scan(GUILD, sid, 160)
-        self.assertEqual(await self.store.window(GUILD, sid), (100, 160))
+        now = int(time.time())
+        self.assertTrue(await self.store.claim_scan(GUILD, sid, now))
+        self.assertFalse(await self.store.claim_scan(GUILD, sid, now + 5))  # once
+        await self.store.finish_scan(GUILD, sid, now + 60)
+        self.assertEqual(await self.store.window(GUILD, sid), (now, now + 60))
         self.assertEqual(await self.store.ready_for_scan(GUILD), [])
 
     async def test_a_failed_scan_is_given_back_with_a_count_and_can_be_let_go(self) -> None:
         sid = await self.imported(1)
-        await self.store.claim_scan(GUILD, sid, 100)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
         self.assertEqual(await self.store.release_scan(GUILD, sid), 1)
         self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [sid])
-        await self.store.claim_scan(GUILD, sid, 200)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
         self.assertEqual(await self.store.release_scan(GUILD, sid), 2)
         await self.store.give_up_scan(GUILD, sid)
         self.assertEqual(await self.store.window(GUILD, sid), (0, 0))  # no questions to wait on
@@ -93,12 +95,15 @@ class TheStore(WithImports):
     async def test_a_recap_is_ready_once_scanned_asked_for_and_not_yet_started(self) -> None:
         sid = await self.imported(1, recap=True)
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])  # not scanned yet
-        await self.store.claim_scan(GUILD, sid, 100)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])  # not finished yet
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
         self.assertEqual([r.session_id for r in await self.store.ready_for_recap(GUILD)], [sid])
         await self.store.mark_recap_started(GUILD, sid)
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])
         other = await self.imported(2)  # (the DM did not ask for this one's recap)
-        await self.store.claim_scan(GUILD, other, 100)
+        await self.store.claim_scan(GUILD, other, int(time.time()))
+        await self.store.finish_scan(GUILD, other, int(time.time()))
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])
 
     async def test_the_choice_travels_with_the_session(self) -> None:
@@ -133,11 +138,21 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         consent=SimpleNamespace(consenting=AsyncMock(return_value={MIRA})),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         plan_allows=AsyncMock(return_value=True),
+        recap_holds=None,
+        post=AsyncMock(return_value=True),
+        _import_names={},
+        _import_unhonoured={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         _hold_or_queue=AsyncMock(return_value="held"),
         **kw,
     )
-    for name in ("run_import_followups", "_scan_import", "_import_recap"):
+    for name in (
+        "run_import_followups",
+        "_scan_import",
+        "_import_recap",
+        "_start_import_recap",
+        "_tell_import_news",
+    ):
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot, campaign
 
@@ -145,6 +160,95 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
 async def rounds(bot: Any, n: int = 4) -> None:
     for _ in range(n):  # one session per campaign each round
         await bot.run_import_followups(GUILD)
+
+
+class TheCrashAndTheNews(WithImports):
+    async def test_a_claim_that_never_finished_is_taken_again_after_a_while(self) -> None:
+        sid = await self.imported(1)
+        old = int(time.time()) - STALE_SCAN_S - 60
+        self.assertTrue(await self.store.claim_scan(GUILD, sid, old))  # the bot stopped here
+        self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [sid])
+        self.assertTrue(await self.store.claim_scan(GUILD, sid, int(time.time())))
+        self.assertEqual(await self.store.ready_for_scan(GUILD), [])  # a fresh claim is left alone
+        self.assertFalse(await self.store.claim_scan(GUILD, sid, int(time.time())))
+
+    async def test_a_finished_scan_is_never_retaken(self) -> None:
+        sid = await self.imported(1)
+        await self.store.claim_scan(GUILD, sid, int(time.time()) - STALE_SCAN_S - 60)
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertEqual(await self.store.ready_for_scan(GUILD), [])
+        self.assertFalse(await self.store.claim_scan(GUILD, sid, int(time.time())))
+
+    async def test_the_dm_hears_of_new_names_once_when_the_whole_import_is_scanned(self) -> None:
+        for day in (1, 2, 3):
+            await self.imported(day)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(side_effect=[["Kazeth"], ["Vane"], ["Ilsa"]])
+        await rounds(bot, 2)  # two of three scanned: nothing said yet
+        bot.post.assert_not_awaited()
+        await rounds(bot, 2)
+        bot.post.assert_awaited_once()  # one message for the import, naming all of them
+        text = bot.post.await_args.args[1]
+        self.assertTrue(all(n in text for n in ("Kazeth", "Vane", "Ilsa")))
+
+    async def test_nothing_is_said_when_no_names_were_added(self) -> None:
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(return_value=[])
+        await rounds(bot, 2)
+        bot.post.assert_not_awaited()
+
+    async def test_a_plan_that_cannot_be_checked_leaves_the_recap_to_be_tried_again(self) -> None:
+        sid = await self.imported(1, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot.plan_allows = AsyncMock(side_effect=lambda *a, fail_open=True, **k: fail_open)
+        await rounds(bot, 2)  # (it says no when failing closed, yes when failing open: unchecked)
+        bot._hold_or_queue.assert_not_awaited()
+        self.assertEqual([r.session_id for r in await self.store.ready_for_recap(GUILD)], [sid])
+        bot.plan_allows = AsyncMock(return_value=True)  # the check works again
+        await rounds(bot, 1)
+        bot._hold_or_queue.assert_awaited_once()
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+
+    async def test_a_plan_without_recaps_is_decided_and_the_dm_is_told_once(self) -> None:
+        for day in (1, 2):
+            await self.imported(day, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(return_value=[])
+        bot.plan_allows = AsyncMock(return_value=False)  # a real no, both ways
+        await rounds(bot, 3)
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])  # decided, not retried
+        posts = [c.args[1] for c in bot.post.await_args_list]
+        self.assertEqual(len(posts), 1)  # one line, whatever the number of sessions
+        self.assertIn("plan doesn't include recaps", posts[0])
+
+    async def test_a_recap_that_keeps_failing_is_let_go_after_a_few_tries(self) -> None:
+        await self.imported(1, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._hold_or_queue = AsyncMock(side_effect=RuntimeError("discord"))
+        await rounds(bot, 6)
+        self.assertEqual(bot._hold_or_queue.await_count, 3)  # IMPORT_RECAP_TRIES, then let go
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        self.assertIn("could not be started", bot.post.await_args.args[1])
+
+    async def test_an_import_asks_about_its_names_once_not_for_every_session(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot.recap_holds = SimpleNamespace(
+            held=AsyncMock(return_value=[SimpleNamespace(campaign_id=self.campaign.id, asked=True)])
+        )
+        await self.imported(2, recap=True)
+        await rounds(bot, 3)
+        self.assertTrue(bot._hold_or_queue.await_args.kwargs["quiet"])  # an earlier one asked
+        bot.recap_holds.held = AsyncMock(return_value=[])
+        await self.imported(3, recap=True)
+        await rounds(bot, 3)
+        self.assertFalse(bot._hold_or_queue.await_args.kwargs["quiet"])  # the first one asks
 
 
 class TheFollowUp(WithImports):
@@ -276,7 +380,7 @@ class TheFollowUp(WithImports):
 
     async def test_two_bots_do_not_both_scan_one_session(self) -> None:
         sid = await self.imported(1)
-        await self.store.claim_scan(GUILD, sid, 1)  # another bot took it
+        await self.store.claim_scan(GUILD, sid, int(time.time()))  # another bot took it
         bot, _ = await self.bot()
         await rounds(bot, 1)
         bot._propose_new_names.assert_not_awaited()
