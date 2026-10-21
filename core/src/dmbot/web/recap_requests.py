@@ -27,6 +27,8 @@ STATUS: dict[str, tuple[int, str]] = {
     "too_soon": (429, "too_soon"),
     "bad_type": (415, "bad_type"),
     "bad_clip": (422, "bad_clip"),
+    "busy": (409, "busy"),  # an answer for that name is already on its way
+    "bad_action": (422, "bad_action"),
     "no_consent": (403, "no_consent"),  # the DM has not agreed to be recorded in Discord
 }
 

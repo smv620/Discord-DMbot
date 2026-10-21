@@ -1,0 +1,382 @@
+"""The recap page's names to check (#2113): the list from the website's door, an answer queued by
+another, and the bot applying each one through the memory paths Discord's name check uses. Invented
+names throughout."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from types import SimpleNamespace
+from typing import Any, cast
+
+from dmbot import bot as bot_module
+from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
+from dmbot.memory.store import MemoryStore
+from dmbot.recaps import name_answers as na
+from dmbot.web import name_checks as web
+from dmbot.web import sessions
+from dmbot.web.recaps import RecapError
+from tests.test_recap_web import BOB, NOW, Base
+from tests.test_web_api import ALICE, THURSDAY
+
+GUILD = THURSDAY.id
+AT = 100  # the recap's session time (the Base's one recap)
+
+
+class WithChecks(Base):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.memory = MemoryStore(self.db)
+        self.answers = na.AnswerStore(self.db)
+
+    async def suggest(self, name: str, *, campaign: str | None = None, link: bool = True) -> str:
+        cid = campaign or self.one.id
+        written = await self.memory.add_entity(
+            GUILD, cid, type="concept", name=name, source="scan", description="Used in a recap"
+        )
+        if link:
+            await self.answers.link(GUILD, cid, AT, [written.value.id])
+        return written.value.id
+
+    async def known(self, name: str, kind: str = "place", *, secret: bool = False) -> str:
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type=kind, name=name, source="dm", status=CONFIRMED
+        )
+        if secret:
+            await self.memory.add_alias(
+                GUILD, self.one.id, written.value.id, name, kind="full", source="dm", secret=True
+            )
+        return written.value.id
+
+    async def code(self, call: Any) -> str:
+        with self.assertRaises(RecapError) as err:
+            await call
+        return err.exception.code
+
+    async def listed(self) -> dict[str, Any]:
+        return await web.read_checks(self.web, self.session, self.ref)
+
+    async def ask(self, entity: str, **body: Any) -> dict[str, Any]:
+        return await web.answer(self.web, self.session, self.ref, entity, body)
+
+    async def apply_next(self, dms: Any = None) -> str:
+        """The bot's loop for one answer: claim, apply, finish. Returns the reason word."""
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        why = await na.apply(self.memory, GUILD, dms if dms is not None else {ALICE.id}, answer)
+        await self.answers.finish(GUILD, answer, error=why)
+        return why
+
+
+class TheList(WithChecks):
+    async def test_the_recaps_waiting_suggestions_are_listed_with_the_known_names(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.known("Oakmere")
+        got = await self.listed()
+        self.assertEqual(
+            got["names"],
+            [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
+              "error": ""}],
+        )  # fmt: skip
+        self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
+        self.assertNotIn("player_character", [k["key"] for k in got["kinds"]])
+        self.assertIn("place", [k["key"] for k in got["kinds"]])
+
+    async def test_a_name_answered_in_discord_or_here_leaves_the_list(self) -> None:
+        one, two = await self.suggest("Mirelle"), await self.suggest("Vale Keep")
+        await self.memory.set_entity_status(GUILD, self.one.id, one, REJECTED, source="dm")
+        self.assertEqual([n["id"] for n in (await self.listed())["names"]], [two])
+
+    async def test_a_secret_name_is_never_listed_nor_offered(self) -> None:
+        secret = await self.suggest("Vecnor")
+        await self.memory.add_alias(
+            GUILD, self.one.id, secret, "Vecnor", kind="full", source="scan", secret=True
+        )
+        await self.known("The Hidden Keep", secret=True)
+        await self.known("Oakmere")
+        got = await self.listed()
+        self.assertEqual(got["names"], [])
+        self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
+        self.assertEqual(
+            await self.code(self.ask(secret, action="not_a_name")), "not_found"
+        )  # and it cannot be answered
+
+    async def test_another_recap_or_campaign_shows_none_of_it(self) -> None:
+        await self.suggest("Mirelle")
+        theirs = await self.memory.add_entity(
+            GUILD, self.two.id, type="concept", name="Zorgul", source="scan"
+        )
+        await self.answers.link(GUILD, self.two.id, AT, [theirs.value.id])
+        got = await web.read_checks(self.web, self.session, self.ref)
+        self.assertEqual([n["name"] for n in got["names"]], ["Mirelle"])
+        await self.answers.link(
+            GUILD, self.one.id, 999, [theirs.value.id]
+        )  # (not in this campaign)
+        other_recap = await web.read_checks(self.web, self.session, self.ref)
+        self.assertEqual([n["name"] for n in other_recap["names"]], ["Mirelle"])
+
+    async def test_a_person_who_is_not_a_dm_of_the_campaign_is_told_nothing(self) -> None:
+        mira = await self.suggest("Mirelle")
+        token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        self.assertEqual(await self.code(web.read_checks(self.web, bob, self.ref)), "not_found")
+        self.assertEqual(
+            await self.code(web.answer(self.web, bob, self.ref, mira, {"action": "not_a_name"})),
+            "not_found",
+        )
+        self.assertEqual(await self.answers.claim_next(GUILD), None)
+
+
+class TheDoors(WithChecks):
+    async def test_the_website_role_has_no_right_on_the_tables_only_the_doors(self) -> None:
+        from psycopg import errors
+
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        for table in ("name_answers", "recap_name_checks"):
+            with self.subTest(table=table), self.assertRaises(errors.InsufficientPrivilege):
+                async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                    await conn.execute(f"SELECT 1 FROM {table}")
+
+    async def test_the_doors_are_for_a_dm_of_the_campaign_in_a_server_on_the_sessions_list(
+        self,
+    ) -> None:
+        mira = await self.suggest("Mirelle")
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            for guild, campaign in ((GUILD, self.two.id), (999, self.one.id)):  # not hers
+                cur = await conn.execute(
+                    "SELECT dmbot_recap_names_read(%s, %s, %s) AS r", (guild, campaign, AT)
+                )
+                self.assertIsNone((await cur.fetchone() or {})["r"])
+                cur = await conn.execute(
+                    "SELECT dmbot_name_answer_add(%s, %s, %s, %s, 'not_a_name', '', '', '') AS r",
+                    (guild, campaign, AT, mira),
+                )
+                self.assertIsNone((await cur.fetchone() or {})["r"])
+
+
+class TheAnswers(WithChecks):
+    async def test_each_answer_is_queued_and_the_name_shows_it_is_on_its_way(self) -> None:
+        mira = await self.suggest("Mirelle")
+        oak = await self.known("Oakmere")
+        for entity, body in (
+            (mira, {"action": "confirm", "kind": "npc"}),
+            (mira, {"action": "same", "known": oak}),
+        ):
+            got = await self.ask(entity, **body)
+            self.assertRegex(got["answerId"], r"^[0-9a-f]{32}$")
+            name = (await self.listed())["names"][0]
+            self.assertTrue(name["answering"])
+            await self.apply_next(dms=set())  # (refused: the sender is no DM, clearing the row)
+            await self.answers.sweep(GUILD)
+
+    async def test_the_words_and_the_choices_are_checked(self) -> None:
+        mira = await self.suggest("Mirelle")
+        oak = await self.known("Oakmere")
+        bad: list[tuple[dict[str, Any], str]] = [
+            ({"action": "dance"}, "bad_action"),
+            ({}, "bad_action"),
+            ({"action": "confirm"}, "bad_text"),
+            ({"action": "confirm", "kind": "Not A Kind!"}, "bad_text"),
+            ({"action": "same"}, "not_found"),
+            ({"action": "same", "known": "zz"}, "not_found"),
+            ({"action": "respell", "text": ""}, "bad_text"),
+            ({"action": "respell", "text": "x" * 81}, "bad_text"),
+            ({"action": "explain", "text": "x" * 301}, "bad_text"),
+            ({"action": "explain", "text": "ok\x00"}, "bad_text"),
+            ({"action": "explain", "text": 7}, "bad_text"),
+        ]
+        for body, code in bad:
+            with self.subTest(body=body):
+                self.assertEqual(await self.code(self.ask(mira, **body)), code)
+        self.assertEqual(
+            await self.code(web.answer(self.web, self.session, self.ref, mira, "nope")),
+            "bad_action",
+        )
+        self.assertEqual(await self.answers.claim_next(GUILD), None)  # nothing was queued
+        await self.ask(mira, action="same", known=oak)  # a good one still goes
+
+    async def test_a_second_answer_for_a_name_is_busy_until_the_first_is_done(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="explain", text="The innkeeper's sister")
+        self.assertEqual(await self.code(self.ask(mira, action="not_a_name")), "busy")
+        self.assertEqual(await self.apply_next(), "")
+        await self.ask(mira, action="not_a_name")  # the first is done: this one goes
+
+    async def test_a_name_that_is_not_this_recaps_cannot_be_answered(self) -> None:
+        stray = await self.suggest("Strayfolk", link=False)
+        self.assertEqual(await self.code(self.ask(stray, action="not_a_name")), "not_found")
+        self.assertEqual(await self.code(self.ask("0" * 32, action="not_a_name")), "not_found")
+        self.assertEqual(await self.code(self.ask("short", action="not_a_name")), "not_found")
+
+    async def test_a_dm_may_have_thirty_waiting_and_no_more(self) -> None:
+        names = [await self.suggest(f"Placename{n}") for n in range(31)]
+        for entity in names[:30]:
+            await self.ask(entity, action="explain", text="note")
+        self.assertEqual(
+            await self.code(self.ask(names[30], action="explain", text="n")), "too_soon"
+        )
+
+
+class TheBot(WithChecks):
+    async def test_it_is_right_confirms_it_as_that_kind_and_it_leaves_discords_list_too(
+        self,
+    ) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="confirm", kind="place")
+        self.assertEqual(await self.apply_next(), "")
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None
+        self.assertEqual((entity.status, entity.type), (CONFIRMED, "place"))
+        waiting = await self.memory.entities(GUILD, self.one.id, statuses=(PROPOSED,))
+        self.assertEqual([e.id for e in waiting], [])  # Discord's list has no more of it
+        self.assertEqual((await self.listed())["names"], [])  # and the page's neither
+
+    async def test_a_players_character_is_asked_in_discord_not_here(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="confirm", kind="player_character")
+        self.assertEqual(await self.apply_next(), na.BAD_KIND)
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == PROPOSED
+        listed = (await self.listed())["names"][0]
+        self.assertEqual((listed["answering"], listed["error"]), (False, na.BAD_KIND))
+        await self.ask(mira, action="confirm", kind="place")  # a new answer replaces the failure
+
+    async def test_its_actually_a_known_name_joins_them_and_can_be_undone(self) -> None:
+        mira = await self.suggest("Mirelle")
+        oak = await self.known("Oakmere")
+        await self.ask(mira, action="same", known=oak)
+        self.assertEqual(await self.apply_next(), "")
+        keep = await self.memory.entity(GUILD, self.one.id, oak)
+        assert keep is not None
+        aliases = await self.memory.aliases(GUILD, self.one.id, entity_id=oak)
+        self.assertIn("mirelle", [a.key for a in aliases if a.status == CONFIRMED])
+        self.assertEqual((await self.listed())["names"], [])
+
+    async def test_a_known_name_that_is_not_confirmed_is_not_joined(self) -> None:
+        mira = await self.suggest("Mirelle")
+        other = await self.suggest("Vale Keep")
+        await self.ask(mira, action="same", known=other)
+        self.assertEqual(await self.apply_next(), na.GONE)
+
+    async def test_a_fixed_spelling_renames_the_suggestion_and_it_stays_to_answer(self) -> None:
+        mira = await self.suggest("Mirel")
+        await self.ask(mira, action="respell", text="Mirelle")
+        self.assertEqual(await self.apply_next(), "")
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None
+        self.assertEqual((entity.name, entity.status), ("Mirelle", PROPOSED))
+        self.assertEqual([n["name"] for n in (await self.listed())["names"]], ["Mirelle"])
+
+    async def test_not_a_name_rejects_it(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        self.assertEqual(await self.apply_next(), "")
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == REJECTED
+
+    async def test_a_note_is_kept_with_the_name_up_to_300_letters(self) -> None:
+        mira = await self.suggest("Mirelle")
+        note = "The innkeeper's sister, " + "who left for the coast. " * 11
+        self.assertLessEqual(len(note), 300)
+        await self.ask(mira, action="explain", text=note)
+        self.assertEqual(await self.apply_next(), "")
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None
+        self.assertEqual((entity.description, entity.status), (note.strip(), PROPOSED))
+        self.assertEqual((await self.listed())["names"][0]["note"], note.strip())
+
+    async def test_a_sender_who_is_no_longer_a_dm_changes_nothing(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        self.assertEqual(await self.apply_next(dms={BOB.id}), na.NOT_ALLOWED)
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == PROPOSED
+
+    async def test_a_name_answered_in_discord_meanwhile_is_gone_not_changed(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="confirm", kind="place")
+        await self.memory.set_entity_status(GUILD, self.one.id, mira, REJECTED, source="dm")
+        self.assertEqual(await self.apply_next(), na.GONE)
+
+    async def test_a_stalled_claim_is_taken_back_and_only_the_holder_can_finish(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        first = await self.answers.claim_next(GUILD)
+        assert first is not None
+        self.assertIsNone(await self.answers.claim_next(GUILD))  # in hand: not given twice
+        later = na.AnswerStore(self.db, clock=lambda: 10**10)
+        second = await later.claim_next(GUILD)
+        assert second is not None and second.id == first.id
+        self.assertFalse(await self.answers.finish(GUILD, first))  # the old holder changes nothing
+        self.assertTrue(await later.finish(GUILD, second))
+
+    async def test_old_answers_are_swept_and_the_words_are_never_logged(self) -> None:
+        mira = await self.suggest("Mirelle")
+        with self.assertNoLogs(level=logging.DEBUG):
+            await self.ask(mira, action="explain", text="Secret-ish words about Mirelle")
+        self.assertEqual(await self.answers.sweep(GUILD), 0)
+        later = na.AnswerStore(self.db, clock=lambda: 10**10)
+        self.assertEqual(await later.sweep(GUILD), 1)
+
+
+class TheLoop(WithChecks):
+    """The bot's loop and the link it writes when it queues a recap's names."""
+
+    def bot(self) -> Any:
+        guild = SimpleNamespace(id=GUILD)
+        stale: list[tuple[int, str]] = []
+        bot = SimpleNamespace(
+            guilds=[guild],
+            name_answers=self.answers,
+            memory=self.memory,
+            campaigns=self.campaigns,
+            lookup=SimpleNamespace(mark_stale=lambda g, c: stale.append((g, c))),
+            stale=stale,
+        )
+        bot.run_name_answers = bot_module.DMBot.run_name_answers.__get__(bot)
+        bot._link_recap_names = bot_module.DMBot._link_recap_names.__get__(bot)
+        return bot
+
+    async def test_the_loop_applies_the_answer_and_refreshes_the_lists(self) -> None:
+        bot = self.bot()
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        await bot.run_name_answers()
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == REJECTED
+        self.assertEqual(bot.stale, [(GUILD, self.one.id)])
+
+    async def test_a_failed_answer_is_marked_for_the_page_and_the_loop_goes_on(self) -> None:
+        bot = self.bot()
+        bot.memory = SimpleNamespace(entity=self._boom)
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        await bot.run_name_answers()
+        self.assertEqual((await self.listed())["names"][0]["error"], na.FAILED)
+
+    @staticmethod
+    async def _boom(*args: Any) -> None:
+        raise RuntimeError("down")
+
+    async def test_the_recaps_names_are_linked_by_their_spelling_to_waiting_suggestions(
+        self,
+    ) -> None:
+        bot = self.bot()
+        mira = await self.suggest("Mirelle", link=False)
+        await self.suggest("Other Name", link=False)
+        job = SimpleNamespace(session_at=AT, to_confirm=("mirelle", "Not Suggested"))
+        await bot._link_recap_names(GUILD, self.one.id, job)
+        await bot._link_recap_names(GUILD, self.one.id, job)  # a repeat changes nothing
+        self.assertEqual([n["id"] for n in (await self.listed())["names"]], [mira])
+
+    async def test_a_name_that_is_removed_takes_its_answers_and_links_with_it(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM memory_entities WHERE id = %s", (mira,))
+        self.assertIsNone(await self.answers.claim_next(GUILD))
+        self.assertEqual((await self.listed())["names"], [])
+        await asyncio.sleep(0)

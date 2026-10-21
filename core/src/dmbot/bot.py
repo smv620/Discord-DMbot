@@ -268,7 +268,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, short, voice
+from dmbot.recaps import cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -510,6 +510,7 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
@@ -984,6 +985,8 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
+        # The DM's answers to a recap's names to check, from its page (#2113).
+        self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
@@ -8754,6 +8757,7 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Skipped a name from the recap: %s", exc)
                     continue
                 added += 1
+            await self._link_recap_names(gid, cid, job)
             if added and campaign.dm_screen_channel_id is not None:
                 await self.post(
                     campaign.dm_screen_channel_id, recap_names_text(added), view=review_view(cid)
@@ -8766,6 +8770,20 @@ class DMBot(commands.AutoShardedBot):
                 self.lookup.drop([cid])
         except Exception:
             log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _link_recap_names(self, gid: int, cid: str, job: Job) -> None:
+        """Remember which waiting suggestions are this recap's names to check (ids only), so its
+        page can list them and answer them (#2113). A name the list already had as a suggestion
+        counts too. A failure costs the page its list, never the recap."""
+        if self.memory is None or self.name_answers is None:
+            return
+        try:
+            wanted = {name_key(n) for n in job.to_confirm}
+            waiting = await self.memory.entities(gid, cid, statuses=(PROPOSED,))
+            ids = [e.id for e in waiting if name_key(e.name) in wanted]
+            await self.name_answers.link(gid, cid, job.session_at, ids)
+        except Exception as exc:
+            log.warning("Couldn't link a recap's names to check: %s", type(exc).__name__)
 
     async def _private_names_note(self, gid: int, cid: str, dm_user_id: int, added: int) -> None:
         """The same note as a private message to the DM, with the same check (#2027): it waits
@@ -9877,14 +9895,51 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_recap_requests()
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("The recap requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_name_answers()
+            except Exception as exc:
+                log.warning("The name answers failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
                     try:
                         await self.recap_requests.sweep(guild.id)
+                        if self.name_answers is not None:
+                            await self.name_answers.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_name_answers(self) -> None:
+        """What DMs answered on the recap page about its names to check (#2113), applied through
+        the same memory paths as Discord's name check, so an answer on either answers both. The
+        sender must still be a DM of the campaign. Only the outcome word is logged, never the
+        spelling or the note."""
+        store = self.name_answers
+        if store is None or self.memory is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(NAME_ANSWERS_PER_ROUND):
+                answer = await store.claim_next(guild.id)
+                if answer is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=answer.campaign_id):
+                    try:
+                        campaign = await self.campaigns.get(guild.id, answer.campaign_id)
+                        why = (
+                            name_answers.NOT_ALLOWED
+                            if campaign is None
+                            else await name_answers.apply(
+                                self.memory, guild.id, campaign.dm_user_ids, answer
+                            )
+                        )
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A name answer failed: %s", type(exc).__name__)
+                        why = name_answers.FAILED
+                    await store.finish(guild.id, answer, error=why)
+                    log.info("Name answer: %s", why or "done")  # the word only
+                    if not why and self.lookup is not None:
+                        self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
 
     async def run_recap_requests(self) -> None:
         store = self.recap_requests
