@@ -505,37 +505,137 @@ class TheBackups(WithClips):
 
 
 class TheLoop(WithClips):
+    async def test_each_loop_claims_only_its_own_kind(self) -> None:
+        await self.send_clip()
+        self.assertIsNone(await self.requests.claim_next(THURSDAY.id, voice=False))
+        got = await self.requests.claim_next(THURSDAY.id, voice=True)
+        assert got is not None and got.kind == "voice"
+        await self.send()
+        self.assertIsNone(await self.requests.claim_next(THURSDAY.id, voice=True))
+        typed = await self.requests.claim_next(THURSDAY.id, voice=False)
+        assert typed is not None and typed.kind == "instructions"
+
     """A voice request goes to the voice path and never to the AI sort; clips are swept every
     round."""
 
-    async def test_a_voice_request_is_written_down_not_sorted(self) -> None:
-        from unittest import mock
-
-        voice_request = rq.Request("a" * 32, "c" * 32, 100, 7, "", 1, "voice", CLIP, "audio/webm")
-        claims = [voice_request, None]
-        store = SimpleNamespace(
-            claim_next=AsyncMock(side_effect=lambda gid: claims.pop(0)),
-            sweep_clips=AsyncMock(),
-        )
+    def bot(self, store: Any, guilds: Any = None) -> Any:
         bot = SimpleNamespace(
             recap_requests=store,
             recap_feedback_ai=object(),
             recaps=object(),
             settings=SimpleNamespace(recaps_on=True),
-            guilds=[SimpleNamespace(id=THURSDAY.id)],
+            guilds=guilds if guilds is not None else [SimpleNamespace(id=THURSDAY.id)],
             _clip_sweep_rounds=0,
+            _voice_tasks={},
             _voice_gate=MagicMock(),
             recap_voice_text=MagicMock(),
             _meter_voice=MagicMock(),
         )
+        bot._run_voice_request = lambda gid, req: DMBot._run_voice_request(bot, gid, req)
+        return bot
+
+    async def test_the_typed_loop_claims_only_typed_notes_and_never_runs_a_clip(self) -> None:
+        from unittest import mock
+
+        typed = rq.Request("a" * 32, "c" * 32, 100, 7, "fix it", 1, "instructions", b"", "")
+        claims = [typed, None]
+        seen: list[Any] = []
+
+        async def claim(gid: int, *, voice: bool | None = None) -> Any:
+            seen.append(voice)
+            return claims.pop(0)
+
+        store = SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock())
+        bot = self.bot(store)
         with (
-            mock.patch("dmbot.bot.recap_requests.run_voice", AsyncMock(return_value="done")) as v,
-            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
+            mock.patch("dmbot.bot.recap_requests.run_voice", AsyncMock()) as v,
+            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock(return_value="done")) as one,
         ):
             await DMBot.run_recap_requests(cast(Any, bot))
-        v.assert_awaited_once()
-        sorted_.assert_not_awaited()  # never the AI sort
+        self.assertEqual(seen, [False, False])  # typed only
+        one.assert_awaited_once()
+        v.assert_not_awaited()
         store.sweep_clips.assert_awaited_once_with()  # every server, in the same round
+
+    async def test_a_voice_request_is_written_down_not_sorted_and_in_a_task_of_its_own(
+        self,
+    ) -> None:
+        import asyncio
+        from unittest import mock
+
+        voice_request = rq.Request("a" * 32, "c" * 32, 100, 7, "", 1, "voice", CLIP, "audio/webm")
+        claims = [voice_request]
+        seen: list[Any] = []
+
+        async def claim(gid: int, *, voice: bool | None = None) -> Any:
+            seen.append(voice)
+            return claims.pop(0) if claims else None
+
+        store = SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock())
+        bot = self.bot(store)
+        release = asyncio.Event()
+
+        async def slow(*a: Any, **k: Any) -> str:
+            await release.wait()
+            return "done"
+
+        with (
+            mock.patch("dmbot.bot.recap_requests.run_voice", slow),
+            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
+        ):
+            await DMBot.run_recap_voice(cast(Any, bot))
+            self.assertEqual(seen, [True])  # voice only
+            self.assertEqual(list(bot._voice_tasks), [THURSDAY.id])
+            # a slow clip does not hold up the round: a typed note is worked while it runs
+            typed = rq.Request("b" * 32, "c" * 32, 100, 7, "fix", 2, "instructions", b"", "")
+            run_one = AsyncMock(return_value="done")
+            with mock.patch("dmbot.bot.recap_requests.run_one", run_one):
+                typed_claims = [typed, None]
+
+                async def claim_typed(gid: int, *, voice: bool | None = None) -> Any:
+                    return typed_claims.pop(0)
+
+                store.claim_next = claim_typed
+                await asyncio.wait_for(DMBot.run_recap_requests(cast(Any, bot)), 2)
+            run_one.assert_awaited_once()
+            self.assertFalse(bot._voice_tasks[THURSDAY.id].done())  # the clip is still being done
+            # and the same server gets no second clip while one runs
+            claims.append(voice_request)
+            store.claim_next = claim
+            await DMBot.run_recap_voice(cast(Any, bot))
+            self.assertEqual(len(claims), 1)  # not claimed
+            release.set()
+            await asyncio.sleep(0.05)
+            self.assertEqual(bot._voice_tasks, {})
+        sorted_.assert_not_awaited()  # never the AI sort
+
+    async def test_only_a_few_clips_are_written_down_at_once_across_servers(self) -> None:
+        import asyncio
+        from unittest import mock
+
+        from dmbot.bot import RECAP_VOICE_AT_ONCE
+
+        guilds = [SimpleNamespace(id=1000 + n) for n in range(RECAP_VOICE_AT_ONCE + 2)]
+        made = []
+
+        async def claim(gid: int, *, voice: bool | None = None) -> Any:
+            made.append(gid)
+            return rq.Request(f"{gid:032x}", "c" * 32, 100, 7, "", 1, "voice", CLIP, "audio/webm")
+
+        bot = self.bot(SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock()), guilds)
+        release = asyncio.Event()
+
+        async def slow(*a: Any, **k: Any) -> str:
+            await release.wait()
+            return "done"
+
+        with mock.patch("dmbot.bot.recap_requests.run_voice", slow):
+            await DMBot.run_recap_voice(cast(Any, bot))
+            self.assertEqual(len(bot._voice_tasks), RECAP_VOICE_AT_ONCE)
+            self.assertEqual(len(made), RECAP_VOICE_AT_ONCE)  # the rest were not even claimed
+            release.set()
+            await asyncio.sleep(0.05)
+        self.assertEqual(bot._voice_tasks, {})
 
     async def test_a_clip_in_a_server_the_bot_is_not_in_is_cleared_too(self) -> None:
         from dmbot.campaigns.store import CampaignStore
