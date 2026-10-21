@@ -16,7 +16,7 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory.extractor import transcript_of
+from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.recaps.text import is_known_name, names_a_secret, proper_nouns, words
 
 WINDOW_CHARS = 40_000  # characters of transcript in one call (about 10,000 tokens)
@@ -114,9 +114,22 @@ def windows(
         size = size * 5 // 4 + 1
 
 
-def message(rows: Sequence[tuple[str, str, str]], names: Collection[str]) -> str:
-    """One window of the transcript as quoted data, and the confirmed names."""
+RETOLD_MAX = 3000  # characters of the table's retelling shown as context
+RETOLD_NOTE = (
+    "The table retold earlier sessions before play. It is context only, to know what is already "
+    "known: never make a beat from it and never cite it."
+)
+
+
+def message(rows: Sequence[tuple[str, str, str]], names: Collection[str], retold: str = "") -> str:
+    """One window of the transcript as quoted data, the confirmed names, and (when the table
+    retold earlier sessions, #2253) that retelling apart as labelled context. Its lines are not in
+    `rows`, so no beat can cite one."""
     parts = [transcript_of(rows)]
+    if retold.strip():
+        parts.append(
+            f"{RETOLD_NOTE}\n<last_time_recap>\n{quoted(retold)[:RETOLD_MAX]}\n</last_time_recap>"
+        )
     if names:
         parts.append("<names>\n" + "; ".join(sorted(names)[:200]) + "\n</names>")
     return "\n".join(parts)

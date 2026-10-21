@@ -4,6 +4,7 @@ campaign, in backups, and gone with the campaign."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Collection
 from itertools import pairwise
 from typing import Any
@@ -14,9 +15,11 @@ from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import split as sp
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
+from tests import test_recap_split as st
 from tests.pg import DatabaseTest
 
 NOW = 1_800_000_000
@@ -209,6 +212,9 @@ class Working(Base):
         hours: float = 2.5,
         heard: str = "",
         campaign_name: str = "",
+        lines: Any = None,
+        earlier: Any = None,
+        previous: str = "",
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -221,11 +227,13 @@ class Working(Base):
             if not inputs:
                 return None
             return pl.Inputs(
-                lines=[*fx.lines(), Line(9000, fx.DM, heard, heard)] if heard else fx.lines(),
+                lines=lines
+                or ([*fx.lines(), Line(9000, fx.DM, heard, heard)] if heard else fx.lines()),
                 dm_ids={fx.DM},
                 allowed_names=list(names),
                 secret_names=self.secret,
-                previous="",
+                previous=previous,
+                earlier=earlier,
                 day=4,
                 window_chars=window_chars,
                 hours=hours,  # the canned recap is 353 words: a 2.5-hour session's (#2013)
@@ -1063,3 +1071,141 @@ class Working(Base):
         self.assertEqual(job.state, "ready")
         self.assertNotIn("ferry", job.summary)  # the revision was not shipped
         self.assertNotIn("The torch burned down a little", job.summary)  # first draft, cut
+
+    # --- the split of the opening (#2253) ----------------------------------------------------
+
+    def story(self) -> list[Line]:
+        return st.reading([st.TALK, st.READ_ALOUD, [t for _, t in fx.LINES]])
+
+    def fast_answers(self, split: str, beats: str) -> fx.Canned:
+        return fx.Canned(split, beats, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+
+    async def test_the_retelling_is_context_and_never_a_beat(self) -> None:
+        offset = len(st.TALK) + len(st.READ_ALOUD)
+        # (the third beat is made only from the retelling, line 3: it is cut by the beat check)
+        recap_only = {
+            "what": "Goblins ambushed the caravan",
+            "who": [],
+            "lines": [4],
+            "kind": "event",
+        }
+        fast = self.fast_answers(st.SPLIT_ANSWER, st.beats_after(offset, [recap_only]))
+        await self.setUpWorker(
+            fast, lines=self.story(), earlier=st.EARLIER, previous="", names=[*fx.NAMES]
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertEqual([p.label for p in split.parts], ["talk", "recap", "play"])
+        self.assertEqual(job.beats and len(job.beats), 5)  # the recap-only beat is cut
+        self.assertNotIn("Goblins ambushed", json.dumps(job.beats))
+        # the split call was the first, on the fast tier, asked for JSON of its own shape
+        self.assertIn("<opening>", fast.sent[0])
+        self.assertEqual(fast.schemas[0], sp.SCHEMA)
+        # the beats' call: the play as the transcript, the retelling apart; the talk nowhere
+        beats_call = fast.sent[1]
+        self.assertIn("<last_time_recap>", beats_call)
+        self.assertNotIn("pizza", beats_call)
+        transcript = beats_call.split("<last_time_recap>")[0]
+        self.assertNotIn("Redfall", transcript)
+        self.assertIn("Greywater Keep at dusk", transcript)
+        self.assertIn("<last_time_recap>", fast.sent[2])  # and the writer has it as context
+
+    async def test_a_session_with_no_earlier_session_makes_no_split_call(self) -> None:
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        await self.setUpWorker(fast)  # earlier=None: the first session, or the first imported
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("<opening>", fast.sent[0])
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertEqual(([p.label for p in split.parts], split.method), (["play"], "none"))
+
+    async def test_an_answer_that_cannot_be_read_goes_on_as_all_play(self) -> None:
+        fast = self.fast_answers("I cannot tell", st.beats_after(0))
+        await self.setUpWorker(
+            fast, lines=st.reading([[t for _, t in fx.LINES]]), earlier=st.EARLIER
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertEqual(([p.label for p in split.parts], split.method), (["play"], "fallback"))
+
+    async def test_an_unsure_retelling_is_played_and_marked(self) -> None:
+        answer = json.dumps({"parts": [{"label": "recap", "last": 1}]})
+        fast = self.fast_answers(answer, st.beats_after(0))
+        await self.setUpWorker(
+            fast, lines=st.reading([[t for _, t in fx.LINES]]), earlier=st.EARLIER
+        )
+        job = await self.go()
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertTrue(split.unsure)
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("<last_time_recap>", fast.sent[1])  # played, not set apart
+
+    async def test_a_player_who_stops_being_recorded_during_the_split_starts_it_again(self) -> None:
+        agreed = {fx.DM, fx.ALICE, fx.BOB}
+
+        async def consenting() -> Any:
+            return set(agreed)
+
+        class Leaving(fx.Canned):
+            async def complete(self, *a: Any, **k: Any) -> Any:
+                agreed.discard(fx.ALICE)  # while the AI answers
+                return await super().complete(*a, **k)
+
+        fast = Leaving(st.SPLIT_ANSWER)
+        await self.setUpWorker(fast, lines=self.story(), earlier=st.EARLIER, consenting=consenting)
+        job = await self.go()
+        self.assertEqual((job.state, job.restarts), ("queued", 1))
+        self.assertIsNone(job.split)  # begun again, without them
+        self.assertIsInstance(job, Job)
+
+    async def test_split_errors_do_not_use_up_the_recaps_error_budget(self) -> None:
+        # The split call errors twice, the beats call once: the recap still ends ready, because
+        # the split's errors are cleared when it is stored (it is optional after two).
+        split_down = AIError("down")
+        fast = fx.Canned(
+            split_down, split_down, AIError("down"), st.beats_after(0), fx.PROSE_ANSWER,
+            fx.GRADE_ANSWER, fx.FINISH_ANSWER,
+        )  # fmt: skip
+        await self.setUpWorker(
+            fast, lines=st.reading([[t for _, t in fx.LINES]]), earlier=st.EARLIER
+        )
+        job = None
+        for _ in range(6):
+            job = await self.worker.run(1, self.one.id, 100)
+            self.clock.now += 1000
+            if job is not None and job.finished:
+                break
+        assert job is not None
+        self.assertEqual(job.state, "ready")
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertEqual(split.method, "fallback")  # done without the AI after two errors
+
+    async def test_the_catch_up_goes_to_the_housekeeping_alone(self) -> None:
+        catchup = "Reminder: we travel by the old Zebulon road next week."
+        talk = st.TALK[0]
+        play = [t for _, t in fx.LINES]
+        lines = st.reading([[talk], [catchup], st.READ_ALOUD, play])
+        answer = json.dumps(
+            {"parts": [{"label": "talk", "last": 1}, {"label": "catchup", "last": 2},
+                       {"label": "recap", "last": 2 + len(st.READ_ALOUD)}]}
+        )  # fmt: skip
+        offset = 2 + len(st.READ_ALOUD)
+        fast = fx.Canned(
+            answer, st.beats_after(offset), fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER
+        )
+        await self.setUpWorker(fast, lines=lines, earlier=st.EARLIER)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        beats_call, writer, *_, housekeeping = fast.sent[1], fast.sent[2], *fast.sent[3:]
+        self.assertNotIn("Zebulon", beats_call)
+        self.assertNotIn("Zebulon", writer)
+        self.assertIn("Zebulon", housekeeping)
+        self.assertIn("<catchup>", housekeeping)
+        self.assertNotIn("pizza", "\n".join(fast.sent[1:]))  # and the talk went nowhere
