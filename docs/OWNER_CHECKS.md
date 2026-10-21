@@ -251,9 +251,10 @@ Unlocks: #1831
 - **Time suggestions (#1758):** deployed, but switched off on the server until `DMBOT_TIME_SUGGESTIONS=1` is set, so
   there is nothing to check yet.
 - **Secret clues (#1649):** need the story extractor, which stays off until its test passes.
-- **Recaps and narrated recaps (#1382, #1385):** need `DMBOT_RECAPS=1`, and narration needs your ElevenLabs go-ahead.
+- **Narrated recaps (#1385):** narration needs your ElevenLabs go-ahead. (Recaps themselves are on since 2026-10-20.)
 - **QAbot (#1341):** needs the steps on #1341.
 - **Heads-up when a fallen character speaks (#2068, #2078):** off until `DMBOT_LIVE_HEADS_UP=1`. It also needs a
   character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
+- **Bring in older sessions (#2105, #2106, #2107):** not built yet, so there is nothing to check yet.
 
 The reasons are in `docs/GO_LIVE.md`.

@@ -501,3 +501,38 @@
   padding: 0.6rem 0;
   display: list-item;
 }
+
+/* Words only a screen reader needs, such as "moved to 2 of 5" on the Import sessions page (#2107). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A shared recap (#2119), in the look of the recap test review page the owner liked: a serif
+   reading text on quiet cards. */
+.public-recap {
+  max-width: 42rem;
+  margin: 0 auto;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+.public-recap h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+}
+.public-recap .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-block: var(--space-4);
+  overflow-wrap: anywhere;
+}

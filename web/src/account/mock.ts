@@ -319,10 +319,12 @@ export function mockRecaps(): Recap[] {
       triesLeft: 2,
       canDrop: true,
       approval: { approved: false, choice: "", approvedAt: null, canApprove: true },
+      share: { on: false, path: null },
     },
     {
       ...base,
       ref: "200000000000000001.cmp1.1790000000",
+      share: { on: false, path: null },
       sessionAt: 1790000000,
       status: "posted",
       title: "The vault door",
@@ -370,6 +372,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
+  let sharedCount = 0;
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
     signedIn();
@@ -404,6 +407,124 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (choice !== "text" && !choices.canAudio) throw new ApiError("not-in-plan");
       r.approval = { approved: true, choice, approvedAt: 1791000100, canApprove: false };
       return { ...r };
+    },
+    // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric
+    // is suggested as Stormy (who agreed) and Ash has not agreed to be recorded.
+    // A Google Doc link (#2140) is read as a file named "Google Doc N.txt". A link with "private" in
+    // it is not shared, "notadoc" is not a Google Doc, and a link pasted twice is flagged the second time.
+    async importPreview(ref, files, links = []) {
+      calls.push(
+        `importPreview:${ref}:${files.map((f) => f.name).join(",")}${links.length ? `|links:${links.length}` : ""}`,
+      );
+      const docs = links.map((link, i) => {
+        const name = `Google Doc ${i + 1}.txt`;
+        const error = links.indexOf(link) !== i || link.includes("repeat")
+          ? "repeated_link"
+          : link.includes("notadoc")
+            ? "not_a_google_doc"
+            : link.includes("private")
+              ? "doc_not_shared"
+              : link.includes("unreachable")
+                ? "doc_unreachable"
+                : link.includes("toobig")
+                  ? "doc_too_big"
+                  : null;
+        return { name, text: error ? "" : "Cerric: Hello from the doc\nMira: And hello", error };
+      });
+      return {
+        files: [...files, ...docs.map((d) => ({ name: d.name, text: d.text }))].map((f) => {
+          const bad = docs.find((d) => d.name === f.name)?.error;
+          if (bad)
+            return { name: f.name, format: null, error: bad, suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
+          if (!f.name.toLowerCase().endsWith(".txt"))
+            return { name: f.name, format: null, error: "not_txt", suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
+          const counts = new Map<string, number>();
+          for (const line of f.text.split("\n")) {
+            const who = /^([^:]{1,40}):/.exec(line)?.[1];
+            if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
+          }
+          const day = /(\d{4}-\d{2}-\d{2})/.exec(f.name)?.[1] ?? null;
+          return {
+            name: f.name,
+            format: "plain",
+            error: counts.size === 0 ? "empty" : null,
+            suggestedDate: day,
+            lineCount: [...counts.values()].reduce((a, b) => a + b, 0),
+            leftOut: 0,
+            speakers: [...counts].map(([label, lines]) => ({
+              label,
+              lines,
+              suggested: label === "Cerric" ? { userId: "1", name: "Stormy", why: "remembered" } : null,
+            })),
+          };
+        }),
+        estimate: { sessions: files.length + links.length, fastCalls: 14 * (files.length + links.length) },
+      };
+    },
+    async importMembers(ref, q) {
+      calls.push(`importMembers:${ref}:${q}`);
+      const all = [
+        { userId: "1", name: "Stormy", agreed: true },
+        { userId: "2", name: "Ash", agreed: false },
+        { userId: "3", name: "Mira", agreed: true },
+      ];
+      return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
+    },
+    async importCheck(ref, files, mapping, links = []) {
+      calls.push(`importCheck:${ref}${links.length ? `|links:${links.length}` : ""}`);
+      files = [
+        ...files,
+        ...links.map((_, i) => ({ name: `Google Doc ${i + 1}.txt`, text: "Cerric: Hello from the doc\nMira: And hello" })),
+      ];
+      const members: Record<string, boolean> = { "1": true, "2": false, "3": true };
+      return {
+        files: files.map((f) => {
+          const counts = new Map<string, number>();
+          for (const line of f.text.split("\n")) {
+            const who = /^([^:]{1,40}):/.exec(line)?.[1];
+            if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
+          }
+          // A doc with "later" in its link opened at Preview but is not shared any more at Check.
+          const lostDoc = links.some((l, i) => l.includes("later") && f.name === `Google Doc ${i + 1}.txt`);
+          return {
+            name: f.name,
+            error: lostDoc ? "doc_not_shared" : null,
+            leftOut: 0,
+            speakers: [...counts].map(([label, n]) => {
+              const to = mapping[label] ?? "drop";
+              const kept = to !== "drop" && members[to] ? n : 0;
+              return {
+                label,
+                kept,
+                dropped: {
+                  not_matched: to === "drop" ? n : 0,
+                  not_agreed: to !== "drop" && !members[to] ? n : 0,
+                  bot: 0,
+                  left_out: 0,
+                },
+              };
+            }),
+          };
+        }),
+        estimate: { sessions: files.length, fastCalls: 14 * files.length },
+      };
+    },
+    async importStart(ref, _files, plan, links = []) {
+      calls.push(
+        `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}${s.writeRecap ? "#recap" : ""}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
+      );
+      if (links.some((l) => l.includes("later"))) throw new ApiError("bad-files");
+      return {
+        importId: "imp1",
+        sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
+        estimate: { sessions: plan.sessions.length, fastCalls: 14 * plan.sessions.length },
+      };
+    },
+    async importProgress(ref, importId) {
+      calls.push(`importProgress:${ref}:${importId}`);
+      const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
+      const state = seen < 2 ? ("working" as const) : ("done" as const);
+      return { sessions: [{ file: "session-1-2026-09-14.txt", date: "2026-09-14", state, reason: null }] };
     },
     async recapChoices(campaignRef) {
       calls.push(`recapChoices:${campaignRef}`);
@@ -597,6 +718,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         canAskAgain: false,
       };
       return { ...r };
+    },
+    // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
+    async shareRecap(ref, action) {
+      calls.push(`shareRecap:${ref}:${action}`);
+      const r = await find(ref);
+      if (r.status !== "posted") throw new ApiError("not-posted");
+      if (action === "off") r.share = { on: false, path: null };
+      else if (action === "new" || !r.share?.on) {
+        sharedCount += 1;
+        r.share = { on: true, path: `/r/secret${sharedCount}` };
+      }
+      r.shared = r.share?.on ?? false;
+      return { ...(r.share ?? { on: false, path: null }) };
+    },
+    async publicRecap(token) {
+      calls.push(`publicRecap:${token}`);
+      await reachable();
+      const r = recaps.find((x) => x.share?.on && x.share.path === `/r/${token}`);
+      if (!r) throw new ApiError("not-found");
+      return { title: r.title, text: r.text, postedAt: r.sessionAt, audio: {} };
     },
     async decideRecap(ref, action) {
       calls.push(`${action}Recap:${ref}`);

@@ -316,7 +316,12 @@ class SaveAndResume(SessionTests):
         self.posts: list[tuple[int, str]] = []
 
         async def fake_post(
-            channel_id: int, text: str, view: object = None, *, remember: object = None
+            channel_id: int,
+            text: str,
+            view: object = None,
+            *,
+            remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.posts.append((channel_id, text))
             return True
@@ -1593,6 +1598,47 @@ class SaveAndResume(SessionTests):
         await self.settle()
         self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # when unsure, keep
         self.assertTrue(table.vocabulary.is_word("sneak"))
+
+    async def spelled_through_the_gate(self, answer: str) -> Any:
+        """#2168: the find is held with the line, not skipped, until the line is labelled."""
+        table = await self.filtered(answer)
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        self.assertEqual(table.spelled, [])  # held: not recorded yet
+        self.assertIn((PLAYER, 5_000), table.held_spelled)
+        await self.settle()
+        self.assertEqual(table.held_spelled, {})
+        return table
+
+    async def test_a_spelled_line_labelled_game_talk_is_recorded(self) -> None:
+        table = await self.spelled_through_the_gate("1 game\n2 game")
+        self.assertEqual([w for w, _, _ in table.spelled], ["Brannoch"])
+
+    async def test_a_spelled_line_labelled_off_topic_is_dropped(self) -> None:
+        table = await self.spelled_through_the_gate("1 other\n2 other")
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_drops_a_held_spelling_and_what_was_kept(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        table.spelled.append(("Kael", PLAYER, ""))  # already kept, and hinted
+        table.spelled_hints = ("Kael",)
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertEqual((table.held_spelled, table.spelled, table.spelled_hints), ({}, [], ()))
+        await self.settle()
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_forgets_their_ask_and_the_words_before_it(self) -> None:
+        import time
+
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "We were sent by Brannoch")
+        self.said(table, "how do you spell that", at_ms=2_000)
+        self.bot.stop_recording(GUILD, PLAYER)
+        # Right now, inside the windows: their ask is gone, so another's letters don't count.
+        later = table.spelling.note(DM, "B R A N N O C H", time.monotonic())
+        self.assertEqual(later, [])
 
     async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
         table = await self.filtered("1 other\n2 game")

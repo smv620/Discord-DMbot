@@ -829,6 +829,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
+SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 
@@ -838,8 +839,24 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
+def spelled_fix(entity: Entity) -> str:
+    """How someone spelled a pending suggestion at the table, when that differs from how it was
+    heard (the note reads "Spelled out at the table: Brannoch"), else ""."""
+    lead = f"{SPELLED_OUT}: "
+    if not entity.description.startswith(lead):
+        return ""
+    spelling = entity.description[len(lead) :].strip()
+    return spelling if name_key(spelling) != name_key(entity.name) else ""
+
+
 def suggestion_text(
-    entity: Entity, left: int, *, also: list[str] | None = None, match: Match | None = None
+    entity: Entity,
+    left: int,
+    *,
+    also: list[str] | None = None,
+    match: Match | None = None,
+    spelled: bool = False,
+    fix_to: str = "",
 ) -> str:
     others = (
         f"\nAlso heard as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
@@ -847,12 +864,24 @@ def suggestion_text(
         else ""
     )
     more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
-    question = (
-        f"Sounds like **{_md(match.name)}**. The same, or new?"
-        if match is not None
-        else "Is this a name in your game?"
-    )
-    return f"📝 **{_md(entity.name)}**{_heard(entity)}{others}\n{question}{more}"
+    # Someone spelled it out (#2168): the question says what the extra button does.
+    if fix_to:
+        question = (
+            f"Someone spelled it out: **{_md(fix_to)}**. Fix the spelling, or keep it as heard?"
+        )
+    elif match is not None and spelled:
+        question = (
+            f"Sounds like **{_md(match.name)}**. Same name, spelled **{_md(entity.name)}**? "
+            "Or a new name?"
+        )
+    elif match is not None:
+        question = f"Sounds like **{_md(match.name)}**. The same, or new?"
+    else:
+        question = "Is this a name in your game?"
+    heard = (
+        "" if fix_to else _heard(entity)
+    )  # the note is the spelling: shown once, in the question
+    return f"📝 **{_md(entity.name)}**{heard}{others}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -910,6 +939,8 @@ class SuggestionReview(_Menu):
         self.queue = entity_ids
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
+        self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
+        self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
         self._buttons()
 
@@ -927,6 +958,8 @@ class SuggestionReview(_Menu):
     ) -> str:
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
+        self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
+        self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
         self.also = [
             a.text
@@ -934,16 +967,38 @@ class SuggestionReview(_Menu):
             if a.key != own
         ]
         self._buttons()
-        return suggestion_text(entity, len(self.queue), also=self.also, match=self.match)
+        return suggestion_text(
+            entity,
+            len(self.queue),
+            also=self.also,
+            match=self.match,
+            spelled=bool(self.spelled),
+            fix_to=self.fix_to,
+        )
 
     def _buttons(self) -> None:
         self.clear_items()
-        if self.match is not None:  # sounds like a known name: offer that first (#394)
+        if self.fix_to:  # someone spelled this suggestion out: fix its spelling first (#2168)
+            buttons = [
+                (self._fix_pending, "✏️ Fix spelling", discord.ButtonStyle.success),
+                (self._yes, "✅ Yes, as heard", discord.ButtonStyle.primary),
+                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
+            ]
+        elif self.match is not None:  # sounds like a known name: offer that first (#394)
             buttons = [
                 (self._another, its_label(self.match.name), discord.ButtonStyle.success),
                 (self._yes, "➕ New name", discord.ButtonStyle.primary),
                 (self._same, "🔗 Another known name…", discord.ButtonStyle.secondary),
             ]
+            if self.spelled:  # someone spelled it out: offer to fix the known name's spelling
+                buttons.insert(
+                    1,
+                    (
+                        self._fix_spelling,
+                        "✏️ Fix spelling",
+                        discord.ButtonStyle.primary,
+                    ),
+                )
         else:
             buttons = [
                 (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
@@ -1115,7 +1170,39 @@ class SuggestionReview(_Menu):
             return
         await self._same_as(interaction, self.match.entity_id)
 
-    async def _same_as(self, interaction: discord.Interaction, keep_id: str) -> None:
+    async def _fix_pending(self, interaction: discord.Interaction) -> None:
+        """Someone spelled out a pending suggestion (#2168): it takes that spelling, and the card
+        comes back with the new name for the DM to answer. The DM decided; nothing is added."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        spelling = spelled_fix(entity)
+        if not spelling:
+            await _tell(interaction, GONE)
+            return
+        try:
+            await memory.rename_entity(
+                campaign.guild_id, campaign.id, entity.id, spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        await self._next(interaction, campaign, memory, note=f"✏️ Now spelled **{_md(spelling)}**.")
+
+    async def _fix_spelling(self, interaction: discord.Interaction) -> None:
+        """Someone spelled the name out at the table (#2168) and it sounds like a known name with
+        another spelling: the known name takes this spelling as its main name and keeps the old
+        spelling as another name, as ⭐ does. Merging keeps its guards."""
+        if self.match is None:
+            await _tell(interaction, GONE)
+            return
+        await self._same_as(interaction, self.match.entity_id, main=True)
+
+    async def _same_as(
+        self, interaction: discord.Interaction, keep_id: str, *, main: bool = False
+    ) -> None:
         """The DM said the suggestion is the same as a known entry: its names (and any
         heard with it) become that entry's other names. Merging keeps its guards
         (secret names, player characters) and can be undone."""
@@ -1148,11 +1235,34 @@ class SuggestionReview(_Menu):
         except MemoryRuleError:
             await self._next(interaction, campaign, memory, note=NOT_JOINED)  # back in place
             return
-        changed(interaction, campaign)
         shown = _and([f"**{_md(n)}**" for n in names])
         verb = "are now names" if len(names) > 1 else "is now a name"
         note = f"✅ Got it: {shown} {verb} for **{_md(keep.name)}**."
+        if main:  # the spelled-out one becomes the main name; the old spelling stays (#2168)
+            note = await self._respelled(memory, campaign, keep, entity.name, note)
+        changed(interaction, campaign)
         await self._saved(interaction, campaign, memory, note)
+
+    async def _respelled(
+        self, memory: MemoryStore, campaign: Campaign, keep: Entity, spelling: str, note: str
+    ) -> str:
+        """Make the merged-in spelling the main name, before the DM is answered. A failure leaves
+        the merge as it is and says so."""
+        try:
+            for alias in await memory.aliases(campaign.guild_id, campaign.id, entity_id=keep.id):
+                if alias.key == name_key(spelling) and alias.status == CONFIRMED:
+                    await memory.set_main_name(
+                        campaign.guild_id, campaign.id, keep.id, alias.id, source=DM
+                    )
+                    return (
+                        f"✅ Got it: **{_md(keep.name)}** is now spelled **{_md(spelling)}**. "
+                        f"The old spelling is still one of its names."
+                    )
+        except MemoryRuleError as exc:
+            log.info("A spelled-out name could not be made the main name: %s", exc)
+        except Exception:
+            log.exception("Couldn't make a spelled-out name the main name")
+        return f"{note} (Its spelling is unchanged: use ⭐ on its card to change it.)"
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)
@@ -1294,13 +1404,13 @@ def recap_names_reminder(count: int) -> str:
     )
 
 
-def after_session_text(names: list[str]) -> str:
+def after_session_text(names: list[str], where: str = "this session") -> str:
     """For the DM screen (players may see it under peek; the names come from the
     transcript anyone can read, so nothing is spoiled)."""
     shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
     more = f" and {len(names) - 5} more" if len(names) > 5 else ""
     return (
-        f"📝 **{_plural(len(names), 'new name')} to check** from this session: {shown}{more}.\n"
+        f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
         "Say which are in your game, so DMbot spells them right. The check opens privately "
         "for the DM."
     )

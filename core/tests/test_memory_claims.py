@@ -77,6 +77,53 @@ class Parsing(unittest.TestCase):
         for text in ("", "no json here", "{}", '{"claims": 3}', "[1, 2]", "{bad"):
             self.assertEqual(parse_answer(text, {"1"}), ([], 1), text)
 
+    def test_an_answer_cut_off_in_the_list_keeps_the_claims_before_the_break(self) -> None:
+        one = json.dumps(
+            {"subject": "A", "relationship": "knows", "object": "B", "lines": [1], "how": "dm_said"}
+        )
+        cut = '{"claims": [' + one + ", " + one + ', {"subject": "C", "relati'
+        found, bad = parse_answer(cut, {"1"})
+        self.assertEqual((len(found), bad), (2, 1))  # the broken one is counted, not lost silently
+        self.assertEqual(parse_answer('{"claims": [{"subject": "C", "rel', {"1"}), ([], 1))
+
+    def test_salvage_keeps_every_check_and_only_reads_a_list_that_never_closed(self) -> None:
+        good = {
+            "subject": "A",
+            "relationship": "knows",
+            "object": "B",
+            "lines": [1],
+            "how": "dm_said",
+        }
+        one = json.dumps(good)
+        bad_how = json.dumps({**good, "how": "dm said"})  # leniency stops at case and a full stop
+        no_line = json.dumps({**good, "lines": [99]})
+        cut = '{"claims": [' + ", ".join([one, bad_how, no_line, "7", one]) + ', {"subject": "C'
+        found, bad = parse_answer(cut, {"1"})
+        self.assertEqual((len(found), bad), (2, 4))  # three bad items and the broken one
+        # A list that closed, in an answer broken afterwards, is not read.
+        closed = '{"claims": [' + one + '], "note": oops}'
+        self.assertEqual(parse_answer(closed, {"1"}), ([], 1))
+        # Words before the JSON that quote a claims list are never searched.
+        quoted = 'He said "claims": [' + one + ", " + one + " and then {"
+        self.assertEqual(parse_answer(quoted, {"1"}), ([], 1))
+        # A cut inside a string of the second item keeps the first.
+        inside = '{"claims": [' + one + ', {"subject": "C", "relationship": "kn'
+        self.assertEqual(len(parse_answer(inside, {"1"})[0]), 1)
+
+    def test_a_cut_answer_with_too_many_claims_is_capped_and_counted(self) -> None:
+        one = json.dumps(
+            {"subject": "A", "relationship": "knows", "object": "B", "lines": [1], "how": "dm_said"}
+        )
+        cut = '{"claims": [' + ", ".join([one] * 70) + ', {"sub'
+        found, bad = parse_answer(cut, {"1"})
+        self.assertEqual((len(found), bad), (claims.MAX_CLAIMS, 1 + 10))
+
+    def test_the_way_it_was_said_is_read_without_case_or_stray_marks(self) -> None:
+        item = {"subject": "A", "relationship": "knows", "object": "B", "lines": [1]}
+        for how in ("DM_said", " dm_said ", "dm_said."):
+            found, bad = parse_answer(json.dumps({"claims": [{**item, "how": how}]}), {"1"})
+            self.assertEqual((len(found), bad), (1, 0), how)
+
     def test_a_long_answer_is_cut_at_the_cap_and_the_rest_counted(self) -> None:
         one = {
             "subject": "A",
@@ -468,7 +515,7 @@ class Stored(ConfirmedMemoryTest):
         await self.propose(said("Bram", "knows", "Chapel"))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         await self.memory.set_entity_type(GUILD_A, self.c, self.chapel, "place", source="dm")
-        await self.memory.rename_entity(GUILD_A, self.c, self.chapel, "Old chapel", source="dm")
+        await self.add("Chapel", type="place")  # a second one: the name is now ambiguous
         with self.assertRaises(MemoryRuleError):
             await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         (still,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)

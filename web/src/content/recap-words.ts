@@ -17,9 +17,14 @@
 // deploys #2030, because until then no recap has the "Facts to be confirmed" list or the private
 // message. It moves with the What's new entry "New names from your recap" and can only be true with
 // RECAPS_LIVE.
-export const RECAPS_LIVE = false;
+export const RECAPS_LIVE = true;
 export const RECAP_AUDIO_LIVE = false;
 export const RECAP_NAMES_LIVE = false;
+// RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
+// link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
+// entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
+// of it, so it never describes a link nobody can make.
+export const RECAP_SHARE_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
@@ -61,11 +66,11 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "A recap's length follows your session: about 200 words for a one-hour game, about 400 for three hours. A game of six hours or more gets about 700 words, the longest.",
   },
   {
-    text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks each sentence against what was said, has it written again once if one doesn't match, and cuts any that still don't. If too little is left, there is no recap. It also takes out compass directions. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
+    text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks the sentences against what was said, has it written again once if one doesn't match, and cuts any that still don't. If too little is left, there is no recap. It also takes out compass directions. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
   },
   ...(RECAP_NAMES_LIVE ? [recapNamesStep(RECAP_AUDIO_LIVE)] : []),
   {
-    text: "DMbot tells you on the DM screen when a recap is ready, or when it couldn't write one and why. It also emails you, unless you turn that off. The email has the title (or the reason) and a link to your account page, never the recap itself.",
+    text: "DMbot tells you on the DM screen when a recap is ready. It also emails you, unless you turn that off, and the email says why if a recap couldn't be written; with the email off, the DM screen tells you it couldn't. The email has the title (or the reason), and a link when there is something to do, never the recap itself.",
   },
   {
     text: "On the DM screen, press Read it to read the recap there. Press Post to the table to send it to your players; DMbot asks once first. Press Not this one to skip it; you can still find it on your recap page. To change the words first, use the link in the message.",
@@ -76,7 +81,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     ],
   },
   {
-    text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you)${
+    text: `Press Recaps on ⚙️ Settings to stop the recaps, to stop only the email (the DM screen still tells you when a recap is ready)${
       RECAP_AUDIO_LIVE ? ", or, on plans with narration, to stop the narration" : ""
     }. You can turn them back on there. Your plan decides what you can have.`,
     names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
@@ -87,6 +92,16 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   {
     text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
+  ...(RECAP_SHARE_LIVE
+    ? [
+        {
+          text: "To share a posted recap, open it on the website and choose Make a link. Anyone who has the link can read the recap without signing in, even people outside your Discord server. Only a posted recap can be shared, never a draft.",
+        },
+        {
+          text: "Treat the link like a password: anyone you give it to can pass it on. Choose Turn the link off, or Make a new link, whenever you like. The old link then stops opening the recap, but that can't take back what someone already read or saved.",
+        },
+      ]
+    : []),
   ...(RECAP_AUDIO_LIVE
     ? [
         {
@@ -105,7 +120,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
 
 /** One more line in "Emails from DMbot". */
 export const recapEmailStep =
-  "Recap emails: DMbot emails you when a recap is ready, or when it couldn't write one. Each has the title (or the reason) and a link. Only the game master gets them, once for each recap. They have no link to stop them.";
+  "Recap emails: DMbot emails you when a recap is ready, or when it couldn't write one. Each has the title (or the reason), and a link when there is something to do. It goes to one game master of the campaign, once for each recap. They have no link to stop them.";
 
 /** Said in place of "The only others are two Try It emails, each sent once." */
 export const emailsIntroTail = RECAPS_LIVE

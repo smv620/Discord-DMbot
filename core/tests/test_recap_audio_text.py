@@ -334,9 +334,9 @@ class Mixing(unittest.TestCase):
     def test_the_graph_names_the_three_levels_the_duck_and_the_length(self) -> None:
         graph = mix.plan(215.5).filter_complex
         self.assertIn("loudnorm=I=-16:TP=-1", graph)
-        self.assertIn("loudnorm=I=-22", graph)
+        self.assertIn("loudnorm=I=-32", graph)
         self.assertEqual(graph.count("aresample=44100"), 4)  # loudnorm's 192 kHz is brought down
-        self.assertIn("loudnorm=I=-28", graph)
+        self.assertIn("loudnorm=I=-38", graph)
         self.assertIn("sidechaincompress", graph)
         self.assertIn("ratio=4", graph)
         self.assertEqual(graph.count("atrim=0:215.500"), 3)  # all three are the voice's length
@@ -362,7 +362,7 @@ class Mixing(unittest.TestCase):
 
     def test_without_music_or_ambience_the_inputs_are_numbered_to_match(self) -> None:
         no_music = mix.plan(60, with_music=False).filter_complex
-        self.assertIn("[1:a]loudnorm=I=-28", no_music)  # the ambience is now input 1
+        self.assertIn("[1:a]loudnorm=I=-38", no_music)  # the ambience is now input 1
         self.assertNotIn("sidechaincompress", no_music)
         voice_only = mix.plan(60, with_music=False, with_ambience=False).filter_complex
         self.assertIn("anullsrc", voice_only)

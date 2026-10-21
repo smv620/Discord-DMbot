@@ -113,6 +113,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
         plan_allows=plan_allows,
         recap_worker=object(),
+        recap_holds=None,  # no hold store: queued at once, as before #2169
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         transcripts=SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
@@ -126,8 +127,9 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         meter=None,
     )
     for name in (
-        "recap_session", "_queue_recap", "recap_allowed", "recap_told", "recap_audio_wanted",
-        "recap_audio_switched", "recap_audio_allowed", "recap_plan_facts",
+        "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
+        "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
+        "recap_plan_facts",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -210,10 +212,10 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
             self.assertEqual(channel, 66)
             self.assertIn("Recap ready: **The Silver Lock**", line)
-            self.assertIn("Edit it here: https://site.example.com", line)
-            ids = [i.custom_id for i in kwargs["view"].children]
-            acts = ("read", "approve", "post", "drop", "tell")
-            self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in acts])
+            self.assertIn("on your recap page: https://site.example.com", line)
+            children = kwargs["view"].children  # the website link, then Share a recap (#2118)
+            self.assertEqual(children[0].url, "https://site.example.com/account/recaps")
+            self.assertEqual(children[1].item.custom_id, f"dmbot:recapshare:{'c' * 32}")
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
         failed = SimpleNamespace(state="failed", session_at=100, title="")
@@ -274,9 +276,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
 
     def test_the_buttons_follow_the_plan(self) -> None:
         three = panel.RecapsPanel(campaign(), panel.PlanFacts(True, True, "part of your plan"))
-        self.assertEqual(len(three.children), 4)  # and ✍️ Recap style
+        self.assertEqual(len(three.children), 5)  # and ✍️ Recap style and Share a recap
         two = panel.RecapsPanel(campaign(), panel.PlanFacts(True, False))
-        self.assertEqual(len(two.children), 3)
+        self.assertEqual(len(two.children), 4)
         self.assertEqual(
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )

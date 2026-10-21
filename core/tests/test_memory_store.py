@@ -1860,6 +1860,10 @@ class Renaming(MemoryTest):
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
         return {x.key: x.status for x in aliases}
 
+    async def kinds(self, entity: str) -> dict[str, str]:
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
+        return {x.key: x.kind for x in aliases}
+
     async def test_fix_spelling_and_undo_it(self) -> None:
         a = await self.add("Beleros", status=CONFIRMED)
         await self.memory.add_alias(
@@ -1867,7 +1871,9 @@ class Renaming(MemoryTest):
         )
         written = await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
         self.assertEqual(written.value.name, "Belleros")
-        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+        # The old spelling stays, as an "old spelling" other name (#2170).
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": CONFIRMED})
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "old"})
         assert written.batch is not None
         await self.memory.undo(GUILD_A, self.c, written.batch)  # one change, one undo
         entity = await self.memory.entity(GUILD_A, self.c, a)
@@ -1881,7 +1887,85 @@ class Renaming(MemoryTest):
                 GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
             )
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
-        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # misspelling dropped
+        # The misspelling is no longer listened for, but it stays as an old spelling (#2170).
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": CONFIRMED})
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "old"})
+
+    async def test_an_old_spelling_another_entry_has_is_not_kept(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        b = await self.add("Beleros the Younger", status=CONFIRMED)
+        for entity, text in ((a, "Beleros"), (b, "Beleros the Younger")):
+            await self.memory.add_alias(
+                GUILD_A, self.c, entity, text, kind="full", source="dm", status=CONFIRMED
+            )
+        await self.memory.add_alias(
+            GUILD_A, self.c, b, "Beleros", kind="nickname", source="dm", status=CONFIRMED
+        )  # the other entry is also called that
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # dropped, as before
+
+    async def test_an_old_spelling_that_is_a_secret_name_is_not_kept(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        b = await self.add("Dread Lord", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.add_alias(
+            GUILD_A, self.c, b, "Beleros", kind="nickname", source="dm", status=CONFIRMED,
+            secret=True,
+        )  # fmt: skip
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+
+    async def test_a_spelling_that_only_differs_in_case_leaves_no_old_name(self) -> None:
+        a = await self.add("belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "belleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+
+    async def test_renaming_back_makes_the_name_listened_for_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Beleros", source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "old"})
+
+    async def test_adding_an_old_spelling_as_a_name_makes_it_listened_for(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="nickname", source="dm", status=CONFIRMED
+        )
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "nickname"})
+
+    async def test_making_an_old_spelling_the_main_name_listens_for_it_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        old = next(x for x in await self.memory.aliases(GUILD_A, self.c) if x.key == "beleros")
+        await self.memory.set_main_name(GUILD_A, self.c, a, old.id, source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "full"})
+        self.assertFalse(old.secret)
+
+    async def test_fixing_it_again_keeps_each_old_spelling(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Bellerous", source="dm")
+        self.assertEqual(
+            await self.kinds(a), {"bellerous": "full", "belleros": "old", "beleros": "old"}
+        )
 
     async def test_another_name_becomes_the_main_name(self) -> None:
         a = await self.add("Belleros", status=CONFIRMED)

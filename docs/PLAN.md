@@ -210,6 +210,36 @@ database.
   would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
   questions ("who plays Vaelora?") would miss facts.
 
+**A worker container, and a smaller bot.py** (owner, 2026-10-20; details Supervisor's; the first step toward #57's workers).
+- **The worker.** Heavy background work leaves the live bot for a `worker` container: recap writing, audio rendering with ffmpeg, cleaning imported sessions, PlotBot's checks and the story extractor. It runs the same `core` image and code with a different start command, against the same database, with no new network API. The bot keeps everything that happens live at the table: voice, the Cleaner, the sidebar, rules cards, the live heads-up and the buttons.
+- **No races: the database is the only coordinator.**
+  - **Claiming work.** Every job is claimed with a lease, a conditional `UPDATE … WHERE leased_to <= now`, as `recap_jobs` already does. Two processes can never work one job, and a crashed worker's lease simply expires and the job is picked up again. In-process locks (`asyncio.Lock`) don't count across processes: the audio worker's "one at a time" lock becomes a lease row.
+  - **Every step resumable.** Every job step is idempotent and resumable, as the recap job already is. A paid call is never repeated for a step that already finished (the stored state says so).
+  - **Changes during a job.** A DM's change wins over a running job: jobs re-read the approval or text hash before every paid call, as the audio worker already does, and stop cleanly.
+- **Results back to Discord through an outbox.** Only the bot holds the Discord connection, so the worker never posts. It writes an outbox row ("recap ready", "names to check") and the bot delivers it. The bot is woken by Postgres `LISTEN`/`NOTIFY`, with a poll every 30 s as a backstop. Delivery is at most a few seconds late and is never lost: a row is marked sent only after Discord accepts it.
+- **No waiting, so no time-outs.**
+  - **Nothing live waits on the worker.** Discord buttons answer within Discord's 3 seconds by deferring, then follow up.
+  - **The website** queues a job and shows its state ("Writing…", "Checking the change…"), polling the job's status. It never holds a request open for an AI call, except short ones under about 10 s (speech to text for a 2-minute clip).
+- **No starving backlog.**
+  - **Limits per kind:** audio at most 1 at a time, recaps at most 3, imports and PlotBot at most 1 per campaign.
+  - **Fair order:** jobs are taken oldest first per campaign, round-robin across campaigns, so one big import never holds up another table's recap.
+  - **Visible depth:** the queue depth and oldest waiting job go to the log every round. The DM sees "queued" with its place.
+  - **Stuck jobs:** a job past its tries fails with a plain reason, as now.
+- **Resources.** The worker container gets its own CPU and memory limits, so ffmpeg can never starve `ears` or the bot during a game. The bot and the worker always deploy from the same commit (one image), and dev1 restarts both.
+- **The switch is temporary.** `DMBOT_WORKER` exists only for rollback while the worker is new. Once dev1 has run the worker live for **two weeks of real sessions**, with every recap, audio render and import done by the worker and no rollback needed, a cleanup PR:
+  - removes the switch;
+  - deletes the bot's in-process copies of the job loops, and any code that only served them;
+  - leaves the bot with only its live work and the outbox delivery.
+
+  dev1 records the two weeks in `docs/testing-history.log`; Supervisor files the cleanup when they're done. **Tracked in #2133, which stays open until the cleanup has merged** (owner, 2026-10-20: this must not be forgotten).
+- **Breaking up `bot.py`.** Each feature moves into its own discord.py extension (a Cog) in its package: `recaps/discord.py`, `memory/discord.py` and so on. Each holds its commands, buttons, listeners and session hooks. `bot.py` keeps startup, the session table and the wiring.
+  - **One feature per PR,** with no change in behaviour, starting with recaps.
+  - **This adds no queues and no new concurrency:** it is the same process and the same event loop.
+  - **One owner of session state:** the shared session state (`Table`) stays owned by one place, and features use it through small methods, never by editing each other's fields.
+- **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
+- **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
+- **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
+
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
 be a public bot others can install, on a scalable Kubernetes platform. *This replaces the
 earlier "one pod per Discord server" idea:* Discord gives a bot one gateway connection per
@@ -3882,6 +3912,201 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   *Built, recap name fixes (2026-10-19, #2026):* a name passes when every word of it is known, so a hyphenated name from the names file ("Dun-Varra's") is no longer refused; a retry sends the rejected draft (`<previous_draft>`, `<previous_answer>` for the title) with the target and the form and asks for a revision, never resending a draft that names a secret; an answer that only lost its SUMMARY or TITLE label is read leniently and still checked.
   *Built, names the recap kept (2026-10-19, #2027):* `recaps/unknown_names.py` respells a near miss to the known name (same word count and first letter, one letter off, two for names over eight letters, plain English words never), and refuses a word whose closest name is secret; `draft.kept_names` finds the names said in the session that no list has; they are stored in `recap_jobs.to_confirm` (migration 0131, at most 10), shown as **Facts to be confirmed** on the DM's recap page and in `recap_run`'s files, queued as proposed suggestions (source `scan`), and told to the DM once on the DM screen and in a private message with the check's button; a reminder follows once at the next session start.
   *Built, structured outputs for the recap (2026-10-19, #2039):* the recap's prose and title calls ask the model for an answer in a fixed shape (`ai.py`'s `schema`, sent as the Messages API's `output_config`), so the sections, moods and title can no longer arrive as loose text; a refused or cut-off answer is retried with more room, and the draft checks (length, names, quotes, secrets) are unchanged.
+- **Recaps go on after every session** (owner, 2026-10-20, after recap run 12 on the owner's own
+  session worked end to end: text, voice-over and music). That run is the real-recap check #1382
+  waited for.
+  - **What dev1 does:** turns `DMBOT_RECAPS` on in the deploy that carries the approval gate
+    (#2083), never before it, so no audio is made without the DM's approval. The site's
+    `RECAPS_LIVE` turns on with that deploy.
+  - **What happens at the end of a session:** DMbot queues the recap (`recap_session`, built). It
+    writes from the cleaned transcript only: the Cleaner's text, never DM-sidebar or table-question
+    lines, never what the off-topic filter left out, and only people who agreed.
+  - **Narration** stays behind `RECAP_AUDIO_LIVE` and the owner's steps on #1385, which include the
+    add-on's price.
+  - **A short session asks first.** DMbot asks the DM before writing when either of these is
+    under **30 minutes**:
+    - the session ran from its first to its last line;
+    - the game talk left after the off-topic filter, its kept lines' spoken time.
+
+    The DM screen says, for example: "This session was short (22 minutes, 9 minutes of game talk
+    after the chat was left out). Write a recap anyway?" with [Write a recap] and [No recap].
+    "No recap" spends nothing and counts nothing. "Write a recap" queues it as usual. Only the
+    campaign's DMs can answer, and an unanswered question expires when the next session starts.
+- **Importing older sessions** (owner, 2026-10-20; details Supervisor's). A DM can load transcripts
+  of sessions DMbot didn't record, for example a Craig session written out as text. DMbot cleans
+  them and builds the campaign's memory from that history.
+  - **Where:** the website, on a new **Import sessions** page for the campaign's DMs. It takes up to
+    20 files at once, each up to 2 MB of text. The formats:
+    - Craig's plain-text export, as `recap_run` reads it today (`devtools/recap_run/transcript_file.py`
+      moves into core as the importer);
+    - `[hh:mm:ss] Name: words` lines;
+    - DMbot's own transcript download.
+
+    Others are added on request.
+  - **Or a Google Doc link** (owner, 2026-10-20): instead of uploading, the DM may paste the share
+    link of a Google Doc that holds a transcript, one link per session.
+    - **How it's read:** DMbot reads it through the guarded link reader `dmbot.fetch` that house
+      rules and name lists already use: Google Docs only, the plain-text export, the same size
+      limit and time-out. It reads the doc again at Preview, Check and Import (Supervisor,
+      2026-10-20, #2143), so the DM keeps it shared until Import has started, and the page says
+      why a doc that stopped opening between steps failed. Pinning the text read at Preview is a
+      follow-up.
+    - **From there,** it is exactly like an uploaded file: the same formats, consent mapping and
+      checks, and the text isn't kept.
+    - **Who can read the doc:** it must be shared as "Anyone with the link can view". DMbot never
+      asks for access to the DM's Google account for this. If the doc isn't shared that way, the
+      page says so plainly and how to change it. Reading private docs through Google's narrowest
+      `drive.file` access waits for Phase 7.
+  - **From Discord** (owner, 2026-10-20, #2154): an **📥 Import sessions** button under the DM
+    screen's ⚙️ Settings, and `/dmbot import`, both open the website's Import sessions page with a
+    link button, for the campaign's DMs only. Nothing is imported in Discord: matching speakers,
+    dates and checks need the page.
+  - **Consent is the hard rule, as everywhere.** Before anything is stored, the DM matches each
+    speaker name in a file to a member of the server.
+    - A speaker who matches a member who has agreed to be recorded (the current consent wording)
+      is kept.
+    - Every other speaker's lines are dropped before saving and are never stored: a person not
+      matched, a person who hasn't agreed, and bots.
+    - The page says how many lines each choice keeps or drops.
+    - The DM's word that "everyone agreed" isn't enough. A player who wants their lines kept agrees
+      in Discord first, as for a live session.
+    - Imported sessions are read by the whole server like any transcript. The consent request
+      already says so.
+  - **Each file becomes a stored session.** The DM sets each one's date (the page suggests one from
+    the file name) and its place in order. It is marked *imported*, with the file name, who
+    imported it and when.
+    - Lines without times get times estimated from their words.
+    - The Cleaner and the off-topic filter run on it like a live session, after the fact.
+    - Craig's `{non-game context}` placeholders count as left-out talk.
+  - **Building the campaign:** after the import, DMbot runs the after-session steps on the imported
+    sessions in date order:
+    - the name scan, which asks the DM about new names as usual;
+    - the story-memory steps that are on (the extractor stays behind its own switch).
+
+    Nothing becomes a confirmed fact without the DM.
+  - **Recaps of imported sessions** are optional and per session (a **Write recaps** choice on the
+    page). Each counts against the monthly allowance. The newest imported session's recap becomes
+    the "last time" bridge for the next live session.
+  - **Plans:** importing is part of the paid plans, like recaps. Costs are the Cleaner's and the
+    name scan's fast-tier calls, so a batch is capped and its estimated cost is shown before the
+    DM starts it. Try It campaigns have no import.
+  - **Isolation:** everything stays in that one campaign of that one server. The files themselves
+    aren't kept after the import, only the stored sessions.
+  - **Order:** the importer and its storage with the consent mapping (core and API), then the
+    website page, then building the campaign and the optional recaps.
+- **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
+  liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
+  recaps) is where the DM reviews a recap before any voice-over or music. **Discord opens it** (owner,
+  2026-10-20): the recap's line on the DM screen and its private message carry a **📝 Review the
+  recap** link button that opens this page. The richer tools live on the website, not in Discord
+  forms; editing inside Discord was dropped (#2110, closed). The page already has the text,
+  the edit box with the cue check, and Approve with the four choices. It gains:
+  1. **Edit it directly** (built): the edit box, as now.
+  2. **Tell DMbot what to change, by typing:** a box, "Tell DMbot what to fix", for example: "The
+     weapons were taken at the keep's gate, not the tavern. Shorter opening."
+     - **The sort:** it goes through the same sort as the Discord feedback (#2076).
+       - **Accuracy and content** become this recap's corrections, and the DM gets **Rewrite with
+         these**, which uses one of the recap's tries.
+       - **Style** becomes a note the DM approves.
+       - **Asking DMbot to build the story** gets the plain no.
+     - **The new draft** replaces the old one only when it passes every check, and it needs
+       approval again. The DM sees each point as DMbot understood it before anything runs.
+  3. **Tell DMbot by voice:** a 🎤 button records the DM in the browser. The site asks the browser
+     for the microphone only on this page, only when pressed, and only for this site.
+     - **On release:** the clip goes to DMbot's speech-to-text and comes back as text in the same
+       box, "Here's what I heard", for the DM to read, correct and send. It's the typed path from
+       then on.
+     - **Privacy:** the clip is the DM's own voice, given by pressing. It is transcribed and thrown
+       away, never kept, never in any transcript, and only the campaign's DMs can use it.
+       - **Consent first** (Supervisor, 2026-10-20, #2159): the DM must have agreed to recording
+         (the current terms, and the speech company in use) before the website accepts a clip. A
+         clip waits in the database only until the bot turns it into words, and at most about 10
+         minutes, swept across every server.
+       - **Length:** the page records up to **a minute** (Supervisor, 2026-10-20, #2160), because
+         the note box holds 1,000 letters. The server accepts up to 2 minutes as a ceiling.
+       - **Listening time** counts the clip's real length; a clip never costs a minute it didn't
+         use.
+       - The privacy page names the speech company.
+     - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
+       for the recap page only.
+     - **Names help, as in a live session** (owner, 2026-10-20): the clip is transcribed with the
+       same campaign name hints a live session sends (Deepgram's keyterms, under the same rules about
+       which names may go), and the text goes through the Cleaner's name fixing, as a DM's live line
+       does. So "care Dinval" comes back as the known name. This costs almost nothing extra.
+     - **It counts as listening time** (owner, 2026-10-20). Each clip's length is added to the
+       campaign's listening minutes for the month, the same hours meter as a session in Discord.
+       The site's words about hours say DMbot listens both in Discord and on the website: "the time
+       DMbot is listening to you, in Discord or on the website".
+  4. **Names to check, answered on the page:** the recap's **Facts to be confirmed** list (#2027) is
+     shown under the recap with an answer for each name, the same answers as Discord's
+     📝 Check new names:
+     - **Yes, it's right**: confirm it, picking what it is (a person, a place, a thing…);
+     - **It's actually…**: pick a known name it should be, or fix the spelling;
+     - **Not a name**: deny it;
+     - **Explain**: the DM types a short note on who or what it is, kept with the name.
+
+     Answering on either the page or Discord answers both.
+- **Recaps on the website, and only two buttons in Discord** (owner, 2026-10-20; this replaces
+  the buttons below).
+  - **[Recaps]**, one button, opens the campaign's recap list on the website, newest session
+    first. Each entry opens that recap's page, where the DM views, listens, edits, fixes and
+    approves it.
+  - **[Share a recap]**, for the campaign's DMs, picks a recap and offers **Copy the link** or
+    **Send the link to the players**, which posts it in the campaign's `dmb-chat`.
+  - **Signing in:** editing and approving need the website sign-in, by Discord or by email, as now.
+  - **Viewing and listening need no sign-in** (owner): anyone with a recap's link can read it and
+    play its audio. The rules that keep this safe:
+    - **Only posted recaps:** a link works only after the DM has approved the text and posted or
+      shared the recap. A draft stays visible to the campaign's signed-in DMs only.
+    - **Only the table's version:** the shared page shows the posted text and audio and nothing
+      else. No "Facts to be confirmed", no housekeeping, no secret name (checked again at share
+      time, as at post time).
+    - **An unguessable link:** each recap has its own random address, never the campaign's or
+      the server's ids. The DM can turn a link off, or make a new one, which ends the old one.
+    - **Not in search engines:** shared pages carry `noindex`.
+    - **The privacy page** says that a shared recap can be read by anyone who has its link.
+  - **Disk:** reserve 1 GB of recap audio per campaign. That covers 100 sessions of recaps up to
+    3 minutes in today's encoding. See docs/costs.md, "Disk space for recap audio".
+- **PlotBot checks every recap before it is accepted** (owner, 2026-10-20; details Supervisor's;
+  the first piece of Phase 5c, docs/STORY_MEMORY.md).
+  - **When:** a plot check runs when a recap's text is ready, and again after every change to it,
+    including a change to an older recap.
+  - **What it reads:** the recap against the running campaign:
+    - the earlier accepted recaps;
+    - the confirmed story memory (facts, conditions, who carries what, threads and promises);
+    - and, with the Shared story switch on, the adventure's plan.
+  - **What it finds:**
+    - contradictions, such as someone dead who acts, an item in two hands, or a place described
+      differently;
+    - dropped threads and broken promises;
+    - timeline slips;
+    - a secret that the recap would reveal.
+  - **How it works:** the code checks of section 4 first, then one careful-tier call for judgment.
+    Each issue gets a level (possible, probable, likely), the recap sentence it is about, and the
+    earlier source it conflicts with, quoted with its session.
+  - **DM-only.** The issues show only on the signed-in DM's recap page. They never appear on a
+    shared link, to players, or in a transcript.
+  - **Talking it through.** For each issue the DM can chat with PlotBot on the page: "It's a
+    different Ulfgar", "he came back as a ghost", "my mistake". Each issue ends in one of four ways:
+    1. **Fix the recap:** the point becomes a correction, through the typed-instructions path.
+    2. **The story changed:** PlotBot proposes the plot-tracking update, a new dated fact or
+       condition, a thread moved, or a link, and **saves it only when the DM presses Save** (PlotBot
+       records only DM-confirmed facts, as the hard rule says).
+    3. **Not a problem:** the DM's explanation is kept with the issue, so it isn't raised again.
+    4. **Leave it as is.**
+  - **Accept.** Accepting the recap (the approval of the text) waits until every issue has an
+    answer. **The DM always decides:** "Leave it as is" is always one of the answers, so PlotBot can
+    advise but never block.
+  - **An accepted recap becomes part of the campaign notes.** It is kept as that session's summary,
+    which PlotBot, the pre-session note, recall and later plot checks read. Each accepted version is
+    kept, so the history is never lost.
+  - **Changing a recap later,** even an old one: PlotBot is given the before and after, checks the
+    changed parts against the campaign and against the later recaps that may depend on them, and
+    Accept waits for the new issues' answers.
+  - **Cost and limits:** about one careful-tier call per check, plus the chat. A rate limit per
+    campaign applies, and it is counted in docs/costs.md.
+  - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
+    check leans on the earlier accepted recaps. It grows more useful as memory fills.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
@@ -3899,7 +4124,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   higher, `pcm_24000`), and `RECAP_AUDIO_LIVE` on the site. Narration comes with Guild and Pro
   (`RECAP_AUDIO_PLANS`); on the other paid plans it is an add-on priced from one constant
   (`RECAP_AUDIO_PRICE_CENTS`, web `recap-audio.ts`; the price is the owner's, #1385). A DM may
-  ask for the audio again once every 10 minutes (#1418).
+  ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
+  again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
+  spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
+  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
+  once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
+  gets that audio afterwards, for its page. Recaps left in that state before this change (when they
+  never got it) are marked failed by migration 0149, so nothing old is narrated without a new press.
 - **Monthly allowance** (Supervisor decision 2026-10-16, #1428, #1437, #1445): each campaign gets
   **10 recaps a month** and **8 narrated ones** (`DMBOT_RECAPS_PER_MONTH`,
   `DMBOT_RECAP_AUDIO_PER_MONTH`; the site mirrors them in `recap-words.ts`, change both
@@ -4048,7 +4280,7 @@ months.
   ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
   and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
   `asked` with no AI call, #1518), the 5-answer limit is reached, the account has no address, or the helper
-  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (jarvis@getdmbot.com) to
+  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md) to
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
@@ -4069,8 +4301,26 @@ months.
   come on any day of that week.
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
-  anyone else's and never their own words back (#1458). The privacy page says all of this; the
+  anyone else's (#1458). **Opening a ticket shows its whole conversation** (owner, 2026-10-21,
+  replacing #1458's "never their own words back"): their question, each of the helper's answers,
+  each of their emailed replies and each of the team's replies, oldest first, each labelled
+  "You", "DMbot's helper (a program)" or "DMbot team" with its date. Only the ticket's own account
+  sees it. The privacy page says all of this; the
   site's words show only when `SUPPORT_AI_LIVE` is on (`support-words.ts`).
+- **The email chain is kept** (owner, 2026-10-21). A ticket's history is the conversation: the
+  question, the helper's answers, the person's emailed replies and the team's replies, all kept
+  in `support_tickets` and `support_replies` for the ticket's life (12 months), never trimmed to
+  the latest. Every email about a ticket to the person (the helper's answer, the team's reply, the
+  "a person will reply" note) carries the conversation so far below the new message, newest first,
+  each part labelled and dated as on the account page, like an ordinary email reply. The history
+  starts with one fixed line ("Earlier in this conversation:") that `support_mail` cuts at, so a
+  reply from a mail program that adds no ">" still stores only the new words. All of a
+  ticket's emails share the subject `Re: <subject>` and thread together in the person's mail
+  (`In-Reply-To` and `References` naming the ticket's earlier emails), and the team's "Needs the
+  team" email carries the whole conversation too. An emailed reply is stored without the quoted
+  text below it (`support_mail`), since the earlier parts are already kept; a reply that is only
+  quoted text is not stored. The 30-reply flood limit per ticket stays. Mail the team answers
+  straight from the team inbox, outside the admin page, is not part of the ticket.
 - **Spend** is bounded by the 5 answers per ticket, the Try It limit of three tickets a day and
   one waiting, and the owner's spend limit on the Anthropic console. The web API holds
   `ANTHROPIC_API_KEY` for this one use (a compose pass-through, never a web setting).

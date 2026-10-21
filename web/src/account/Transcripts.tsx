@@ -5,6 +5,7 @@
 // who sees what, and the text is the bot's own export, so nothing is formatted here.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { IMPORT_LIVE, importPage } from "../content/import-words";
 import { sessionDay } from "../content/recaps";
 import { problem, text, versionNote } from "../content/transcripts";
 import {
@@ -163,6 +164,11 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
           </p>
           <h2>{found.name}</h2>
           <p class="small">{text.shareLine}</p>
+          {IMPORT_LIVE && api.importPreview && (
+            <p>
+              <a href={`/account/import/${encodeURIComponent(campaignRef)}`}>{importPage.heading}</a>
+            </p>
+          )}
           {text.keepLine(found.keepDays) && (
             <p class="small">
               {text.keepLine(found.keepDays)}
