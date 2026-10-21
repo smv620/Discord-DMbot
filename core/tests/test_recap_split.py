@@ -179,6 +179,27 @@ class TheSplit(unittest.TestCase):
         only = sp.build(said(backstory, PLAY * 3), [("recap", 2)], EARLIER)
         self.assertTrue(only.unsure)
 
+    def test_everyday_words_of_a_backstory_do_not_keep_it_in_the_recap(self) -> None:
+        # Words like "father", "sword" and "village" are in a long earlier session's vocabulary.
+        everyday = sp.vocabulary_of(
+            ["father sword village mother river winter lantern brother cottage orchard"] * 3
+        )
+        backstory = [
+            "My father forged a sword in our village before the winter came.",
+            "My mother carried a lantern to the river, and my brother watched the orchard.",
+        ]
+        lines = said(READ_ALOUD, [CLOSING], backstory, PLAY * 3)
+        for earlier, note in (
+            (sp.Earlier(sp.vocabulary_of(PREVIOUS_PLAY) | everyday, PREVIOUS_BEATS), "with beats"),
+            (sp.Earlier(sp.vocabulary_of(PREVIOUS_PLAY) | everyday, ()), "words only"),
+        ):
+            with self.subTest(note):
+                recap = " ".join(PREVIOUS_PLAY) if note == "with beats" else ""
+                split = sp.build(lines, [("recap", 8)], earlier, recap)
+                self.assertEqual(split.label_of(7), sp.PLAY)
+                self.assertEqual(split.label_of(8), sp.PLAY)
+                self.assertEqual(split.label_of(5), sp.RECAP)
+
     def test_the_fixed_lines_alone_never_make_a_recap(self) -> None:
         # opening and closing lines around text that has nothing to do with the earlier session
         lines = said(["Previously…"], PLAY, [CLOSING], PLAY * 3)
@@ -331,7 +352,14 @@ OPENING = [*TALK, *READ_ALOUD[:-1], READ_ALOUD[-1]]  # 2 talk lines, 5 read alou
 class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
     """What the loader gathers about the previous session."""
 
-    async def gather(self, stored: object, session_at: int = 200) -> sp.Earlier | None:
+    async def gather(
+        self,
+        stored: object = None,
+        *,
+        job_at: int | None = 200,
+        previous: tuple[int, bool] | None = (200, False),
+        on_disk: dict[str, list[Any]] | None = None,
+    ) -> Any:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
@@ -341,20 +369,24 @@ class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(started_at=200, id="b"),
             SimpleNamespace(started_at=100, id="a"),
         ]
-        job = SimpleNamespace(
-            session_at=session_at, split=stored, beats=[{"what": "The wagon burned"}, {"x": 1}]
+        job = (
+            None
+            if job_at is None
+            else SimpleNamespace(
+                session_at=job_at, split=stored, beats=[{"what": "The wagon burned"}, {"x": 1}]
+            )
         )
         lines = reading([OWN_WORDS, PLAY * 2])
-        store = SimpleNamespace(earlier_job=AsyncMock(return_value=job))
-        return await _earlier(
-            SimpleNamespace(
-                sessions=AsyncMock(return_value=sessions), lines=AsyncMock(return_value=lines)
-            ),
-            store,
-            1,
-            "c" * 32,
-            300,
+        transcripts = SimpleNamespace(
+            latest_before=AsyncMock(return_value=previous),
+            sessions=AsyncMock(return_value=sessions),
+            lines=AsyncMock(return_value=lines),
         )
+        got = await _earlier(
+            transcripts, SimpleNamespace(earlier_job=AsyncMock(return_value=job)), 1, "c" * 32, 300
+        )
+        self.transcripts = transcripts
+        return got
 
     async def test_only_the_previous_sessions_play_and_its_beats_are_kept(self) -> None:
         stored = {"parts": [["recap", 1, 4], ["play", 5, 10]], "unsure": False, "method": "ai"}
@@ -374,42 +406,29 @@ class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         # Session 200 was never recapped; the latest job is session 100's, with its own split.
         stored = {"parts": [["recap", 1, 4], ["play", 5, 10]], "unsure": False, "method": "ai"}
-        got = await self.gather(stored, session_at=100)
+        got = await self.gather(stored, job_at=100)
         assert got is not None
         self.assertIn("goblins", got.vocabulary)  # taken whole: the split is not applied
         self.assertEqual(got.beats, ())  # and the older session's beats are not mixed in
 
     async def test_no_earlier_session_means_none(self) -> None:
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        from dmbot.recaps.inputs import _earlier
-
-        later = SimpleNamespace(started_at=500, id="z")  # after this one, so not earlier
-        transcripts = SimpleNamespace(sessions=AsyncMock(return_value=[later]))
-        recaps = SimpleNamespace(earlier_job=AsyncMock(return_value=None))
-        self.assertIsNone(await _earlier(transcripts, recaps, 1, "c" * 32, 300))
+        self.assertIsNone(await self.gather(previous=None, job_at=None))
 
     async def test_a_recapped_session_whose_transcript_is_gone_is_compared_by_its_beats(
         self,
     ) -> None:
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        from dmbot.recaps.inputs import _earlier
-
-        # session 15 still has lines; 16 was recapped but its transcript was deleted
-        fifteen = SimpleNamespace(started_at=100, id="a")
-        job = SimpleNamespace(session_at=200, split=None, beats=[{"what": "The wagon burned"}])
-        transcripts = SimpleNamespace(
-            sessions=AsyncMock(return_value=[fifteen]),
-            lines=AsyncMock(return_value=reading([OWN_WORDS])),
-        )
-        recaps = SimpleNamespace(earlier_job=AsyncMock(return_value=job))
-        got = await _earlier(transcripts, recaps, 1, "c" * 32, 300)
+        got = await self.gather(previous=(200, True))
         assert got is not None
         self.assertEqual((got.vocabulary, got.beats), (frozenset(), ("The wagon burned",)))
-        transcripts.lines.assert_not_awaited()  # session 15 is not what 17 is compared with
+        self.transcripts.lines.assert_not_awaited()  # session 15 is not what 17 is compared with
+
+    async def test_a_deleted_session_with_no_recap_job_is_compared_with_nothing(self) -> None:
+        # 16's transcript is gone and it was never recapped; 15 still has its lines. 17 is not
+        # compared with 15: there is an earlier session, and nothing is known of it.
+        got = await self.gather(previous=(200, True), job_at=100)
+        assert got is not None
+        self.assertEqual((got.vocabulary, got.beats), (frozenset(), ()))
+        self.transcripts.lines.assert_not_awaited()
 
 
 if __name__ == "__main__":

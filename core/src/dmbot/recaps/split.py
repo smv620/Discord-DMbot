@@ -375,6 +375,7 @@ def build(
     return Split(tuple(parts), unsure, "ai")
 
 
+RARE_WORD = 8  # letters: shorter words are too common to tell a retelling from a backstory
 LINE_FLOOR = 0.25  # of a line's long words that the earlier session also has, to stay in the recap
 
 
@@ -390,16 +391,23 @@ def trimmed(
     if index is None:
         return out
     recap = out[index]
-    refs = [earlier.vocabulary, vocabulary_of(earlier.beats), vocabulary_of([previous_recap])]
-    reference: set[str] = set().union(*[set(r) for r in refs])
+    # What the earlier session's beats and recap say is the reference when there is any; the whole
+    # vocabulary of its play holds everyday words ("father", "sword", "village"), so alone it counts
+    # only the rarer ones, which a backstory told right after the recap does not share.
+    story = vocabulary_of(earlier.beats) | vocabulary_of([previous_recap])
+    reference: set[str] = set(story) or {w for w in earlier.vocabulary if len(w) >= RARE_WORD}
     lines = [s for s in said if recap.first <= s.number <= recap.last]
     end = len(lines)
     while end > 0:
         text = lines[end - 1].text
         if heard_fixed_lines([text])[1]:  # the closing line: part of a read-aloud recap
             break
-        mine = content_words(text)
-        if len(mine) >= 3 and len(mine & reference) / len(mine) >= LINE_FLOOR:
+        if story:
+            mine = content_words(text)
+            about = len(mine) >= 3 and len(mine & reference) / len(mine) >= LINE_FLOOR
+        else:  # words only: one rare word the earlier session also had is enough to stay
+            about = bool({w for w in content_words(text) if len(w) >= RARE_WORD} & reference)
+        if about:
             break
         end -= 1  # (a line too short to compare, or about something else: play)
     if end == len(lines):

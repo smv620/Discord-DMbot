@@ -181,6 +181,7 @@ class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
             ),
             lookup=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(names=[]))),
             transcripts=SimpleNamespace(
+                latest_before=AsyncMock(return_value=(120, False)),
                 sessions=AsyncMock(return_value=[session, *before]),
                 lines=AsyncMock(return_value=[]),
             ),
