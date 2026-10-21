@@ -396,7 +396,7 @@ describe("writing to the team (#1340)", () => {
     // #1373: the account page lists the person's own questions; #2193: each opens to its whole
     // conversation, which only the person and the team can read.
     expect(t).toContain(
-      "your account page shows you its subject, when you sent it and whether it was answered. You can open it there to read the whole conversation: your message and the replies. Only you and the team can read it",
+      "your account page shows you its subject, when you sent it and whether it was answered. You can open it there to read the whole conversation: your message and the replies. On our website, only you and the team can read it",
     );
     expect(t).not.toContain("never the message itself");
     expect(t).not.toContain("does not show it to you again");

@@ -5224,8 +5224,8 @@ SUPPORT_MINE_THREAD = """
     -- account's ticket and a missing one look the same (no rows). The website's role still has no
     -- column right on any of the words: this door is the only way they come back.
     -- A ticket is named by its sent time because the list shows no ticket numbers (they would
-    -- show how many other people write); two tickets in one second are refused by the send limit,
-    -- and if it ever happened the newer one would be shown.
+    -- show how many other people write); a person's tickets never share a sent time (the insert
+    -- stamps a second ticket one second later), and if one ever did the newer would be shown.
     -- The policy lets the door (not the role's own queries, which have no right on the words) see
     -- a person's own emailed replies too; the ids, kinds and times of those are the only new thing
     -- a person's own session could list, and they are their own messages.
@@ -5250,10 +5250,13 @@ SUPPORT_MINE_THREAD = """
             RETURN;
         END IF;
         RETURN QUERY
-            SELECT 'customer'::TEXT, mine.message, mine.created_at
-            UNION ALL
-            (SELECT r.who, r.text, r.created_at FROM support_replies r
-             WHERE r.ticket_id = mine.id ORDER BY r.id);
+            SELECT o.who, o.text, o.created_at FROM (
+                SELECT 0::BIGINT AS ord, 'customer'::TEXT AS who, mine.message AS text,
+                       mine.created_at AS created_at
+                UNION ALL
+                SELECT r.id, r.who, r.text, r.created_at FROM support_replies r
+                WHERE r.ticket_id = mine.id
+            ) o ORDER BY o.ord;
     END
     $fn$;
     DO $do$

@@ -228,7 +228,7 @@ describe("the whole conversation (#2193)", () => {
   it("stays closed, and reads nothing, until it is asked for", async () => {
     const read = vi.fn(async () => parts);
     render(<MyQuestions api={withThread(read)} />);
-    const button = await screen.findByRole("button", { name: text.conversationOpen });
+    const button = await screen.findByRole("button", { name: /^Read the conversation/ });
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(read).not.toHaveBeenCalled();
     expect(screen.queryByText("Check the Billing page.")).toBeNull();
@@ -237,30 +237,30 @@ describe("the whole conversation (#2193)", () => {
   it("shows each part oldest first with who wrote it and its date", async () => {
     const read = vi.fn(async () => parts);
     render(<MyQuestions api={withThread(read)} />);
-    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
-    const region = await screen.findByRole("region", { name: text.conversationLabel("My invoice") });
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    const region = await screen.findByRole("group", { name: text.conversationLabel("My invoice") });
     await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(4));
     expect(read).toHaveBeenCalledWith(DAY);
     expect(within(region).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
       "You15 January 2027Why was I charged\ntwice?",
-      "DMbot's helper (a program)15 January 2027Check the Billing page.",
+      "DMbot's helper (a program, not a person)15 January 2027Check the Billing page.",
       "You16 January 2027<b>That</b> did not help.",
       "DMbot team17 January 2027Fixed, sorry.",
     ]);
     // Words, never markup.
     expect(region.querySelector("b")).toBeNull();
-    const button = screen.getByRole("button", { name: text.conversationClose });
+    const button = screen.getByRole("button", { name: /^Hide the conversation/ });
     expect(button.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("hides it again, and reads it afresh the next time so a new reply shows", async () => {
     const read = vi.fn(async () => parts);
     render(<MyQuestions api={withThread(read)} />);
-    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
     await screen.findByText("Fixed, sorry.");
-    fireEvent.click(screen.getByRole("button", { name: text.conversationClose }));
+    fireEvent.click(screen.getByRole("button", { name: /^Hide the conversation/ }));
     expect(screen.queryByText("Fixed, sorry.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: text.conversationOpen }));
+    fireEvent.click(screen.getByRole("button", { name: /^Read the conversation/ }));
     await screen.findByText("Fixed, sorry.");
     expect(read).toHaveBeenCalledTimes(2);
   });
@@ -268,16 +268,44 @@ describe("the whole conversation (#2193)", () => {
   it("says plainly when it can't be read, and the list stays", async () => {
     const read = vi.fn(async (): Promise<never> => Promise.reject(new ApiError("not-found")));
     render(<MyQuestions api={withThread(read)} />);
-    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
     expect(await screen.findByText(text.conversationError)).toBeTruthy();
     expect(screen.getByText("My invoice")).toBeTruthy();
+    // And there is a way to try again from the message itself.
+    fireEvent.click(screen.getByRole("button", { name: text.conversationRetry }));
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("names each button by its question, and says when there is no reply yet", async () => {
+    const read = vi.fn(async () => [parts[0]!]);
+    render(<MyQuestions api={withThread(read)} />);
+    const button = await screen.findByRole("button", { name: "Read the conversation: My invoice" });
+    fireEvent.click(button);
+    expect(await screen.findByText(text.conversationNoReply)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(text.conversationLoaded);
+  });
+
+  it("lets only the newest read set what is shown", async () => {
+    let first!: (v: typeof parts) => void;
+    const read = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<typeof parts>((done) => (first = done)))
+      .mockImplementation(async () => [{ ...parts[3]! }]);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Read the conversation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Hide the conversation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Read the conversation/ }));
+    await screen.findByText("Fixed, sorry.");
+    first(parts);
+    await new Promise((done) => setTimeout(done, 0));
+    expect(screen.queryByText("Check the Billing page.")).toBeNull();
   });
 
   it("has no button on an API older than the conversation", async () => {
     const { supportThread: _none, ...older } = apiWith(question) as AccountApi & { supportThread?: unknown };
     render(<MyQuestions api={older as AccountApi} />);
     await screen.findByText("My invoice");
-    expect(screen.queryByRole("button", { name: text.conversationOpen })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Read the conversation/ })).toBeNull();
   });
 });
 

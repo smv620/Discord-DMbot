@@ -503,6 +503,25 @@ class SupportRoute(SupportBase):
         # No ticket number comes back to count the other people's by.
         self.assertNotIn('"id"', answer.text)
 
+    async def test_two_tickets_sent_in_one_second_each_open_their_own_conversation(self) -> None:
+        first = await support.add(
+            self.web, ALICE.id, "table", support.Ticket("one", "First words"), now=self.now
+        )
+        second = await support.add(
+            self.web, ALICE.id, "table", support.Ticket("two", "Second words"), now=self.now
+        )
+        self.assertNotEqual(first, second)
+        await support.add_reply(self.web, first, "ai", "Answer to one.", now=self.now)
+        client = await self.client()
+        listed = (await client.get("/support/mine")).json()["tickets"]
+        self.assertEqual(sorted(t["subject"] for t in listed), ["one", "two"])
+        self.assertEqual(len({t["at"] for t in listed}), 2)
+        by_subject = {t["subject"]: t["at"] for t in listed}
+        one = (await client.get(f"/support/mine/{by_subject['one']}")).json()["messages"]
+        two = (await client.get(f"/support/mine/{by_subject['two']}")).json()["messages"]
+        self.assertEqual([m["text"] for m in one], ["First words", "Answer to one."])
+        self.assertEqual([m["text"] for m in two], ["Second words"])
+
     async def test_another_accounts_ticket_and_a_missing_one_both_answer_404(self) -> None:
         await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
         await self.add_row(BOB, self.now - 5, "bobs")

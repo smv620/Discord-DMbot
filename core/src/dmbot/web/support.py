@@ -112,9 +112,12 @@ async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int
     (`db.user`); the number comes back through the same person's `read_own` right."""
     async with db.user(user_id) as conn:
         cur = await conn.execute(
+            # A person's tickets never share a sent time: the account page opens one by that time
+            # (#2193), so a second ticket in the same second is stamped one second later.
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (now, user_id, plan, ticket.subject, ticket.message),
+            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+            (now, user_id, user_id, plan, ticket.subject, ticket.message),
         )
         row = await cur.fetchone()
     assert row is not None
