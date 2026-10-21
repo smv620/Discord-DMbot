@@ -913,6 +913,29 @@ class TheRoutes(WithImports):
                 got = await client.request(method, base + path, json={"files": []})
                 self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"), path)
 
+    async def test_a_listed_server_has_the_routes_on_and_another_has_them_off(self) -> None:
+        # (#2259) The list turns importing on for chosen servers although the switch is off.
+        for listed, want in ((frozenset({THURSDAY.id}), 200), (frozenset({THURSDAY.id + 1}), 404)):
+            app = create_app(
+                settings(imports_servers=listed), self.web, FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+            )  # fmt: skip
+            token = await web_sessions.sign_in(
+                self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+                got = await client.post(
+                    f"/me/campaigns/{self.ref_c}/imports/preview",
+                    json={"files": files(("a.txt", CRAIG))},
+                )
+                self.assertEqual(got.status_code, want, got.text)
+                me = await client.get("/me")
+                mine = [c for c in me.json()["campaigns"] if c["id"] == self.one.id]
+                self.assertEqual([c["importsOn"] for c in mine], [want == 200])
+
     async def test_a_body_of_the_worst_escaped_legal_files_fits(self) -> None:
         worst = '\n"' * (imports.MAX_BYTES // 2)  # 2 MB that JSON writes at twice the size
         body = json.dumps({"files": [{"name": f"{n}.txt", "text": worst} for n in range(20)]})

@@ -219,6 +219,12 @@ def _ref(ref: str) -> tuple[int, str]:
     return parsed[0], parsed[1]
 
 
+def ref_parts(ref: str) -> tuple[int, str]:
+    """(server id, campaign id) from a campaign's address; RecapError("not_found") if it is not one.
+    Reads the address only, so the on/off gate asks nothing of the database."""
+    return _ref(ref)
+
+
 async def _open(conn: Conn, session: Session, ref: str, *, outside: str | None) -> Campaign:
     """The campaign for a DM of it, or a refusal: not in the server (not_found) or not a DM."""
     gid, cid = _ref(ref)

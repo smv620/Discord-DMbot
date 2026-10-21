@@ -11,7 +11,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from dmbot.memory.extractor import readable
 from dmbot.recaps import fixed_lines
+from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
 from dmbot.recaps.text import strip_cues
@@ -32,6 +34,7 @@ async def load_inputs(
     session_at: int,
     styles: StyleStore | None = None,
     notes: NoteStore | None = None,
+    with_earlier: bool = True,
 ) -> Inputs | None:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -47,6 +50,11 @@ async def load_inputs(
         return None
     lines = await transcripts.lines(guild_id, found[0].id)
     bridge = await recaps.bridge(guild_id, campaign_id, session_at)
+    earlier = (
+        await _earlier(transcripts, recaps, guild_id, campaign_id, session_at)
+        if with_earlier
+        else None
+    )
     stored = await clocks.get(guild_id, campaign_id) if clocks is not None else None
     return Inputs(
         lines=lines,
@@ -58,6 +66,7 @@ async def load_inputs(
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,
+        earlier=earlier,
         # Which of the ten closing lines: by this session's place in the campaign (#2253).
         ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
@@ -67,3 +76,38 @@ async def load_inputs(
         if notes is not None
         else (),
     )
+
+
+async def _earlier(
+    transcripts: Any, recaps: Any, guild_id: int, campaign_id: str, session_at: int
+) -> sp.Earlier | None:
+    """What the campaign's previous session was about (#2253), for finding a retelling of it at
+    the start of this one: the content words of its play and its beat sentences. Only its play, by
+    its stored split, so a retelling inside it is not carried on into this one (15 into 16 into
+    17); a session from before the split is taken whole. The previous session is the latest one
+    before this, including one whose transcript the keep-days limit deleted: then its beats (from
+    its recap job, if it had one) stand in for it, and with no job there is nothing to compare
+    with, never an older session. None when there is no earlier session at all: then nothing in
+    this one is a recap. Read once, for the split stage."""
+    previous = await transcripts.latest_before(guild_id, campaign_id, session_at)
+    if previous is None:
+        return None
+    started, deleted = previous
+    job = await recaps.earlier_job(guild_id, campaign_id, session_at)
+    if job is not None and job.session_at != started:
+        job = None  # a recap of an older session: its line numbers are not that transcript's
+    beats = sp.beat_sentences(job.beats or []) if job is not None else ()
+    if deleted:
+        return sp.Earlier(frozenset(), beats)
+    found = [
+        s
+        for s in await transcripts.sessions(guild_id, campaign_id, limit=1000)
+        if s.started_at == started
+    ]
+    if not found:
+        return sp.Earlier(frozenset(), beats)
+    said = readable(await transcripts.lines(guild_id, found[0].id))
+    split = sp.from_json(job.split) if job is not None else None
+    if split is not None:
+        said = sp.pick(said, split, sp.PLAY)
+    return sp.Earlier(sp.vocabulary_of(s.text for s in said), beats)
