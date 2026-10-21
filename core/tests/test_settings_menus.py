@@ -117,7 +117,7 @@ class Menus(unittest.TestCase):
             "Mirelle",
             1,
             "open",
-            None,  # type: ignore[arg-type]
+            None,
         )
         mine = labels(management_view(c, waiting, owner))
         self.assertTrue(any("Take back" in x for x in mine), mine)
