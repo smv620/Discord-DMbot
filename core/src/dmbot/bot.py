@@ -308,7 +308,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
-from dmbot.rules.wins import WinsSection
+from dmbot.rules.wins import WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -1270,6 +1270,13 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.rule_conflict_ai = (  # a saved house rule that disagrees with another (#2284)
+            self.ai_client.tier(FEATURE_TIERS[Feature.RULE_CONFLICTS], Feature.RULE_CONFLICTS)
+            if self.ai_client
+            else None
+        )
+        # Which disagreeing house rule wins, as the DM decided; set where the database is known.
+        self.house_wins: WinsStore | None = None
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
@@ -11534,6 +11541,7 @@ async def run(settings: Settings) -> None:
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
         )
+        bot.house_wins = WinsStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
