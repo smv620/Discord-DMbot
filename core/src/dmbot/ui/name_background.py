@@ -21,10 +21,18 @@ import discord
 
 from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
-from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
+from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
-from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.memory.models import (
+    BACKGROUND_SOURCE,
+    DESCRIPTION_MAX,
+    DM,
+    PROPOSED,
+    MemoryRuleError,
+    NewName,
+)
+from dmbot.memory.ontology import check_named
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
@@ -47,7 +55,6 @@ from dmbot.ui.names import (
     _campaign_for,
     _md,
     _memory,
-    background_kind,
     changed,
     start_review,
 )
@@ -63,7 +70,8 @@ def rights_text() -> str:
     return (
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
         "switch.)\n**Pressing 🤖 Find names tells DMbot this is your own writing.** The text is "
-        "sent once to Anthropic, an AI company, to be read. DMbot does not keep it."
+        "sent once to Anthropic, an AI company, to be read. DMbot does not keep it, only a "
+        "short line beside each name until you answer it."
     )
 
 
@@ -188,7 +196,7 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         f"📜 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and suggests names "
         "(people, places, groups, gods…). You check each one in 📝 Check new names. Nothing is "
         "added until you say yes.\n"
-        f"Cost: about {cents} cent{'' if cents == 1 else 's'} of your AI allowance.\n"
+        f"Cost: {bg.cost_text(cents)} of your AI allowance.\n"
         f"{rights_text()}",
         BackgroundOffer(campaign.id, upload),
     )
@@ -249,7 +257,7 @@ class BackgroundOffer(_Menu):
             document = fingerprint(self.upload.text)
             # The DM said it is their own writing; a lasting record, before anything is read.
             await bot.campaigns.record_confirmation(
-                guild, campaign.id, interaction.user.id, NAMES_LIST, document
+                guild, campaign.id, interaction.user.id, OWN_WRITING, document
             )
             log.info(
                 "Background confirmed for AI reading: campaign=%s doc=%s",
@@ -267,9 +275,11 @@ class BackgroundOffer(_Menu):
 
             async with asyncio.timeout(AI_TIME_LIMIT_S):
                 answers = await asyncio.gather(*(one(p) for p in bg.pieces(self.upload.text)))
-            found = bg.merge(answers, known)
+            found = bg.merge(
+                answers, known, rules=(campaign.target_ruleset, campaign.fallback_ruleset)
+            )
             stored = await store(memory, campaign, found)
-            log.info("Background read: %d names suggested", sum(stored.values()))  # counts only
+            log.info("Background read: %d names suggested", sum(map(len, stored.values())))
             await summary(interaction, campaign, self.upload.label, stored)
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
@@ -296,33 +306,40 @@ class BackgroundOffer(_Menu):
         )
 
 
-async def store(memory: MemoryStore, campaign: Campaign, found: list[bg.Found]) -> dict[str, int]:
-    """Each name as a suggestion marked "From your background" with its quote (never confirmed),
-    its other spellings suggested with it. Returns how many of each kind were stored."""
-    stored: dict[str, int] = {}
+async def store(
+    memory: MemoryStore, campaign: Campaign, found: list[bg.Found]
+) -> dict[str, list[str]]:
+    """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
+    a disguise kept as a secret name. One change for the whole list: one reload of the live names,
+    one Undo. Returns the new suggestions' IDs for each kind."""
+    names: list[NewName] = []
     for item in found:
-        note = f'{BACKGROUND}: "{item.quote}"' if item.quote else BACKGROUND
         try:
-            written = await memory.add_entity(
-                campaign.guild_id,
-                campaign.id,
-                type=item.kind,
-                name=item.name,
-                source="scan",
-                description=note,
-            )
+            check_named(item.kind, item.name)  # one refused name must not stop the others
         except MemoryRuleError as exc:
             log.info("Skipped a name from a background: %s", exc)
             continue
-        stored[item.kind] = stored.get(item.kind, 0) + 1
-        for other in item.also:
-            try:
-                await memory.add_alias(
-                    campaign.guild_id, campaign.id, written.value.id, other,
-                    kind="nickname", source="scan",
-                )  # fmt: skip
-            except MemoryRuleError as exc:
-                log.info("Skipped a spelling from a background: %s", exc)
+        note = f'{BACKGROUND}: "{item.quote}"' if item.quote else BACKGROUND
+        if len(note) > DESCRIPTION_MAX:
+            note = BACKGROUND  # a long quote goes, the name stays
+        names.append(
+            NewName(
+                item.name, item.kind, PROPOSED, others=item.also, secrets=item.secret, note=note
+            )
+        )
+    stored: dict[str, list[str]] = {}
+    if not names:
+        return stored
+    try:
+        written = await memory.add_names(
+            campaign.guild_id, campaign.id, names, source=DM, entity_source=BACKGROUND_SOURCE
+        )
+    except MemoryRuleError as exc:
+        log.info("Skipped the names from a background: %s", exc)
+        return stored
+    for name, entity_id in zip(names, written.value, strict=False):
+        if entity_id is not None:
+            stored.setdefault(name.type, []).append(entity_id)
     return stored
 
 
@@ -332,22 +349,27 @@ def _plural(kind: str, count: int) -> str:
 
 
 async def summary(
-    interaction: discord.Interaction, campaign: Campaign, label: str, stored: dict[str, int]
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    label: str,
+    stored: dict[str, list[str]],
 ) -> None:
-    total = sum(stored.values())
+    total = sum(map(len, stored.values()))
     if not total:
         await interaction.edit_original_response(
             content=f"🤖 DMbot found no new names in {_md(label)}. Nothing was added.",
             allowed_mentions=NO_PINGS,
         )
         return
-    parts = ", ".join(_plural(k, n) for k, n in sorted(stored.items(), key=lambda x: -x[1]))
+    parts = ", ".join(
+        _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
+    )
     view = BulkConfirm(campaign.id, stored)
     await interaction.edit_original_response(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
             f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
-            "Nothing is added until you say yes, and **Yes to all** adds every name of that "
+            "Nothing is added until you say yes, and **All** adds every name of that "
             "group. DMbot can miss names or put one in the wrong group, so look them over."
         ),
         view=view,
@@ -357,24 +379,26 @@ async def summary(
 
 
 class BulkConfirm(_Menu):
-    """Say yes to every name of a kind at once ("Yes to all 14 places"), or open the checking."""
+    """Say yes to every name of a kind from this reading at once ("All 14 places"), undo it, or
+    open the checking. Only the names this reading found: never an earlier reading's."""
 
-    def __init__(self, campaign_id: str, stored: dict[str, int]) -> None:
+    def __init__(self, campaign_id: str, stored: dict[str, list[str]]) -> None:
         super().__init__()
         self.campaign_id = campaign_id
-        self.stored = dict(stored)
+        self.ids = {k: list(v) for k, v in stored.items()}
+        self.last: tuple[str, int, list[str]] | None = None  # (kind, batch, ids) to undo
         self._build()
 
     def _build(self) -> None:
         self.clear_items()
-        by_size = sorted(self.stored.items(), key=lambda x: -x[1])
-        for kind, count in by_size[:MAX_BULK_BUTTONS]:
+        by_size = sorted(self.ids.items(), key=lambda x: -len(x[1]))
+        for kind, ids in by_size[:MAX_BULK_BUTTONS]:
             if kind == "concept":
                 continue  # an idea needs a look: no yes-to-all
             self.add_item(
                 _Button(
                     partial(self._all, kind),
-                    label=logic.shorten(f"✅ All {_plural(kind, count)}", REVIEW_LABEL_MAX),
+                    label=logic.shorten(f"✅ All {_plural(kind, len(ids))}", REVIEW_LABEL_MAX),
                     style=discord.ButtonStyle.success,
                 )
             )
@@ -386,6 +410,15 @@ class BulkConfirm(_Menu):
                 row=1,
             )
         )
+        if self.last is not None:
+            self.add_item(
+                _Button(
+                    self._undo,
+                    label=logic.shorten(f"↩️ Undo {_plural(self.last[0], len(self.last[2]))}", 25),
+                    style=discord.ButtonStyle.secondary,
+                    row=1,
+                )
+            )
 
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -401,28 +434,52 @@ class BulkConfirm(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
-        waiting = [
-            e
-            for e in await memory.entities(campaign.guild_id, campaign.id, statuses=["proposed"])
-            if e.description.startswith(BACKGROUND) and background_kind(e) == kind
-        ]
-        done = 0
-        for entity in waiting:
-            try:
-                await memory.confirm_entity(
-                    campaign.guild_id, campaign.id, entity.id, kind, source=DM
-                )
-                done += 1
-            except MemoryRuleError:
-                continue  # changed since (answered, merged): left as it is
+        ids = self.ids.get(kind, [])
+        try:
+            written = await memory.confirm_kinds(
+                campaign.guild_id, campaign.id, ids, kind, source=DM
+            )  # this reading's names only; one already answered is left alone
+        except MemoryRuleError:
+            await _tell(interaction, "DMbot couldn't add those. Open 📝 Check new names instead.")
+            return
         changed(interaction, campaign)
-        self.stored.pop(kind, None)
+        self.ids.pop(kind, None)
+        if written.value and written.batch is not None:
+            self.last = (kind, written.batch, ids)
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"✅ Added {_plural(kind, done)}. See them in 📝 Check new names.",
+                f"✅ Added {_plural(kind, written.value)}.",
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
+            )
+
+    async def _undo(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None or self.last is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, ONLY_DMS)
+            return
+        kind, batch, ids = self.last
+        try:
+            await memory.undo(campaign.guild_id, campaign.id, batch)
+        except MemoryRuleError:
+            await _tell(interaction, "That can't be undone now: something changed since.")
+            return
+        changed(interaction, campaign)
+        self.ids[kind] = ids
+        self.last = None
+        self._build()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(
+                f"↩️ Took back {_plural(kind, len(ids))}. They wait in 📝 Check new names again.",
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

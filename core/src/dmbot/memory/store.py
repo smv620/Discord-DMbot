@@ -53,7 +53,7 @@ from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
-    BACKGROUND_NOTE,
+    BACKGROUND_SOURCE,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -1420,6 +1420,7 @@ class MemoryStore:
         source: str,
         secret_clashes: bool = True,
         more: Sequence[MoreNames] = (),
+        entity_source: str | None = None,
     ) -> Written[list[str | None]]:
         """Many names at once (📥 Add many), each with its other and secret names, in one
         change: one Undo (`undo_names`) takes the whole list back, and live transcription
@@ -1432,9 +1433,13 @@ class MemoryStore:
         (#369), in the same change, so the same Undo takes them back; one whose entry has
         gone, or whose name is used by now or that entry already has (even as a secret or
         a name the DM said isn't it), is left out quietly. The returned IDs then go on with
-        one per `more` entry: its entry's ID if any name was added, else None."""
+        one per `more` entry: its entry's ID if any name was added, else None. `entity_source`:
+        what the new entries record as their origin (`BACKGROUND_SOURCE` for names read from the
+        DM's story; the change itself is still the DM's)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can add a list of names.")
+        if entity_source is not None and entity_source not in SOURCES:
+            raise ValueError(f"Unknown memory source: {entity_source!r}")
         for n in names:
             _check_choice(n.status, LIVE, "entity status")
         # Each name's spelling, key and sound codes, before the campaign's write lock and
@@ -1508,8 +1513,10 @@ class MemoryStore:
                 entity_id = new_id()
                 entities.append(
                     {
-                        "id": entity_id, "type": kind, "name": name, "description": "",
-                        "status": n.status, "merged_into": None, "source": source,
+                        "id": entity_id, "type": kind, "name": name,
+                        "description": n.note[:DESCRIPTION_MAX],
+                        "status": n.status, "merged_into": None,
+                        "source": entity_source or source,
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
                         "unique_item": None,
@@ -1838,6 +1845,9 @@ class MemoryStore:
             ):
                 await w.update(ALIASES, alias["id"], {"status": CONFIRMED})
             await states.settle_kind(w, onto, [entity_id], type)
+            await _forget_quotes(
+                w, [entity_id] if before.get("source") == BACKGROUND_SOURCE else []
+            )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
             return Written(_entity(row), w.batch)
@@ -1878,6 +1888,13 @@ class MemoryStore:
             )
             ids = [row["id"] for row in confirmed]
             await states.settle_kind(w, onto, ids, type)
+            # Names read from the DM's story: the quote goes with the decision (#2167).
+            quoted = [r["id"] for r in confirmed if r["source"] == BACKGROUND_SOURCE]
+            if quoted:
+                await w.update_where(
+                    ENTITIES, {"description": ""}, " AND id = ANY(%s)", [sorted(quoted)]
+                )
+                await _forget_quotes(w, quoted)
             if ids:
                 await w.update_where(
                     ALIASES,
@@ -1910,7 +1927,10 @@ class MemoryStore:
             row = await w.update(
                 ENTITIES,
                 entity_id,
-                {"status": status, **(_note_cleared(current) if status == REJECTED else {})},
+                {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
+            )
+            await _forget_quotes(
+                w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
             )
             if status == REJECTED:
                 # A rejected entry is not a name at the table any more, so the DM's word that it is
@@ -2193,6 +2213,7 @@ class MemoryStore:
                 gone_id,
                 {"status": MERGED, "merged_into": keep_id, **_note_cleared(gone)},
             )
+            await _forget_quotes(w, [gone_id] if _note_cleared(gone) else [])
             await _sync_plays(w, keep_id)
             await _sync_plays(w, gone_id)
             final = await w.get(ENTITIES, keep_id)
@@ -3610,10 +3631,28 @@ def _new_alias(
 
 
 def _note_cleared(row: dict[str, Any]) -> dict[str, Any]:
-    """A suggestion read from the DM's story carries a quote of it until the DM decides; deciding
-    (confirm, reject, merge) takes it away, so the DM's text is not kept (#2167)."""
-    note = str(row.get("description") or "")
-    return {"description": ""} if note.startswith(BACKGROUND_NOTE) else {}
+    """A suggestion read from the DM's story carries a quote of it until the DM decides; any way
+    out of "waiting" (confirm, reject, merge) takes it away, so the DM's text is not kept
+    (#2167)."""
+    return {"description": ""} if row.get("source") == BACKGROUND_SOURCE else {}
+
+
+async def _forget_quotes(w: Changes, entity_ids: Sequence[str]) -> None:
+    """Blank the quote in the change log too (`before` and `after` of those entries), so an
+    entry decided on keeps nothing of the DM's text there either. An Undo of the decision then
+    brings the suggestion back without its quote. Called after the update that cleared it."""
+    if not entity_ids:
+        return
+    await w.conn.execute(
+        "UPDATE memory_changes SET"
+        " before = CASE WHEN before ->> 'source' = %s"
+        " THEN before || jsonb_build_object('description', ''::text) ELSE before END,"
+        " after = CASE WHEN after ->> 'source' = %s"
+        " THEN after || jsonb_build_object('description', ''::text) ELSE after END"
+        " WHERE guild_id = %s AND campaign_id = %s AND table_name = 'memory_entities'"
+        " AND row_id = ANY(%s)",
+        (BACKGROUND_SOURCE, BACKGROUND_SOURCE, *w.ids, list(entity_ids)),
+    )
 
 
 def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dict[str, Any]:

@@ -60,9 +60,10 @@ SCHEMA = {
                     "name": {"type": "string"},
                     "kind": {"type": "string", "enum": list(KINDS)},
                     "also": {"type": "array", "items": {"type": "string"}},
+                    "secret": {"type": "array", "items": {"type": "string"}},
                     "quote": {"type": "string"},
                 },
-                "required": ["name", "kind", "also", "quote"],
+                "required": ["name", "kind", "also", "secret", "quote"],
                 "additionalProperties": False,
             },
         }
@@ -77,6 +78,7 @@ class Found:
     name: str
     kind: str  # the stored kind (npc, place, faction…)
     also: tuple[str, ...]
+    secret: tuple[str, ...]  # disguises and secret identities: never a public name
     quote: str  # at most QUOTE_WORDS words, as written; "" when the AI's quote was not in the text
 
 
@@ -93,8 +95,11 @@ def instructions() -> str:
         "For each name give:\n"
         f"- name: as written in the text, at most {NAME_WORDS} words. Never invent a name.\n"
         f"- kind: exactly one of {kinds}.\n"
-        "- also: other spellings, nicknames or titles the text uses for the same one "
-        f'("Lord Brannoch" for "Brannoch"), at most {MAX_ALSO}; empty if none.\n'
+        "- also: other spellings, nicknames or titles the text uses openly for the same one "
+        f'("Lord Brannoch" for "Brannoch"), at most {MAX_ALSO}; empty if none. Never a disguise.\n'
+        "- secret: only when the text says plainly that a name is a disguise or secret identity "
+        '("the hooded stranger is really Belleros"): put the disguise here, for the real one, '
+        "and never in also. Empty if none.\n"
         f"- quote: one short quote copied exactly from the text where it appears, at most "
         f"{QUOTE_WORDS} words.\n"
         "Leave out descriptions, relationships, ordinary words, spells, rules terms, and kinds of "
@@ -108,6 +113,13 @@ def pieces(text: str) -> list[str]:
 
 def request(piece: str) -> str:
     return request_text(piece)
+
+
+def cost_text(cents: int) -> str:
+    """ "about 3 cents", "about $4.01": dollars once it is a dollar or more."""
+    if cents >= 100:
+        return f"about ${cents / 100:.2f}"
+    return f"about {cents} cent{'' if cents == 1 else 's'}"
 
 
 def estimate_cents(chars: int) -> int:
@@ -139,9 +151,35 @@ def _json(reply: str) -> object:
     return None
 
 
+def _has(haystack: str, text: str) -> bool:
+    """Is `text` in the (squashed) haystack as whole words? "Ann" is not in "annual"."""
+    return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
+
+
+def _spellings(raw: object, name: str, haystack: str, *, skip: set[str]) -> list[str]:
+    """The other spellings in one list the text really holds, each once, not the name itself."""
+    out: list[str] = []
+    for other in raw if isinstance(raw, list) else []:
+        if not isinstance(other, str):
+            continue
+        other = " ".join(other.split())
+        key = name_key(other)
+        if (
+            other
+            and len(other) <= NAME_CHARS
+            and "|" not in other
+            and key != name_key(name)
+            and key not in skip
+            and _has(haystack, other)
+        ):
+            skip.add(key)
+            out.append(other)
+    return out
+
+
 def read_answer(reply: str, piece: str) -> list[Found]:
     """The names in one answer that are really in `piece`. A name, other spelling or quote the
-    text does not hold is dropped (a quote alone: the name stays, without it)."""
+    text does not hold (as whole words) is dropped (a quote alone: the name stays, without it)."""
     data = _json(reply)
     items = data.get("names") if isinstance(data, dict) else None
     if not isinstance(items, list):
@@ -161,38 +199,45 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or len(name) > NAME_CHARS
             or len(name.split()) > NAME_WORDS
             or "|" in name
-            or _squash(name) not in haystack
+            or not _has(haystack, name)
         ):
             continue
-        also: list[str] = []
-        raw = item.get("also")
-        for other in raw if isinstance(raw, list) else []:
-            if isinstance(other, str):
-                other = " ".join(other.split())
-                if (
-                    other
-                    and len(other) <= NAME_CHARS
-                    and "|" not in other
-                    and name_key(other) != name_key(name)
-                    and _squash(other) in haystack
-                    and other not in also
-                ):
-                    also.append(other)
+        # A disguise is read first, so the same spelling is never also a public one.
+        seen: set[str] = set()
+        secret = _spellings(item.get("secret"), name, haystack, skip=seen)
+        also = _spellings(item.get("also"), name, haystack, skip=seen)
         quote = item.get("quote")
         kept = ""
         if isinstance(quote, str):
             words = quote.split()
-            if words and len(words) <= QUOTE_WORDS and _squash(quote) in haystack:
+            if words and len(words) <= QUOTE_WORDS and _has(haystack, quote):
                 kept = " ".join(words)
-        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), kept))
+        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept))
     return out
 
 
+def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
+    """Is this a kind of monster, or a spell, in the rules? Those belong to the rules, not to the
+    campaign (a proper name like "Snot" is not a monster). A named person counts as a monster
+    when the rules hold it by that name ("Owlbear")."""
+    from dmbot.rules import index  # late: the rules data loads on first use
+
+    rules = index.srd()
+    if kind == "npc" and rules.is_monster(name):
+        return True
+    return rules.lookup(name, target, fallback, kind="spell") is not None
+
+
 def merge(
-    answers: Iterable[list[Found]], skip_keys: Collection[str] = (), *, cap: int = MAX_NAMES
+    answers: Iterable[list[Found]],
+    skip_keys: Collection[str] = (),
+    *,
+    cap: int = MAX_NAMES,
+    rules: tuple[str, str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
-    leaving out names DMbot already has, ordinary words and game terms, at most `cap`."""
+    leaving out names DMbot already has, ordinary words and game terms, at most `cap`. `rules`
+    (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
     merged: dict[str, Found] = {}
@@ -201,10 +246,13 @@ def merge(
             key = name_key(item.name)
             if not key or key in skip:
                 continue
+            if rules is not None and in_the_rules(item.name, item.kind, *rules):
+                continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
                 item.kind,
                 tuple(a for a in item.also if name_key(a) not in skip),
+                tuple(a for a in item.secret if name_key(a) not in skip),
                 item.quote,
             )
             old = merged.get(key)
@@ -212,19 +260,32 @@ def merge(
                 order.append(key)
                 merged[key] = item
                 continue
-            seen = {name_key(x) for x in old.also}
+            seen = {name_key(x) for x in (*old.also, *old.secret)}
             more = tuple(x for x in item.also if name_key(x) not in seen)
+            more_secret = tuple(x for x in item.secret if name_key(x) not in seen)
             merged[key] = Found(
                 old.name,
                 old.kind,
                 (*old.also, *more)[:MAX_ALSO],
+                (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
             )
     out = [merged[k] for k in order]
-    # An other spelling that is another name's own name is that name's, not an alias.
+    # An other spelling that is another name's own name is that name's, not an alias; and a
+    # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}
     out = [
-        Found(f.name, f.kind, tuple(a for a in f.also if name_key(a) not in names), f.quote)
+        Found(
+            f.name,
+            f.kind,
+            tuple(
+                a
+                for a in f.also
+                if name_key(a) not in names and name_key(a) not in {name_key(x) for x in f.secret}
+            ),
+            tuple(a for a in f.secret if name_key(a) not in names),
+            f.quote,
+        )
         for f in out
     ]
     return out[:cap]

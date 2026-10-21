@@ -24,7 +24,11 @@ MENTION_METHODS = ("exact", "sound", "spelling", "context", "dm")
 FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
-SOURCES = ("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor")
+BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#2167)
+SOURCES = (
+    *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
+    BACKGROUND_SOURCE,
+)
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
 # only, in their own table. A claim is dropped (with a reason) when the rules or consent say no,
@@ -205,6 +209,7 @@ class NewName:
     others: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
+    note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
 
 
 @dataclass(frozen=True, slots=True)

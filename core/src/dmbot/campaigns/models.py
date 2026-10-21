@@ -45,7 +45,8 @@ DEFAULT_DM_SCREEN_LEVEL = NORMAL
 # The database checks the same list (schema.SHARED_CONFIRMATIONS): a new purpose needs a
 # migration too (a test compares them).
 NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
-CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK)
+OWN_WRITING = "own_writing"  # a DM's own background or notes, read for names (#2167)
+CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK, OWN_WRITING)
 
 
 # The Shared story switch (#1692; docs/STORY_MEMORY.md, section 6). Nothing reads it yet: the

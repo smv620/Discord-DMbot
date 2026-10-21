@@ -7010,6 +7010,15 @@ MORE_HOMEBREW_KINDS = """
 """
 
 
+OWN_WRITING = """
+    -- A DM's own background, read by DMbot for names (#2167), is a different thing from a list of
+    -- names (names_list) or a published adventure (shared_story): its own purpose, so the record
+    -- of who confirmed what can tell them apart. No row changes.
+    ALTER TABLE shared_confirmations DROP CONSTRAINT shared_confirmations_purpose_check;
+    ALTER TABLE shared_confirmations ADD CONSTRAINT shared_confirmations_purpose_check
+        CHECK (purpose IN ('names_list', 'shared_story', 'rulebook', 'own_writing'));
+    """
+
 RECAP_SHARE = (
     _setting("dmbot_recap_share_tok", "dmbot.recap_share_tok", "TEXT")
     + _setting("dmbot_recap_share_guild", "dmbot.recap_share_guild", "BIGINT")
@@ -7615,6 +7624,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0136_session_imports", SESSION_IMPORTS),  # sessions loaded from a file (#2105)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
+    ("0146_own_writing", OWN_WRITING),  # a DM's own background is its own purpose (#2167)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
