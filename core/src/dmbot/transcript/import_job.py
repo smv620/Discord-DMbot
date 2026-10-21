@@ -51,6 +51,7 @@ class Ready:
     session_id: str
     started_at: int
     write_recap: bool
+    import_id: str = ""  # the batch the session came in
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,14 +119,15 @@ class ImportStore:
         being cleaned or unscanned: the scans and recaps of a batch go in date order (#2106)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at"
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at, i.import_id"
                 " FROM session_imports i JOIN transcript_sessions t"
                 " ON t.id = i.session_id AND t.guild_id = i.guild_id"
                 " WHERE i.state = 'done' AND NOT i.scan_finished"
                 " AND (NOT i.scanned OR i.scan_from < %s) AND NOT EXISTS ("
                 " SELECT 1 FROM session_imports j JOIN transcript_sessions u"
                 " ON u.id = j.session_id AND u.guild_id = j.guild_id"
-                " WHERE j.campaign_id = i.campaign_id AND u.started_at < t.started_at"
+                " WHERE j.campaign_id = i.campaign_id"
+                " AND (u.started_at, j.session_id) < (t.started_at, i.session_id)"
                 " AND (j.state IN ('waiting', 'working')"
                 " OR (j.state = 'done' AND NOT j.scan_finished)))"
                 " ORDER BY t.started_at, i.session_id LIMIT %s",
@@ -133,7 +135,11 @@ class ImportStore:
             )
             return [
                 Ready(
-                    r["campaign_id"], r["session_id"], int(r["started_at"]), bool(r["write_recap"])
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
                 )
                 for r in await cur.fetchall()
             ]
@@ -198,7 +204,7 @@ class ImportStore:
         order. Separate from the scan, so a recap that failed to start is tried again."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at"
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at, i.import_id"
                 " FROM session_imports i JOIN transcript_sessions t"
                 " ON t.id = i.session_id AND t.guild_id = i.guild_id"
                 " WHERE i.scan_finished AND i.write_recap AND NOT i.recap_started"
@@ -207,7 +213,11 @@ class ImportStore:
             )
             return [
                 Ready(
-                    r["campaign_id"], r["session_id"], int(r["started_at"]), bool(r["write_recap"])
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
                 )
                 for r in await cur.fetchall()
             ]

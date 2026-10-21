@@ -36,6 +36,7 @@ class Hold:
     asked: bool = True  # the DM was told; False while the story extractor may still add names
     names_open: int = 0  # name questions it waits on when last counted; the website says it (#2174)
     reminded: bool = False  # the one reminder after a day has been claimed
+    group_id: str = ""  # an import's id: its holds are asked, reminded and ended together (#2106)
 
 
 QUEUED, ALREADY, GONE = "queued", "already", "gone"
@@ -98,14 +99,15 @@ class HoldStore:
         channel_id: int,
         asked: bool = True,
         names_open: int = 0,
+        group_id: str = "",
     ) -> bool:
         """Hold this session's recap. False when it is held already, or a recap job exists for the
         session (a repeat of the end of the session): one wait, and never after a job."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO recap_holds (guild_id, campaign_id, session_at, session_id,"
-                " dm_user_id, channel_id, created_at, asked, names_open)"
-                " SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s"
+                " dm_user_id, channel_id, created_at, asked, names_open, group_id)"
+                " SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s"
                 " WHERE NOT EXISTS (SELECT 1 FROM recap_jobs WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s)"
                 " ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
@@ -119,6 +121,7 @@ class HoldStore:
                     int(self._now()),
                     asked,
                     names_open,
+                    group_id,
                     guild_id,
                     campaign_id,
                     session_at,
@@ -134,7 +137,8 @@ class HoldStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT campaign_id, session_at, session_id, dm_user_id, channel_id, created_at,"
-                " asked, names_open, reminded FROM recap_holds ORDER BY created_at, session_at"
+                " asked, names_open, reminded, group_id FROM recap_holds"
+                " ORDER BY created_at, session_at"
             )
             return list(await cur.fetchall())
 
@@ -214,6 +218,7 @@ class HoldStore:
                 bool(r["asked"]),
                 int(r["names_open"]),
                 bool(r["reminded"]),
+                r["group_id"],
             )
             for r in rows
         ]
@@ -222,7 +227,7 @@ class HoldStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT session_id, dm_user_id, channel_id, created_at, asked, names_open,"
-                " reminded FROM recap_holds"
+                " reminded, group_id FROM recap_holds"
                 " WHERE campaign_id = %s AND session_at = %s",
                 (campaign_id, session_at),
             )
@@ -239,6 +244,7 @@ class HoldStore:
             bool(r["asked"]),
             int(r["names_open"]),
             bool(r["reminded"]),
+            r["group_id"],
         )
 
     async def release(

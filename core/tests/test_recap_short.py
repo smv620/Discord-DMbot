@@ -89,7 +89,6 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         post_message=AsyncMock(return_value=SimpleNamespace(id=1, content="q")),
         decision_lines=MagicMock(close=AsyncMock(), remember_pressed=MagicMock()),
         _short_asks={},
-        _writing_said={},
         recap_holds=None,
     )
     for name in (

@@ -7636,6 +7636,9 @@ IMPORT_RECAPS = """
         -- (the bot stopped) is taken again after a while.
         ADD COLUMN scan_finished BOOLEAN NOT NULL DEFAULT FALSE,
         ADD COLUMN recap_tries INTEGER NOT NULL DEFAULT 0;
+    -- The holds of one import act as a group (one question, one reminder, one expiry line, one
+    -- "Write the recap now"): they share the import's id. Empty for a live session's hold.
+    ALTER TABLE recap_holds ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
 
     -- dmbot_import_write_recap: set the choice of one stored import, only while it waits to be
     -- cleaned and only by a DM of the campaign in a server on the session's list. True when set.

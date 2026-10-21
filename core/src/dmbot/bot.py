@@ -322,7 +322,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
-from dmbot.transcript.import_job import ImportJob, ImportStore, Ready
+from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Ready
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
@@ -958,7 +958,6 @@ class DMBot(commands.AutoShardedBot):
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
-        self._writing_said: dict[str, float] = {}  # campaign -> when "Writing a recap" was said
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # The rules archive channel (#1752) hears about every change to a campaign's house rules
@@ -7779,6 +7778,7 @@ class DMBot(commands.AutoShardedBot):
         *,
         extractor_to_come: bool = True,
         quiet: bool = False,
+        group_id: str = "",
     ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
@@ -7790,7 +7790,7 @@ class DMBot(commands.AutoShardedBot):
         for the session (the DM pressing "Write a recap" after the end-of-session steps, or an
         imported session): only open questions hold it, never a silent wait. `quiet`: the DM was
         asked about another recap of the same import already, so this hold is made asked but its
-        question is not posted again."""
+        question is not posted again. `group_id`: the import's id; its holds go together."""
         gid, cid = campaign.guild_id, campaign.id
         store = self.recap_holds
         if store is not None:
@@ -7802,6 +7802,7 @@ class DMBot(commands.AutoShardedBot):
                     if not await store.hold(
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
                         channel_id=channel_id, asked=waiting > 0, names_open=waiting,
+                        group_id=group_id,
                     ):  # fmt: skip
                         if await store.get(gid, cid, session_at) is not None:
                             return "held"  # it is waiting already: a repeat of the end or press
@@ -7861,9 +7862,13 @@ class DMBot(commands.AutoShardedBot):
         store = self.recap_holds
         if store is None:
             return
-        for held in await store.held(gid):
+        holds = await store.held(gid)
+        for held in holds:
+            # The holds of one import go together (#2106): the oldest speaks for the group (the
+            # question, the reminder, the expiry line); the others only follow their own answers.
+            group = [h for h in holds if held.group_id and h.group_id == held.group_id]
             try:
-                await self._release_one(store, gid, held)
+                await self._release_one(store, gid, held, group=group or [held])
             except Exception:  # one campaign's trouble does not hold up the others
                 log.exception("Recap: couldn't check a held recap")
 
@@ -7874,6 +7879,7 @@ class DMBot(commands.AutoShardedBot):
         held: recap_hold.Hold,
         *,
         extractor_done: bool = False,
+        group: list[recap_hold.Hold] | None = None,
     ) -> None:
         """One held recap, the same rules whether the round or the end of the extractor asks: a
         campaign that is gone or has recaps off drops it; a silent hold waits for the extractor
@@ -7886,6 +7892,8 @@ class DMBot(commands.AutoShardedBot):
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
+            members = group or [held]
+            lead = held.session_at == min(m.session_at for m in members)  # speaks for its group
             age = store.now() - held.created_at  # the store's clock wrote created_at
             if not held.asked and not extractor_done and age < recap_hold.QUIET_WAIT_S:
                 return  # the story extractor is still running; it counts again when done
@@ -7905,19 +7913,28 @@ class DMBot(commands.AutoShardedBot):
                 if not await self.recap_allowed(gid, held.campaign_id, None):
                     log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
                     return
+                note = recap_hold.EXPIRED_NOTE if waiting and held.asked else ""
+                if len(members) > 1:
+                    if not lead:
+                        return  # the oldest of the import ends them all, with one line
+                    made = 0
+                    for m in members:
+                        if (
+                            await store.release(gid, m.campaign_id, m.session_at)
+                            == recap_hold.QUEUED
+                        ):
+                            made += 1
+                    if made:
+                        await self._say_group_writing(campaign, held.channel_id, made, note=note)
+                    return
                 if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
-                    await self._say_writing(
-                        campaign,
-                        held.channel_id,
-                        held.session_at,
-                        note=recap_hold.EXPIRED_NOTE if waiting and held.asked else "",
-                    )
+                    await self._say_writing(campaign, held.channel_id, held.session_at, note=note)
                 return
             if waiting:
                 if held.asked:
                     # One reminder after a day, claimed first so the round and a restart never
                     # send it twice; any failure to post gives the claim back for the next round.
-                    if age >= recap_hold.HOLD_REMIND_S and not held.reminded:
+                    if lead and age >= recap_hold.HOLD_REMIND_S and not held.reminded:
                         await self._remind(store, gid, held, waiting, age)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
@@ -7937,6 +7954,10 @@ class DMBot(commands.AutoShardedBot):
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                if held.group_id and any(
+                    h.group_id == held.group_id for h in await store.held(gid)
+                ):  # an import's recaps start one by one: the last one says so, once
+                    return
                 await self._say_writing(campaign, held.channel_id, held.session_at)
 
     async def _remind(
@@ -7979,11 +8000,20 @@ class DMBot(commands.AutoShardedBot):
         held = await self.recap_holds.get(gid, cid, session_at)
         if held is None:
             return "already"
-        result = await self.recap_holds.release(gid, cid, session_at)
-        if result == recap_hold.QUEUED:
+        group = [held]
+        if held.group_id:  # one press writes all of an import's held recaps (#2106)
+            group = [h for h in await self.recap_holds.held(gid) if h.group_id == held.group_id]
+        made = 0
+        for h in group:
+            if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED:
+                made += 1
+        if not made:
+            return "already"
+        if len(group) > 1:
+            await self._say_group_writing(campaign, held.channel_id, made)
+        else:
             await self._say_writing(campaign, held.channel_id, session_at)
-            return "queued"
-        return "already"
+        return "queued"
 
     async def _queue_recap(
         self, campaign: Campaign, session_at: int, channel_id: int, dm: int
@@ -8011,14 +8041,26 @@ class DMBot(commands.AutoShardedBot):
             else "Find it on your recap page when it's ready."
         )
         lead = f"{note} " if note else ""
-        now = time.monotonic()
-        if not note and now - self._writing_said.get(campaign.id, -1e9) < 120:
-            return  # an import's recaps start together: one line, not one for each
-        self._writing_said[campaign.id] = now
         await self.post(
             channel_id,
             f"📜 {lead}Writing a recap of this session. {ready} "
             f"Nothing goes to the table until you say so.{where}",
+        )
+
+    async def _say_group_writing(
+        self, campaign: Campaign, channel_id: int, count: int, note: str = ""
+    ) -> None:
+        """One line for the recaps of an import that start together (#2106), not one for each."""
+        ready = (
+            "You'll get an email as each is ready."
+            if campaign.recaps_email
+            else "Find them on your recap page when they're ready."
+        )
+        lead = f"{note} " if note else ""
+        await self.post(
+            channel_id,
+            f"📜 {lead}Writing {count} recaps from your imported sessions. {ready} "
+            "Nothing goes to the table until you say so.",
         )
 
     async def recap_short_expired(self, gid: int, cid: str, session_at: int) -> bool:
@@ -9091,7 +9133,8 @@ class DMBot(commands.AutoShardedBot):
                 if not await store.claim_scan(gid, ready.session_id, began):
                     continue  # another round or bot has it
                 try:
-                    added = await self._scan_import(gid, ready)
+                    async with asyncio.timeout(STALE_SCAN_S // 3):  # well inside the stale claim
+                        added = await self._scan_import(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
@@ -9116,6 +9159,8 @@ class DMBot(commands.AutoShardedBot):
                 if why:
                     self._import_unhonoured.setdefault(ready.campaign_id, []).append(why)
             await store.mark_recap_started(gid, ready.session_id)
+        except PlanUnchecked:
+            log.warning("Import: the plan could not be checked; the recap is tried again")
         except Exception:
             log.exception("Import: a session's recap could not be started")
             if await store.note_recap_failure(gid, ready.session_id) >= IMPORT_RECAP_TRIES:
@@ -9134,7 +9179,9 @@ class DMBot(commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if names and campaign is not None and campaign.dm_screen_channel_id is not None:
                 await self.post(
-                    campaign.dm_screen_channel_id, after_session_text(names), view=review_view(cid)
+                    campaign.dm_screen_channel_id,
+                    after_session_text(names, where="your imported sessions"),
+                    view=review_view(cid),
                 )
         for cid, reasons in list(self._import_unhonoured.items()):
             if await store.pending_scans(gid, cid):
@@ -9142,12 +9189,15 @@ class DMBot(commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             del self._import_unhonoured[cid]
             if campaign is not None and campaign.dm_screen_channel_id is not None:
-                noun = "recap" if len(reasons) == 1 else "recaps"
-                await self.post(
-                    campaign.dm_screen_channel_id,
-                    f"📜 {len(reasons)} {noun} you asked for from your imported sessions "
-                    f"wasn't written: {reasons[0]}.",
-                )
+                why = "; ".join(sorted(set(reasons)))
+                if len(reasons) == 1:
+                    head = "1 recap you asked for from your imported sessions wasn't written"
+                else:
+                    head = (
+                        f"{len(reasons)} recaps you asked for from your imported sessions "
+                        "weren't written"
+                    )
+                await self.post(campaign.dm_screen_channel_id, f"📜 {head}: {why}.")
 
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """The name scan of one imported session: the lines of people who still agree (asked after
@@ -9185,7 +9235,7 @@ class DMBot(commands.AutoShardedBot):
             return "recaps are off for this campaign"
         if not await self.plan_allows("recap", gid, campaign, fail_open=False):
             if await self.plan_allows("recap", gid, campaign, fail_open=True):
-                raise RuntimeError("the plan could not be checked")  # not a no: try again
+                raise PlanUnchecked  # not a no: try again, and don't count it
             log.info("Import: no recap written (not in the plan)")
             return "your plan doesn't include recaps"
         dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
@@ -9199,7 +9249,7 @@ class DMBot(commands.AutoShardedBot):
         # One question for the whole import, not one per session: when an earlier recap of this
         # campaign is already waiting and was asked about, this one waits quietly beside it.
         asked_before = self.recap_holds is not None and any(
-            h.campaign_id == campaign.id and h.asked for h in await self.recap_holds.held(gid)
+            h.group_id == ready.import_id and h.asked for h in await self.recap_holds.held(gid)
         )
         await self._hold_or_queue(
             campaign,
@@ -9209,6 +9259,7 @@ class DMBot(commands.AutoShardedBot):
             dm,
             extractor_to_come=False,
             quiet=asked_before,
+            group_id=ready.import_id,
         )
         return ""
 
@@ -10581,6 +10632,10 @@ async def run(settings: Settings) -> None:
     finally:
         with contextlib.suppress(Exception):
             await db.close()
+
+
+class PlanUnchecked(Exception):
+    """The plan could not be checked right now (a timeout, the database): not a "no"."""
 
 
 def _close_on_sigterm(bot: DMBot) -> None:

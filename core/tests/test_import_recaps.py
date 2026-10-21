@@ -240,15 +240,81 @@ class TheCrashAndTheNews(WithImports):
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
         bot.recap_holds = SimpleNamespace(
-            held=AsyncMock(return_value=[SimpleNamespace(campaign_id=self.campaign.id, asked=True)])
+            held=AsyncMock(return_value=[SimpleNamespace(group_id="a" * 32, asked=True)])
+        )
+        await self.imported(2, recap=True)  # (imported with the import id "aaaa...")
+        await rounds(bot, 3)
+        kwargs = bot._hold_or_queue.await_args.kwargs
+        self.assertTrue(kwargs["quiet"])  # an earlier session of this import asked
+        self.assertEqual(kwargs["group_id"], "a" * 32)  # and they go together
+
+    async def test_a_live_sessions_hold_does_not_silence_an_imports_question(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot.recap_holds = SimpleNamespace(
+            held=AsyncMock(return_value=[SimpleNamespace(group_id="", asked=True)])
         )
         await self.imported(2, recap=True)
         await rounds(bot, 3)
-        self.assertTrue(bot._hold_or_queue.await_args.kwargs["quiet"])  # an earlier one asked
-        bot.recap_holds.held = AsyncMock(return_value=[])
-        await self.imported(3, recap=True)
+        self.assertFalse(bot._hold_or_queue.await_args.kwargs["quiet"])
+
+    async def test_an_unchecked_plan_is_not_counted_against_the_recap(self) -> None:
+        sid = await self.imported(1, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(return_value=[])
+        bot.plan_allows = AsyncMock(side_effect=lambda *a, fail_open=True, **k: fail_open)
+        await rounds(bot, 6)  # well past the try cap, and the DM is told nothing
+        bot._hold_or_queue.assert_not_awaited()
+        bot.post.assert_not_awaited()
+        self.assertEqual([r.session_id for r in await self.store.ready_for_recap(GUILD)], [sid])
+        bot.plan_allows = AsyncMock(return_value=True)  # the meter is back
+        await rounds(bot, 1)
+        bot._hold_or_queue.assert_awaited_once()
+
+    async def test_several_reasons_are_listed_and_the_plural_reads_right(self) -> None:
+        for day in (1, 2):
+            await self.imported(day, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(return_value=[])
+        bot.plan_allows = AsyncMock(return_value=False)
         await rounds(bot, 3)
-        self.assertFalse(bot._hold_or_queue.await_args.kwargs["quiet"])  # the first one asks
+        text = bot.post.await_args.args[1]
+        self.assertIn("2 recaps you asked for from your imported sessions weren't written", text)
+        one = fake_bot(self.store)[0]
+        one._import_unhonoured["x"] = ["recaps are switched off"]
+        one.campaigns.get = AsyncMock(return_value=campaign)
+        await one._tell_import_news(GUILD, self.store)
+        self.assertIn("1 recap you asked for", one.post.await_args.args[1])
+
+    async def test_the_names_message_says_it_is_about_the_imported_sessions(self) -> None:
+        from dmbot.ui.names import after_session_text
+
+        self.assertIn("from this session", after_session_text(["Kazeth"]))
+        self.assertIn(
+            "from your imported sessions",
+            after_session_text(["Kazeth"], where="your imported sessions"),
+        )
+
+    async def test_a_name_scan_that_hangs_is_cut_off_and_given_back(self) -> None:
+        import asyncio
+        from unittest.mock import patch
+
+        sid = await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+
+        async def hang(*a: Any) -> list[str]:
+            await asyncio.sleep(30)
+            return []
+
+        bot._scan_import = hang
+        with patch("dmbot.bot.STALE_SCAN_S", 3):  # a one second limit for the test
+            await rounds(bot, 1)
+        self.assertEqual(
+            await self.store.release_scan(GUILD, sid), 2
+        )  # it had been given back once
 
 
 class TheFollowUp(WithImports):
