@@ -13,6 +13,7 @@ import {
   IMPORT_LIVE,
   importPage as words,
 } from "../content/import-words";
+import { RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
@@ -78,6 +79,8 @@ export default function Import({
   const [dates, setDates] = useState<Record<string, string>>({});
   const [guessed, setGuessed] = useState<Record<string, boolean>>({});
   const [order, setOrder] = useState<string[]>([]);
+  // The sessions the DM wants a recap of (by file name): none until ticked (#2221).
+  const [recaps, setRecaps] = useState<Record<string, boolean>>({});
   const [importId, setImportId] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [busy, setBusy] = useState(false);
@@ -369,6 +372,11 @@ export default function Import({
     });
 
   const allDates = order.every((n) => isDate(dates[n] ?? ""));
+  // The choice is offered while recaps are on for the site (the bot decides the rest, with the
+  // DM's own recap choice and the plan, and says so on the DM screen).
+  const offerRecaps = RECAPS_LIVE;
+  const allRecaps = order.length > 0 && order.every((n) => recaps[n] === true);
+  const someRecaps = order.some((n) => recaps[n] === true);
 
   const start = (): Promise<void> =>
     run(async () => {
@@ -387,6 +395,8 @@ export default function Import({
             file: sentName(file),
             date: dates[file] ?? "",
             order: i + 1,
+            // Only a ticked session says anything about recaps.
+            ...(offerRecaps && recaps[file] ? { writeRecap: true as const } : {}),
           })),
         },
         sentLinks,
@@ -808,6 +818,44 @@ export default function Import({
                     (check?.estimate ?? preview.estimate).fastCalls,
                   )}
                 </p>
+                {offerRecaps && order.length > 0 && (
+                  <fieldset class="recap-choices">
+                    <legend>{words.recapsHeading}</legend>
+                    <label class="choice">
+                      <input
+                        type="checkbox"
+                        checked={allRecaps}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someRecaps && !allRecaps;
+                        }}
+                        disabled={busy}
+                        onChange={(e) =>
+                          setRecaps(
+                            Object.fromEntries(
+                              order.map((n) => [n, e.currentTarget.checked]),
+                            ),
+                          )
+                        }
+                      />
+                      <span>{words.recapsAll}</span>
+                    </label>
+                    {order.map((n) => (
+                      <label class="choice" key={`recap-${n}`}>
+                        <input
+                          type="checkbox"
+                          checked={recaps[n] === true}
+                          disabled={busy}
+                          onChange={(e) => {
+                            const on = e.currentTarget.checked;
+                            setRecaps((now) => ({ ...now, [n]: on }));
+                          }}
+                        />
+                        <span>{words.recapsOne(words.shownName(n))}</span>
+                      </label>
+                    ))}
+                    <p class="small">{words.recapsNote}</p>
+                  </fieldset>
+                )}
                 <p class="small">{words.confirmNote}</p>
                 <p class="small">{words.renumberNote}</p>
                 <button
