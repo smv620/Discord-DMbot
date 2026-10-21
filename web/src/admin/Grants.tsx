@@ -243,6 +243,7 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
                       type="button"
                       class="button secondary"
                       disabled={busy}
+                      aria-label={`${text.removeOlderGrant}: ${who(g.name, g.discordId)}`}
                       onClick={() =>
                         void act(async () => {
                           await api.revoke(csrf, g.discordId);
