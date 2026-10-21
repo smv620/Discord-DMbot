@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "Say a name your way, from its card",
+    what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name. Leave it empty to have it said as written. It matches the field on the website's Names page, and it only shows when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "Names spelled out at the table",
     what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot notes it, using only players who agreed to be recorded. After the session it shows up in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can correct that name's spelling with one button. DMbot only suggests. Nothing changes until you press a button, and the suggestion goes only to you.",
@@ -240,6 +246,18 @@ export const held: Held[] = [
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
     reason: "Waiting for review (#2132) and for dev1 to deploy it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "A fixed spelling reaches past transcripts",
+    what: "When you fix how a name is spelled, DMbot still knows the old spelling, writes the new one in the cleaned transcripts of your past sessions and in your recaps, and tells you how many changed. A recap you approved stays approved, and what was heard is never changed. One Undo puts the name and the transcripts back.",
+    reason: "In review (#2175, #2170); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "A note when a spelling changed a posted recap",
+    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website now says \"Spelling updated\". It reminds you that the message in Discord still shows the old spelling.",
+    reason: "Waits for the spelling change to reach recaps (#2170) and for dev1 to deploy it (#2178).",
   },
   {
     date: "2026-10-20",
