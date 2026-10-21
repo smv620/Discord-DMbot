@@ -67,6 +67,7 @@ from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.pipeline import Client
@@ -145,6 +146,24 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     windows = max(1, math.ceil(chars / inputs.window_chars))
     tokens = chars // 4 * 2 + 2500 * 3  # the transcript for beats, the beats for prose, prompts
     return pl.MAX_CALLS + windows - 1, tokens
+
+
+def split_lines(out: Outcome) -> list[str]:
+    """How the opening was split (#2253), counts and ranges only: never a word of a line."""
+    split = sp.from_json(out.job.split)
+    if split is None:
+        return []
+    said = readable(out.inputs.lines)
+    counts = ", ".join(
+        f"{label} {n}" for label in sp.LABELS if (n := len(sp.pick(said, split, label)))
+    )
+    ranges = ", ".join(f"{p.label} {p.first}-{p.last}" for p in split.parts)
+    return [
+        "",
+        f"Split ({split.method}): {counts}.",
+        f"  lines {ranges}"
+        + ("; the retelling is UNSURE and was played as play" if split.unsure else ""),
+    ]
 
 
 def dollars(
@@ -399,6 +418,7 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         lines += ["", *explain_sheets(out)]
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
+    lines += split_lines(out)
     lines += cl.section(out.calls)  # counts and fixed words only (#2053)
     if out.notes:
         lines += ["", *(f"Note: {n}" for n in out.notes)]
@@ -811,7 +831,13 @@ async def _session(
         # the lines of anyone who opted out are left out, read now.
         # The earlier recap (`previous`) is derived from everyone's words, so it is left out
         # of a test run rather than carry an opted-out person's words along.
-        inputs = replace(inputs, lines=await filter_lines(db, inputs.lines), previous="")
+        # (the earlier session's beats are left out for the same reason; its words only compare)
+        inputs = replace(
+            inputs,
+            lines=await filter_lines(db, inputs.lines),
+            previous="",
+            earlier=replace(inputs.earlier, beats=()) if inputs.earlier is not None else None,
+        )
         # The same rule as the live bot: with an outside engine only yeses for it count.
         engine = load_transcription_settings(os.environ).outside_engine
         consent = ConsentStore(db, outside=engine)

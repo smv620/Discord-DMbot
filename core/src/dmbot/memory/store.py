@@ -1823,11 +1823,19 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def set_note(
-        self, guild_id: int, campaign_id: str, entity_id: str, note: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        note: str,
+        *,
+        source: str,
+        limit: int = 200,
     ) -> Written[Entity]:
-        """The note shown with a suggestion (how it was heard, or spelled out at the table). Only
-        a suggestion still waiting for the DM has one that can change."""
-        note = " ".join(note.split())[:200]
+        """The note shown with a suggestion (how it was heard, or spelled out at the table, or
+        what the DM wrote about it on the recap page: `limit` letters). Only a suggestion still
+        waiting for the DM has one that can change."""
+        note = " ".join(note.split())[:limit]
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if current["status"] != PROPOSED:

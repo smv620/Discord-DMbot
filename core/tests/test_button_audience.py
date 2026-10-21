@@ -145,6 +145,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.handover.TakeOnButton",
             "dm_screen.house_sync.HouseSyncButton",
             "dm_screen.house_voice.HouseVoiceButton",
+            "dm_screen.import_button.ImportButton",
             "dm_screen.left_out.PutBackButton",
             "dm_screen.name_questions.FixUndoButton",
             "dm_screen.name_questions.NameAnswerUndoButton",

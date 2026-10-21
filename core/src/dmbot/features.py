@@ -104,6 +104,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
+        "importing sessions",
+        "Importing sessions",
+        "",
+        lambda s: s.imports_on or bool(s.imports_servers),  # (on for all, or for chosen servers)
+        ("imports_on", "imports_servers"),
+        for_dms=False,
+    ),
+    Feature(
         "ai helpers",
         "AI helpers",
         "",
