@@ -4294,8 +4294,26 @@ months.
   come on any day of that week.
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
-  anyone else's and never their own words back (#1458). The privacy page says all of this; the
+  anyone else's (#1458). **Opening a ticket shows its whole conversation** (owner, 2026-10-21,
+  replacing #1458's "never their own words back"): their question, each of the helper's answers,
+  each of their emailed replies and each of the team's replies, oldest first, each labelled
+  "You", "DMbot's helper (a program)" or "DMbot team" with its date. Only the ticket's own account
+  sees it. The privacy page says all of this; the
   site's words show only when `SUPPORT_AI_LIVE` is on (`support-words.ts`).
+- **The email chain is kept** (owner, 2026-10-21). A ticket's history is the conversation: the
+  question, the helper's answers, the person's emailed replies and the team's replies, all kept
+  in `support_tickets` and `support_replies` for the ticket's life (12 months), never trimmed to
+  the latest. Every email about a ticket to the person (the helper's answer, the team's reply, the
+  "a person will reply" note) carries the conversation so far below the new message, newest first,
+  each part labelled and dated as on the account page, like an ordinary email reply. The history
+  starts with one fixed line ("Earlier in this conversation:") that `support_mail` cuts at, so a
+  reply from a mail program that adds no ">" still stores only the new words. All of a
+  ticket's emails share the subject `Re: <subject>` and thread together in the person's mail
+  (`In-Reply-To` and `References` naming the ticket's earlier emails), and the team's "Needs the
+  team" email carries the whole conversation too. An emailed reply is stored without the quoted
+  text below it (`support_mail`), since the earlier parts are already kept; a reply that is only
+  quoted text is not stored. The 30-reply flood limit per ticket stays. Mail the team answers
+  straight from the team inbox, outside the admin page, is not part of the ticket.
 - **Spend** is bounded by the 5 answers per ticket, the Try It limit of three tickets a day and
   one waiting, and the owner's spend limit on the Anthropic console. The web API holds
   `ANTHROPIC_API_KEY` for this one use (a compose pass-through, never a web setting).
