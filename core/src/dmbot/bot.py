@@ -14,12 +14,14 @@ import dataclasses
 import inspect
 import logging
 import os
+import re
 import shutil
 import signal
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -250,7 +252,7 @@ from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
-from dmbot.memory.scene import HintParts, SceneTracker, mentions, scene_hints
+from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
 from dmbot.memory.secret_reveal import RevealSession, revealed_in
@@ -318,6 +320,7 @@ from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
+from dmbot.transcript import pronounced as pronounced_aloud
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
@@ -453,6 +456,8 @@ TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this oft
 SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
 SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
+PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
+SOUND_CLOSE = 0.6  # how alike a plain word and the name must be to count as how it is said
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
@@ -630,6 +635,19 @@ class Table:
     held_spelled: dict[tuple[int, int], list[spelled_out.SpelledOut]] = field(
         default_factory=dict
     )  # spellings found in lines the off-topic filter holds, until they are labelled
+    # A name said with how it is pronounced (#2171): watched for in every game-talk line, kept as
+    # the counts below for the after-session offers. Words only.
+    pronouncing: pronounced_aloud.PronunciationWatcher = field(
+        default_factory=pronounced_aloud.PronunciationWatcher
+    )
+    # (name ID, the sound's key, whom it was said by) → how it was written → how often, so the
+    # sound said most is offered ("Kay el" and "Kay-el" count together).
+    pronounced: dict[tuple[str, str, int], dict[str, int]] = field(default_factory=dict)
+    # What a line the off-topic filter holds said about a name, until it is labelled: each sound
+    # with the name it was heard to belong to (settled when it was heard), words only.
+    held_pronounced: dict[tuple[int, int], list[tuple[pronounced_aloud.Sound, str]]] = field(
+        default_factory=dict
+    )
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
     # last read, the schedule, and the loop that runs it (cancelled at the end).
@@ -1712,6 +1730,11 @@ class DMBot(commands.AutoShardedBot):
                 x for x in table.spelled if x[1] != user_id
             ]  # and nothing they spelled
             table.spelling.forget(user_id)  # nor the words they said just before
+            table.pronounced = {k: v for k, v in table.pronounced.items() if k[2] != user_id}
+            table.pronouncing.forget(user_id)  # nor a name they had just said, for the next sound
+            table.held_pronounced = {
+                k: v for k, v in table.held_pronounced.items() if k[0] != user_id
+            }
             table.spelled_hints = tuple(w for w, _, _ in table.spelled)[-SPELLED_MAX:]  # nor hints
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
@@ -2642,6 +2665,9 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             # After the scan: a spelling can belong to a name the scan just suggested (#2168).
             ("spelled names", lambda: self.suggest_spelled(table)),
+            # What a person said aloud beats the cleaner's indirect signal: the first offer for a
+            # name stays (#2171).
+            ("said aloud", lambda: self.suggest_pronounced(table)),
             ("say it this way", lambda: self.suggest_said_as(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
@@ -4434,13 +4460,15 @@ class DMBot(commands.AutoShardedBot):
                 utterance.user_id, utterance.start_ms, text, result.fixes
             ):
                 self._redraw_fix_notes(table)
-            named = mentions(table.name_lookup, cleaned)  # once per name per line
+            found_names = find_mentions(table.name_lookup, cleaned)
+            named = {f.entity_id for f in found_names}  # once per name per line
             table.scene.note(named, utterance.user_id, time.monotonic())
             table.heard_counts.update((entity_id, utterance.user_id) for entity_id in named)
             names_said = len(named)
         else:
             names_said = 0
             line_fixes = ()
+            found_names = []
         # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
         # filter holds for a label is left out, as for the word list.
         # One answer for the whole line, so the callers below can't disagree (#1748).
@@ -4451,6 +4479,16 @@ class DMBot(commands.AutoShardedBot):
                 table,
                 utterance.user_id,
                 str(cleaned or text),
+                held_key=(utterance.user_id, utterance.start_ms) if holds else None,
+            )
+        if text and self.tables.get(table.guild_id) is table:
+            # Every line goes to the watcher (memory only); what it finds waits with a held line.
+            self._note_pronounced(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                found_names,
+                str(text),
                 held_key=(utterance.user_id, utterance.start_ms) if holds else None,
             )
         if line_fixes and not holds:  # (a held line is not counted: when unsure, offer less)
@@ -5587,6 +5625,7 @@ class DMBot(commands.AutoShardedBot):
         for waiting in stopped:
             table.held.pop((waiting.speaker, waiting.started_ms), None)
             table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
+            table.held_pronounced.pop((waiting.speaker, waiting.started_ms), None)
         lines = [w for w in lines if w not in stopped]
         if not lines:
             return
@@ -5611,10 +5650,13 @@ class DMBot(commands.AutoShardedBot):
         for waiting, topic in zip(lines, topics, strict=True):
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
             spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
+            sounds = table.held_pronounced.pop((waiting.speaker, waiting.started_ms), None)
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and spelling:
                 self._record_spelled(table, waiting.speaker, spelling)
+            if topic != OFF_TOPIC and sounds:
+                self._count_pronounced(table, waiting.speaker, sounds)
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
             if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
@@ -9165,6 +9207,152 @@ class DMBot(commands.AutoShardedBot):
             if key not in table.heard_forms and len(table.heard_forms) >= HEARD_FORMS_MAX:
                 continue
             table.heard_forms[key] = table.heard_forms.get(key, 0) + 1
+
+    def _note_pronounced(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        found: Sequence[Found],
+        raw: str,
+        *,
+        held_key: tuple[int, int] | None = None,
+    ) -> None:
+        """A name said with how it is pronounced (#2171): "it's pronounced Kay-el". `found` are the
+        names already looked up in the cleaned `line`; the sound is read from `raw`, the line as
+        heard, because the cleaner turns a misheard "Kale" into the name. The line is from someone
+        who agreed (the pipeline has just re-checked) and is not kept: only the sound, whom it was
+        said by and the name it belongs to. Only a name said in its main spelling counts. A line
+        the off-topic filter holds keeps its find until it is labelled game talk
+        (`_label_topics`), never for talk about something else (#1748). The log gets counts."""
+        lookup = table.name_lookup
+        if lookup is None:
+            return
+        names: list[tuple[str, int]] = []
+        for hit in found:
+            entity = lookup.entities.get(hit.entity_id)
+            said = line[hit.span[0] : hit.span[1]]
+            if (
+                hit.method == "exact"
+                and entity is not None
+                and name_key(said) == name_key(entity.name)
+            ):
+                names.append((hit.entity_id, hit.span[0]))
+        sounds = (
+            table.pronouncing.parse(line, raw)
+            if pronounced_aloud.mentions_pronunciation(line)
+            else []
+        )
+        now = time.monotonic()
+        if held_key is not None:
+            # Held with the line, its name settled now (not when it is labelled, by which time
+            # other names will have been said); a held line does not count as a name just said.
+            resolved = table.pronouncing.resolve(sounds, names, now) if sounds else []
+            if resolved:
+                table.held_pronounced[held_key] = resolved
+            return
+        attached = table.pronouncing.attach(user_id, sounds, names, now)
+        self._count_pronounced(table, user_id, attached)
+
+    def _count_pronounced(
+        self,
+        table: Table,
+        user_id: int,
+        found: Sequence[tuple[pronounced_aloud.Sound, str]],
+    ) -> None:
+        """Keep the count of each sound found. One that is a secret name, or has a word of one, or
+        is another entry's name ("No, the other one, it's pronounced Kael"), or has no sound's
+        shape and is not close to the name ("was pronounced Tuesday"), is no pronunciation of this
+        name. Nothing here may break a line's delivery."""
+        try:
+            for sound, entity_id in found:
+                if not self._sound_allowed(table, entity_id, sound):
+                    continue
+                key = (entity_id, pronounced_aloud.sound_key(sound.phrase), user_id)
+                if key not in table.pronounced and len(table.pronounced) >= PRONOUNCED_MAX:
+                    continue
+                spelled = table.pronounced.setdefault(key, {})
+                spelled[sound.phrase] = spelled.get(sound.phrase, 0) + 1
+                log.info("Said aloud: a pronunciation of %d letters", len(sound.phrase))
+        except Exception:
+            log.exception("Said aloud: couldn't keep a pronunciation")
+
+    @staticmethod
+    def _sound_allowed(table: Table, entity_id: str, sound: pronounced_aloud.Sound) -> bool:
+        lookup = table.name_lookup
+        entity = lookup.entities.get(entity_id) if lookup is not None else None
+        if lookup is None or entity is None:
+            return False
+        phrase = sound.phrase
+        words = {name_key(w) for w in re.split(r"[\s-]+", phrase) if w}
+        hidden: set[str] = set()
+        for key, entries in lookup.by_key.items():
+            if any(e.secret for e in entries):
+                hidden.add(key)
+                hidden.update(key.split())
+        if name_key(phrase) in hidden or words & hidden:
+            return False  # a secret name, or a word of one, is never what a name sounds like
+        if any(
+            e.entity_id != entity_id
+            for key in {name_key(phrase), *words}
+            for e in lookup.by_key.get(key, ())
+        ):
+            return False
+        if sound.shaped:
+            return True
+        # Not shaped like a sound ("Tuesday", "Fireball"): only when it sounds like the name.
+        wanted = {c for w in re.split(r"[\s-]+", entity.name) if w for c in sound_codes(w)}
+        if any(c in wanted for w in re.split(r"[\s-]+", phrase) if w for c in sound_codes(w)):
+            return True
+        # (the codes miss "Kerrick" for "Cerric": a soft c); close in its letters is close enough
+        close = SequenceMatcher(
+            None, pronounced_aloud.sound_key(phrase), pronounced_aloud.sound_key(entity.name)
+        ).ratio()
+        return close >= SOUND_CLOSE
+
+    async def suggest_pronounced(self, table: Table) -> None:
+        """After a session: a name someone said with its pronunciation is offered for the
+        narrator's "said as" (#2171), for the DM to answer in 🔊 Check how to say names. The same
+        rules as the counted offers (`suggest_said_as`): only where spoken recaps are on, only
+        from people who still agree (checked now), only a public name, never a change. If the
+        table said it more than one way, the one said most often is offered. The log gets
+        counts."""
+        said = table.pronounced
+        table.pronounced = {}
+        table.pronouncing = pronounced_aloud.PronunciationWatcher()  # (not kept past the session)
+        if (
+            self.memory is None
+            or table.campaign_id is None
+            or not said
+            or not self.settings.recap_audio_on
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "recap_audio", gid, campaign, fail_open=False
+            ):
+                return
+            agreed = await self.consent.consenting(gid)  # after the waits: who still agrees
+            names = {e.id: e.name for e in await self.memory.entities(gid, cid)}
+            totals: dict[tuple[str, str], int] = {}
+            spelled: dict[tuple[str, str], dict[str, int]] = {}
+            for (entity_id, key, speaker), writings in said.items():
+                if speaker not in agreed or entity_id not in names:
+                    continue
+                for writing, times in writings.items():
+                    totals[(entity_id, key)] = totals.get((entity_id, key), 0) + times
+                    seen = spelled.setdefault((entity_id, key), {})
+                    seen[writing] = seen.get(writing, 0) + times
+            best: dict[str, tuple[str, int]] = {}
+            for (entity_id, key), times in totals.items():
+                if times > best.get(entity_id, ("", 0))[1]:  # (a tie keeps the first said)
+                    writings = spelled[(entity_id, key)]
+                    best[entity_id] = (max(writings, key=lambda w: writings[w]), times)
+            offers = [(e, phrase, names[e], times) for e, (phrase, times) in best.items()]
+            kept = await self.memory.add_said_as_suggestions(gid, cid, offers)
+            log.info("Said aloud: %d of %d offered", kept, len(best))
 
     async def suggest_said_as(self, table: Table) -> None:
         """After a session: a name the cleaner fixed at least `SAID_AS_MIN_FIXES` times from the
