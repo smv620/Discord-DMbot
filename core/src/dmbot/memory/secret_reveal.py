@@ -25,6 +25,7 @@ class RevealSession:
     read. Kept in memory for the session and never stored (a restart starts it fresh)."""
 
     asked: set[str] = field(default_factory=set)
+    told_waiting: bool = False  # the "question waiting" line went up already this session
     names: list[SecretName] | None = None
     read_at: float | None = None
 

@@ -70,6 +70,8 @@ from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
+from dmbot.web.name_checks import answer as answer_name_check
+from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import (
     NotResumable,
@@ -655,6 +657,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
     voice_types = voice.TYPES
     voice_max = voice.MAX_CLIP_BYTES
@@ -744,6 +747,31 @@ def create_app(
         body = await bounded_json(request)
         try:
             return await rewrite(db, session, ref, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The recap's names to check, answered on its page (#2113): the list, and one answer at a time,
+    # queued for the bot to apply like Discord's name check. The DM's words are never logged.
+    @app.get("/me/recaps/{ref}/names-to-check")
+    async def me_recap_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/names-to-check/{entity_id}", status_code=202)
+    async def me_recap_name_answer(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        session, _token = signed
+        if name_answer_limit.take(f"name-answer:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await answer_name_check(db, session, ref, entity_id, body)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
