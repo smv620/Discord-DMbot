@@ -25,9 +25,14 @@
 /art/*
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
 
+# The one page that may ask for the microphone: "Speak instead" on a recap (#2114). Cloudflare
+# adds a matching rule's headers to the ones from /*, so the sitewide value is detached first;
+# every other page keeps microphone=(). A test pins this.
 /account/recaps*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
+  ! Permissions-Policy
+  Permissions-Policy: camera=(), microphone=(self), geolocation=(), payment=()
 
 /account/house-rules*
   Cache-Control: no-store
