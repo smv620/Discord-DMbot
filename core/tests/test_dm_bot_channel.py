@@ -23,7 +23,7 @@ from tests.test_dm_screen_setup import BOT, BOT_PERMS, GENERAL, text_channel
 
 GUILD = 111
 DM = 7
-NEW = 680000000000000071  # long: a short id turns up inside timestamps (#1213)
+NEW = 680000000000000071  # long: a short id turns up inside timestamps (#1213, #2208)
 
 
 class Roles(unittest.TestCase):
@@ -127,9 +127,9 @@ class Setup(DatabaseTest):
 
     async def test_a_new_channel_forgets_the_old_panel_message(self) -> None:
         await self.store.set_dm_bot_channel(GUILD, self.campaign.id, NEW)
-        await self.store.set_dm_bot_message(GUILD, self.campaign.id, 5551)
+        await self.store.set_dm_bot_message(GUILD, self.campaign.id, 680000000000000093)
         again = await self.store.get(GUILD, self.campaign.id)
-        assert again is not None and again.dm_bot_message_id == 5551
+        assert again is not None and again.dm_bot_message_id == 680000000000000093
         await self.store.set_dm_bot_channel(GUILD, self.campaign.id, NEW + 1)
         moved = await self.store.get(GUILD, self.campaign.id)
         assert moved is not None
@@ -155,10 +155,10 @@ class Setup(DatabaseTest):
 
     async def test_a_backup_never_holds_the_ids(self) -> None:
         await self.store.set_dm_bot_channel(GUILD, self.campaign.id, NEW)
-        await self.store.set_dm_bot_message(GUILD, self.campaign.id, 5551)
+        await self.store.set_dm_bot_message(GUILD, self.campaign.id, 680000000000000093)
         exported = repr(await self.store.export(GUILD, self.campaign.id))
         self.assertNotIn(str(NEW), exported)
-        self.assertNotIn("5551", exported)
+        self.assertNotIn("680000000000000093", exported)
         self.assertNotIn("dm_bot", exported)
 
     async def test_it_is_never_picked_as_the_dms_extra_table_chat(self) -> None:

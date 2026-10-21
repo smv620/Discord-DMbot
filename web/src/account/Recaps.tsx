@@ -571,6 +571,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {text.posted}
         </p>
       )}
+      {recap.status === "posted" && recap.respelledAt && (
+        <p class="small">
+          <strong>{text.respelledHeading}.</strong> {text.respelled(sessionDay(recap.respelledAt))}
+        </p>
+      )}
       {recap.status === "posting" && (
         <p class="ok" role="status">
           {text.posting}
