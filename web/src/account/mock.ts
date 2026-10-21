@@ -10,6 +10,7 @@ import type {
   AccountApi,
   Campaign,
   Character,
+  ImportProgress,
   Me,
   Offer,
   Person,
@@ -525,7 +526,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
-      return { sessions: [{ file: "session-1-2026-09-14.txt", date: "2026-09-14", state, reason: null }] };
+      return {
+        sessions: [
+          {
+            file: "session-1-2026-09-14.txt",
+            date: "2026-09-14",
+            state,
+            reason: null,
+            stage: state === "done" ? ("done" as const) : ("cleaning" as const),
+          },
+        ],
+      };
     },
     async recapChoices(campaignRef) {
       calls.push(`recapChoices:${campaignRef}`);
@@ -1057,3 +1068,33 @@ function mockHomebrew() {
     ],
   };
 }
+
+/** One imported session in each stage the API can report (#2230), for the page's tests and demos:
+ * (the old shape, with no stage, is covered in the tests). */
+export const everyImportStage: ImportProgress = {
+  sessions: [
+    ...(
+      [
+        "cleaning",
+        "checking_names",
+        "finding_names",
+        "waiting_for_names",
+        "starting_recap",
+        "writing_recap",
+        "recap_ready",
+        "recap_failed",
+        "recap_not_written",
+        "done",
+        "failed",
+      ] as const
+    ).map((stage, i) => ({
+      file: `${stage}.txt`,
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      state: stage === "done" || stage.startsWith("recap_") ? ("done" as const) : stage === "failed" ? ("failed" as const) : ("working" as const),
+      reason: null,
+      stage,
+      namesToAnswer: stage === "waiting_for_names" ? 3 : 0,
+      namesUnchecked: false,
+    })),
+  ],
+};
