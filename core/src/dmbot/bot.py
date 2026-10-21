@@ -221,6 +221,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
+from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.members import MemberDirectory
@@ -887,6 +888,7 @@ class DMBot(commands.AutoShardedBot):
         npcs_messages: MessageMap | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
+        installs: InstallStore | None = None,
         recap_holds: recap_hold.HoldStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
@@ -941,6 +943,7 @@ class DMBot(commands.AutoShardedBot):
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
@@ -3561,6 +3564,8 @@ class DMBot(commands.AutoShardedBot):
                 gaps = install.missing(me.guild_permissions)
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
+        if self.installs is not None:  # servers joined before this was recorded (#2163)
+            self._track(self.installs.present([g.id for g in self.guilds]), "installs")
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
@@ -3683,10 +3688,27 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
+        if self.installs is not None:  # first: "Link this server" needs the row (#2163), and the
+            self._track(self.installs.joined(guild.id), "install-joined")  # welcome may fail
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
         self._track(self.site_offers.sweep_server(guild.id), "offer-sweep")
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """DMbot was removed from a server (or the server was deleted): note when. A server that
+        is merely unavailable in a Discord outage is a different event and is not marked."""
+        if self.installs is not None:
+            self._track(self._note_left(guild.id), "install-left")
+
+    async def _note_left(self, guild_id: int) -> None:
+        """Mark the server left, unless it came back already (a kick and a quick re-add: the
+        join's write may land first, and it must not be undone)."""
+        assert self.installs is not None
+        with log_context(guild_id=guild_id):
+            if self.get_guild(guild_id) is not None:
+                return
+            await self.installs.left(guild_id)
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
@@ -10791,6 +10813,7 @@ async def run(settings: Settings) -> None:
             npcs_messages=NpcMessageStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
+            installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
         )
         _close_on_sigterm(bot)
