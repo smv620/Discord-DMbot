@@ -7975,21 +7975,24 @@ class DMBot(commands.AutoShardedBot):
                 if len(members) > 1:
                     if not lead:
                         return  # the oldest of the import ends them all, with one line
-                    released = [
-                        m
-                        for m in members
-                        if await store.release(gid, m.campaign_id, m.session_at)
-                        == recap_hold.QUEUED
-                    ]
-                    made = [m.session_at for m in released]
-                    await self._close_hold_lines(released, recap_hold.LINE_EXPIRED)
+                    ended: list[recap_hold.Hold] = []
+                    made = []
+                    for m in members:
+                        result = await store.release(gid, m.campaign_id, m.session_at)
+                        if result != recap_hold.GONE:  # (over all the same: a job existed)
+                            ended.append(m)
+                        if result == recap_hold.QUEUED:
+                            made.append(m.session_at)
+                    await self._close_hold_lines(ended, recap_hold.LINE_EXPIRED)
                     if made:
                         await self._say_group_writing(
                             campaign, held.channel_id, len(made), note=note, session_at=made[-1]
                         )
                     return
-                if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                result = await store.release(gid, held.campaign_id, held.session_at)
+                if result != recap_hold.GONE:
                     await self._close_hold_lines([held], recap_hold.LINE_EXPIRED)
+                if result == recap_hold.QUEUED:
                     await self._say_writing(campaign, held.channel_id, held.session_at, note=note)
                 return
             if waiting:
@@ -8027,8 +8030,10 @@ class DMBot(commands.AutoShardedBot):
                 await store.unmark_asked(gid, held.campaign_id, held.session_at)
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
-            if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+            result = await store.release(gid, held.campaign_id, held.session_at)
+            if result != recap_hold.GONE:
                 await self._close_hold_lines([held], recap_hold.LINE_ANSWERED)
+            if result == recap_hold.QUEUED:
                 if held.group_id:  # an import's recaps start one by one: the last says so, once
                     made = self._group_made.setdefault(held.group_id, [])
                     made.append(held.session_at)
@@ -8041,12 +8046,16 @@ class DMBot(commands.AutoShardedBot):
                     return
                 await self._say_writing(campaign, held.channel_id, held.session_at)
 
-    async def _close_hold_lines(self, holds: Sequence[recap_hold.Hold], outcome: str) -> None:
+    async def _close_hold_lines(
+        self, holds: Sequence[recap_hold.Hold], outcome: str, *, pressed_id: int | None = None
+    ) -> None:
         """Take the buttons off the question and the reminder of holds that are over, and say how
         they ended (#2174), so no old line offers buttons that only answer "already". A failed
         edit is logged inside and goes no further."""
         for h in holds:
-            await self.decision_lines.close(hold_line_key(h.campaign_id, h.session_at), outcome)
+            await self.decision_lines.close(
+                hold_line_key(h.campaign_id, h.session_at), outcome, pressed_id=pressed_id
+            )
 
     async def _remind(
         self,
@@ -8081,7 +8090,9 @@ class DMBot(commands.AutoShardedBot):
                 for m in group:
                     await store.unmark_reminded(gid, m.campaign_id, m.session_at)
 
-    async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
+    async def recap_hold_write_now(
+        self, gid: int, cid: str, session_at: int, *, pressed_id: int | None = None
+    ) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
         any session. "queued", "already" (no hold: written or decided before) or "refused". The
         "writing it now" line goes to the DM screen the hold stored, wherever the button was
@@ -8099,15 +8110,17 @@ class DMBot(commands.AutoShardedBot):
         group = [held]
         if held.group_id:  # one press writes all of an import's held recaps (#2106)
             group = recap_hold.group_of(await self.recap_holds.held(gid), held)
-        released = [
-            h
-            for h in group
-            if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED
-        ]
-        made = [h.session_at for h in released]
+        ended: list[recap_hold.Hold] = []
+        made = []
+        for h in group:
+            result = await self.recap_holds.release(gid, cid, h.session_at)
+            if result != recap_hold.GONE:
+                ended.append(h)
+            if result == recap_hold.QUEUED:
+                made.append(h.session_at)
+        await self._close_hold_lines(ended, recap_hold.LINE_WRITING, pressed_id=pressed_id)
         if not made:
             return "already"
-        await self._close_hold_lines(released, recap_hold.LINE_WRITING)
         await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])
         return "queued"
 

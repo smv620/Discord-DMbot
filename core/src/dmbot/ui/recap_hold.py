@@ -13,6 +13,7 @@ from typing import Any
 import discord
 
 from dmbot.mentions import NO_PINGS
+from dmbot.recaps.hold import LINE_WRITING
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.names import ReviewButton
@@ -21,7 +22,7 @@ NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
 OFF_EVERYWHERE = "Recaps are switched off for all of DMbot right now. No recap was written."
-WRITING = "Writing the recap."
+WRITING = LINE_WRITING  # (one wording, the same under every line)
 ALREADY = "Already being written."
 
 _TEMPLATE = r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
@@ -63,7 +64,10 @@ class WriteNowButton(
         bot.decision_lines.remember_pressed(
             hold_line_key(campaign.id, self.session_at), interaction
         )
-        result = await bot.recap_hold_write_now(guild.id, campaign.id, self.session_at)
+        pressed = interaction.message.id if interaction.message is not None else None
+        result = await bot.recap_hold_write_now(
+            guild.id, campaign.id, self.session_at, pressed_id=pressed
+        )
         if result == "off":
             await _tell(interaction, OFF_EVERYWHERE)
             return
@@ -71,6 +75,10 @@ class WriteNowButton(
             await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
             return
         outcome = WRITING if result == "queued" else ALREADY
+        if result != "queued":  # no hold to release: the other copies come off here instead
+            await bot.decision_lines.close(
+                hold_line_key(campaign.id, self.session_at), outcome, pressed_id=pressed
+            )
         message = interaction.message
         await interaction.edit_original_response(
             content=with_outcome(message.content, outcome) if message is not None else outcome,

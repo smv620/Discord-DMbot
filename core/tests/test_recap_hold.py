@@ -917,6 +917,23 @@ class TheButton(IsolatedAsyncioTestCase):
         await button.callback(i)
         self.assertEqual(bot.post.await_args.args[0], 66)
 
+    async def test_the_line_pressed_is_edited_once_not_twice(self) -> None:
+        bot = fake_bot(proposed=3)
+        button, i = press(bot)
+        await button.callback(i)
+        i.message.edit.assert_not_awaited()  # only the press's own edit touches it
+        i.edit_original_response.assert_awaited_once()
+
+    async def test_a_press_on_a_hold_that_is_gone_takes_the_other_copy_off_too(self) -> None:
+        bot = fake_bot(proposed=3)
+        bot.recap_holds.get = AsyncMock(return_value=None)  # no hold: written or decided before
+        reminder = SimpleNamespace(id=8, content="📝 reminder", edit=AsyncMock())
+        bot.decision_lines.remember(hold_line_key("c" * 32, AT), reminder)
+        button, i = press(bot)
+        await button.callback(i)
+        reminder.edit.assert_awaited_once()
+        self.assertIsNone(reminder.edit.await_args.kwargs["view"])
+
     async def test_a_press_takes_the_buttons_off_the_other_copy_too(self) -> None:
         bot = fake_bot(proposed=3)
         reminder = SimpleNamespace(id=8, content="📝 reminder", edit=AsyncMock())
@@ -1038,6 +1055,36 @@ class TheOldLines(IsolatedAsyncioTestCase):
         bot.recap_holds.held = AsyncMock(return_value=[held])
         await bot.release_recap_holds(GUILD)
         self.assertIn(hold.LINE_NO_RECAP, self.edited(line))
+
+    async def test_a_hold_whose_recap_was_made_another_way_still_closes_its_line(self) -> None:
+        bot = fake_bot()
+        (line,) = self.keep_lines(bot, AT).values()
+        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - 100)
+        bot.recap_holds.held = AsyncMock(return_value=[held])
+        bot.recap_holds.release = AsyncMock(return_value=hold.ALREADY)  # a job existed
+        await bot.release_recap_holds(GUILD)
+        self.assertIn(hold.LINE_ANSWERED, self.edited(line))
+        bot.post.assert_not_awaited()  # nothing is said about a recap that was made before
+
+    async def test_an_import_that_ran_out_closes_the_lines_of_every_session(self) -> None:
+        bot = fake_bot(proposed=2)
+        lines = self.keep_lines(bot, AT, AT + 1, AT + 2)
+        members = [
+            hold.Hold(
+                "c" * 32,
+                AT + n,
+                f"s{n}",
+                DM,
+                66,
+                int(time.time()) - hold.HOLD_MAX_S - 60,
+                group_id="imp",
+            )
+            for n in range(3)
+        ]
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        await bot.release_recap_holds(GUILD)
+        for line in lines.values():
+            self.assertIn(hold.LINE_EXPIRED, self.edited(line))
 
     async def test_a_hold_still_waiting_keeps_its_buttons(self) -> None:
         bot = fake_bot(proposed=2)
