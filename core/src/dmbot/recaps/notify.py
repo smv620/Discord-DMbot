@@ -3,8 +3,9 @@
 It goes to the DM's account address through the mail DMbot already sends (dmbot.mail) and holds
 the chapter title and a link, never the recap: sent mail is logged and forwarded, and the recap
 is best read where it can be edited (the website). A failed job also emails, with the reason in
-plain words and nothing technical. Each kind goes once for each session: `Mailer.send` keeps the
-record, with a short kind built from a hash so no campaign id sits in the mail log.
+plain words and nothing technical. A held recap that waits on name questions emails once a day
+(#2174). Each kind goes once for each session (or each day, for the held one): `Mailer.send` keeps
+the record, with a short kind built from a hash so no campaign id sits in the mail log.
 """
 
 from __future__ import annotations
@@ -83,3 +84,45 @@ async def tell_the_dm(
     )
     log.info("Recap: the email was %s", result)
     return result
+
+
+async def remind_the_dm(
+    mailer: Mailer,
+    store: RecapStore,
+    site: str,
+    guild_id: int,
+    campaign_id: str,
+    dm_user_id: int,
+    session_at: int,
+    waiting: int,
+    day: int,
+    group_id: str = "",
+) -> str:
+    """Email a DM that a held recap still waits on name questions (#2174). At most one a day:
+    the kind carries the day number, so a second round the same day finds it already sent.
+    It holds a count and a link, never a name or any story. Never raises."""
+    if not site or waiting <= 0:
+        return "not_ready"
+    address = await store.address(guild_id, dm_user_id)
+    link = page_link(site, guild_id, campaign_id, session_at)
+    noun = "name question" if waiting == 1 else "name questions"
+    body = (
+        f"{waiting} {noun} from your last session {'is' if waiting == 1 else 'are'} still open, "
+        "so your recap is waiting.\n\n"
+        "Answer in Discord (press Check new names), or press Write the recap now. "
+        f"The recap page is here: {link}\n\n"
+        "If nothing is done, DMbot writes the recap by itself, with the names as they are."
+    )
+    # An import's holds share one email a day: the group id is stable when the oldest session
+    # of the group is answered and the next one speaks for it.
+    # A lone hold is keyed by its own session, so two held sessions each get their email.
+    kind = _kind(
+        "waiting", guild_id, campaign_id, int(group_id, 16) if group_id else session_at, day
+    )
+    return await mailer.send(
+        user_id=dm_user_id,
+        kind=kind,
+        to=address,
+        subject="Your recap is waiting for you",
+        body=body,
+    )

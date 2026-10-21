@@ -42,7 +42,7 @@ type Session = ImportProgress["sessions"][number];
  * the DM's answers move it on. Without a stage (an older API) the plain state decides. */
 function isFinal(s: Session): boolean {
   // A stage this page doesn't know (a newer API) is read by the plain state, never polled forever.
-  if (!s.stage || !(s.stage in words.stage || s.stage === "waiting_for_names"))
+  if (!s.stage || !(Object.hasOwn(words.stage, s.stage) || s.stage === "waiting_for_names"))
     return s.state === "done" || s.state === "failed";
   return (
     s.stage === "recap_ready" ||
@@ -55,6 +55,24 @@ function isFinal(s: Session): boolean {
 
 function isFailed(s: Session): boolean {
   return s.stage ? s.stage === "failed" : s.state === "failed";
+}
+
+/** Why recaps can't be written for this campaign, when it is something the DM can change: the
+ * reason's own line, with the plans link for a plan. Nothing for any other reason (#2229). */
+function RecapsWhyLine({ why }: { why: string }) {
+  const line = words.recapsWhy[why];
+  if (!line) return null;
+  return (
+    <>
+      {line}
+      {why === "plan" && (
+        <>
+          {" "}
+          <a href="/pricing">{words.recapsPlans}</a>
+        </>
+      )}
+    </>
+  );
 }
 
 /** The words for where one session has got to; the plain state's words when there is no stage. */
@@ -113,6 +131,8 @@ export default function Import({
   // The sessions the DM wants a recap of (by file name): none until ticked (#2221).
   const [recaps, setRecaps] = useState<Record<string, boolean>>({});
   const [importId, setImportId] = useState<string | null>(null);
+  // Set when the start reply says recaps weren't possible although ticks were sent (#2229).
+  const [startedWithoutRecaps, setStartedWithoutRecaps] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -234,6 +254,8 @@ export default function Import({
     setKnown({});
     setSentLinks([]);
     setSentNames({});
+    // Ticks belong to the files they were made for; new files start unticked (#2229).
+    setRecaps({});
   };
 
   /** The problem with the chosen files and links as they stand, if there is one. */
@@ -402,9 +424,10 @@ export default function Import({
     });
 
   const allDates = order.every((n) => isDate(dates[n] ?? ""));
-  // The choice is offered while recaps are on for the site (the bot decides the rest, with the
-  // DM's own recap choice and the plan, and says so on the DM screen).
-  const offerRecaps = RECAPS_LIVE;
+  // The choice is offered while recaps are on for the site and only where the API says the bot
+  // would write them (#2229, from the preview): never a tick it would refuse.
+  const offerRecaps = RECAPS_LIVE && preview?.recapsPossible === true;
+  const recapsWhy = RECAPS_LIVE && preview?.recapsPossible === false ? preview.recapsWhy : undefined;
   const allRecaps = order.length > 0 && order.every((n) => recaps[n] === true);
   const someRecaps = order.some((n) => recaps[n] === true);
 
@@ -431,6 +454,10 @@ export default function Import({
         },
         sentLinks,
       );
+      // The setting can change between Preview and the start: the tick was sent but the bot will
+      // decline it, and the progress view says so instead of implying a recap is coming.
+      if (started.recapsPossible === false && offerRecaps && someRecaps)
+        setStartedWithoutRecaps(started.recapsWhy ?? "unknown");
       setProgress({
         sessions: started.sessions.map((s) => ({
           file: s.file,
@@ -480,6 +507,12 @@ export default function Import({
           >
             {words.checkAgain}
           </button>
+        )}
+        {startedWithoutRecaps && (
+          <p class="small" role="status">
+            {words.recapsNotWritten}{" "}
+            <RecapsWhyLine why={startedWithoutRecaps} />
+          </p>
         )}
         <p role="status" aria-live="polite">
           {words.doneCount(
@@ -866,6 +899,11 @@ export default function Import({
                     (check?.estimate ?? preview.estimate).fastCalls,
                   )}
                 </p>
+                {recapsWhy && words.recapsWhy[recapsWhy] && order.length > 0 && (
+                  <p class="small" role="note">
+                    <RecapsWhyLine why={recapsWhy} />
+                  </p>
+                )}
                 {offerRecaps && order.length > 0 && (
                   <fieldset class="recap-choices">
                     <legend>{words.recapsHeading}</legend>

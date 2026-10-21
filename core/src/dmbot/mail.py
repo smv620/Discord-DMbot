@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import smtplib
 import ssl
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
@@ -36,6 +37,8 @@ from dmbot.link_tokens import make_unsubscribe_token
 log = logging.getLogger(__name__)
 
 KIND_MAX = 60  # the sent_emails column's limit
+# A Message-ID as mail programs thread by it: <something@domain>, one token, nothing else.
+MESSAGE_ID = re.compile(r"<[^<>\s@]{1,100}@[^<>\s@]{1,100}>")
 DAILY_CAP_DEFAULT = 400
 # Addresses that are a person's own live replies and never an automated sender (#1425: the owner
 # answers from admin@ by hand, so a robot sending as it would look like a person's word).
@@ -250,6 +253,9 @@ class Mailer:
         offer: bool = False,
         sender: str | None = None,
         reply_to: str | None = None,
+        message_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: Sequence[str] = (),
     ) -> Result:
         """Send one email to a person, once per `kind` (put a round number in `kind` for
         something that may repeat). Never raises: the result says what happened. An offer
@@ -274,7 +280,16 @@ class Mailer:
         # once-only row behind. The unsubscribe link is made for this person, from their id.
         try:
             message = self._build(
-                to or "", to_dmbot_id(user_id), subject, body, offer, sender, reply_to
+                to or "",
+                to_dmbot_id(user_id),
+                subject,
+                body,
+                offer,
+                sender,
+                reply_to,
+                message_id=message_id,
+                in_reply_to=in_reply_to,
+                references=references,
             )
         except ValueError:
             log.error("Couldn't build a %s email", kind)
@@ -348,6 +363,9 @@ class Mailer:
         offer: bool,
         sender: str | None = None,
         reply_to: str | None = None,
+        message_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: Sequence[str] = (),
     ) -> EmailMessage:
         from_address = sender or self._s.sender
         message = EmailMessage()
@@ -362,7 +380,16 @@ class Mailer:
         domain = parseaddr(from_address)[1].rpartition("@")[
             2
         ]  # from "Name <a@b>", not the raw text
-        message["Message-ID"] = make_msgid(domain=domain or None)
+        # A caller that threads its emails (the support flow) makes the ID itself and keeps it;
+        # every ID is checked, so no header can be made to carry anything but an ID.
+        for given in (message_id, in_reply_to, *references):
+            if given is not None and not MESSAGE_ID.fullmatch(given):
+                raise ValueError("bad message id")
+        message["Message-ID"] = message_id or make_msgid(domain=domain or None)
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+        if references:
+            message["References"] = " ".join(references)
         text = body.strip()
         if offer:
             link = self.unsubscribe_link(dmbot_id)

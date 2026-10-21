@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Support emails show the whole chat",
+    what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
+    reason: "In review (#2192); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "DMbot offers how to say a name",
     what: "When your table says a name differently from how it's spelled, or says out loud how it is said (\"it's pronounced Kay-el\"), DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
@@ -268,9 +274,22 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "Names from your own story",
+    what: "In ⚙️ Settings, Names, then Add many, press 📜 From my story. Paste your campaign background, upload it, or send a link, and DMbot suggests the names in it, each with the line it came from. You say yes or no to each one, or yes to a whole group, such as every place, in one press. DMbot does not keep your text, only a short line beside each name until you answer it. This is for your own writing, not a published book.",
+    reason: "In review (#2167); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Link a server you added with a plain link",
     what: "If you added DMbot to your server with a plain invite link, \"Link this server\" on the website now finds it and puts your name on it. DMbot also notes when it is taken out of a server.",
     reason: "In review (#2163); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "See what your plan is doing",
+    what: "My Account now shows when your plan renews, ends or changes. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
+    reason:
+      "Waits for the website's API change (#2165) to deploy and for the owner to check it in Stripe's test mode. When it is live, move this up.",
   },
   {
     date: "2026-10-20",
@@ -439,7 +458,7 @@ export const held: Held[] = [
   {
     date: "2026-10-16",
     title: "DMbot's helper answers questions",
-    what: "Ask the team a question from your account page and you get an email at once to say we have it. DMbot's helper, an AI program and not a person, answers first, a person on the team takes over if it cannot help or you ask, and your account page shows who answered.",
+    what: "Ask the team a question from your account page and you get an email at once to say we have it. DMbot's helper, an AI program and not a person, answers first, a person on the team takes over if it cannot help or you ask, and your account page shows who answered. Free-access accounts can ask too.",
     reason:
       "The helper answers only once the support helper is deployed and has answered a real question (#1431, #1452). When it is on, move this up and turn on SUPPORT_AI_LIVE in support-words.ts.",
   },

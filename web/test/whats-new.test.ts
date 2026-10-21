@@ -68,13 +68,16 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Support emails show the whole chat", // until #2192 merges and dev1 deploys it
       "DMbot offers how to say a name", // until #2171 merges and dev1 deploys it
       "Your support questions now show the whole conversation", // until #2193 deploys and the helper is on (SUPPORT_AI_LIVE)
       "Make the audio again for a recap you already posted", // until dev1 deploys it (#2203)
       "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
       "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
+      "Names from your own story", // until dev1 deploys it (#2167)
       "Link a server you added with a plain link", // until dev1 deploys it (#2163)
+      "See what your plan is doing", // until the web API change deploys and the owner checks it in test mode (#2165)
       "Names spelled out at the table", // until dev1 deploys it (#2168)
       "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
       "A fixed spelling reaches past transcripts", // until dev1 deploys it (#2170)

@@ -50,7 +50,7 @@ import aiohttp
 
 from dmbot.alerts import Problem, raise_alert
 from dmbot.plans import Plan
-from dmbot.web.payments import EventKind, PaymentError, PaymentEvent
+from dmbot.web.payments import EventKind, NotResumable, PaymentError, PaymentEvent, ResumeRefused
 
 log = logging.getLogger(__name__)
 
@@ -373,18 +373,84 @@ class StripeProvider:
             form, email, user_id=user_id, dmbot_id=dmbot_id, customer_id=customer_id
         )
 
-    async def billing_url(self, *, customer_id: str, return_url: str) -> str:
+    async def billing_url(
+        self, *, customer_id: str, return_url: str, subscription_id: str | None = None
+    ) -> str:
         """The customer portal (change plan, fix a payment, stop). Stripe makes a short-lived
-        session per visit, so it is asked for each time."""
+        session per visit, so it is asked for each time. With a subscription id the portal opens
+        straight on choosing a plan (`flow_data` `subscription_update`, #2165) instead of the
+        overview, whose button says "Update subscription". If Stripe refuses that for this
+        account's portal settings, the ordinary portal opens and the refusal is logged."""
         form = {
             "customer": _checked(customer_id, _CUSTOMER, "customer id"),
             "return_url": return_url,
         }
+        if subscription_id is not None:
+            flow = dict(form)
+            flow["flow_data[type]"] = "subscription_update"
+            flow["flow_data[subscription_update][subscription]"] = _checked(
+                subscription_id, _SUBSCRIPTION, "subscription id"
+            )
+            status, answer = await self._http("POST", "/v1/billing_portal/sessions", flow)
+            if status == 200:
+                return _stripe_page(
+                    answer.get("url") if isinstance(answer, dict) else None,
+                    "billing.stripe.com",
+                    "billing",
+                )
+            if status != 400:
+                # An outage or a rate limit is not a reason to change the page: say so, once.
+                raise PaymentError(f"Stripe answered {status} for a billing page")
+            log.warning(
+                "Stripe answered %s to a plan-choosing billing page: the ordinary one opens", status
+            )
         status, answer = await self._http("POST", "/v1/billing_portal/sessions", form)
         if status != 200:
             raise PaymentError(f"Stripe answered {status} for a billing page")
         url = answer.get("url") if isinstance(answer, dict) else None
         return _stripe_page(url, "billing.stripe.com", "billing")
+
+    async def resume(self, *, subscription_id: str) -> None:
+        """Undo a cancellation that has not taken effect (#2165): the plan renews on its date,
+        with no new charge. Both ways Stripe records a cancel are cleared. Nothing to do for a
+        subscription that is not cancelled; one that has ended cannot be resumed."""
+        path = f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
+        status, answer = await self._http("GET", path, None)
+        if status != 200:
+            raise PaymentError(f"Stripe answered {status} for a subscription")
+        current = answer if isinstance(answer, dict) else {}
+        # Only a subscription that is paid up and running: an overdue one (past_due, unpaid) would
+        # have its failed invoice retried, and one that has ended cannot be brought back.
+        if current.get("status") not in ("active", "trialing"):
+            raise NotResumable("the subscription is not active and cannot be resumed")
+        if current.get("cancel_at_period_end") is not True and current.get("cancel_at") is None:
+            return  # not cancelled: nothing to undo
+        form = {"cancel_at_period_end": "false"}
+        if current.get("cancel_at") is not None:
+            form["cancel_at"] = ""  # an empty value clears a cancel date
+        status, _ = await self._http("POST", path, form)
+        if status != 200:
+            # A subscription with a plan change scheduled for the period's end can refuse a
+            # direct update (a 400): the person is sent to the billing page then. Any other
+            # answer (401, 403, 429, 5xx) is an error, not that refusal.
+            if status == 400:
+                raise ResumeRefused(f"Stripe refused a resume ({status})")
+            raise PaymentError(f"Stripe answered {status} to a resume")
+
+    async def subscription_owner(self, *, subscription_id: str) -> int | None:
+        path = f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
+        status, answer = await self._http("GET", path, None)
+        if status == 404:
+            return None  # gone at the company: not ours to act on
+        if status != 200 or not isinstance(answer, dict):
+            raise PaymentError(f"Stripe answered {status} for a subscription")
+        metadata = answer.get("metadata") or {}
+        if _is_add_on(metadata):
+            return None
+        try:
+            return _person(metadata)
+        except ValueError:
+            return None  # an unreadable user id: not a plan of ours, and a retry would not help
 
     async def cancel(self, *, subscription_id: str) -> None:
         path = f"/v1/subscriptions/{_checked(subscription_id, _SUBSCRIPTION, 'subscription id')}"
@@ -489,9 +555,55 @@ class StripeProvider:
                 customer_id=customer,
                 email=email,
             )
+        if name.startswith("subscription_schedule."):
+            return self._schedule(name, obj, event_id, when)
         if name.startswith("invoice."):
             return self._invoice(name, obj, event_id, when)
         return self._subscription(name, obj, raw.get("data", {}), event_id, when)
+
+    def _schedule(
+        self, name: str, schedule: dict[str, Any], event_id: str, when: int
+    ) -> PaymentEvent | None:
+        """A subscription schedule (#2165). The person is not named on it: user_id 0 means "find
+        them from the subscription" (the app asks the company). A schedule that is live and has a
+        phase after the current one, on a different plan, is a plan change set for the period's
+        end; any other schedule event (or a finished or undone one) clears it. A schedule on a
+        price DMbot does not sell is not ours."""
+        subscription = _text(schedule.get("subscription"))
+        if subscription is None:
+            return None
+        common: dict[str, Any] = {
+            "provider": self.name,
+            "event_id": event_id,
+            "user_id": 0,
+            "occurred_at": when,
+            "customer_id": _text(schedule.get("customer")),
+            "subscription_id": subscription,
+        }
+        clear = PaymentEvent(kind="plan_unscheduled", **common)
+        if name != "subscription_schedule.created" and name != "subscription_schedule.updated":
+            return clear
+        if schedule.get("status") not in ("not_started", "active"):
+            return clear
+        phases = schedule.get("phases")
+        phases = [p for p in phases if isinstance(p, dict)] if isinstance(phases, list) else []
+        current = schedule.get("current_phase")
+        started = _int(current.get("start_date")) if isinstance(current, dict) else None
+        # The phase after the current one: the one that starts later than it.
+        later = [p for p in phases if (_int(p.get("start_date")) or 0) > (started or 0)]
+        if not later:
+            return clear
+        upcoming = min(later, key=lambda p: _int(p.get("start_date")) or 0)
+        # A phase's items are a plain list (an invoice's lines are a `data` list).
+        items = upcoming.get("items")
+        item = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else {}
+        # A phase item names its price as a plain id, unlike an invoice line's object.
+        price = item.get("price") if isinstance(item.get("price"), str) else _price_id(item)
+        plan = self._plan_of_price.get(price or "")
+        due = _int(upcoming.get("start_date"))
+        if plan is None or due is None:
+            return None  # not a plan DMbot sells
+        return PaymentEvent(kind="plan_scheduled", plan=plan, period_start=due, **common)
 
     def _extra_hours(
         self, session: dict[str, Any], event_id: str, when: int
@@ -729,6 +841,14 @@ _USED = (
     "invoice.payment_failed",
     "customer.subscription.updated",
     "customer.subscription.deleted",
+    # A plan change set for the end of the period (the billing page's downgrade, #2165): the
+    # schedule holds the next plan and when it starts.
+    "subscription_schedule.created",
+    "subscription_schedule.updated",
+    "subscription_schedule.released",
+    "subscription_schedule.canceled",
+    "subscription_schedule.completed",
+    "subscription_schedule.aborted",
     "checkout.session.completed",
     # The payer changed their address (the billing page): kept as the payment email (#1242).
     "customer.updated",

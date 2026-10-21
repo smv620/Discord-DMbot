@@ -30,7 +30,7 @@ from dmbot import fetch, plan_rules
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
-from dmbot.recaps.notify import parse_ref
+from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.transcript import import_link, importer
 from dmbot.transcript import import_plan as ip
 from dmbot.transcript.import_job import MAX_WINDOWS
@@ -632,6 +632,13 @@ async def confirm(
     }
 
 
+# The progress stages in which a session has a recap, or one held for the DM's answers (#2240).
+# They follow the stage list in `progress` and the SQL's `stage` CASE; the tests pin them.
+RECAP_STAGES = frozenset(
+    ("waiting_for_names", "starting_recap", "writing_recap", "recap_ready", "recap_failed")
+)
+
+
 async def progress(
     db: Database,
     session: Session,
@@ -664,7 +671,14 @@ async def progress(
                 "stage": s["stage"],
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
-                "recap": None,
+                # Its own recap's reference, for the stages that have a recap or a held one: the
+                # page then links the session's recap, not the list (#2240). The session time is
+                # the door's `date`; the campaign is the one opened above (never another's).
+                "recap": (
+                    job_ref(c.guild_id, c.campaign_id, int(s["date"]))
+                    if s["stage"] in RECAP_STAGES
+                    else None
+                ),
             }
             for s in found
         ]

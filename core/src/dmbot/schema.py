@@ -339,7 +339,9 @@ CAMPAIGN_MEMORY = f"""
         WHERE other_id IS NOT NULL;
 
     -- Append-only log of every change, so any operation can be undone. One operation
-    -- (a "batch") may change several rows. Not part of backups.
+    -- (a "batch") may change several rows. Not part of backups. The one exception: the quote
+    -- kept with a name read from the DM's story (#2167) is blanked here too once the DM decides
+    -- on the name, so none of the DM's text outlives the decision.
     CREATE TABLE memory_changes (
         {_memory_scope()}
         version    BIGINT NOT NULL,
@@ -3175,6 +3177,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT (id, ticket_id, who, created_at)", ("support_replies",)),
     # The weekly support email's once-only mark, through the admin door only (#1514).
     ("SELECT, INSERT, UPDATE", ("support_week_mail",)),
+    # The IDs of the emails sent for a ticket, to thread the next one (#2192): admin door only.
+    ("SELECT, INSERT", ("support_mail_ids",)),
     ("SELECT, INSERT, UPDATE, DELETE", ("web_users", "web_sessions")),
     # The improvement opt-out (#1609): the person's own row, through the website's switch.
     ("SELECT, INSERT, DELETE", ("improvement_opt_outs",)),
@@ -5605,6 +5609,26 @@ SUPPORT_WEEK_MAIL = """
         WITH CHECK (dmbot_support_admin() = 'admin');
     """
 
+SUPPORT_MAIL_IDS = """
+    -- The Message-ID of every email sent for a support ticket (#2192), so the next one can say
+    -- which it answers (In-Reply-To, References) and a mail program shows the whole chain as one
+    -- conversation. Random IDs only: no words, no addresses. They go with the ticket (the
+    -- cascade), and only the admin door reads or writes them, like the replies.
+    CREATE TABLE support_mail_ids (
+        id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ticket_id  BIGINT NOT NULL REFERENCES support_tickets (id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL
+            CHECK (message_id ~ '^<[^<>[:space:]@]{1,100}@[^<>[:space:]@]{1,100}>$'),
+        created_at BIGINT NOT NULL
+    );
+    CREATE INDEX support_mail_ids_by_ticket ON support_mail_ids (ticket_id, id);
+    ALTER TABLE support_mail_ids ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE support_mail_ids FORCE ROW LEVEL SECURITY;
+    CREATE POLICY support_admin_only ON support_mail_ids
+        USING (dmbot_support_admin() = 'admin')
+        WITH CHECK (dmbot_support_admin() = 'admin');
+    """
+
 WEB_TRANSCRIPTS = """
     -- A campaign's session transcripts on the website (#1501). Transcripts are shared: anyone in
     -- the Discord server may read and download them (CLAUDE.md, decided 2026-10-05), so these
@@ -7188,6 +7212,15 @@ MORE_HOMEBREW_KINDS = """
 """
 
 
+OWN_WRITING = """
+    -- A DM's own background, read by DMbot for names (#2167), is a different thing from a list of
+    -- names (names_list) or a published adventure (shared_story): its own purpose, so the record
+    -- of who confirmed what can tell them apart. No row changes.
+    ALTER TABLE shared_confirmations DROP CONSTRAINT shared_confirmations_purpose_check;
+    ALTER TABLE shared_confirmations ADD CONSTRAINT shared_confirmations_purpose_check
+        CHECK (purpose IN ('names_list', 'shared_story', 'rulebook', 'own_writing'));
+    """
+
 RECAP_SHARE = (
     _setting("dmbot_recap_share_tok", "dmbot.recap_share_tok", "TEXT")
     + _setting("dmbot_recap_share_guild", "dmbot.recap_share_guild", "BIGINT")
@@ -7333,6 +7366,22 @@ RECAP_SHARE = (
     REVOKE ALL ON FUNCTION dmbot_recap_share(BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
     """
 )
+
+PLAN_PENDING = """
+    -- A plan change the payment company has scheduled for the end of the paid period (a downgrade
+    -- or upgrade picked on its billing page, #2165): the plan that starts, and when. Filled from
+    -- the company's schedule events and cleared when the change begins, is undone, or the plan
+    -- ends. Two nullable columns: no rows change, so no row-level-security policy is needed.
+    ALTER TABLE entitlements ADD COLUMN next_plan TEXT;
+    ALTER TABLE entitlements ADD COLUMN next_plan_on BIGINT;
+    -- Schedule events are ordered by their own clock, never by `last_event_at`: at a downgrade's
+    -- start the schedule's "released" and the plan change arrive in the same moment, and a later
+    -- schedule event must not make the real plan change look stale.
+    ALTER TABLE entitlements ADD COLUMN next_plan_event_at BIGINT NOT NULL DEFAULT 0;
+    -- When the person pressed Renew (our clock). Only a "cancelled" event older than this is
+    -- ignored; it does not touch `last_event_at`, which is the payment company's clock alone.
+    ALTER TABLE entitlements ADD COLUMN renewed_at BIGINT;
+"""
 
 # Consent given under older wording never counts for an import: the store door refuses a caller
 # that passes less (the SQL says 6; a test checks the two agree and are not above TERMS_VERSION).
@@ -8176,6 +8225,22 @@ SAID_AS_SUGGESTIONS = f"""
     );
     """ + _isolate("said_as_suggestions")
 
+NAMES_LATER = f"""
+    -- A suggested name the DM pressed "Later" on (#2174): the question stays in 📝 Check new names,
+    -- but it no longer holds a recap back, so one name the DM cannot decide on does not keep
+    -- every recap waiting. One row per name, deleted with the name and with the campaign, left
+    -- out of backups (a wait, not content: a restored campaign's suggestions ask again), isolated
+    -- per server. A name that is decided on loses its row (`Changes.update`). No speaker, no line,
+    -- no words.
+    CREATE TABLE name_later (
+        {_memory_scope()}
+        entity_id   TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entity_id),
+        {_entity_link("entity_id")}
+    );
+    """ + _isolate("name_later")
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -8529,10 +8594,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0139_recap_requests", RECAP_REQUESTS),  # the recap page's notes to DMbot (#2113)
     ("0140_recap_voice", RECAP_VOICE),  # ... and a short clip it may speak instead (#2113)
     ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
+    ("0142_plan_pending", PLAN_PENDING),  # a plan change set for the period's end (#2165)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
+    ("0146_own_writing", OWN_WRITING),  # a DM's own background is its own purpose (#2167)
     ("0147_said_as_suggestions", SAID_AS_SUGGESTIONS),  # say it this way? (#2171)
+    ("0148_support_mail_ids", SUPPORT_MAIL_IDS),  # email threading (#2192)
     (
         "0149_audio_again_posted",
         RECAP_AUDIO_AGAIN_POSTED,
@@ -8549,6 +8617,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0155_support_ticket_times",
         SUPPORT_TICKET_TIMES,
     ),  # no two of a person's tickets share a time
+    ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -8584,6 +8653,7 @@ ISOLATED_TABLES = (
     "recap_jobs",
     "recap_dictionaries",
     "recap_holds",
+    "name_later",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
@@ -8638,6 +8708,8 @@ USER_ISOLATED_TABLES = (
     "support_replies",
     # The week the weekly support email last went; only the admin door reads or writes it (#1514).
     "support_week_mail",
+    # The IDs of the emails sent for a ticket; only the admin door reads or writes them (#2192).
+    "support_mail_ids",
     # An owner's hours per plan month; only the meter adds to it (#437).
     "owner_hours",
     # Which campaigns an owner has, across servers; kept by a trigger on campaigns (#437).

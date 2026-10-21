@@ -341,6 +341,16 @@ export function mockRecaps(): Recap[] {
   ];
 }
 
+/** What the import preview and start say about recaps (#2229): a campaign whose address ends in
+ * `.recaps-off`, `.recaps-campaign_off`, `.recaps-plan` or `.recaps-unknown` gets that case, any
+ * other can have recaps. */
+function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" | "campaign_off" | "plan" } {
+  const why = /\.recaps-([a-z_]+)$/.exec(ref)?.[1];
+  if (why === "unknown") return { recapsPossible: false };
+  if (why === "off" || why === "campaign_off" || why === "plan") return { recapsPossible: false, recapsWhy: why };
+  return { recapsPossible: true };
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -462,6 +472,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           };
         }),
         estimate: { sessions: files.length + links.length, fastCalls: 14 * (files.length + links.length) },
+        ...recapFacts(ref),
       };
     },
     async importMembers(ref, q) {
@@ -521,6 +532,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
         estimate: { sessions: plan.sessions.length, fastCalls: 14 * plan.sessions.length },
+        ...recapFacts(ref),
       };
     },
     async importProgress(ref, importId) {
@@ -905,6 +917,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
+    async renewPlan() {
+      calls.push("renew");
+      if (me?.plan?.state !== "ending") throw new ApiError("not-ending");
+      const { endsOn: _ended, ...rest } = me.plan;
+      me = { ...me, plan: { ...rest, state: "active" } };
+    },
     async recapAudioUrl() {
       calls.push("recap-audio");
       return "#demo-recap-audio";
@@ -1100,7 +1118,7 @@ function mockHomebrew() {
 }
 
 /** One imported session in each stage the API can report (#2230), for the page's tests and demos:
- * (the old shape, with no stage, is covered in the tests). */
+ * the old shape, with no stage, is covered in the tests. */
 export const everyImportStage: ImportProgress = {
   sessions: [
     ...(

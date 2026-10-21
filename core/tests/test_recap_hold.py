@@ -221,8 +221,8 @@ class TheStore(DatabaseTest):
         self.assertEqual(await self.holds.held(GUILD), [])
 
 
-def entity(created_at: int, status: str = PROPOSED) -> Any:
-    return SimpleNamespace(created_at=created_at, status=status)
+def entity(created_at: int, status: str = PROPOSED, id: str = "") -> Any:
+    return SimpleNamespace(created_at=created_at, status=status, id=id or f"e{created_at}")
 
 
 def campaign() -> Any:
@@ -249,6 +249,7 @@ def fake_bot(
     )
     bot = SimpleNamespace(
         _group_made={},
+        _group_locks={},
         decision_lines=DecisionLines(),
         user=SimpleNamespace(id=1),
         _import_queued={},
@@ -261,7 +262,11 @@ def fake_bot(
         ),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
         memory=SimpleNamespace(
-            entities=AsyncMock(return_value=[entity(AT + 5)] * proposed + [entity(AT - 5)])
+            entities=AsyncMock(
+                return_value=[entity(AT + 5, id=f"p{n}") for n in range(proposed)]
+                + [entity(AT - 5)]
+            ),
+            deferred_names=AsyncMock(return_value=set()),  # no "Later" answers
         ),
         heard_questions=SimpleNamespace(count_for_session=AsyncMock(return_value=did_they_mean)),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
@@ -275,7 +280,7 @@ def fake_bot(
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
         "release_recap_holds", "_release_one", "recap_hold_write_now", "recheck_recap_hold",
         "recap_write_anyway", "_remind", "_say_group_writing", "_close_hold_lines",
-        "_extractor_pending", "_next_session_start",
+        "_extractor_pending", "_next_session_start", "_group_lock",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -374,6 +379,50 @@ class TheCap(IsolatedAsyncioTestCase):
         ids = [c.custom_id for c in bot.post.await_args.kwargs["view"].children]
         self.assertEqual(ids, [f"dmbot:names:review:{'c' * 32}", f"dmbot:rhold:go:{'c' * 32}:{AT}"])
         bot.recap_holds.release.assert_not_awaited()  # still waiting
+
+    async def test_the_email_goes_after_a_day_when_emails_are_on(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.mailer, bot.settings.site_url = object(), "https://dmbot.example.org"
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
+        email.assert_awaited_once()
+        assert email.await_args is not None
+        self.assertEqual(email.await_args.args[3:], (GUILD, "c" * 32, DM, AT, 2, 1, ""))
+
+    async def test_the_email_still_goes_on_later_days_after_the_reminder(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.mailer = object()
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            await self.round_with(bot, self.aged(hold.HOLD_REMIND_S * 2 + 60, reminded=True))
+        email.assert_awaited_once()
+        assert email.await_args is not None
+        self.assertEqual(email.await_args.args[-3:], (2, 2, ""))  # still counted, day 2
+
+    async def test_one_failing_email_does_not_stop_the_next_dm(self) -> None:
+        bot = fake_bot(proposed=1)
+        bot.mailer = object()
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        bot.campaigns.get.return_value.dm_user_ids = frozenset({DM, DM + 1})
+        send = AsyncMock(side_effect=[RuntimeError("boom"), "sent"])
+        with patch("dmbot.bot.remind_the_dm", new=send):
+            await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
+        self.assertEqual(send.await_count, 2)
+
+    async def test_no_email_in_the_first_day_when_off_or_without_a_mailer(self) -> None:
+        for age, emails_on, mailer in (
+            (hold.HOLD_REMIND_S - 120, True, object()),
+            (hold.HOLD_REMIND_S + 60, False, object()),
+            (hold.HOLD_REMIND_S + 60, True, None),
+        ):
+            bot = fake_bot(proposed=2)
+            bot.mailer = mailer
+            bot._email_hold = DMBot._email_hold.__get__(bot)
+            bot.campaigns.get.return_value.recaps_email = emails_on
+            with patch("dmbot.bot.remind_the_dm", new=AsyncMock()) as email:
+                await self.round_with(bot, self.aged(age))
+            email.assert_not_awaited()
 
     async def test_a_reminder_already_sent_is_not_sent_again(self) -> None:
         bot = fake_bot(proposed=2)
@@ -635,6 +684,109 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         await bot.recap_hold_write_now(GUILD, "c" * 32, AT)
         self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
         self.assertEqual(bot._group_made, {})
+
+    async def test_a_press_between_the_release_and_the_record_tells_the_group_once(self) -> None:
+        """The real press, interleaved: the round releases the first session and yields; the press
+        arrives for the whole import. The import's lock makes the press wait, so the group is
+        told once, as 2 recaps, not once by each."""
+        bot = fake_bot()  # no questions open: an answered hold is released
+        first, second = self.group(100, 2, asked=True)
+        released: set[int] = set()
+        gate = asyncio.Event()  # the round's release is held here, until the press has run
+
+        async def release(gid: int, cid: str, session_at: int) -> str:
+            if session_at == first.session_at and not released:
+                released.add(session_at)  # (the round's release: done in the database)
+                await gate.wait()  # ... but not yet back in the round
+                return hold.QUEUED
+            await asyncio.sleep(0)
+            if session_at in released:
+                return hold.GONE
+            released.add(session_at)
+            return hold.QUEUED
+
+        async def held(gid: int) -> list[Any]:
+            await asyncio.sleep(0)
+            return [h for h in (first, second) if h.session_at not in released]
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = held
+        bot.recap_holds.get = AsyncMock(return_value=first)
+        round_ = asyncio.create_task(
+            bot._release_one(bot.recap_holds, GUILD, first, group=[first, second])
+        )
+        await asyncio.sleep(0)  # the round is inside its release
+        press_task = asyncio.create_task(
+            bot.recap_hold_write_now(GUILD, "c" * 32, AT, group_id=GROUP)
+        )
+        for _ in range(20):  # the press runs as far as it can (without the lock: to the end)
+            await asyncio.sleep(0)
+        gate.set()
+        press = await press_task
+        await round_
+        self.assertEqual(press, "queued")
+        lines = [c.args[1] for c in bot.post.await_args_list if "Writing" in c.args[1]]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("Writing 2 recaps", lines[0])
+        self.assertEqual(bot._group_made, {})
+
+    async def test_a_press_during_the_three_day_expiry_tells_the_group_once(self) -> None:
+        """The same interleaving at the expiry: its release is held after the database change
+        while the real press runs for the import. One line, "Writing 2 recaps"."""
+        bot = fake_bot()
+        first, second = self.group(hold.HOLD_MAX_S + 60, 2, asked=True)
+        released: set[int] = set()
+        gate = asyncio.Event()
+
+        async def release(gid: int, cid: str, session_at: int) -> str:
+            if session_at == first.session_at and not released:
+                released.add(session_at)  # (the expiry's release: done in the database)
+                await gate.wait()  # ... but not yet back in the round
+                return hold.QUEUED
+            await asyncio.sleep(0)
+            if session_at in released:
+                return hold.GONE
+            released.add(session_at)
+            return hold.QUEUED
+
+        async def held(gid: int) -> list[Any]:
+            await asyncio.sleep(0)
+            return [h for h in (first, second) if h.session_at not in released]
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = held
+        bot.recap_holds.get = AsyncMock(return_value=first)
+        expiry = asyncio.create_task(
+            bot._release_one(bot.recap_holds, GUILD, first, group=[first, second])
+        )
+        await asyncio.sleep(0)  # the expiry is inside its release
+        press_task = asyncio.create_task(
+            bot.recap_hold_write_now(GUILD, "c" * 32, AT, group_id=GROUP)
+        )
+        for _ in range(20):  # the press runs as far as it can (without the lock: to the end)
+            await asyncio.sleep(0)
+        gate.set()
+        await press_task
+        await expiry
+        lines = [c.args[1] for c in bot.post.await_args_list if "Writing" in c.args[1]]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("Writing 2 recaps", lines[0])
+        self.assertEqual(bot._group_made, {})
+
+    async def test_the_list_is_claimed_by_a_pop_not_a_read(self) -> None:
+        bot = fake_bot()
+        (only,) = self.group(100, 1, asked=True)
+        bot.recap_holds.held = AsyncMock(return_value=[only])  # round: still held until released
+        released: list[int] = []
+
+        async def release(gid: int, cid: str, session_at: int) -> str:
+            released.append(session_at)
+            bot.recap_holds.held = AsyncMock(return_value=[])  # (it is gone from now on)
+            return hold.QUEUED
+
+        bot.recap_holds.release = release
+        await bot._release_one(bot.recap_holds, GUILD, only, group=[only])
+        self.assertEqual(bot._group_made, {})  # popped, so a later reader finds nothing to tell
 
     async def test_a_hold_made_without_saying_posts_nothing_at_all(self) -> None:
         bot = fake_bot()  # nothing to answer: the recap is queued at once
