@@ -97,6 +97,15 @@ export const text = {
   // The page bar under Recent changes (#2199).
   historyList: "Recent changes, newest first",
   pagesNav: "Pages of recent changes",
+  ticketPagesNav: "Pages of tickets",
+  // The tickets are not "newer" and "older" (Needs the team reads longest-waiting first), so their
+  // bar says where it goes in the list.
+  ticketPageFirst: "First",
+  ticketPagePrevious: "Previous",
+  ticketPageNext: "Next",
+  ticketPageLast: "Last",
+  // When the page the team was on has gone (its last ticket left): it shows the last page there is.
+  ticketPageGone: "That page isn't there any more, so here is the last one that is.",
   pageNewest: "Newest",
   pageNewer: "Newer",
   pageOlder: "Older",

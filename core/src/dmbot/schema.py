@@ -3000,6 +3000,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
+    # The signed-in DM's recaps still waiting for their name answers (#2174).
+    ("dmbot_web_recap_holds", "dmbot_web_recap_holds(BIGINT)"),
+    # The "Write recaps" choice of one imported session (#2106).
+    ("dmbot_import_write_recap", "dmbot_import_write_recap(BIGINT, TEXT, TEXT, BOOLEAN)"),
     ("dmbot_web_set_recap_choice", "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"),
     # A campaign's house rules, read by any member of the server (#1521).
     ("dmbot_web_house_rules", "dmbot_web_house_rules(BIGINT, TEXT)"),
@@ -7569,6 +7573,109 @@ RECAP_HOLDS = f"""
     );
     """ + _isolate("recap_holds")
 
+RECAP_HOLD_NAMES = """
+    -- How many name questions a held recap waits on (#2174), written by the bot each time it counts
+    -- (at the hold and in every round), so the website can say "N answers to give" without
+    -- reading memory. A defaulted column changes no rows, so no row-level-security policy is
+    -- needed. The website reads it only through the door below.
+    ALTER TABLE recap_holds ADD COLUMN names_open INTEGER NOT NULL DEFAULT 0
+        CHECK (names_open >= 0);
+
+    -- The signed-in person's held recaps in one server: only campaigns they are a DM of, only
+    -- holds the DM was told about and that still wait on an answer (a silent hold is waiting for
+    -- the story extractor, and one with nothing left is released by the next round). Counts and
+    -- times only; no name or text. The server must be one of the session's, as for the other
+    -- website doors (a second layer: forced row-level security already holds the same line).
+    CREATE FUNCTION dmbot_web_recap_holds(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN '[]'::jsonb;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'campaignId', h.campaign_id, 'campaign', c.name,
+                       'sessionAt', h.session_at, 'namesOpen', h.names_open)
+                   ORDER BY h.session_at DESC)
+            FROM recap_holds h
+            JOIN campaigns c ON c.guild_id = h.guild_id AND c.id = h.campaign_id
+            WHERE h.guild_id = g AND h.asked AND h.names_open > 0
+              AND EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = h.guild_id AND d.campaign_id = h.campaign_id
+                            AND d.user_id = dmbot_current_user())), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_recap_holds(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_recap_holds(BIGINT) FROM PUBLIC;
+"""
+
+RECAP_HOLD_REMINDED = """
+    -- The one reminder a held recap gets after a day (#2174): set when it is claimed, so the
+    -- round and a restart never send it twice. A defaulted column changes no rows, so no
+    -- row-level-security policy is needed.
+    ALTER TABLE recap_holds ADD COLUMN reminded BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
+IMPORT_RECAPS = """
+    -- Recaps of imported sessions (#2106): the DM's per-session "Write recaps" choice, and where
+    -- the bot has got with the session's name scan. `scan_from`/`scan_to` are the seconds in
+    -- which that scan proposed its names, so the recap can wait for the questions from THIS
+    -- session only (a live session counts by its own start time; an old one has none).
+    -- Defaulted columns change no rows, so no row-level-security policy is needed.
+    ALTER TABLE session_imports
+        ADD COLUMN write_recap BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN scanned     BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN scan_from   BIGINT NOT NULL DEFAULT 0,
+        ADD COLUMN scan_to     BIGINT NOT NULL DEFAULT 0,
+        -- failed tries of the scan (it is given up on after a few), and whether the recap for
+        -- this session has been dealt with (made, held, or decided against).
+        ADD COLUMN scan_tries  INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN recap_started BOOLEAN NOT NULL DEFAULT FALSE,
+        -- `scanned` is the claim (scan_from is when it was taken); a claim that never finished
+        -- (the bot stopped) is taken again after a while.
+        ADD COLUMN scan_finished BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN recap_tries INTEGER NOT NULL DEFAULT 0;
+    -- The holds of one import act as a group (one question, one reminder, one expiry line, one
+    -- "Write the recap now"): they share the import's id. Empty for a live session's hold.
+    ALTER TABLE recap_holds ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
+
+    -- dmbot_import_write_recap: set the choice of one stored import, only while it waits to be
+    -- cleaned and only by a DM of the campaign in a server on the session's list. True when set.
+    CREATE FUNCTION dmbot_import_write_recap(g BIGINT, c TEXT, sid TEXT, on_ BOOLEAN)
+    RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN FALSE;
+        END IF;
+        UPDATE session_imports SET write_recap = on_
+            WHERE guild_id = g AND campaign_id = c AND session_id = sid AND state = 'waiting';
+        RETURN FOUND;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_write_recap(BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_import_write_recap(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+
 OLD_SPELLING = """
     -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
     -- still matches it, so a line that says it is fixed to the new spelling and a search finds
@@ -7988,6 +8095,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
+    ("0151_recap_hold_names", RECAP_HOLD_NAMES),  # how many answers it waits on (#2174)
+    ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
+    ("0153_import_recaps", IMPORT_RECAPS),  # Write recaps for an import, its scan window (#2106)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

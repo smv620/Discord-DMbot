@@ -42,7 +42,9 @@ import Base from "../layouts/Base.astro";
     font-weight: 600;
   }
 
-  .admin :global(input),
+  /* Text, date and select boxes fill the row. Radios and checkboxes are left out (#2198): this
+     rule would stretch them to the full width and put each label on a line of its own. */
+  .admin :global(input:not([type="radio"]):not([type="checkbox"])),
   .admin :global(select) {
     width: 100%;
     box-sizing: border-box;
@@ -53,6 +55,23 @@ import Base from "../layouts/Base.astro";
     background: var(--bg);
     color: var(--text);
     font: inherit;
+  }
+
+  /* A radio or checkbox sits beside its label, left-aligned, and the whole row is the tap
+     target (the account page's .choice, but for this page). */
+  .admin :global(.choice) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--tap);
+  }
+
+  .admin :global(.choice input) {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    accent-color: var(--accent);
   }
 
   .admin :global(.button) {
