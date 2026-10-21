@@ -1145,7 +1145,16 @@ channel's chat.
 **How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
 picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
 with Create; Chatty isn't offered until something uses it) and changed any time with
-**⚙️ Settings**, on the DM screen's help card (there between sessions too) and first on
+**⚙️ Settings**. **Where it is** (owner, 2026-10-21): only in the campaign's DM Bot channel
+(`#dmb-dm-bot-<short name>`), under its menu button, now named **👤 DMbot Main Menu** (it was "My
+buttons"). It is no longer on the DM screen's help card or the "Listening" message. **How it is grouped**
+(owner, 2026-10-21), so the card keeps the often-used buttons and puts the rest a tap away:
+- **👁️ Who can see the DM screen** opens the three choices (Only the DM, Players can peek, Everyone in
+  the server), with the current one ticked.
+- **🗂️ Campaign management** opens 🤝 Hand over, ⏸️ Pause this campaign, 🗄️ Transcript retention (was
+  "Transcripts": how long transcripts are kept), 👑 Game masters and 🗑️ Delete this campaign, each with its
+  own rules as before (Hand over and Delete for the plan holder only).
+Earlier wording, kept for the history: Settings was on the DM screen's help card (there between sessions too) and first on
 the "Listening" message (built 2026-10-08, #515). Settings opens privately, for the
 campaign's DMs or a server manager: how much DMbot says (one tap saves it, and a running
 session follows the change from now on) and who can see the DM screen, each tap redrawing
