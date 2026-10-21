@@ -7886,10 +7886,13 @@ class DMBot(commands.AutoShardedBot):
             else:
                 since, until = began, await self._next_session_start(gid, cid, began)
             proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            later = await self.memory.deferred_names(gid, cid)  # "Later": asked, but not waited on
             total += sum(
                 1
                 for e in proposed
-                if e.created_at >= since and (until is None or e.created_at < until)
+                if e.created_at >= since
+                and (until is None or e.created_at < until)
+                and e.id not in later
             )
         if self.heard_questions is not None:
             total += await self.heard_questions.count_for_session(gid, session_id)

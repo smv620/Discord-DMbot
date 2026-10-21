@@ -1299,9 +1299,13 @@ class SuggestionReview(_Menu):
         current = await self._current(interaction)
         if current is None:
             return
-        campaign, memory, _ = current
+        campaign, memory, entity = current
         self.later += 1
         self.queue.pop(0)  # this round only; it's still waiting next time
+        try:  # and remembered, so it no longer holds a recap back (#2174)
+            await memory.defer_name(campaign.guild_id, campaign.id, entity.id)
+        except Exception:
+            log.exception("Couldn't remember a name left for later")
         await self._next(interaction, campaign, memory, note=None)
 
     async def _back(self, interaction: discord.Interaction) -> None:

@@ -8192,6 +8192,22 @@ SAID_AS_SUGGESTIONS = f"""
     );
     """ + _isolate("said_as_suggestions")
 
+NAMES_LATER = f"""
+    -- A suggested name the DM pressed "Later" on (#2174): the question stays in 📝 Check new names,
+    -- but it no longer holds a recap back, so one name the DM cannot decide on does not keep
+    -- every recap waiting. One row per name, deleted with the name and with the campaign, left
+    -- out of backups (a wait, not content: a restored campaign's suggestions ask again), isolated
+    -- per server. A name that is decided on loses its row (`Changes.update`). No speaker, no line,
+    -- no words.
+    CREATE TABLE name_later (
+        {_memory_scope()}
+        entity_id   TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entity_id),
+        {_entity_link("entity_id")}
+    );
+    """ + _isolate("name_later")
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -8566,6 +8582,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0155_support_ticket_times",
         SUPPORT_TICKET_TIMES,
     ),  # no two of a person's tickets share a time
+    ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -8601,6 +8618,7 @@ ISOLATED_TABLES = (
     "recap_jobs",
     "recap_dictionaries",
     "recap_holds",
+    "name_later",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
