@@ -1147,7 +1147,10 @@ picked with buttons when creating a campaign (**Quiet / Normal**, sharing the la
 with Create; Chatty isn't offered until something uses it) and changed any time with
 **⚙️ Settings**. **Where it is** (owner, 2026-10-21): only in the campaign's DM Bot channel
 (`#dmb-dm-bot-<short name>`), under its menu button, now named **👤 DMbot Main Menu** (it was "My
-buttons"). It is no longer on the DM screen's help card or the "Listening" message. **How it is grouped**
+buttons"). It is no longer on the DM screen's help card or the "Listening" message. Two private ways in
+stay, because only the DM sees them: the ⚙️ Settings button on `/dmbot start`'s channel picker (#1619) and
+`/dmbot settings`, the fallback when the DM Bot channel can't be reached (Supervisor, 2026-10-21, #2289).
+**How it is grouped**
 (owner, 2026-10-21), so the card keeps the often-used buttons and puts the rest a tap away:
 - **👁️ Who can see the DM screen** opens the three choices (Only the DM, Players can peek, Everyone in
   the server), with the current one ticked.
