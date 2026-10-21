@@ -100,12 +100,14 @@ class RevealButton(
             await interaction.response.edit_message(
                 content=secret_posts.HIDDEN, view=None, allowed_mentions=NO_PINGS
             )
+            secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         name = name_in(interaction)
         if self.act == "n":
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
+            secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         memory = bot.memory
         if memory is None:
@@ -123,6 +125,7 @@ class RevealButton(
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
+        secret_posts.answered(interaction, self.campaign_id)  # (#2156)
 
 
 def reveal_view(campaign_id: str, alias_id: str, guild_id: int) -> discord.ui.View:

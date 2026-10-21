@@ -44,6 +44,9 @@ export interface Campaign {
   status: "active" | "paused";
   /** "owner": uses your hours. "co-dm": you help run it. */
   role: "owner" | "co-dm";
+  /** Importing older sessions works in this campaign's server (#2259), even while the site's own
+   * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
+  importsOn?: boolean;
 }
 
 /** A Discord server you manage. */

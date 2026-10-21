@@ -181,10 +181,13 @@ class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
             ),
             lookup=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(names=[]))),
             transcripts=SimpleNamespace(
+                latest_before=AsyncMock(return_value=(120, False)),
                 sessions=AsyncMock(return_value=[session, *before]),
                 lines=AsyncMock(return_value=[]),
             ),
-            recaps=SimpleNamespace(bridge=AsyncMock(return_value=bridge)),
+            recaps=SimpleNamespace(
+                bridge=AsyncMock(return_value=bridge), earlier_job=AsyncMock(return_value=None)
+            ),
             clocks=None,
             guild_id=1,
             campaign_id="c" * 32,

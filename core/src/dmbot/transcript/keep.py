@@ -45,7 +45,10 @@ def note_text(sessions: int, days: int) -> str:
     """What the DM screen says once: "🗑 Deleted 3 transcripts older than 90 days. …"."""
     things = "1 transcript" if sessions == 1 else f"{sessions} transcripts"
     age = KEEP_LABELS.get(days, f"{days} days")
-    return f"🗑 Deleted {things} older than {age}. Change this under ⚙️ Settings → 📜 Transcripts."
+    return (
+        f"🗑 Deleted {things} older than {age}. Change this under "
+        "⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention."
+    )
 
 
 class KeepJob:

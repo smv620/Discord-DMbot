@@ -9,8 +9,11 @@ import dataclasses
 import datetime as dt
 import os
 import re
+import statistics
 import subprocess
 import sys
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +100,7 @@ class Metered:
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
+        self.seconds: list[float] = []  # how long each call took, in the order made (#2263)
 
     @property
     def model(self) -> str:
@@ -104,7 +108,23 @@ class Metered:
 
     async def complete(self, system: str, text: str, **kwargs: Any) -> Reply:
         self.calls += 1  # counted when made: a call that fails was still a call
-        reply: Reply = await self._client.complete(system, text, **kwargs)
+        started = time.monotonic()
+        try:
+            reply: Reply = await self._client.complete(system, text, **kwargs)
+        finally:
+            self.seconds.append(time.monotonic() - started)
         self.input_tokens += reply.input_tokens
         self.output_tokens += reply.output_tokens
         return reply
+
+
+def timing_line(seconds: Sequence[float]) -> str:
+    """ "median 1.2 s, slowest 3.4 s over 17 answers", for the rollback rule ("about a second
+    slower per answer", #2152); "" when nothing was timed."""
+    if not seconds:
+        return ""
+    ordered = sorted(seconds)
+    median = statistics.median(ordered)
+    n = len(ordered)
+    noun = "call" if n == 1 else "calls"
+    return f"median {median:.1f} s, slowest {ordered[-1]:.1f} s over {n} {noun}"
