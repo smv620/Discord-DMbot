@@ -7608,6 +7608,13 @@ RECAP_HOLD_NAMES = """
     REVOKE ALL ON FUNCTION dmbot_web_recap_holds(BIGINT) FROM PUBLIC;
 """
 
+RECAP_HOLD_REMINDED = """
+    -- The one reminder a held recap gets after a day (#2174): set when it is claimed, so the
+    -- round and a restart never send it twice. A defaulted column changes no rows, so no
+    -- row-level-security policy is needed.
+    ALTER TABLE recap_holds ADD COLUMN reminded BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
 OLD_SPELLING = """
     -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
     -- still matches it, so a line that says it is fixed to the new spelling and a search finds
@@ -7818,6 +7825,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
     ("0151_recap_hold_names", RECAP_HOLD_NAMES),  # how many answers it waits on (#2174)
+    ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -7757,12 +7757,13 @@ class DMBot(commands.AutoShardedBot):
 
     async def _hold_or_queue(
         self, campaign: Campaign, session_id: str, session_at: int, channel_id: int, dm: int
-    ) -> None:
+    ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
         the extractor to come the hold is silent until `recheck_recap_hold` has counted again. The
         recap is never lost: if counting, holding or asking fails, the hold is released into a
-        queued recap (or the recap is queued as before when nothing was held)."""
+        queued recap (or the recap is queued as before when nothing was held). Returns "held"
+        (waiting for answers), "queued" or "already" (a repeat: held or queued before)."""
         gid, cid = campaign.guild_id, campaign.id
         store = self.recap_holds
         if store is not None:
@@ -7775,11 +7776,11 @@ class DMBot(commands.AutoShardedBot):
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
                         channel_id=channel_id, asked=waiting > 0, names_open=waiting,
                     ):  # fmt: skip
-                        return  # held already, or a job exists: a repeat of the end of the session
+                        return "already"  # held already, or a job exists: a repeat
                     held = True
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
-                        return
+                        return "held"
                     sent = await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
@@ -7787,7 +7788,7 @@ class DMBot(commands.AutoShardedBot):
                     )
                     if sent:
                         log.info("Recap: held for %d name question(s)", waiting)  # a count
-                        return
+                        return "held"
                     log.warning("Recap: couldn't ask about the name questions; writing it now")
             except Exception:
                 log.exception("Recap: couldn't hold it for name questions; writing it now")
@@ -7795,10 +7796,12 @@ class DMBot(commands.AutoShardedBot):
                 try:
                     if await store.release(gid, cid, session_at) == recap_hold.QUEUED:
                         await self._say_writing(campaign, channel_id, session_at)
-                        return
+                        return "queued"
                 except Exception:
                     log.exception("Recap: couldn't release a hold nobody was told about")
-        await self._queue_recap(campaign, session_at, channel_id, dm)
+        return (
+            "queued" if await self._queue_recap(campaign, session_at, channel_id, dm) else "already"
+        )
 
     async def recheck_recap_hold(self, table: Table) -> None:
         """After the story extractor (#2169): count the name questions again for a recap held
@@ -7854,6 +7857,17 @@ class DMBot(commands.AutoShardedBot):
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
+            age = time.time() - held.created_at
+            if age >= recap_hold.HOLD_MAX_S:
+                # A wait nobody answers cannot go on for ever (#2174): the recap is written with
+                # the names as they are, if the plan allows it (else kept, asked again next round).
+                if not await self.recap_allowed(gid, held.campaign_id, None):
+                    return
+                if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                    await self._say_writing(
+                        campaign, held.channel_id, held.session_at, note=recap_hold.EXPIRED_NOTE
+                    )
+                return
             if (
                 not held.asked
                 and not extractor_done
@@ -7866,6 +7880,19 @@ class DMBot(commands.AutoShardedBot):
             if waiting:
                 await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
                 if held.asked:
+                    # One reminder after a day, claimed first so the round and a restart never
+                    # send it twice; a reminder that could not be posted is tried again.
+                    if (
+                        age >= recap_hold.HOLD_REMIND_S
+                        and not held.reminded
+                        and await store.mark_reminded(gid, held.campaign_id, held.session_at)
+                        and not await self.post(
+                            held.channel_id,
+                            recap_hold.reminder_text(waiting),
+                            view=hold_view(held.campaign_id, held.session_at),
+                        )
+                    ):
+                        await store.unmark_reminded(gid, held.campaign_id, held.session_at)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -7920,8 +7947,11 @@ class DMBot(commands.AutoShardedBot):
         await self._say_writing(campaign, channel_id, session_at)
         return True
 
-    async def _say_writing(self, campaign: Campaign, channel_id: int, session_at: int) -> None:
-        """Tell the DM, on the DM screen, that the recap is being written."""
+    async def _say_writing(
+        self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
+    ) -> None:
+        """Tell the DM, on the DM screen, that the recap is being written (`note`: why, when it was
+        not asked for, such as a hold that ran out)."""
         link = page_link(self.settings.site_url, campaign.guild_id, campaign.id, session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
         ready = (
@@ -7929,9 +7959,10 @@ class DMBot(commands.AutoShardedBot):
             if campaign.recaps_email
             else "Find it on your recap page when it's ready."
         )
+        lead = f"{note} " if note else ""
         await self.post(
             channel_id,
-            f"📜 Writing a recap of this session. {ready} "
+            f"📜 {lead}Writing a recap of this session. {ready} "
             f"Nothing goes to the table until you say so.{where}",
         )
 
@@ -7946,8 +7977,9 @@ class DMBot(commands.AutoShardedBot):
 
     async def recap_write_anyway(self, gid: int, cid: str, session_at: int, channel_id: int) -> str:
         """The DM said to write the recap of a short session. The same gates as after any session:
-        the switch and the plan (closed when they can't be checked). "queued", "already" (there
-        is a recap job for it) or "refused"."""
+        the switch and the plan (closed when they can't be checked), and the hold for name answers.
+        "queued", "held" (waiting for the DM's name answers), "already" (there is a recap job for
+        it) or "refused"."""
         if self.recap_worker is None or self.recaps is None or self.transcripts is None:
             return "refused"
         campaign = await self.campaigns.get(gid, cid)
@@ -7956,9 +7988,18 @@ class DMBot(commands.AutoShardedBot):
         dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
         if dm <= 0:
             return "refused"
-        if await self._queue_recap(campaign, session_at, channel_id, dm):
-            return "queued"
-        return "already"
+        # Like any session, it waits for the DM's name answers first (#2174).
+        session_id = next(
+            (x.id for x in await self.transcripts.sessions(gid, cid, limit=5)
+             if x.started_at == session_at), None,
+        )  # fmt: skip
+        if session_id is None:
+            return (
+                "queued"
+                if await self._queue_recap(campaign, session_at, channel_id, dm)
+                else "already"
+            )
+        return await self._hold_or_queue(campaign, session_id, session_at, channel_id, dm)
 
     async def _expire_short_asks(self, table: Table) -> None:
         """A new session of the campaign has started: the open question about its last short

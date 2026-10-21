@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "A recap won't wait for ever for your name answers",
+    what: "If a recap is waiting for your answers about names, DMbot reminds you once after a day, on your DM screen, with 📝 Check new names and Write the recap now. If nobody answers, after three days it writes the recap with the names as it heard them, and says so on your DM screen. Also: pressing Write a recap on a short session now waits for your name answers too.",
+    reason: "In review (#2174); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "Names spelled out at the table",
     what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot notes it, using only players who agreed to be recorded. After the session it shows up in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can correct that name's spelling with one button. DMbot only suggests. Nothing changes until you press a button, and the suggestion goes only to you.",
