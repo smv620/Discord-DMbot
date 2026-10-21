@@ -17,6 +17,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import fit_message
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_sources
 from dmbot.rules.house_sources import Source
@@ -81,7 +82,6 @@ async def _load(
 
 
 TITLE_SHOWN = 60  # a long file or set name is cut in the list; the menu and file keep it
-TEXT_MAX = 1800  # Discord's message limit is 2,000
 
 
 def _cut(text: str, limit: int) -> str:
@@ -95,7 +95,7 @@ def _text(sources: list[Source]) -> str:
         notes.append(UPLOAD_NOTE)
     if len(sources) >= house_sources.MAX_SOURCES:
         notes.append(CUT_NOTE)
-    return _cut("\n".join([INTRO, *lines, "", *notes]), TEXT_MAX)
+    return fit_message("\n".join([INTRO, *lines, "", *notes]))
 
 
 class SourcesView(_Menu):
