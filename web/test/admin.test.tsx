@@ -327,6 +327,31 @@ describe("free access (#773)", () => {
     ).toBeTruthy();
   });
 
+  it("lists someone on the free list who also has an older grant once, with a way to remove it (#2196)", async () => {
+    const both: GrantsView = {
+      ...view(),
+      free: [{ discordId: FRIEND, name: "Sam" }],
+      grants: [{ ...view().grants[0]!, alsoFree: true }],
+    };
+    const api = signedIn({ grants: vi.fn(async () => both) });
+    const free = (await screen.findByText(text.alwaysFree)).closest("li") as HTMLElement;
+    // One entry: no second row for the same person, and no "nobody" note for the empty rest.
+    expect(screen.getAllByText("Sam")).toHaveLength(1);
+    expect(document.querySelector(`[data-grant="${FRIEND}"]`)).toBeNull();
+    expect(screen.getByText(text.nobody)).toBeTruthy();
+    expect(within(free).getByText(text.olderGrant)).toBeTruthy();
+    fireEvent.click(within(free).getByRole("button", { name: text.removeOlderGrant }));
+    expect(await screen.findByText(text.olderGrantRemoved("Sam"))).toBeTruthy();
+    expect(api.revoke).toHaveBeenCalledWith("csrf-1", FRIEND);
+  });
+
+  it("shows a free-list person with no older grant exactly as before", async () => {
+    signedIn();
+    const free = (await screen.findByText(text.alwaysFree)).closest("li") as HTMLElement;
+    expect(within(free).queryByRole("button")).toBeNull();
+    expect(within(free).queryByText(text.olderGrant)).toBeNull();
+  });
+
   it("someone with no name shows by id, and shortened in sentences", async () => {
     const nameless = view();
     nameless.grants[0] = { ...nameless.grants[0]!, name: null };

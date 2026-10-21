@@ -63,6 +63,10 @@ export const text = {
   // `who` is the person's name, or a shortened id when they haven't signed in lately.
   confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
   yesRevoke: "Yes, revoke",
+  // A grant for someone who is now on the server's free list (#2196): it changes nothing.
+  olderGrant: "An older free-access grant is also on file. It isn't needed.",
+  removeOlderGrant: "Remove it",
+  olderGrantRemoved: (who: string): string => `Done. The older grant for ${who} is gone. They are still always free.`,
   cancel: "Cancel",
   revoked: (who: string): string => `Done. ${who} no longer has free access.`,
   addHeading: "Add someone",
