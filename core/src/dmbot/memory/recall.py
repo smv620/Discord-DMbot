@@ -274,10 +274,13 @@ class RecallService:
         budget: int = DEFAULT_BUDGET,
         opted_in: OptedIn = (),
         hops: int = MAX_HOPS,
+        confirmed_only: bool = False,
     ) -> Recall:
         """What may be said about `seeds` (entry ids or names) to `audience` at `as_of`, cut to
         `budget` characters. `opted_in` are the people recorded now (or a function that says,
-        asked again before any quote is attached): only they are quoted or counted."""
+        asked again before any quote is attached): only they are quoted or counted.
+        `confirmed_only`: for the DM screen, leave out the entries the DM has not confirmed yet
+        (a proposed one), as the players' view does; a recap rests on confirmed memory alone."""
         if audience not in AUDIENCES:
             raise ValueError(f"unknown audience {audience!r}")
         as_of = as_of or AsOf()
@@ -286,7 +289,7 @@ class RecallService:
         hops = max(0, min(hops, MAX_HOPS))
         agreed = await _agreed(opted_in)
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
-            walk = await self._walk(scope, seeds, audience, as_of, hops)
+            walk = await self._walk(scope, seeds, audience, as_of, hops, confirmed_only)
             reached = sorted(walk.cost)
             heard = await self._heard(scope, reached, agreed)
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
@@ -406,11 +409,17 @@ class RecallService:
     # ---- the walk --------------------------------------------------------------------
 
     async def _walk(
-        self, scope: Scope, seeds: Sequence[str], audience: str, as_of: AsOf, hops: int
+        self,
+        scope: Scope,
+        seeds: Sequence[str],
+        audience: str,
+        as_of: AsOf,
+        hops: int,
+        confirmed_only: bool = False,
     ) -> _Walk:
         walk = _Walk()
-        ids = await self._seed_ids(scope, seeds, audience)
-        walk.entities.update(await self._entries(scope, ids, audience))
+        ids = await self._seed_ids(scope, seeds, audience, confirmed_only)
+        walk.entities.update(await self._entries(scope, ids, audience, confirmed_only))
         walk.seeds = [i for i in ids if i in walk.entities]
         walk.cost = {i: 0 for i in walk.seeds}
         when, values = _true_at(as_of)
@@ -444,7 +453,9 @@ class RecallService:
                 for end in (str(r["subject_id"]), str(r["object_id"]))
                 if end not in walk.entities
             }
-            walk.entities.update(await self._entries(scope, sorted(unknown), audience))
+            walk.entities.update(
+                await self._entries(scope, sorted(unknown), audience, confirmed_only)
+            )
             frontier = self._step(walk, rows, frontier, hops)
         else:
             walk.truncated = walk.truncated or bool(frontier)
@@ -489,7 +500,9 @@ class RecallService:
                     walk.truncated = True
         return nxt
 
-    async def _seed_ids(self, scope: Scope, seeds: Sequence[str], audience: str) -> list[str]:
+    async def _seed_ids(
+        self, scope: Scope, seeds: Sequence[str], audience: str, confirmed_only: bool = False
+    ) -> list[str]:
         """The entries the seeds mean, in the order given: an id as it is, a name through the
         entries' names and the other names it goes by. The players' audience only trusts names
         the DM has confirmed and has not made secret."""
@@ -499,11 +512,12 @@ class RecallService:
         if keys:
             # Every entry's own name is its first alias, so one indexed lookup finds names and
             # other names alike.
-            hide = (
-                " AND NOT secret AND status = 'confirmed'"
-                if audience == PLAYERS
-                else " AND status <> 'rejected'"
-            )
+            if audience == PLAYERS:
+                hide = " AND NOT secret AND status = 'confirmed'"
+            elif confirmed_only:
+                hide = " AND status = 'confirmed'"
+            else:
+                hide = " AND status <> 'rejected'"
             cur = await scope.conn.execute(
                 "SELECT key, entity_id FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
                 f" AND key = ANY(%s){hide}",
@@ -518,14 +532,14 @@ class RecallService:
         return list(ids)
 
     async def _entries(
-        self, scope: Scope, ids: Sequence[str], audience: str
+        self, scope: Scope, ids: Sequence[str], audience: str, confirmed_only: bool = False
     ) -> dict[str, dict[str, object]]:
         """The live entries among `ids`. For the players: confirmed ones only, and never an
         entry whose own name the DM has made secret (its identity is the secret), whether it
         came by name or by id."""
         if not ids:
             return {}
-        live = ["confirmed"] if audience == PLAYERS else list(_LIVE)
+        live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
         # A clue only some people know (#1649) is the DM's alone: the players' audience gets
