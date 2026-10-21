@@ -36,10 +36,23 @@ WEAK_NAMES = {
     "are": "r", "you": "u", "see": "c", "sea": "c", "be": "b", "oh": "o", "eye": "i",
     "why": "y", "tea": "t", "queue": "q", "cue": "q", "pee": "p", "a": "a", "i": "i",
 }  # fmt: skip
+# Table talk that is spelled with letters but is not a name (acronyms the game uses).
+NOT_NAMES = frozenset(
+    {
+        *("npc", "pc", "pcs", "npcs", "bbeg", "tpk", "aoe", "dnd", "phb", "dmg", "xp", "hp"),
+        *("ac", "dc", "dm", "gm", "ooc", "lfg", "ttrpg"),
+    }
+)
+# Lead-ins and fillers before an answer: they do not count against "mostly letters".
+FILLERS = frozenset(
+    {
+        *("uh", "um", "er", "erm", "yeah", "yep", "yes", "so", "well", "okay", "ok", "right"),
+        *("and", "it", "its", "it's", "is", "that", "that's", "spelled", "spelt", "like", "then"),
+    }
+)
 SYMBOLS = {"apostrophe": "'", "dash": "-", "hyphen": "-"}
 NUMBERS = {"double": 2, "triple": 3}
 
-_TOKEN = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?|[.,;:!?]")
 _ASKS = [
     re.compile(p, re.I)
     for p in (
@@ -53,10 +66,16 @@ _ASKS = [
     )
 ]
 _SAID = re.compile(
-    r"\b(?:it(?:'s|\s+is)|that(?:'s|\s+is)|spelled|spelt|spelled\s+like|it\s+is\s+spelled)\s+"
-    r"(?:spelled\s+|spelt\s+)?([A-Z][A-Za-z]+(?:['-][A-Za-z]+)*)"
-    r"(?:\s+with\s+(?:a|an|one|two|double|2)\s+[A-Za-z]'?s?)?",
+    r"\b(?i:it(?:'s|\s+is)|that(?:'s|\s+is)|spelled|spelt|spelled\s+like|it\s+is\s+spelled)\s+"
+    r"(?i:spelled\s+|spelt\s+)?([A-Z][A-Za-z]+(?:['-][A-Za-z]+)*)"
+    r"(?:\s+(?i:with)\s+(?i:(?P<count>a|an|one|two|double|2))\s+(?P<letter>[A-Za-z])'?s?)?",
 )
+_BARE = re.compile(  # "Cael with a K", with no lead-in (only believed after an ask)
+    r"\b([A-Z][A-Za-z]+(?:['-][A-Za-z]+)*)\s+(?i:with)\s+(?i:(?P<count>a|an|one|two|double|2))"
+    r"\s+(?P<letter>[A-Za-z])'?s?\b"
+)
+_COUNTS = {"two": 2, "double": 2, "2": 2}
+_SOUND_ALIKE = {"k": "c", "c": "k", "s": "c", "z": "s", "f": "p", "j": "g", "g": "j"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +108,8 @@ def _tokens(text: str) -> list[_Tok]:
 
 
 def _classify(toks: list[_Tok], text: str) -> None:
+    """Say which tokens are letters, and which of those are unmistakable (a lone "I" or "A"
+    is a word unless hyphen-joined)."""
     for i, t in enumerate(toks):
         low = t.text.lower()
         joined_next = (i + 1 < len(toks) and text[t.end : toks[i + 1].start].strip() == "-") or (
@@ -96,8 +117,7 @@ def _classify(toks: list[_Tok], text: str) -> None:
         )
         if len(low) == 1 and low.isalpha():
             t.letter = low
-            # "B", "R" are unmistakable; "a" and "i" are words unless hyphen-joined or capital.
-            t.strong = low not in "ai" or joined_next  # a lone "I" or "A" is a word
+            t.strong = low not in "ai" or joined_next
             t.joined = joined_next
         elif low in STRONG_NAMES:
             t.letter, t.strong = STRONG_NAMES[low], True
@@ -105,7 +125,7 @@ def _classify(toks: list[_Tok], text: str) -> None:
             t.letter, t.strong = WEAK_NAMES[low], False
         elif low in SYMBOLS:
             t.letter, t.strong = SYMBOLS[low], True
-        elif low in NUMBERS or low == "capital" or low == "double":
+        elif low in NUMBERS or low == "capital":
             t.letter, t.strong = "", True  # modifiers, handled in the run
 
 
@@ -122,23 +142,44 @@ def _double_u(toks: list[_Tok]) -> list[_Tok]:
 
 
 def _runs(toks: list[_Tok]) -> list[list[_Tok]]:
-    """Stretches of tokens that can be letters, with the modifiers between them."""
+    """Stretches of tokens that can be letters, with the modifiers between them. Punctuation
+    between letters ("B, R, A") does not end a run, but a comma or full stop before a word that
+    can be a letter ("N P C, a B B E G") does; a run starts and ends on an unmistakable letter."""
     runs: list[list[_Tok]] = []
     cur: list[_Tok] = []
+
+    def close() -> None:
+        while cur and cur[-1].text in ",.;:!?-":
+            cur.pop()
+        # Only a lower-case word that can be a letter ("a", "you") is trimmed from the ends; a
+        # capital ("Z E double T A") is a letter.
+        while cur and cur[0].letter and not cur[0].strong and cur[0].text.islower():
+            cur.pop(0)
+        while cur and (
+            (cur[-1].letter and not cur[-1].strong and cur[-1].text.islower())
+            or cur[-1].text in ",.;:!?-"
+        ):
+            cur.pop()
+        if cur:
+            runs.append(list(cur))
+        cur.clear()
+
     for t in toks:
+        punctuation = t.text in ",.;:!?"
         ok = bool(t.letter) or t.text.lower() in ("double", "triple", "capital") or t.text == "-"
-        if t.text in ",.;:!?" and cur:
-            cur.append(t)  # punctuation between letters ("B, R, A") does not end a run
+        if punctuation and cur:
+            cur.append(t)
             continue
+        first_break = not any(x.text in ",.;:!?" for x in cur[:-1])
+        if t.letter and not t.strong and cur and cur[-1].text in ",.;:!?" and first_break:
+            close()  # "N P C, a B B": the weak "a" after the first comma starts something else
         if ok:
             cur.append(t)
-        else:
-            if cur:
-                runs.append(cur)
-            cur = []
+        elif cur:
+            close()
     if cur:
-        runs.append(cur)
-    return [[t for t in r] for r in runs]
+        close()
+    return runs
 
 
 def _word_of(run: list[_Tok]) -> tuple[str, int, int, int] | None:
@@ -183,12 +224,14 @@ def _word_of(run: list[_Tok]) -> tuple[str, int, int, int] | None:
     ):
         return None  # "I I I", "a a a": stuttering, unless "double" or "triple" was said
     word = "".join(letters)
+    if word.lower() in NOT_NAMES:
+        return None  # "N.P.C.", "T.P.K.": table talk, not a name
     # Title case, but keep a capital the speaker asked for ("capital b" inside a word).
     word = word[0].upper() + word[1:] if word[0].islower() else word
     return word, first.start, last.end, strong
 
 
-def run_tokens(run: list[_Tok]) -> list[_Tok]:
+def _run_tokens(run: list[_Tok]) -> list[_Tok]:
     return [t for t in run if t.text not in ",.;:!?-"]
 
 
@@ -207,26 +250,52 @@ def parse(text: str, *, asked: bool = False) -> list[Spelling]:
         need = 2 if asked else 3
         if strong < need or len(word) > MAX_WORD:
             continue
-        spoken = len([t for t in toks if t.text not in ",.;:!?-"])
-        if asked and len(run_tokens(run)) * 10 < spoken * 8:
+        spoken = len([t for t in toks if t.text not in ",.;:!?-" and t.text.lower() not in FILLERS])
+        if asked and len(_run_tokens(run)) * 10 < spoken * 8:
             continue  # an answer is mostly letters, not a sentence with a few in it
         out.append(Spelling(word, start, end))
     return out
 
 
 def said_spelling(text: str) -> str | None:
-    """ "it's spelled Brannoch" / "that's Brannoch with two Ns": the word, as written."""
-    m = _SAID.search(text)
+    """ "it's spelled Brannoch" / "that's Branoch with two Ns": the word, as the speaker means it.
+    "with two Ns" doubles the single N; "with a K" swaps the sound-alike letter (Cael with a K is
+    Kael). A change that cannot be applied returns None: a spelling known to be wrong is never
+    offered."""
+    m = _SAID.search(text) or _BARE.search(text)
     if m is None:
         return None
     word = m.group(1)
-    return word if 3 <= len(word) <= MAX_WORD else None
+    if not 3 <= len(word) <= MAX_WORD:
+        return None
+    count, letter = m.group("count"), m.group("letter")
+    if count is None or letter is None:
+        return word
+    return _with_letter(word, letter.lower(), _COUNTS.get(count.lower(), 1))
+
+
+def _with_letter(word: str, letter: str, times: int) -> str | None:
+    low = word.lower()
+    if times >= 2:  # "two Ns": that letter is doubled
+        if letter * 2 in low:
+            return word
+        at = low.find(letter)
+        if at < 0 or low.count(letter) != 1:
+            return None
+        return word[: at + 1] + word[at] + word[at + 1 :]
+    if letter in low:
+        return word  # "with a K": it already has one
+    other = _SOUND_ALIKE.get(letter)
+    if other is None or other not in low:
+        return None
+    at = low.find(other)
+    swapped = letter.upper() if word[at].isupper() else letter
+    return word[:at] + swapped + word[at + 1 :]
 
 
 @dataclass(frozen=True, slots=True)
 class SpelledOut:
     word: str
-    asked: bool  # it answered an ask (otherwise it followed a capitalised word)
     user_id: int
     near: tuple[str, ...]  # capitalised words from the last few lines, closest first
 
@@ -236,7 +305,7 @@ _CAPITALISED = re.compile(r"(?<![.!?]\s)(?<!^)\b[A-Z][a-z]{2,}\b")
 
 def capitalised_words(text: str) -> list[str]:
     """Capitalised words not at the start of a sentence: likely names."""
-    return [w for w in _CAPITALISED.findall(text)]
+    return _CAPITALISED.findall(text)
 
 
 class SpellingWatcher:
@@ -256,10 +325,8 @@ class SpellingWatcher:
             spoken.append(said)
         near = tuple(self._near(now))
         for word in dict.fromkeys(spoken):
-            if asked:
-                found.append(SpelledOut(word, True, user_id, near))
-            elif self._after_capitalised(text, now):
-                found.append(SpelledOut(word, False, user_id, near))
+            if asked or self._after_capitalised(text, now):
+                found.append(SpelledOut(word, user_id, near))
         if is_ask(text):
             self._ask_at = now
         elif found:
@@ -268,6 +335,8 @@ class SpellingWatcher:
         return found
 
     def _near(self, now: float) -> list[str]:
+        """Words from the last few lines that might be the name being spelled: capitalised ones
+        first, then the other words, closest line first."""
         words: list[str] = []
         for at, _uid, text in reversed(self._lines):
             if now - at > ASK_WINDOW_S * 2:
@@ -282,7 +351,7 @@ class SpellingWatcher:
         first = parse(text)
         if first:
             before = text[: first[0].start]
-            if capitalised_words(before) or re.search(r"(?<!^)\b[A-Z][a-z]{2,}", before):
+            if capitalised_words(before):
                 return True
         if self._lines:
             at, _uid, previous = self._lines[-1]

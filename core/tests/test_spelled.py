@@ -25,6 +25,8 @@ class TheParser(unittest.TestCase):
     def test_a_table_of_spoken_spellings(self) -> None:
         table = [
             ("it's spelled B-R-A-N-N-O-C-H", "Brannoch"),
+            ("Uh, it's K-A-E-L", "Kael"),
+            ("yeah it's B R A N", "Bran"),
             ("B R A N N O C H", "Brannoch"),
             ("b, r, a, n, n, o, c, h", "Brannoch"),
             ("B. R. A. N. N. O. C. H.", "Brannoch"),
@@ -63,6 +65,9 @@ class TheParser(unittest.TestCase):
             "oh be quiet you",
             "we need a plan B",
             "he got an A in it",
+            "Is he an N.P.C. or a P.C.?",
+            "That would be a T.P.K. for sure",
+            "an N P C, a B B E G",
         ):
             with self.subTest(said=said):
                 self.assertEqual(parse(said), [])
@@ -70,14 +75,24 @@ class TheParser(unittest.TestCase):
     def test_a_run_of_ambiguous_letter_words_needs_an_ask(self) -> None:
         # Two clear letters and an ambiguous one: believed only after an ask.
         self.assertEqual(parse("K R you"), [])
-        self.assertEqual([g.word for g in parse("K R you", asked=True)], ["Kru"])
+        self.assertEqual(parse("K R you", asked=True), [])  # "you" at the end is a word
         self.assertEqual(parse("B R"), [])  # too short
 
     def test_a_named_spelling_is_found(self) -> None:
+        self.assertEqual(said_spelling("It's Brannoch"), "Brannoch")  # capital lead-ins too
+        self.assertEqual(said_spelling("That's spelled Brannoch"), "Brannoch")
         self.assertEqual(said_spelling("that's Brannoch with two Ns"), "Brannoch")
         self.assertEqual(said_spelling("it's spelled Brannoch"), "Brannoch")
         self.assertEqual(said_spelling("it is Kael-Tar with a K"), "Kael-Tar")
         self.assertIsNone(said_spelling("that's fine"))
+
+    def test_a_with_a_letter_hint_is_applied_or_the_spelling_is_refused(self) -> None:
+        self.assertEqual(said_spelling("that's Branoch with two Ns"), "Brannoch")
+        self.assertEqual(said_spelling("Cael with a K"), "Kael")
+        self.assertEqual(said_spelling("it's Cael with a K"), "Kael")
+        self.assertEqual(said_spelling("it's Brannoch with two Ns"), "Brannoch")  # already so
+        self.assertIsNone(said_spelling("that's Zorgul with a K"))  # nothing to swap: never guess
+        self.assertIsNone(said_spelling("that's Borgul with two Ns"))  # no N to double
 
     def test_asks(self) -> None:
         for said in (
@@ -102,7 +117,7 @@ class TheWatcher(unittest.TestCase):
         w = SpellingWatcher()
         self.assertEqual(w.note(1, "how do you spell that?", 0.0), [])
         (hit,) = w.note(2, "B-R-A-N-N-O-C-H", 8.0)
-        self.assertEqual((hit.word, hit.asked, hit.user_id), ("Brannoch", True, 2))
+        self.assertEqual((hit.word, hit.user_id), ("Brannoch", 2))
 
     def test_an_answer_too_long_after_the_ask_does_not(self) -> None:
         w = SpellingWatcher()
@@ -113,7 +128,7 @@ class TheWatcher(unittest.TestCase):
         w = SpellingWatcher()
         w.note(1, "We were sent by Brannoch", 0.0)
         (hit,) = w.note(1, "B R A N N O C H", 4.0)
-        self.assertEqual((hit.word, hit.asked), ("Brannoch", False))
+        self.assertEqual(hit.word, "Brannoch")
         same = SpellingWatcher().note(1, "It was Brannoch. B R A N N O C H", 0.0)
         self.assertEqual([h.word for h in same], ["Brannoch"])
 
@@ -143,10 +158,12 @@ class TheWatcher(unittest.TestCase):
         self.assertEqual(w.note(2, "K A E L", 6.0), [])  # no ask, no capitalised word
 
 
-def table_bot(*, consenting: set[int] | None = None) -> Any:
+def table_bot(*, consenting: set[int] | None = None, waiting: list[Any] | None = None) -> Any:
     memory = SimpleNamespace(
         known_keys=AsyncMock(return_value=["vale"]),
         add_entity=AsyncMock(),
+        entities=AsyncMock(return_value=waiting or []),
+        set_note=AsyncMock(),
     )
     bot = SimpleNamespace(
         memory=memory,
@@ -214,6 +231,20 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
         self.say(bot, table, [(1, "how do you spell that"), (2, "B R A N N O C H")])
         await bot.suggest_spelled(table)
         bot.memory.add_entity.assert_not_awaited()
+
+    async def test_a_spelling_said_next_to_a_pending_suggestion_goes_to_that_suggestion(
+        self,
+    ) -> None:
+        pending = SimpleNamespace(id="e" * 32, name="Brenoch")
+        bot, table = table_bot(waiting=[pending]), a_table()
+        said = [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N N O C H")]
+        self.say(bot, table, said)
+        await bot.suggest_spelled(table)
+        bot.memory.add_entity.assert_not_awaited()  # not a second entry
+        bot.memory.set_note.assert_awaited_once()
+        self.assertEqual(
+            bot.memory.set_note.await_args.args[3], "Spelled out at the table: Brannoch"
+        )
 
     async def test_a_secret_name_spelled_out_is_never_suggested(self) -> None:
         bot, table = table_bot(), a_table(frozenset({"brannoch"}))

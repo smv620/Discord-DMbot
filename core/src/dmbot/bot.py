@@ -2524,8 +2524,9 @@ class DMBot(commands.AutoShardedBot):
             ("final transcript", channel),
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
-            ("spelled names", lambda: self.suggest_spelled(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            # After the scan: a spelling can belong to a name the scan just suggested (#2168).
+            ("spelled names", lambda: self.suggest_spelled(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
@@ -4290,7 +4291,13 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
-        if text and self.tables.get(table.guild_id) is table:
+        # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
+        # filter holds for a label is left out, as for the word list.
+        if (
+            text
+            and self.tables.get(table.guild_id) is table
+            and not self._topic_holds(table, cleaned or text, names_said)
+        ):
             self._note_spelling(table, utterance.user_id, str(cleaned or text))
         if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
@@ -8429,9 +8436,8 @@ class DMBot(commands.AutoShardedBot):
         spelling is suggested all the same: the review shows which known name it sounds like."""
         spelled = table.spelled
         table.spelled = []
-        table.spelling = (
-            spelled_out.SpellingWatcher()
-        )  # the recent lines are not kept past the session
+        # (the watcher's recent lines are not kept past the session)
+        table.spelling = spelled_out.SpellingWatcher()
         if self.memory is None or table.campaign_id is None or not spelled:
             return
         gid, cid = table.guild_id, table.campaign_id
@@ -8439,8 +8445,24 @@ class DMBot(commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
-            for word, user_id, _near in spelled:
-                if user_id not in agreed or name_key(word) in known:
+            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            for word, user_id, near in spelled:
+                key = name_key(word)
+                if user_id not in agreed or key in known:
+                    continue
+                # Said next to a suggestion that sounds like it: that suggestion is what was being
+                # spelled, so it gets the spelling and the DM is offered to fix it (#2168).
+                target = next(
+                    (e for e in waiting if near and name_key(e.name) == name_key(near)), None
+                )
+                if target is not None and name_key(target.name) != key:
+                    try:
+                        await self.memory.set_note(
+                            gid, cid, target.id, f"{SPELLED_OUT}: {word}", source="scan"
+                        )
+                        added += 1
+                    except MemoryRuleError as exc:
+                        log.info("Skipped a spelling for a suggestion: %s", exc)
                     continue
                 try:
                     await self.memory.add_entity(

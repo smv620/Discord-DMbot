@@ -839,6 +839,16 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
+def spelled_fix(entity: Entity) -> str:
+    """How someone spelled a pending suggestion at the table, when that differs from how it was
+    heard (the note reads "Spelled out at the table: Brannoch"), else ""."""
+    lead = f"{SPELLED_OUT}: "
+    if not entity.description.startswith(lead):
+        return ""
+    spelling = entity.description[len(lead) :].strip()
+    return spelling if name_key(spelling) != name_key(entity.name) else ""
+
+
 def suggestion_text(
     entity: Entity,
     left: int,
@@ -846,6 +856,7 @@ def suggestion_text(
     also: list[str] | None = None,
     match: Match | None = None,
     spelled: bool = False,
+    fix_to: str = "",
 ) -> str:
     others = (
         f"\nAlso heard as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
@@ -853,9 +864,12 @@ def suggestion_text(
         else ""
     )
     more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
-    if (
-        match is not None and spelled
-    ):  # someone spelled it out (#2168): say what the extra button does
+    # Someone spelled it out (#2168): the question says what the extra button does.
+    if fix_to:
+        question = (
+            f"Someone spelled it out: **{_md(fix_to)}**. Fix the spelling, or keep it as heard?"
+        )
+    elif match is not None and spelled:
         question = (
             f"Sounds like **{_md(match.name)}**. Same name, spelled **{_md(entity.name)}**? "
             "Or a new name?"
@@ -923,6 +937,7 @@ class SuggestionReview(_Menu):
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
+        self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
         self._buttons()
 
@@ -941,6 +956,7 @@ class SuggestionReview(_Menu):
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
+        self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
         self.also = [
             a.text
@@ -949,12 +965,23 @@ class SuggestionReview(_Menu):
         ]
         self._buttons()
         return suggestion_text(
-            entity, len(self.queue), also=self.also, match=self.match, spelled=bool(self.spelled)
+            entity,
+            len(self.queue),
+            also=self.also,
+            match=self.match,
+            spelled=bool(self.spelled),
+            fix_to=self.fix_to,
         )
 
     def _buttons(self) -> None:
         self.clear_items()
-        if self.match is not None:  # sounds like a known name: offer that first (#394)
+        if self.fix_to:  # someone spelled this suggestion out: fix its spelling first (#2168)
+            buttons = [
+                (self._fix_pending, "✏️ Fix spelling", discord.ButtonStyle.success),
+                (self._yes, "✅ Yes, as heard", discord.ButtonStyle.primary),
+                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
+            ]
+        elif self.match is not None:  # sounds like a known name: offer that first (#394)
             buttons = [
                 (self._another, its_label(self.match.name), discord.ButtonStyle.success),
                 (self._yes, "➕ New name", discord.ButtonStyle.primary),
@@ -965,7 +992,7 @@ class SuggestionReview(_Menu):
                     1,
                     (
                         self._fix_spelling,
-                        logic.shorten(f"✏️ Respell as {self.spelled}", REVIEW_LABEL_MAX),
+                        "✏️ Fix spelling",
                         discord.ButtonStyle.primary,
                     ),
                 )
@@ -1140,6 +1167,27 @@ class SuggestionReview(_Menu):
             return
         await self._same_as(interaction, self.match.entity_id)
 
+    async def _fix_pending(self, interaction: discord.Interaction) -> None:
+        """Someone spelled out a pending suggestion (#2168): it takes that spelling, and the card
+        comes back with the new name for the DM to answer. The DM decided; nothing is added."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        spelling = spelled_fix(entity)
+        if not spelling:
+            await _tell(interaction, GONE)
+            return
+        try:
+            await memory.rename_entity(
+                campaign.guild_id, campaign.id, entity.id, spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        await self._next(interaction, campaign, memory, note=f"✏️ Now spelled **{_md(spelling)}**.")
+
     async def _fix_spelling(self, interaction: discord.Interaction) -> None:
         """Someone spelled the name out at the table (#2168) and it sounds like a known name with
         another spelling: the known name takes this spelling as its main name and keeps the old
@@ -1207,6 +1255,8 @@ class SuggestionReview(_Menu):
                         f"✅ Got it: **{_md(keep.name)}** is now spelled **{_md(spelling)}**. "
                         f"The old spelling is still one of its names."
                     )
+        except MemoryRuleError as exc:
+            log.info("A spelled-out name could not be made the main name: %s", exc)
         except Exception:
             log.exception("Couldn't make a spelled-out name the main name")
         return f"{note} (Its spelling is unchanged: use ⭐ on its card to change it.)"
