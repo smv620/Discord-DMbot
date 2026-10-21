@@ -1659,8 +1659,8 @@ class FinishPastButton(
             await _tell(interaction, "Nothing more to do: it was undone, or it is all done.")
             return
         old, new = spellings
-        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
         try:
+            entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
             kept, longer, hidden = await _names_around(memory, campaign, self.entity_id, old)
         except Exception:
             log.exception("Finish the past transcripts: couldn't read the names")

@@ -127,7 +127,7 @@ def done_note(old: str, new: str, lines: int, sessions: int) -> str:
 def left_note(remaining: int) -> str:
     """How many lines are still to do after one run, and what to press."""
     return (
-        f"{_count(remaining, 'more line is', 'more lines are')} still to change: "
+        f"Up to {_count(remaining, 'more line', 'more lines')} may still change: "
         "press Finish the past transcripts."
     )
 

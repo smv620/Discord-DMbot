@@ -258,6 +258,7 @@ class ThePastTranscripts(NamesTest):
         retry = self.it()
         await undo.callback(retry)
         self.assertEqual((await self.texts())[0], "Branok waits at the gate")
+        self.assertIn("Spelling put back", retry.response.edited[0][0])
         self.assertIn("Put Branok back", retry.response.edited[0][0])
         self.assertNotIn("changed again", retry.response.edited[0][0])
 
@@ -277,7 +278,7 @@ class ThePastTranscripts(NamesTest):
         await self.memory.add_knower(GUILD, cid, clue.id, mira.id, source="dm", from_session_at=100)
         await self.memory.set_audience_limited(GUILD, cid, clue.id, True, source="dm")
         await self.transcripts.add_lines(
-            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Branok's deed")]
+            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Brannoch's deed and Branok's deed")]
         )
         before = await self.texts()
         form = name_card.FixSpellingForm(self.campaign.id, clue.id, "Branok's deed")
@@ -290,7 +291,9 @@ class ThePastTranscripts(NamesTest):
     async def test_a_dm_only_entry_is_never_written_into_the_transcript(self) -> None:
         thread = await ui.save_name(self.memory, self.campaign, "Branok's quest", "thread", [], [])
         await self.transcripts.add_lines(
-            GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Branok's quest")]
+            GUILD,
+            self.session,
+            [Line(MS + 8000, PLAYER, "x", "Brannoch's quest and Branok's quest")],
         )
         self.branok = thread
         before = await self.texts()
@@ -325,7 +328,7 @@ class ThePastTranscripts(NamesTest):
         with patch("dmbot.transcript.store.MAX_RESPELLED", 5):
             it = await self.fix()
             view = it.response.edited[0][1]
-            self.assertIn("more lines are still to change", it.response.edited[0][0])
+            self.assertIn("more lines may still change", it.response.edited[0][0])
             (finish,) = [
                 c for c in view.children if isinstance(c, name_card.FinishPastButton)
             ]  # fmt: skip
