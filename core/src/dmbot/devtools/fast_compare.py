@@ -9,7 +9,9 @@ tool: its own quality figure, passes and fails, the tokens in and out, and the d
 list prices on file (`devtools/costs/prices.py`). Without `--yes` nothing is called and it only
 says what it would run. Counts and the tools' own figures only, on the invented golden data, never
 live data. The key comes from ANTHROPIC_API_KEY and is never printed. The sidebar's questions are
-read from `tests/sidebar_brevity_cases.py`, so run it from `core/` of a checkout.
+and the golden sets ship inside the package (`dmbot/devtools/golden`, `sidebar_cases.py`), so it
+runs from any folder where DMbot is installed. It prints each call's time, with the median and
+the slowest, for each model.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from dmbot.ai import FAST_CANDIDATE, PREVIOUS_FAST, AIError, AIModels, AIModelTi
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools import sidebar_check
 from dmbot.devtools.claims import cost
-from dmbot.devtools.common import Metered
+from dmbot.devtools.common import Metered, timing_line
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.recap_measure import __main__ as recap_measure
 from dmbot.devtools.recap_measure.golden import GoldenError as RecapGoldenError
@@ -57,6 +59,7 @@ class Row:
     tokens_out: int = 0
     dollars: float | None = None  # None: no price on file for the model
     note: str = ""
+    seconds: list[float] = field(default_factory=list)  # each call's time, in order (#2263)
 
 
 @dataclass(slots=True)
@@ -169,6 +172,7 @@ async def compare(
                 await close()
             row.tokens_in, row.tokens_out = metered.input_tokens, metered.output_tokens
             row.dollars = dollars_for(model, row.tokens_in, row.tokens_out)
+            row.seconds = list(metered.seconds)
             spent += row.dollars or 0.0
             table.rows.append(row)
     return tables
@@ -185,6 +189,10 @@ def render(tables: Sequence[Table]) -> list[str]:
                 f"  {row.model}: {row.quality or '-'}; passed {row.passed}, failed {row.failed}; "
                 f"tokens {row.tokens_in} in / {row.tokens_out} out; {money}"
             )
+            if row.seconds:
+                each = " ".join(f"{t:.1f}" for t in row.seconds)
+                out.append(f"    time per call: {timing_line(row.seconds)}")
+                out.append(f"    each (s): {each}")
             if row.note:
                 out.append(f"    note: {row.note}")
     return out
