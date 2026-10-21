@@ -4280,7 +4280,7 @@ months.
   ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
   and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
   `asked` with no AI call, #1518), the 5-answer limit is reached, the account has no address, or the helper
-  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (jarvis@getdmbot.com) to
+  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md) to
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
