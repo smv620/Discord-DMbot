@@ -19,7 +19,7 @@ class TheSharedDecoder(unittest.TestCase):
 
     def test_each_check_has_its_own_reason(self) -> None:
         clip = tone("ogg", 1.5)
-        cases = {
+        cases: dict[audio_decode.Why, tuple[bytes, dict[str, float]]] = {
             audio_decode.Why.TOO_BIG: (b"", {}),
             audio_decode.Why.TOO_LONG: (clip, {"max_s": 0.5}),
             audio_decode.Why.TOO_SHORT: (clip, {"min_s": 5}),
@@ -27,9 +27,16 @@ class TheSharedDecoder(unittest.TestCase):
             audio_decode.Why.TOO_SLOW: (clip, {"budget_s": -1.0}),
         }
         for why, (data, over) in cases.items():
-            args: dict[str, object] = {"max_bytes": 10**6, "max_s": 30, "min_s": 0.4} | over
+            limits: dict[str, float] = {"max_s": 30, "min_s": 0.4} | over
             with self.subTest(why=why), self.assertRaises(audio_decode.Refused) as caught:
-                audio_decode.decode_pcm(data, container="ogg", **args)  # type: ignore[arg-type]
+                audio_decode.decode_pcm(
+                    data,
+                    container="ogg",
+                    max_bytes=10**6,
+                    max_s=limits["max_s"],
+                    min_s=limits["min_s"],
+                    budget_s=limits.get("budget_s"),
+                )
             self.assertIs(caught.exception.why, why)
 
 
