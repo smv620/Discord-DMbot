@@ -10,7 +10,15 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from dmbot.ai import DEFAULT_MODELS, FAST_CANDIDATE, PRICE_PER_MILLION, AIModels, AIModelTier, Reply
+from dmbot.ai import (
+    DEFAULT_MODELS,
+    FAST_CANDIDATE,
+    PREVIOUS_FAST,
+    PRICE_PER_MILLION,
+    AIModels,
+    AIModelTier,
+    Reply,
+)
 from dmbot.config import parse_ai_models
 from dmbot.devtools import fast_compare, sidebar_check
 from dmbot.devtools.claims import cost
@@ -59,10 +67,17 @@ class ThePrices(unittest.TestCase):
         self.assertEqual(micro, 200)  # 1,000 in at 0.10 and 200 out at 0.50, in millionths
         self.assertEqual(story_plan.micro_usd("claude-sonnet-5-5", 1_000, 200), 4_000)  # unchanged
 
-    def test_the_default_fast_model_is_unchanged(self) -> None:
-        self.assertEqual(DEFAULT_MODELS.fast, "claude-haiku-4-5-20251001")
+    def test_the_baseline_defaults_to_the_model_before_the_move(self) -> None:
+        args = fast_compare.parse_args([])
+        self.assertEqual(args.baseline, PREVIOUS_FAST)
+        self.assertEqual(args.candidate, NEW)
+        self.assertEqual(fast_compare.parse_args(["--baseline", "m-old"]).baseline, "m-old")
+
+    def test_the_default_fast_model_is_haiku_5_5(self) -> None:
+        self.assertEqual(DEFAULT_MODELS.fast, "claude-haiku-5-5")  # the owner's decision, #2152
         models = parse_ai_models(lambda name: "")[0]
-        self.assertEqual(models.fast, "claude-haiku-4-5-20251001")
+        self.assertEqual(models.fast, "claude-haiku-5-5")
+        self.assertEqual(PREVIOUS_FAST, "claude-haiku-4-5-20251001")  # kept for the rollback
         self.assertEqual(with_fast_model(models, None), models)  # no option: nothing changes
         self.assertEqual(with_fast_model(models, NEW).fast, NEW)
         self.assertEqual(with_fast_model(models, NEW).careful, models.careful)
