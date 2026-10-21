@@ -5272,6 +5272,29 @@ SUPPORT_MINE_THREAD = """
     REVOKE ALL ON FUNCTION dmbot_support_mine_thread(BIGINT) FROM PUBLIC;
     """
 
+SUPPORT_TICKET_TIMES = """
+    -- A person's tickets never share a sent time (#2214): the account page opens a ticket by that
+    -- time (#2193). `support.add` stamps the next free second; this index is what holds two sends
+    -- in the same instant apart, whichever commits second retries.
+    -- Tickets already sharing a time are moved apart first, the later id by a second at a time
+    -- (the table has forced row-level security, so the migration opens it for itself and closes
+    -- it again, as the other backfills do).
+    CREATE POLICY migrate_backfill ON support_tickets FOR ALL USING (true) WITH CHECK (true);
+    DO $do$
+    BEGIN
+        LOOP
+            UPDATE support_tickets t SET created_at = t.created_at + 1
+            FROM (SELECT id, row_number() OVER (PARTITION BY user_id, created_at ORDER BY id) AS n
+                  FROM support_tickets) d
+            WHERE t.id = d.id AND d.n > 1;
+            EXIT WHEN NOT FOUND;
+        END LOOP;
+    END
+    $do$;
+    DROP POLICY migrate_backfill ON support_tickets;
+    CREATE UNIQUE INDEX support_tickets_one_time ON support_tickets (user_id, created_at);
+    """
+
 WEB_RECAP_CHOICES = """
     -- The DM's three recap choices on the website (#1468), the same as the DM screen's 📜 Recaps
     -- panel (#1421): recaps on or off, the narration and music, the email. The website's role has
@@ -7833,6 +7856,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0150_support_mine_thread",
         SUPPORT_MINE_THREAD,
     ),  # a person reads their own ticket's thread (#2193)
+    (
+        "0152_support_ticket_times",
+        SUPPORT_TICKET_TIMES,
+    ),  # no two of a person's tickets share a time
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

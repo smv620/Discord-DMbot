@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+import psycopg
+
 from dmbot.db import Database
 from dmbot.entitlements import Entitlement
 from dmbot.web.feedback import clean_text
@@ -36,6 +38,9 @@ MAX_MESSAGE = 4000
 # How many tickets the admin page lists at once, newest first. Kept short because the page looks
 # up each person's name with one query per person.
 LIST_LIMIT = 100
+# How many times `add` tries when another send of the same person took its second (#2214). Each
+# retry finds the next free one, so this is the number of sends that could all land at once.
+ADD_TRIES = 8
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -109,19 +114,29 @@ async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
 async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:
     """Keep a ticket for this signed-in person; returns its number. The table's policy lets them
     add a row for their own account and nothing else, which is why the person is set
-    (`db.user`); the number comes back through the same person's `read_own` right."""
-    async with db.user(user_id) as conn:
-        cur = await conn.execute(
-            # A person's tickets never share a sent time: the account page opens one by that time
-            # (#2193), so a second ticket in the same second is stamped one second later.
-            "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
-            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
-            (now, user_id, user_id, plan, ticket.subject, ticket.message),
-        )
-        row = await cur.fetchone()
-    assert row is not None
-    return int(row["id"])
+    (`db.user`); the number comes back through the same person's `read_own` right.
+
+    A person's tickets never share a sent time: the account page opens one by that time (#2193).
+    So a new ticket is stamped the next free second, and a unique index (#2214) holds two sends in
+    the same instant apart: the one that commits second finds the time taken and tries again,
+    which stamps it one second later."""
+    for attempt in range(ADD_TRIES):
+        try:
+            async with db.user(user_id) as conn:
+                cur = await conn.execute(
+                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                    " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+                    " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+                    (now, user_id, user_id, plan, ticket.subject, ticket.message),
+                )
+                row = await cur.fetchone()
+        except psycopg.errors.UniqueViolation:
+            if attempt == ADD_TRIES - 1:
+                raise
+            continue
+        assert row is not None
+        return int(row["id"])
+    raise AssertionError("unreachable")  # the last try returns or raises
 
 
 @dataclass(frozen=True)
