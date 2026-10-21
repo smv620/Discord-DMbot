@@ -1,7 +1,7 @@
 """The DM Bot channel's panel and what its buttons do (#1666; docs/PLAN.md, "The DM Bot
 channel").
 
-One shared message holds two buttons everyone may press: 👤 My buttons and ❓ Help. 👤 answers
+One shared message holds two buttons everyone may press: 👤 DMbot Main Menu and ❓ Help. 👤 answers
 privately with the buttons that person's role gets (`dm_bot_panel.buttons_for`), re-checked from
 the campaign as it is now on every press, and those buttons are the menus DMbot already has
 (the 🗂️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
@@ -133,7 +133,7 @@ class OpenButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:panel:open:{_ID}",
 ):
-    """👤 My buttons: the person's own buttons, privately."""
+    """👤 DMbot Main Menu: the person's own buttons, privately."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(

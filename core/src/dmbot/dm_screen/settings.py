@@ -5,13 +5,16 @@ change anything.
 
 - **How much DMbot says** (Quiet / Normal, #504): saved for the campaign, and a running
   session follows the change from now on (`DMBot.set_screen_level`).
-- **Who can see the DM screen:** saved the same way as the help card's buttons
+- **Who can see the DM screen:** a submenu (👁️), saved the same way as the help card's buttons
   (`save_visibility`).
-- **Saved transcripts:** where to find them and how long they are kept (📜 Transcripts, #1533).
+- **Campaign management:** a submenu (🗂️) with the choices that are rarely used: hand over,
+  pause, how long transcripts are kept, game masters, delete (#2281).
 
-Each tap redraws the card, so it always shows what's saved. The buttons' IDs carry the
+Each tap redraws the card, so it always shows what's saved. A submenu replaces the card in place
+and has a ↩️ Back to Settings button. The buttons' IDs carry the
 campaign, so they work after a restart. Register with
-`bot.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton)`.
+`bot.add_dynamic_items(SettingsButton, LevelButton, SettingsVisibilityButton, VisibilityMenuButton,
+ManagementMenuButton, BackToSettingsButton)`.
 """
 
 from __future__ import annotations
@@ -74,6 +77,7 @@ RULES_LINE = (
     "• **Rules:** press 📖 Look up a rule to read a spell, condition, creature or rule from the "
     "free rules (SRD). Only you see it."
 )
+CAMPAIGN_MANAGEMENT_PATH = "⚙️ Settings → 🗂️ Campaign management"
 ONLY_DM = "Only this campaign's DM (or a server manager) can open or change its settings."
 GONE = messages.DM_CAMPAIGN_GONE
 FAILED = "Sorry, that didn't save. Please try again."
@@ -107,8 +111,15 @@ def _transcripts_line(campaign: Campaign) -> str:
     )
     return (
         "• **Saved transcripts:** anyone in the server can read and download them with "
-        f"`/transcript`. {kept[:1].upper()}{kept[1:]}. Change it with 📜 Transcripts."
+        f"`/transcript`. {kept[:1].upper()}{kept[1:]}. Change it in {CAMPAIGN_MANAGEMENT_PATH} → "
+        "🗄️ Transcript retention."
     )
+
+
+MORE_LINE = (
+    "• **More:** hand over, pause, game masters, delete and how long transcripts are kept are "
+    "under 🗂️ Campaign management."
+)
 
 
 def _rules_cards_line(campaign: Campaign, viewer: int | None) -> str:
@@ -136,8 +147,12 @@ def settings_text(
             f"⚙️ **Settings for {discord.utils.escape_markdown(campaign.name)}**",
             f"• **How much DMbot says:** {level.capitalize()}{recommended}. "
             f"{what[:1].upper()}{what[1:]}. Warnings always show.",
-            f"• **Who can see the DM screen:** {who}",
-            _transcripts_line(campaign),
+            f"• **Who can see the DM screen:** {who} Change it with 👁️ Who can see the DM screen.",
+            *(
+                [MORE_LINE]
+                if viewer is not None and management_items(campaign, offer, viewer)
+                else []
+            ),
             *rules,
             _rules_cards_line(campaign, viewer),
             *([INVITE_SET if campaign.dndbeyond_invite else INVITE_NOT_SET] if rules else []),
@@ -145,27 +160,76 @@ def settings_text(
             _combat_line(campaign),
             *([story_mode.line(campaign)] if rules else []),  # the DMs' (#1692)
             *([quiet_stop.line(campaign.quiet_stop_minutes)] if rules else []),  # (#2034)
-            handover.owner_line(campaign, offer),
-            pause_line(campaign, viewer),
             "Tap a button to change it. If DMbot is listening now, it follows the change from "
             "now on.",
         ]
     )
 
 
+def visibility_text(campaign: Campaign) -> str:
+    """The 👁️ card: who can see the DM screen, with the choice that is saved."""
+    who = messages.WHO_CAN_SEE.get(campaign.dm_screen_visibility, "")
+    return (
+        f"👁️ **Who can see the DM screen for {discord.utils.escape_markdown(campaign.name)}**\n"
+        f"{who}\nTap a choice to change it."
+    )
+
+
+def management_text(
+    campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
+) -> str:
+    """The 🗂️ card: the owner, whether it is paused, and how long transcripts are kept, with the
+    buttons for them (hand over, pause, transcript retention, game masters, delete)."""
+    return "\n".join(
+        [
+            f"🗂️ **Campaign management for {discord.utils.escape_markdown(campaign.name)}**",
+            handover.owner_line(campaign, offer),
+            pause_line(campaign, viewer),
+            _transcripts_line(campaign),
+            "Tap what you need, or ↩️ Back to Settings.",
+        ]
+    )
+
+
+def management_items(
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int
+) -> list[discord.ui.Item[Any]]:
+    """The 🗂️ card's buttons for this viewer, each with its own rules as before: hand over and
+    pause for the owner (a waiting offer's maker can take it back, the DMs of a campaign with no
+    owner can take it on), delete and the rest for the campaign's DMs (delete refuses anyone
+    but the plan holder when pressed). Nothing is drawn that the viewer could not use."""
+    items: list[discord.ui.Item[Any]] = [
+        *handover.owner_buttons(campaign, offer, viewer),
+        *pause_buttons(campaign, viewer),
+    ]
+    if viewer in campaign.dm_user_ids:
+        items += [
+            TranscriptsButton(campaign.id),  # how long transcripts are kept (#1533)
+            GameMastersButton(campaign.id),  # who the DMs are (#1600)
+            DeleteButton(campaign.id),  # delete the campaign, plan holder only (#1608)
+        ]
+    for item in items:
+        _unpin(item)
+    return items
+
+
+def _unpin(item: discord.ui.Item[Any]) -> None:
+    """Let the card lay the button out: each had a row of its own choosing on the old card."""
+    inner = getattr(item, "item", item)  # (a dynamic item wraps the real button)
+    inner.row = None
+    item.row = None
+
+
 def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) -> discord.ui.View:
-    """The card's buttons. `viewer`: who it's for (it's private), so only the owner gets
-    the hand-over button."""
+    """The card's buttons. `viewer`: who it's for (it's private). The rarely used choices are a
+    tap away: 👁️ Who can see the DM screen, and (when the viewer has anything in it) 🗂️ Campaign
+    management."""
     view = discord.ui.View(timeout=None)
     for level in DM_SCREEN_LEVELS_OFFERED:
         view.add_item(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level))
-    for visibility in messages.VISIBILITY_BUTTONS:
-        current = visibility == campaign.dm_screen_visibility
-        view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
-    for item in handover.owner_buttons(campaign, offer, viewer):
-        view.add_item(item)
-    for item in pause_buttons(campaign, viewer):
-        view.add_item(item)
+    view.add_item(VisibilityMenuButton(campaign.id))
+    if management_items(campaign, offer, viewer):
+        view.add_item(ManagementMenuButton(campaign.id))
     if viewer in campaign.dm_user_ids:  # rules lookup is for the campaign's DMs (#908)
         view.add_item(RuleLookupButton(campaign.id))
         view.add_item(RulesCardsButton(campaign.id, campaign.rules_cards))
@@ -177,17 +241,37 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(QuietStopButton(campaign.id, campaign.quiet_stop_minutes))  # (#2034)
         view.add_item(SharedRulesButton(campaign.id))  # shared house rules (#1190)
         view.add_item(HomebrewButton(campaign.id))  # the campaign's own homebrew (#1520)
-        view.add_item(TranscriptsButton(campaign.id))  # how long transcripts are kept (#1533)
-        view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986); row 4 is now full
+        view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986)
         view.add_item(FeaturesButton(campaign.id, row=1))  # what is switched on (#1831)
-        view.add_item(GameMastersButton(campaign.id, row=2))  # who the DMs are (#1600)
-        view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)
         view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
     return view
 
 
+def visibility_view(campaign: Campaign) -> discord.ui.View:
+    """The 👁️ card's buttons: the three choices, the saved one ticked, and Back."""
+    view = discord.ui.View(timeout=None)
+    for visibility in messages.VISIBILITY_BUTTONS:
+        current = visibility == campaign.dm_screen_visibility
+        view.add_item(SettingsVisibilityButton(campaign.id, visibility, current=current))
+    view.add_item(BackToSettingsButton(campaign.id))
+    return view
+
+
+def management_view(
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int
+) -> discord.ui.View:
+    """The 🗂️ card's buttons for this viewer, and Back."""
+    view = discord.ui.View(timeout=None)
+    for item in management_items(campaign, offer, viewer):
+        view.add_item(item)
+    view.add_item(BackToSettingsButton(campaign.id))
+    return view
+
+
 def _card(campaign: Campaign, viewer: int) -> tuple[str, discord.ui.View]:
-    return settings_text(campaign, None, viewer), settings_view(campaign, None, viewer)
+    """The card the hand-over and pause buttons live on, drawn again after an offer is taken
+    back or a campaign is paused: 🗂️ Campaign management."""
+    return management_text(campaign, None, viewer), management_view(campaign, None, viewer)
 
 
 handover.use_settings_card(_card)  # it redraws this card after an offer is taken back
@@ -224,16 +308,26 @@ async def _may(
     )
 
 
-async def _redraw(interaction: discord.Interaction, campaign: Campaign) -> None:
+def _drawn(
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int, card: str
+) -> tuple[str, discord.ui.View]:
+    """A card as the campaign is now: "settings", "visibility" or "management"."""
+    if card == "visibility":
+        return visibility_text(campaign), visibility_view(campaign)
+    if card == "management":
+        return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
+    return settings_text(campaign, offer, viewer), settings_view(campaign, offer, viewer)
+
+
+async def _redraw(
+    interaction: discord.Interaction, campaign: Campaign, card: str = "settings"
+) -> None:
     """Show the card as saved now (the press was deferred as an update). If the card
     can't be redrawn (it's too old), the change still is saved: say so."""
     offer = await _open_offer(interaction, campaign.id)
+    text, view = _drawn(campaign, offer, interaction.user.id, card)
     try:
-        await interaction.edit_original_response(
-            content=settings_text(campaign, offer, interaction.user.id),
-            view=settings_view(campaign, offer, interaction.user.id),
-            allowed_mentions=NO_PINGS,
-        )
+        await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(SAVED, ephemeral=True)
@@ -814,7 +908,7 @@ class SettingsVisibilityButton(
                 emoji=emoji,
                 style=discord.ButtonStyle.primary if current else discord.ButtonStyle.secondary,
                 disabled=current,
-                row=1,
+                row=0,
                 custom_id=f"dmbot:setvis:{campaign_id}:{visibility}",
             )
         )
@@ -834,4 +928,102 @@ class SettingsVisibilityButton(
         await interaction.response.defer()  # the card is redrawn after saving
         saved = await save_visibility(interaction, *allowed, self.visibility, quiet=True)
         if saved is not None:
-            await _redraw(interaction, saved)
+            await _redraw(interaction, saved, "visibility")
+
+
+async def _open_card(interaction: discord.Interaction, campaign_id: str, card: str) -> None:
+    """Replace the private card in place with another, drawn from the campaign as it is now.
+    The same check as every settings button, on every press."""
+    allowed = await _may(interaction, campaign_id)
+    if allowed is None:
+        return
+    campaign = allowed[0]
+    offer = await _open_offer(interaction, campaign_id) if card != "visibility" else None
+    text, view = _drawn(campaign, offer, interaction.user.id, card)
+    with contextlib.suppress(discord.HTTPException):  # (a card too old to edit: nothing to show)
+        await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+
+
+class VisibilityMenuButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:setvismenu:{_ID}",
+):
+    """👁️ Who can see the DM screen: opens the three choices (#2281)."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Who can see the DM screen",
+                emoji="👁️",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+                custom_id=f"dmbot:setvismenu:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> VisibilityMenuButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _open_card(interaction, self.campaign_id, "visibility")
+
+
+class ManagementMenuButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:setmgmt:{_ID}",
+):
+    """🗂️ Campaign management: hand over, pause, transcript retention, game masters, delete
+    (#2281). Drawn only for someone who has at least one of them."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Campaign management",
+                emoji="🗂️",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+                custom_id=f"dmbot:setmgmt:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ManagementMenuButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _open_card(interaction, self.campaign_id, "management")
+
+
+class BackToSettingsButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:setback:{_ID}",
+):
+    """↩️ Back to Settings: on each submenu card, draws the Settings card again in place."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Back to Settings",
+                emoji="↩️",
+                style=discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:setback:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> BackToSettingsButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _open_card(interaction, self.campaign_id, "settings")

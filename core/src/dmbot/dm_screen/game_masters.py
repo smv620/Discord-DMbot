@@ -42,7 +42,10 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 LABEL = "Game masters"
 ONLY_DMS = "Only this campaign's game masters can change this list."
 GONE = messages.DM_CAMPAIGN_GONE
-FAILED = "Sorry, that didn't work. Check the list in ⚙️ Settings → Game masters, then try again."
+FAILED = (
+    "Sorry, that didn't work. Check the list in ⚙️ Settings → 🗂️ Campaign management "
+    "→ 👑 Game masters, then try again."
+)
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
 NOT_A_PERSON = "Bots can't be game masters. Pick a person."
 ALREADY = "**{name}** is already a game master."
@@ -50,15 +53,16 @@ TOO_MANY = TOO_MANY_DMS
 # Two voices, because only the plan holder has the 🤝 Hand over button.
 PLAN_HOLDER_SELF = (
     "Your plan runs this campaign, so you can't leave yet. Hand the campaign over first: "
-    "⚙️ Settings → 🤝 Hand over."
+    "⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over."
 )
 PLAN_HOLDER_OTHER = (
     "**{name}** holds this campaign's plan, so they can't be removed. They can hand the "
-    "campaign over first (⚙️ Settings → 🤝 Hand over)."
+    "campaign over first (⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over)."
 )
 LAST_ONE = LAST_DM
 GONE_FROM_LIST = (
-    "They aren't a game master any more. Open ⚙️ Settings → Game masters to see the list."
+    "They aren't a game master any more. Open ⚙️ Settings → 🗂️ Campaign "
+    "management → 👑 Game masters to see the list."
 )
 ADD_PROMPT = "➕ Who should be a game master of **{campaign}**? Pick a member of this server."
 ADD_PLACEHOLDER = "Pick who to add"
@@ -74,13 +78,16 @@ REMOVED_SELF = "✅ You are no longer a game master of **{campaign}**."
 NOT_TOLD = "\nDMbot couldn't message them, so please tell them yourself."
 ACCESS_LATE = (
     "\nSaved, but DMbot couldn't update who can see the DM screen yet. It will on the next "
-    "session, or when you change who can see the DM screen in ⚙️ Settings."
+    "session, or when you change who can see the DM screen in ⚙️ Settings → 👁️ Who can see "
+    "the DM screen."
 )
 TOLD = (
     "👑 **{by}** made you a game master of **{campaign}** in **{server}**. You can now see its "
     "DM screen and change its settings. This doesn't start any recording of you."
 )
-MENU_TIMED_OUT = "This menu timed out. Press ⚙️ Settings, then 👑 Game masters, to try again."
+MENU_TIMED_OUT = (
+    "This menu timed out. Press ⚙️ Settings → 🗂️ Campaign management → 👑 Game masters, to try again."
+)
 
 
 def md(text: str) -> str:
