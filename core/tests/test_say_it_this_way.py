@@ -117,9 +117,9 @@ class TheReview(SaidAsTest):
 
     async def test_the_offer_reads_plainly_and_has_four_answers(self) -> None:
         it, view = await self.start()
-        self.assertIn("People say **Cerric** like **kerrick**", it.response.sent[0][0])
+        self.assertIn("At your table, **Cerric** sounds like **kerrick**", it.response.sent[0][0])
         labels = [b.label for b in view.children]
-        self.assertEqual(labels, ["✅ Yes", "❌ No", "✏️ Type it", "⏳ Later"])
+        self.assertEqual(labels, ["✅ Yes", "❌ No", "✏️ Type my own", "⏳ Later"])
 
     async def test_yes_sets_the_spelling_and_ends_the_offer(self) -> None:
         _, view = await self.start()
@@ -168,4 +168,4 @@ class TheReview(SaidAsTest):
         assert campaign is not None
         self.assertEqual((await ui.waiting_reviews(self.it(), campaign)).said, 1)
         self.assertEqual((await ui.waiting_reviews(self.it(MANAGER), campaign)).said, 0)
-        self.assertIn("to say", ui.review_line(ui.Reviews(said=1)) or "")
+        self.assertIn("to say out loud", ui.review_line(ui.Reviews(said=1)) or "")

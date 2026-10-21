@@ -26,10 +26,10 @@ from dmbot.ui.names import (
 log = logging.getLogger(__name__)
 
 NOTHING_WAITING = (
-    "✅ Nothing to check. DMbot offers some after a session, when it keeps hearing a name "
-    "another way."
+    "✅ Nothing to check right now. DMbot will offer a name here when it hears it said "
+    "a different way."
 )
-GONE = "That one was already answered or changed. Press **Check how to say** again for the next."
+GONE = "That one was already answered. Press **Check how to say** again to see the next."
 ONLY_DMS = "Only a DM of this campaign can do that."
 
 
@@ -37,8 +37,8 @@ def question_text(s: SaidAsSuggestion, count: int) -> str:
     """The offer in plain words, with how many more wait."""
     more = f"\n_{count - 1} more after this._" if count > 1 else ""
     return (
-        f"🔊 People say **{_md(s.name)}** like **{_md(s.heard)}**.\n"
-        f"Use that for the narrator in recaps?{more}"
+        f"🔊 At your table, **{_md(s.name)}** sounds like **{_md(s.heard)}**.\n"
+        f"Should the narrator say it that way in recaps?{more}"
     )
 
 
@@ -88,7 +88,7 @@ class SaidAsReview(_Menu):
         for handler, label, style in (
             (self._yes, "✅ Yes", discord.ButtonStyle.success),
             (self._no, "❌ No", discord.ButtonStyle.secondary),
-            (self._type, "✏️ Type it", discord.ButtonStyle.primary),
+            (self._type, "✏️ Type my own", discord.ButtonStyle.primary),
             (self._later, "⏳ Later", discord.ButtonStyle.secondary),
         ):
             self.add_item(_Button(handler, label=label, style=style))
@@ -151,7 +151,8 @@ class SaidAsReview(_Menu):
         await self._save(
             interaction,
             None,
-            f"👍 **{_md(self.shown.name)}** is said as written. DMbot won't ask again.",
+            f"👍 The narrator will say **{_md(self.shown.name)}** as it's spelled. "
+            "DMbot won't ask again.",
         )
 
     async def _type(self, interaction: discord.Interaction) -> None:
@@ -169,7 +170,10 @@ class SaidAsReview(_Menu):
 
 class TypeIt(discord.ui.Modal, title="How to say it"):
     said_as: discord.ui.TextInput[TypeIt] = discord.ui.TextInput(
-        label="How the narrator says it", max_length=SAID_AS_MAX, required=True
+        label="How the narrator says it",
+        placeholder="Type it as it sounds, like kerrick",
+        max_length=SAID_AS_MAX,
+        required=True,
     )
 
     def __init__(self, review: SaidAsReview, s: SaidAsSuggestion) -> None:
@@ -187,7 +191,7 @@ class TypeIt(discord.ui.Modal, title="How to say it"):
         await _answer_first(interaction, in_place=True)
         spelling = " ".join(self.said_as.value.split())
         if not spelling:
-            await _tell(interaction, "Type how it should be said, or press ❌ No.")
+            await _tell(interaction, "Type how it should sound, or press ❌ No.")
             return
         self.review.shown = self.s  # the offer this form was opened for
         await self.review._save(

@@ -191,7 +191,7 @@ def review_line(reviews: Reviews) -> str | None:
         f"{_plural(reviews.heard, 'name')} to double-check" if reviews.heard else "",
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
         f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
-        f"{_plural(reviews.said, 'name')} to say" if reviews.said else "",
+        f"{_plural(reviews.said, 'name')} to say out loud" if reviews.said else "",
     ]
     parts = [p for p in parts if p]
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None

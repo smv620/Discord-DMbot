@@ -232,7 +232,7 @@ export const held: Held[] = [
   {
     date: "2026-10-21",
     title: "DMbot offers how to say a name",
-    what: "When your table keeps saying a name in a way DMbot hears as another spelling, DMbot offers that spelling for the recap narrator. Press 🔊 Check how to say in the names panel, then say yes, no, or type your own. Nothing changes until you answer, and it only shows when spoken recaps are on for your campaign.",
+    what: "When your table says a name differently from how it's spelled, DMbot offers to teach the recap narrator that sound. Press 🔊 Check how to say in the names panel, then choose Yes, No, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
   },
   {
