@@ -63,7 +63,12 @@ CI runs all of the above on every pull request. Never merge red CI.
   where its permissions allow a push to the PR's branch; where they refuse, the author merges
   `development` and keeps both entries. Either way the approval carries over as a merge-only
   refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
-  no new line). A conflict in any other file goes to the author and needs a fresh "approved".
+  no new line). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
+  `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
+  whole in the file's order, and the approval carries over the same way. An edit to an existing entry
+  on either side is not a union. A conflict in any other file goes to the author and needs a fresh
+  "approved".
   **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
   "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
   no new design review; Supervisor records the approval again as a review on the new head so the
