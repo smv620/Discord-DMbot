@@ -46,3 +46,21 @@ class TheHeldRecapEmail(IsolatedAsyncioTestCase):
         self.assertEqual(await call(self.mailer, self.store, site=""), "not_ready")
         self.assertEqual(await call(self.mailer, self.store, waiting=0), "not_ready")
         self.mailer.send.assert_not_awaited()
+
+
+class TheDailyKind(IsolatedAsyncioTestCase):
+    """Two held sessions of one campaign must not share a kind, or the second's email is dropped."""
+
+    async def kinds(self, *calls: tuple[int, str]) -> list[str]:
+        mailer = SimpleNamespace(send=AsyncMock(return_value="sent"))
+        store = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
+        for session_at, group in calls:
+            await remind_the_dm(mailer, store, SITE, 5, CID, 7, session_at, 2, 1, group)
+        return [c.kwargs["kind"] for c in mailer.send.await_args_list]
+
+    async def test_two_lone_holds_and_an_import_each_have_their_own(self) -> None:
+        one, two, imp_a, imp_b = await self.kinds(
+            (1000, ""), (2000, ""), (3000, "a" * 32), (4000, "a" * 32)
+        )
+        self.assertEqual(len({one, two, imp_a}), 3)
+        self.assertEqual(imp_a, imp_b)  # an import's sessions share one email a day

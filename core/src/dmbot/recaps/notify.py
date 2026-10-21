@@ -115,7 +115,10 @@ async def remind_the_dm(
     )
     # An import's holds share one email a day: the group id is stable when the oldest session
     # of the group is answered and the next one speaks for it.
-    kind = _kind("waiting", guild_id, campaign_id, int(group_id or "0", 16), day)
+    # A lone hold is keyed by its own session, so two held sessions each get their email.
+    kind = _kind(
+        "waiting", guild_id, campaign_id, int(group_id, 16) if group_id else session_at, day
+    )
     return await mailer.send(
         user_id=dm_user_id,
         kind=kind,
