@@ -66,8 +66,9 @@ class RequestStore:
         self._db = db
         self._now = clock
 
-    async def claim_next(self, guild_id: int) -> Request | None:
-        """The oldest waiting request (or a stalled one), marked as being worked on."""
+    async def claim_next(self, guild_id: int, *, voice: bool | None = None) -> Request | None:
+        """The oldest waiting request (or a stalled one), marked as being worked on. `voice`: only
+        spoken notes (True) or only typed ones (False), so the two are worked apart (#2161)."""
         # Milliseconds, so two claims of one row never carry the same value (the claim is the
         # token that lets only the latest worker write the answer).
         now = int(self._now() * 1000)
@@ -76,9 +77,10 @@ class RequestStore:
                 "UPDATE recap_requests SET state = 'working', claimed_at = %s WHERE (guild_id, id)"
                 " = (SELECT guild_id, id FROM recap_requests WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
+                " AND (%s::boolean IS NULL OR (kind = 'voice') = %s::boolean)"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, session_at, user_id, body, kind, clip, clip_type",
-                (now, guild_id, now - RETAKE_AFTER_S * 1000),
+                (now, guild_id, now - RETAKE_AFTER_S * 1000, voice, voice),
             )
             row = await cur.fetchone()
         if row is None:

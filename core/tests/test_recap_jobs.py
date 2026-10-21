@@ -198,7 +198,7 @@ class Told:
         self.jobs.append(job)
 
 
-class Working(Base):
+class WorkerHarness(Base):
     """The worker with canned answers. The fast client answers first tries, the careful one
     retries; each is given its answers in order."""
 
@@ -220,6 +220,7 @@ class Working(Base):
         earlier: Any = None,
         previous: str = "",
         story: Any = None,
+        critics: bool = False,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -258,6 +259,7 @@ class Working(Base):
             notify=self.told,
             clock=self.clock,
             story=story,
+            critics=critics,
         )
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
 
@@ -265,6 +267,17 @@ class Working(Base):
         job = await self.worker.run(1, self.one.id, 100)
         assert job is not None
         return job
+
+    def story_of(self, *memory: sg.Memory) -> Any:
+        async def story(gid: int, cid: str, job: Job, seeds: Any) -> list[sg.Memory]:
+            self.seeds = list(seeds)
+            return list(memory)
+
+        return story
+
+
+class Working(WorkerHarness):
+    """The worker with canned answers (see `WorkerHarness`)."""
 
     def happy(self) -> fx.Canned:
         return fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
@@ -1185,13 +1198,6 @@ class Working(Base):
             "ties": ties,
         }
         return json.dumps({"notes": [], "details": [detail]})
-
-    def story_of(self, *memory: sg.Memory) -> Any:
-        async def story(gid: int, cid: str, job: Job, seeds: Any) -> list[sg.Memory]:
-            self.seeds = list(seeds)
-            return list(memory)
-
-        return story
 
     async def test_a_left_out_detail_that_ties_to_a_confirmed_thread_reaches_the_writer(
         self,

@@ -1714,6 +1714,33 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **How:** the website's role still has no right on the memory tables. It reads and writes through
     database doors scoped to one campaign and checked against the signed-in DM on every call, like the
     "said as" spelling (#1451). Logs hold counts, never names.
+- **The name card's connections, one per line, with a dropdown** (owner, 2026-10-21). The card reads:
+  ```
+  Jack Uzi · character · NPC · not heard in a session yet
+  🤫 Secret: Jack Uzi (hidden from players)
+  Connections:
+  • is the boss of Sss'thlix 🤫
+  • is a member of The Thieves' Guild
+  ```
+  Each connection is its own line. Only a secret one carries 🤫; a known one has no icon. Discord can't put a
+  button on a line of text, so the card gets one **✏️ Edit a connection…** dropdown listing each connection
+  in the same order and words (🤫 on secret ones). Choosing one opens that connection's choices: change the
+  words, mark secret or known, or remove it (one confirmation). Each is the same action and Undo as today.
+  More than 25 connections: the dropdown's last choice is "🌐 All connections on the website…".
+- **The relationship web on the website** (owner, 2026-10-21): a graph of names (nodes) and connections
+  (edges) at `/account/web/<server>.<campaign>`.
+  - **Centre and distance:** pick the centre from a searchable list of every name; the graph shows
+    everything within **N hops** (default 2), set with a spinner or by typing 1 to the campaign's largest
+    useful number. If the chosen N would draw more than about 300 names, it warns first ("This will be
+    slow; show it anyway?"). Clicking a name makes it the centre and redraws.
+  - **Edges:** between two names, one line with the most relevant connection's words and "(+n)" for the
+    others ("works with (+3)"). Most relevant: the DM's latest confirmed connection, never a secret one
+    when a known one exists. Clicking the line lists all of them, each secret one marked 🤫.
+  - **Editing in place** (the campaign's DMs only): rename or change a name's kind, add, change or remove
+    a connection, mark secret or known, the same actions and Undo as the Discord card.
+  - **Who sees what:** DMs see everything, secret ones marked. Anyone else in the server sees the players'
+    view only (what the NPC pages show) and cannot edit. Secret names and connections are never sent to
+    them.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
@@ -4317,6 +4344,24 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   holds it in memory (#1509). The same for a player's suggested fix ("Accepted." / "Kept as is."). **Read
   it** keeps its buttons. Nothing is stored, so after a restart a copy is found again only when
   someone presses it.
+- **"How to say it", with a suggestion and the DM's own voice** (owner, 2026-10-21). Wherever a DM sets
+  how a name is said (the website's "said as" field, #1451, and the name card's "Say it this way?",
+  #2195):
+  - **A suggestion first:** DMbot offers a respelling from the written name ("Ka'zeth" → "KAH-zeth"),
+    one fast-tier call with the name and its kind only, which the DM may take, change or ignore.
+  - **🎤 Say it:** on the website, the DM records the name in the browser, can **▶️ Play it back** (in the
+    browser, before anything is sent) and re-record, then **Use this**. DMbot turns the clip into a
+    respelling in plain letters with the stressed part in capitals ("kah-ZETH"). The DM sees it, edits it
+    if needed and saves. Discord has no microphone for buttons, so the name card gets a **🎤 Say it**
+    link button straight to that name on the website (one tap, the link-button rule).
+  - **🔊 Hear it:** the website reads the respelling aloud with the browser's own voice, so the DM can
+    check it. No cost, and it isn't the narrator's voice.
+  - **How the clip becomes letters:** a small speech-sound recogniser on our own server turns the clip
+    into speech sounds (IPA). Plain code turns those into the respelling. No outside service hears the
+    clip. If the recogniser isn't installed or fails, the DM is told plainly and types it instead.
+  - **Privacy and consent:** pressing 🎤 is the DM agreeing to that one clip. It is held only while it is
+    turned into letters, then deleted, and is never in a transcript, a backup or a log (counts only). At
+    most 10 seconds and 1 MB. DMs only; per campaign.
 - **Narration and music** (#1383, #1415, #1417): a recap can come with a narrator's voice and a
   music bed as two audio files, made with ElevenLabs from the cleaned recap with the campaign's
   "said as" spellings and no secret names, kept on a named volume (`recap-audio`) that the
