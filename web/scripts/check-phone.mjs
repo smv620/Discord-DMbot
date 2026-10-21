@@ -3,8 +3,8 @@
 //   1. the page scrolls sideways (documentElement.scrollWidth > the window's width),
 //   2. something sticks out past the window outside a box that scrolls on its own, or
 //   3. a button, link-button, field or choice is smaller than 44 x 44 px (WCAG 2.5.5; the site's
-//      own --tap is 48 px) or sits within 8 px of another one (full-width rows that are each a
-//      thumb tall and stacked, like the questions on /pricing, are not counted as too close).
+//      own --tap is 48 px) or sits within 8 px of another one (stacked full-width disclosure rows, like the
+//      questions on /pricing, are not counted as too close).
 // It serves dist-smoke/ (the pretend-API build, with the recap and import switches on: see
 // astro.smoke.config.mjs), so it builds that first unless PHONE_SKIP_BUILD=1 (or SMOKE_SKIP_BUILD=1).
 // PHONE_SHOTS=<folder> also saves a full-page picture of each state.
@@ -34,6 +34,11 @@ if (!process.env.PHONE_SKIP_BUILD && !process.env.SMOKE_SKIP_BUILD) {
     console.error("The smoke build failed.");
     process.exit(1);
   }
+}
+
+if (!existsSync(dist)) {
+  console.error("dist-smoke/ is not there: run `npm run check:smoke` (it builds it) or leave PHONE_SKIP_BUILD unset.");
+  process.exit(1);
 }
 
 // The same address rules as check-smoke.mjs: a recap's, a transcript's and an import's own address
@@ -111,10 +116,12 @@ function measure() {
       if (targets[i].el.contains(targets[j].el) || targets[j].el.contains(targets[i].el)) continue;
       const gapX = Math.max(b.left - a.right, a.left - b.right);
       const gapY = Math.max(b.top - a.bottom, a.top - b.bottom);
-      // Two targets whose boxes are closer than 8 px both ways. Full-width rows that are each a
-      // thumb tall and stacked (an accordion of questions) are not a mis-tap risk: skipped.
-      const stackedRows = gapX < 0 && a.height >= 43.5 && b.height >= 43.5;
-      if (gapX < 8 && gapY < 8 && !(gapX < 0 && gapY < 0) && !stackedRows) out.close.push(`${label(targets[i].el)} and ${label(targets[j].el)} (${Math.round(Math.max(gapX, gapY))} px)`);
+      // Two targets closer than 8 px both ways, or overlapping. The one exemption: stacked,
+      // full-width, thumb-tall disclosure rows (the questions on /pricing), which are not a mis-tap risk.
+      const fullWidthRow = (r) => r.width >= vw - 48;
+      const stackedRows =
+        targets[i].el.tagName === "SUMMARY" && targets[j].el.tagName === "SUMMARY" && fullWidthRow(a) && fullWidthRow(b) && a.height >= 43.5 && b.height >= 43.5;
+      if (gapX < 8 && gapY < 8 && !stackedRows) out.close.push(`${label(targets[i].el)} and ${label(targets[j].el)} (${Math.round(Math.max(gapX, gapY))} px)`);
     }
   }
   return out;
@@ -149,12 +156,17 @@ const pages = [
     await page.getByText(/^Checked:/).first().waitFor();
   }],
   ["admin, signed in", "/admin", adminIn],
-  ["admin, with an addition and the tickets open", "/admin", async (page) => {
+  ["admin, with an addition and the tickets shown", "/admin", async (page) => {
     await adminIn(page);
-    await page.getByLabel(/Discord user ID/i).fill("123456789012345678901").catch(() => {});
-    await page.getByRole("button", { name: /^(add|give|save)/i }).first().click().catch(() => {});
-    await page.waitForTimeout(500);
-    for (const b of await page.getByRole("button", { name: /^(read|open|show)/i }).all()) await b.click().catch(() => {});
+    // Fail loudly if a label changed: a state that silently measured nothing new would pass for nothing.
+    await page.getByLabel(/Discord user ID/i).fill("123456789012345678");
+    await page.getByRole("button", { name: /^(add|give|save)/i }).first().click();
+    await page.getByText("123456789012345678").first().waitFor();
+    // The tickets are listed once the filter is on All, each with its replies and its buttons: they
+    // must be on the page.
+    await page.getByRole("button", { name: /^All \(/ }).click();
+    await page.getByText("My invoice shows the wrong plan").first().waitFor();
+    await page.getByRole("button", { name: /mark answered/i }).first().waitFor();
   }],
   ["pricing", "/pricing"],
 ];
@@ -173,9 +185,14 @@ for (const width of [360, 390]) {
       await page.waitForTimeout(500);
       const m = await page.evaluate(measure);
       if (m.sw > m.vw) problems.push(`the page scrolls sideways (${m.sw} px in a ${m.vw} px window)`);
-      for (const o of [...new Set(m.over)].slice(0, 6)) problems.push(`sticks out: ${o}`);
-      for (const s of [...new Set(m.small)].slice(0, 8)) problems.push(`too small to tap: ${s}`);
-      for (const c of [...new Set(m.close)].slice(0, 6)) problems.push(`too close: ${c}`);
+      const list = (what, items, max) => {
+        const all = [...new Set(items)];
+        for (const item of all.slice(0, max)) problems.push(`${what}: ${item}`);
+        if (all.length > max) problems.push(`${what}: and ${all.length - max} more`);
+      };
+      list("sticks out", m.over, 6);
+      list("too small to tap", m.small, 8);
+      list("too close", m.close, 6);
       if (shots) await page.screenshot({ path: resolve(shots, `${name.replace(/[^a-z0-9]+/gi, "-")}-${width}.png`), fullPage: true });
     } catch (error) {
       problems.push(error.message.split("\n")[0]);

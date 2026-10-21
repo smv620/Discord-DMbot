@@ -25,7 +25,7 @@ const switchRecapsOn = {
       // A switch may already be on in the source (RECAPS_LIVE is, once recaps are live), so match
       // either value. Fail the build rather than smoke-test a site where a switch can't be found.
       const declaration = new RegExp(`export const ${name} = (?:false|true);`);
-      if (!declaration.test(out)) throw new Error(`smoke build: "export const ${name} = …;" not found in ${found.file}`);
+      if (!declaration.test(out)) throw new Error(`smoke build: "export const ${name} = …;" not found in ${id}`);
       out = out.replace(declaration, `export const ${name} = true;`);
     }
     return { code: out, map: null };

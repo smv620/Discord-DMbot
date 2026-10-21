@@ -392,10 +392,11 @@
     accent-color: var(--accent);
   }
 
+  /* Kept a list item, so the open/closed marker stays; the padding makes the row a thumb tall. */
   .account details > summary {
-    display: flex;
-    align-items: center;
     min-height: var(--tap);
+    box-sizing: border-box;
+    padding-block: var(--space-3);
     cursor: pointer;
   }
 
