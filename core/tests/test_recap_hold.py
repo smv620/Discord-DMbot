@@ -459,6 +459,10 @@ class TheCap(IsolatedAsyncioTestCase):
                 assert email.await_args is not None
                 days.append(email.await_args.args[-2])
         self.assertEqual(days, [2, 2])  # (counted from the oldest, not reset to the newer hold's 1)
+        self.assertEqual(bot._group_started, {GROUP: old.created_at})
+        bot.recap_holds.held = AsyncMock(return_value=[])  # the import has nothing held any more
+        await bot.release_recap_holds(GUILD)
+        self.assertEqual(bot._group_started, {})
 
     async def test_no_email_in_the_first_day_when_off_or_without_a_mailer(self) -> None:
         for age, emails_on, mailer in (

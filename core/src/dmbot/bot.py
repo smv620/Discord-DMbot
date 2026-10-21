@@ -8008,6 +8008,9 @@ class DMBot(commands.AutoShardedBot):
         if store is None:
             return
         holds = await store.held(gid)
+        live = {h.group_id for h in holds}
+        for group_id in [g for g in self._group_started if g not in live]:
+            del self._group_started[group_id]  # an import with nothing held needs no start time
         for held in holds:
             # The holds of one import go together (#2106): the oldest speaks for the group (the
             # question, the reminder, the expiry line); the others only follow their own answers.

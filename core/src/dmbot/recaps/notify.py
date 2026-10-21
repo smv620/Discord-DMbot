@@ -90,13 +90,12 @@ async def tell_the_dm(
         kind = _kind("failed", guild_id, campaign_id, job.session_at, job.tries)
     result = "no_address"
     for user_id in dict.fromkeys((job.dm_user_id, *sorted(dm_user_ids))):  # the job's DM first
-        sent = await mailer.send(
-            user_id=user_id,
-            kind=kind,
-            to=await store.address(guild_id, user_id),
-            subject=subject,
-            body=body,
-        )
+        try:
+            address = await store.address(guild_id, user_id)
+        except Exception:  # one DM's lookup failing must not stop the others
+            log.exception("Recap: couldn't look up a DM's address")
+            address = None
+        sent = await mailer.send(user_id=user_id, kind=kind, to=address, subject=subject, body=body)
         log.info("Recap: the email was %s", sent)
         if user_id == job.dm_user_id:
             result = sent
