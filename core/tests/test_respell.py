@@ -355,7 +355,7 @@ class ThePastTranscripts(NamesTest):
             self.assertRegex(source, rf"add_dynamic_items\([^)]*{name}")
 
     def test_the_card_draws_with_both_buttons_for_every_kind(self) -> None:
-        flags = [
+        flags: list[dict[str, Any]] = [
             {},
             {"item": True},
             {"thread": True},
