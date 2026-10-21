@@ -4129,9 +4129,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
   and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
   is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
-  once, in the recap's own month. A recap that was posted while its audio was still queued is never
-  narrated afterwards on its own (migration 0149 marks those failed), so nothing is spent without
-  a press.
+  once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
+  gets that audio afterwards, for its page. Recaps left in that state before this change (when they
+  never got it) are marked failed by migration 0149, so nothing old is narrated without a new press.
 - **Monthly allowance** (Supervisor decision 2026-10-16, #1428, #1437, #1445): each campaign gets
   **10 recaps a month** and **8 narrated ones** (`DMBOT_RECAPS_PER_MONTH`,
   `DMBOT_RECAP_AUDIO_PER_MONTH`; the site mirrors them in `recap-words.ts`, change both
