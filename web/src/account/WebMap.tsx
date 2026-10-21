@@ -3,11 +3,11 @@
 // layout in webLayout.ts. Pan by dragging, zoom by wheel, pinch or the buttons. The map is for the eyes
 // and the finger; the same names and connections are listed under it for the keyboard and for screen
 // readers, so the drawing itself is hidden from them.
-import { useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import type { WebEdge, WebNode } from "./api";
-import { MAX_ZOOM, MIN_ZOOM, radialLayout, zoomAbout, type View } from "./webLayout";
+import { radialLayout, zoomAbout, type View } from "./webLayout";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const SHOW_LABELS_UNDER = 80; // more lines than this and only the chosen line says its words
@@ -79,48 +79,63 @@ export default function WebMap({
 
   const zoom = (factor: number, at = { x: 0, y: 0 }): void => setView((v) => zoomAbout(v, at, factor));
 
-  const down = (e: PointerEvent): void => {
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    dragged.current = false;
-    if (pointers.current.size === 2) {
-      const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
-      pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
-    }
+  // The window listeners are added once and removed on unmount, so a drag that ends off the map, or a
+  // map that disappears mid-drag, leaves nothing behind. Handlers read the latest layout through refs.
+  const unitsRef = useRef(units);
+  unitsRef.current = units;
+  const toDrawingRef = useRef(toDrawing);
+  toDrawingRef.current = toDrawing;
+  const start = useRef(new Map<number, { x: number; y: number }>());
+  useEffect(() => {
+    const pair = (): [{ x: number; y: number }, { x: number; y: number }] =>
+      [...pointers.current.values()].slice(0, 2) as [{ x: number; y: number }, { x: number; y: number }];
     const move = (m: PointerEvent): void => {
       const before = pointers.current.get(m.pointerId);
       if (!before) return;
       pointers.current.set(m.pointerId, { x: m.clientX, y: m.clientY });
       if (pointers.current.size >= 2 && pinch.current) {
-        const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
+        const [p, q] = pair();
         const now = Math.hypot(p.x - q.x, p.y - q.y);
         if (now > 0) {
-          const mid = toDrawing((p.x + q.x) / 2, (p.y + q.y) / 2);
-          zoom(now / pinch.current, mid);
+          setView((v) => zoomAbout(v, toDrawingRef.current((p.x + q.x) / 2, (p.y + q.y) / 2), now / (pinch.current ?? now)));
           pinch.current = now;
           dragged.current = true;
         }
         return;
       }
-      const dx = m.clientX - before.x;
-      const dy = m.clientY - before.y;
-      if (Math.abs(dx) + Math.abs(dy) > 0) {
-        if (Math.hypot(m.clientX - e.clientX, m.clientY - e.clientY) > 5) dragged.current = true;
-        const u = units();
-        setView((v) => ({ ...v, x: v.x + dx * u, y: v.y + dy * u }));
-      }
+      const from = start.current.get(m.pointerId);
+      if (from && Math.hypot(m.clientX - from.x, m.clientY - from.y) > 5) dragged.current = true;
+      const u = unitsRef.current();
+      const dx = (m.clientX - before.x) * u;
+      const dy = (m.clientY - before.y) * u;
+      setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
     };
     const up = (u: PointerEvent): void => {
       pointers.current.delete(u.pointerId);
+      start.current.delete(u.pointerId);
       if (pointers.current.size < 2) pinch.current = null;
-      if (pointers.current.size === 0) {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-      }
+      // The click that follows a drag arrives after this; forget the drag only once it has passed.
+      if (pointers.current.size === 0) setTimeout(() => (dragged.current = false), 0);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      pointers.current.clear();
+    };
+  }, []);
+
+  const down = (e: PointerEvent): void => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    start.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 1) dragged.current = false;
+    if (pointers.current.size === 2) {
+      const [p, q] = [...pointers.current.values()] as [{ x: number; y: number }, { x: number; y: number }];
+      pinch.current = Math.hypot(p.x - q.x, p.y - q.y);
+    }
   };
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -148,9 +163,11 @@ export default function WebMap({
         class="web-svg"
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
         role="img"
+        aria-hidden="true"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
         onPointerDown={down}
         onWheel={(ev) => {
+          if (!ev.ctrlKey && !ev.metaKey) return; // plain scrolling belongs to the page
           ev.preventDefault();
           zoom(ev.deltaY < 0 ? 1.15 : 1 / 1.15, toDrawing(ev.clientX, ev.clientY));
         }}
@@ -175,6 +192,7 @@ export default function WebMap({
                 <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-hit" onClick={open} />
                 {(labels || chosen) && (
                   <text x={(p.x + q.x) / 2} y={(p.y + q.y) / 2} class="web-edge-text" text-anchor="middle" onClick={open}>
+                    <title>{text}</title>
                     {short(text, 26)}
                   </text>
                 )}
@@ -204,9 +222,6 @@ export default function WebMap({
           })}
         </g>
       </svg>
-      <p class="small muted" aria-hidden="true">
-        {Math.round(view.k * 100)}% ({Math.round(MIN_ZOOM * 100)}–{Math.round(MAX_ZOOM * 100)})
-      </p>
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}

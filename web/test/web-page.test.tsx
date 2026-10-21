@@ -6,9 +6,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BIG_WEB } from "../src/content/web-words";
+import type { WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web, { webRefFromPath } from "../src/account/Web";
-import { clampHops, radialLayout } from "../src/account/webLayout";
+import { clampHops, radialLayout, zoomAbout } from "../src/account/webLayout";
 
 afterEach(cleanup);
 
@@ -50,7 +51,8 @@ describe("the layout", () => {
 describe("reading the web", () => {
   it("draws the names and lists them too", async () => {
     await open();
-    expect(screen.getByRole("img")).toBeTruthy();
+    // The drawing is hidden from screen readers; the lists carry the same names.
+    expect(screen.getByRole("img", { hidden: true })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "The same web, as a list" })).toBeTruthy();
   });
 
@@ -64,13 +66,13 @@ describe("reading the web", () => {
 
   it("asks for more steps out", async () => {
     const api = await open();
-    fireEvent.change(screen.getByLabelText("How far out"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Steps out from the middle"), { target: { value: "3" } });
     await waitFor(() => expect(api.calls.some((c) => c.endsWith("hops=3"))).toBe(true));
   });
 
   it("asks before drawing a very big web, and draws it on a yes", async () => {
     const api = await open(".web-big");
-    fireEvent.change(screen.getByLabelText("How far out"), { target: { value: "6" } });
+    fireEvent.change(screen.getByLabelText("Steps out from the middle"), { target: { value: "6" } });
     const ask = await screen.findByText(/This will draw \d+ names and may be slow/);
     const n = Number(/draw (\d+)/.exec(ask.textContent ?? "")?.[1]);
     expect(n).toBeGreaterThan(BIG_WEB);
@@ -127,6 +129,65 @@ describe("who sees what", () => {
 
   it("says not found to someone who may not see it", async () => {
     render(<Web api={mockApi("table")} path={at(".web-none")} />);
-    expect(await screen.findByText(/We can't show that web/)).toBeTruthy();
+    expect(await screen.findByText(/We couldn't find that web/)).toBeTruthy();
+  });
+});
+
+describe("zooming", () => {
+  it("stays between the least and most, and keeps the point under the finger still", () => {
+    expect(zoomAbout({ x: 0, y: 0, k: 1 }, { x: 0, y: 0 }, 100).k).toBe(4);
+    expect(zoomAbout({ x: 0, y: 0, k: 1 }, { x: 0, y: 0 }, 0.001).k).toBe(0.25);
+    const v = zoomAbout({ x: 10, y: 20, k: 1 }, { x: 100, y: 100 }, 2);
+    // A drawing point p lands at x + p * k; the one that was at 100 still is.
+    const p = (100 - 10) / 1;
+    expect(v.x + p * v.k).toBeCloseTo(100);
+  });
+});
+
+describe("a very big web on first open", () => {
+  it("asks first, and does not call the DM read-only or the web empty", async () => {
+    const api = mockApi("table");
+    const graph = (): WebGraph => ({ center: "n1", nodes: [{ id: "n1", name: "Mira", kind: "npc" }], edges: [], truncated: false, maxHops: 6, canEdit: true });
+    api.webSize = async () => ({ names: BIG_WEB + 50 });
+    api.webGraph = async () => graph();
+    render(<Web api={api} path={at()} />);
+    expect(await screen.findByText(/This will draw 350 names/)).toBeTruthy();
+    expect(screen.queryByText(/Only this campaign's DM/)).toBeNull();
+    expect(screen.queryByText("No names are connected here yet.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show it anyway" }));
+    await screen.findByText("1 name, 0 lines");
+  });
+});
+
+describe("secrets for someone who is not a DM", () => {
+  it("never shows a secret connection's words, even if the API sent them", async () => {
+    const api = mockApi("table");
+    api.webSize = async () => ({ names: 2 });
+    api.webGraph = async () => ({
+      center: "a",
+      nodes: [
+        { id: "a", name: "Mira", kind: "npc" },
+        { id: "b", name: "Garrick", kind: "npc" },
+      ],
+      edges: [
+        {
+          a: "a",
+          b: "b",
+          label: "is secretly the heir of",
+          more: 1,
+          links: [
+            { id: "l1", words: "serves", secret: false, direction: "ab" },
+            { id: "l2", words: "is secretly the heir of", secret: true, direction: "ab" },
+          ],
+        },
+      ],
+      truncated: false,
+      maxHops: 3,
+      canEdit: false,
+    });
+    render(<Web api={api} path={at()} />);
+    await screen.findByText("2 names, 1 line");
+    expect(document.body.textContent).not.toMatch(/heir/);
+    expect(document.body.textContent).toMatch(/serves/);
   });
 });

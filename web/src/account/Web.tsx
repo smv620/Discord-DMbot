@@ -51,23 +51,22 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   async function load(at: string | null, steps: number, sure = false): Promise<void> {
     if (!ref || !api.webGraph) return;
     const mine = ++latest.current;
+    setBig(null);
     try {
       if (!sure && api.webSize) {
         const size = await api.webSize(ref, { center: at, hops: steps });
         if (mine !== latest.current) return;
         if (size.names > BIG_WEB) {
           setBig({ names: size.names, center: at, hops: steps });
-          setView((v) => (v === "loading" ? "ok" : v));
           return;
         }
       }
       const read = await api.webGraph(ref, { center: at, hops: steps });
       if (mine !== latest.current) return;
-      setBig(null);
       setGraph(read);
       setCenter(read.center);
       setHops(clampHops(steps, read.maxHops));
-      setLine((now) => (now && read.edges.some((e) => e.a === now.a && e.b === now.b) ? now : null));
+      setLine((now) => (now && read.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
       setView("ok");
     } catch (error) {
       if (mine !== latest.current) return;
@@ -126,6 +125,22 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </button>
       </div>
     );
+  const askBox = big !== null && (
+        <div class="panel stack" role="alert">
+          <p>{words.bigAsk(big.names)}</p>
+          <div class="row">
+            <button type="button" class="button" onClick={() => void load(big.center, big.hops, true)}>
+              {words.bigYes}
+            </button>
+            <button type="button" class="button secondary" onClick={() => setBig(null)}>
+              {words.bigNo}
+            </button>
+          </div>
+        </div>
+      );
+
+  if (view === "loading" && big !== null)
+    return <div class="stack web-page">{askBox}</div>;
   if (view === "loading")
     return (
       <p class="muted" role="status">
@@ -133,16 +148,28 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       </p>
     );
 
+  if (!graph)
+    return (
+      <p class="muted" role="status">
+        {words.loading}
+      </p>
+    );
   // The API never sends a secret to someone who isn't a DM; this keeps one from showing if it did.
-  const canEdit = graph?.canEdit ?? false;
-  const nodes = (graph?.nodes ?? []).filter((n) => canEdit || !n.secret);
+  const canEdit = graph.canEdit;
+  const nodes = graph.nodes.filter((n) => canEdit || !n.secret);
   const visible = new Set(nodes.map((n) => n.id));
-  const edges = (graph?.edges ?? [])
+  const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
-    .map((e) => (canEdit ? e : { ...e, links: e.links.filter((l) => !l.secret) }))
+    // For anyone but a DM the label is rebuilt from the known connections, so a secret one's words can
+    // never ride along on the line even if the API sent them.
+    .map((e) => {
+      if (canEdit) return e;
+      const links = e.links.filter((l) => !l.secret);
+      return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
+    })
     .filter((e) => e.links.length > 0);
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
-  const maxHops = graph?.maxHops ?? 1;
+  const maxHops = graph.maxHops;
   const chosen = line ? (edges.find((e) => e.a === line.a && e.b === line.b || e.a === line.b && e.b === line.a) ?? null) : null;
 
   return (
@@ -177,24 +204,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </p>
       </div>
 
-      {big !== null && (
-        <div class="panel stack" role="alert">
-          <p>{words.bigAsk(big.names)}</p>
-          <div class="row">
-            <button type="button" class="button" onClick={() => void load(big.center, big.hops, true)}>
-              {words.bigYes}
-            </button>
-            <button type="button" class="button secondary" onClick={() => setBig(null)}>
-              {words.bigNo}
-            </button>
-          </div>
-        </div>
-      )}
+      {askBox}
 
       <p class="small" role="status" aria-live="polite">
         {words.howMany(nodes.length, edges.length)}
       </p>
-      {graph?.truncated && <p class="note">{words.truncated}</p>}
+      {graph.truncated && <p class="note">{words.truncated}</p>}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
@@ -206,14 +221,19 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <p class="muted">{words.empty}</p>
       ) : (
         center && (
-          <WebMap
-            nodes={nodes}
-            edges={edges}
-            center={center}
-            selected={line}
-            onCenter={(id) => void load(id, hops)}
-            onLine={(a, b) => setLine({ a, b })}
-          />
+          <>
+            <a class="small" href="#web-list">
+              {words.skipMap}
+            </a>
+            <WebMap
+              nodes={nodes}
+              edges={edges}
+              center={center}
+              selected={line}
+              onCenter={(id) => void load(id, hops)}
+              onLine={(a, b) => setLine({ a, b })}
+            />
+          </>
         )
       )}
 
@@ -237,7 +257,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               <span class="campaign-name">
                 {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
                 {n.name}
-              </span>{" "}
+              </span>
+              {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}{" "}
               <span class="tag">{kindWords(n.kind)}</span>
               {n.id === center ? (
                 <span class="small muted"> {words.inMiddle}</span>
@@ -413,20 +434,21 @@ function LinkRow({
             <button
               type="button"
               class="button secondary"
+              aria-label={link.secret ? words.makeKnown(n) : words.makeSecret(n)}
               onClick={() => void run({ action: "secret", id: link.id, secret: !link.secret }, words.saved)}
             >
-              {link.secret ? words.makeKnown(n) : words.makeSecret(n)}
+              {link.secret ? words.makeKnownShort : words.makeSecretShort}
             </button>
             {!asking && (
-              <button type="button" class="button secondary" onClick={() => setAsking(true)}>
-                {words.removeLink(n)}
+              <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>
+                {words.removeShort}
               </button>
             )}
           </div>
           {asking && (
-            <div class="row" role="group" aria-label={words.removeAsk}>
-              <span>{words.removeAsk}</span>
-              <button type="button" class="button" onClick={() => void run({ action: "remove", id: link.id, confirm: true }, words.removed)}>
+            <div class="row" role="group" aria-label={words.removeShort}>
+              <span>{words.removeAsk(a, b)}</span>
+              <button type="button" class="button" autoFocus onClick={() => void run({ action: "remove", id: link.id, confirm: true }, words.removed)}>
                 {words.removeYes}
               </button>
               <button type="button" class="button secondary" onClick={() => setAsking(false)}>
@@ -457,7 +479,10 @@ function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok
         e.preventDefault();
         const said = await act({ action: "add", a: edge.a, b: edge.b, words: text, secret }, words.added);
         setProblem(said);
-        if (said === null) setText("");
+        if (said === null) {
+          setText("");
+          setSecret(false);
+        }
       }}
     >
       <h3 class="small">{words.addHeading}</h3>

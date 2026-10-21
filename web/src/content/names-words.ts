@@ -34,7 +34,7 @@ export const namesPage = {
   secretWords: "Secret (DM only)",
   alsoCalled: "Also called",
   npcLink: "Open the NPC page",
-  webLink: "See how they are connected",
+  webLink: "Open the relationship web",
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
