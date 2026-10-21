@@ -48,7 +48,7 @@ COLUMNS = (
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
-    " approved_by, approved_at, approved_hash, audio_choice, split"
+    " approved_by, approved_at, approved_hash, audio_choice, split, critics"
 )
 
 
@@ -112,6 +112,8 @@ class Job:
     approved_hash: str = ""  # the fingerprint of the text they approved
     audio_choice: str = ""  # voice, music, both or text, once approved
     split: Any = None  # the opening's parts (dmbot.recaps.split.from_json reads it); None: not yet
+    # Where the critics loop is (dmbot.recaps.critics.loop_from_json reads it); None: not begun.
+    critics: Any = None
 
     @property
     def finished(self) -> bool:
@@ -168,6 +170,7 @@ def _job(r: dict[str, Any]) -> Job:
         r["approved_hash"],
         r["audio_choice"],
         r["split"],
+        r["critics"],
     )
 
 
@@ -187,6 +190,7 @@ _WRITABLE = frozenset(
         "problems",
         "beats",
         "split",
+        "critics",
         "title",
         "summary",
         "original",
@@ -334,7 +338,7 @@ class RecapStore:
                 values.append(list(value))
             elif name in ("beats", "grade"):
                 values.append(Jsonb(value))
-            elif name == "split":  # None is SQL NULL ("not split yet"), not a JSON null
+            elif name in ("split", "critics"):  # None is SQL NULL ("not yet"), not a JSON null
                 values.append(None if value is None else Jsonb(value))
             else:
                 values.append(value)

@@ -69,6 +69,8 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "See where your house rules came from", // until #2285 merges and dev1 deploys it
+      "Recaps are checked before you see them", // until dev1 deploys it (#2255)
+      "Every NPC has its own page", // until dev1 deploys it and the NPC page is live (#2265)
       "Import reads more transcripts", // until #2302 merges and dev1 deploys it
       "Settings has two small menus", // until #2281 merges and dev1 deploys it
       "See and fix every name online", // until #2294 is deployed (#2295)
