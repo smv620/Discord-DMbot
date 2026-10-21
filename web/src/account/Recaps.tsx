@@ -74,13 +74,10 @@ export default function Recaps({
   );
 }
 
-function SignedOut({ api }: { api: AccountApi }) {
+function SignedOut() {
   return (
     <div class="panel" role="status">
       <p>{text.signedOut}</p>
-      <a class="button" href={api.signInUrl()}>
-        {text.signIn}
-      </a>
     </div>
   );
 }
@@ -117,7 +114,7 @@ function List({ api }: { api: AccountApi }) {
         {text.loading}
       </p>
     );
-  if (load.kind === "signed-out") return <SignedOut api={api} />;
+  if (load.kind === "signed-out") return <SignedOut />;
   if (load.kind === "error")
     return (
       <p class="warn" role="alert">
@@ -440,7 +437,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         {text.loading}
       </p>
     );
-  if (load.kind === "signed-out") return <SignedOut api={api} />;
+  if (load.kind === "signed-out") return <SignedOut />;
   if (load.kind === "error" || !recap) {
     return (
       <>

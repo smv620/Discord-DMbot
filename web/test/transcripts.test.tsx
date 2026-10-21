@@ -51,7 +51,8 @@ describe("the campaigns", () => {
     } as AccountApi;
     page(api, "/account/transcripts");
     expect(await screen.findByText(text.signedOut)).toBeTruthy();
-    expect(screen.getByRole("link", { name: text.signIn })).toBeTruthy();
+    // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
+    expect(screen.queryByRole("link", { name: text.signIn })).toBeNull();
   });
 
   it("says it did not load, in plain words, when the API is down", async () => {

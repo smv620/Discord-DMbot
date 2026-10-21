@@ -72,6 +72,7 @@ describe("What's new", () => {
       "Recaps are checked before you see them", // until dev1 deploys it (#2255)
       "Every NPC has its own page", // until dev1 deploys it and the NPC page is live (#2265)
       "Import reads more transcripts", // until #2302 merges and dev1 deploys it
+      "Every page says who you are", // until #2301 is deployed
       "Settings has two small menus", // until #2281 merges and dev1 deploys it
       "See and fix every name online", // until #2294 is deployed (#2295)
       "Support emails show the whole chat", // until #2192 merges and dev1 deploys it
