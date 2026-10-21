@@ -1114,7 +1114,9 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
-SAY_NOT_ON = "Spoken recaps aren't switched on for this campaign, so there is no narrator to tell."
+SAY_NOT_ON = (
+    "Spoken recaps are off for this campaign, so there is nothing to set. Turn them on first."
+)
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
@@ -1146,6 +1148,9 @@ class SayForm(discord.ui.Modal, title="How to say it"):
         if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on a press
             await _tell(interaction, "Only a DM of this campaign can do that.")
             return
+        if not await _spoken_recaps(interaction, campaign):  # the plan may have lapsed meanwhile
+            await _tell(interaction, SAY_NOT_ON)
+            return
         spelling = " ".join(self.said_as.value.split()) or None
         try:
             await memory.set_said_as(
@@ -1155,9 +1160,9 @@ class SayForm(discord.ui.Modal, title="How to say it"):
             await _tell(interaction, f"Couldn't change it. {exc}")
             return
         note = (
-            f"🔊 The narration will say it as **{_md(spelling)}**."
+            f"🔊 The narrator will say it as **{_md(spelling)}**."
             if spelling
-            else "🔊 The narration will say it as written."
+            else "🔊 The narrator will say it as written."
         )
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)

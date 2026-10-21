@@ -409,11 +409,31 @@ class NameCards(NamesTest):
             form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
             form.said_as = SimpleNamespace(value=typed)  # type: ignore[assignment]
             it = self.it()
-            await form.on_submit(it)
+            with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)):
+                await form.on_submit(it)
             self.assertIn(told, it.response.edited[0][0])
             self.assertEqual(
                 await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
             )
+
+    async def test_the_say_form_rechecks_the_dm_and_the_plan_after_its_waits(self) -> None:
+        from dmbot.ui import name_card
+
+        form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+        form.said_as = SimpleNamespace(value="Bell-air-os")  # type: ignore[assignment]
+        it = self.it()
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
+            await form.on_submit(it)  # a DM, but spoken recaps lapsed since the press
+        self.assertIn("Spoken recaps are off", it.response.sent[0][0])
+        gone = SimpleNamespace(dm_user_ids=frozenset({999}), guild_id=GUILD, id=self.campaign.id)
+        it = self.it()
+        with (
+            patch.object(name_card, "_current", AsyncMock(return_value=(gone, "Belleros"))),
+            patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)),
+        ):
+            await form.on_submit(it)  # no longer a DM of the campaign
+        self.assertIn("Only a DM", it.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
 
     async def test_the_say_form_refuses_a_non_dm_and_says_when_spoken_recaps_are_off(self) -> None:
         from dmbot.ui import name_card
@@ -423,10 +443,13 @@ class NameCards(NamesTest):
         await form.on_submit(self.it(MANAGER))
         self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
         card = name_card.NameCard(self.campaign.id, self.bell.id, say=True)
+        manager_press = self.it(MANAGER)
+        await card._say(manager_press)  # not a DM: refused before the plan is asked
+        self.assertIn("Only a DM", manager_press.response.sent[0][0])
         it = self.it()
         with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
             await card._say(it)
-        self.assertIn("Spoken recaps aren't switched on", it.response.sent[0][0])
+        self.assertIn("Spoken recaps are off", it.response.sent[0][0])
 
     async def test_a_form_without_the_field_never_touches_the_spelling(self) -> None:
         from dmbot.ui import name_card
