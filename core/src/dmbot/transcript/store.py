@@ -27,6 +27,18 @@ PAGE = 2000  # candidate lines read at a time
 MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 
+# The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
+# ended sessions, speech only, saying the name's longest word, not already done by this fix.
+_CANDIDATES = (
+    " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
+    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
+    " AND l.sidebar IS NULL AND NOT l.typed"
+    " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
+    " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
+    "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class PastRespell:
     """What one run of a fixed spelling did to the past transcripts (#2170)."""
@@ -374,35 +386,29 @@ class TranscriptStore:
                 (campaign_id, batch),
             )
             run = int((await cur.fetchone() or {"run": 1})["run"])
-            last = 0
+            after = (0, 0, 0)  # (session start, line time, line id) of the last line looked at
             scanned = 0
-            while scanned < MAX_SCANNED:
+            while len(updates) < MAX_RESPELLED and scanned < MAX_SCANNED:
                 # Pages of lines that may say the name, in session order, not yet done by this fix:
                 # lines that never change (inside a longer name) cannot starve the window.
                 cur = await conn.execute(
-                    "SELECT l.id, l.session_id, l.user_id, coalesce(l.text, l.heard) AS cleaned"
-                    " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-                    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
-                    " AND l.sidebar IS NULL AND NOT l.typed AND l.id > %s"
-                    " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
-                    " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
-                    "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
-                    " ORDER BY l.id LIMIT %s FOR UPDATE OF l",
-                    (guild_id, campaign_id, last, longest, campaign_id, batch, PAGE),
+                    "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
+                    " coalesce(l.text, l.heard) AS cleaned"
+                    + _CANDIDATES
+                    + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
+                    " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
+                    (guild_id, campaign_id, longest, campaign_id, batch, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
                     break
-                last = int(page[-1]["id"])
                 scanned += len(page)
-                # (ids run in the order the lines were saved, which is session order for
-                # sessions that have ended)
                 for row in page:
                     found = respell(str(row["cleaned"]), old, new, longer, hidden)
+                    if found is not None and len(updates) >= MAX_RESPELLED:
+                        break  # this line is the first of what is left
+                    after = (int(row["started_at"]), int(row["started_ms"]), int(row["id"]))
                     if found is None:
-                        continue
-                    if len(updates) >= MAX_RESPELLED:
-                        remaining += 1
                         continue
                     updates.append((int(row["id"]), found.text))
                     rows.append(
@@ -422,6 +428,15 @@ class TranscriptStore:
                         )
                     )
                     sessions.add(str(row["session_id"]))
+            # What is left, counted without locking: lines further on that say the name. Some may
+            # never change (inside a longer name), so it is "up to" this many.
+            cur = await conn.execute(
+                "SELECT count(*) AS n"
+                + _CANDIDATES
+                + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
+                (guild_id, campaign_id, longest, campaign_id, batch, *after),
+            )
+            remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
                 await conn.execute(
                     "UPDATE transcript_lines t SET text = NULLIF(v.text, t.heard)"
