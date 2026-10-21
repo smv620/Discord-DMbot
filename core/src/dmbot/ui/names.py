@@ -191,6 +191,7 @@ class Reviews:
     heard: int = 0  # ❓ "Did they mean…?"
     people: int = 0  # 🧑 who is who
     claims: int = 0  # 🗣️ what was said (only when the story extractor is on)
+    said: int = 0  # 🔊 how the narrator should say a name (#2171)
 
 
 def review_line(reviews: Reviews) -> str | None:
@@ -199,6 +200,7 @@ def review_line(reviews: Reviews) -> str | None:
         f"{_plural(reviews.heard, 'name')} to double-check" if reviews.heard else "",
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
         f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
+        f"{_plural(reviews.said, 'name')} to say out loud" if reviews.said else "",
     ]
     parts = [p for p in parts if p]
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
@@ -319,6 +321,7 @@ class NamesHome(_Menu):
                 (reviews.heard, "❓ Check names", self._check_heard),
                 (reviews.people, "🧑 Check who is who", self._check_people),
                 (reviews.claims, "🗣️ Check what was said", self._check_claims),
+                (reviews.said, "🔊 Check how to say", self._check_said),
             ):
                 if count:
                     shown_count = str(count) if count < 100 else "99+"  # keeps the label short
@@ -414,6 +417,11 @@ class NamesHome(_Menu):
 
         await start_people_review(interaction, self.campaign_id)
 
+    async def _check_said(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.said_as_review import start_said_as_review
+
+        await start_said_as_review(interaction, self.campaign_id)
+
     async def _check_claims(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
@@ -432,7 +440,7 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
     that can't be read is left out (zero), never an error on the home card."""
     bot: Any = _bot(interaction)
     guild_id = campaign.guild_id
-    heard = people = claims = 0
+    heard = people = claims = said = 0
     try:
         if bot.heard_questions is not None:
             heard = await bot.heard_questions.count(guild_id, campaign.id)
@@ -454,7 +462,12 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
             )
     except Exception:
         log.exception("Couldn't count the things said at the table")
-    return Reviews(heard=heard, people=people, claims=claims)
+    try:
+        if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only
+            said = len(await memory.said_as_suggestions(guild_id, campaign.id))
+    except Exception:
+        log.exception("Couldn't count the ways to say names")
+    return Reviews(heard=heard, people=people, claims=claims, said=said)
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:

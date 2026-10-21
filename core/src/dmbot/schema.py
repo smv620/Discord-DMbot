@@ -5368,6 +5368,32 @@ SUPPORT_MINE_THREAD = """
     REVOKE ALL ON FUNCTION dmbot_support_mine_thread(BIGINT) FROM PUBLIC;
     """
 
+SUPPORT_TICKET_TIMES = """
+    -- A person's tickets never share a sent time (#2214): the account page opens a ticket by that
+    -- time (#2193). `support.add` stamps the next free second; this index is what holds two sends
+    -- in the same instant apart, whichever commits second retries.
+    -- Tickets already sharing a time are moved apart first: each pass moves every ticket that
+    -- shares its second with an earlier id up by one, until none do. A ticket that was alone can
+    -- be pushed too when the ones below it run into it, so a cluster of k ends up at most k-1
+    -- seconds late; the order by id is kept. (The table has forced row-level security, so the
+    -- migration opens it for itself and closes it again, as the other backfills do.) The older
+    -- index (user_id, created_at DESC) is left as it is: dropping an index is not this change.
+    CREATE POLICY migrate_backfill ON support_tickets FOR ALL USING (true) WITH CHECK (true);
+    DO $do$
+    BEGIN
+        LOOP
+            UPDATE support_tickets t SET created_at = t.created_at + 1
+            FROM (SELECT id, row_number() OVER (PARTITION BY user_id, created_at ORDER BY id) AS n
+                  FROM support_tickets) d
+            WHERE t.id = d.id AND d.n > 1;
+            EXIT WHEN NOT FOUND;
+        END LOOP;
+    END
+    $do$;
+    DROP POLICY migrate_backfill ON support_tickets;
+    CREATE UNIQUE INDEX support_tickets_one_time ON support_tickets (user_id, created_at);
+    """
+
 WEB_RECAP_CHOICES = """
     -- The DM's three recap choices on the website (#1468), the same as the DM screen's 📜 Recaps
     -- panel (#1421): recaps on or off, the narration and music, the email. The website's role has
@@ -8143,6 +8169,23 @@ RECAP_REQUESTS = (
         BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[]) FROM PUBLIC;
     """
 )
+SAID_AS_SUGGESTIONS = f"""
+    -- "Say it this way?" (#2171): when a confirmed name is again and again heard as the same
+    -- other spelling, DMbot offers that spelling for the recap narrator's "said as". One row per
+    -- name, so the DM is asked once: a "no" stays as state 'no' and is never offered again.
+    -- Words only: no speaker, no line, no time of day. It goes with the name and with the
+    -- campaign, is not part of backups (a wait, not content), and is isolated per server.
+    CREATE TABLE said_as_suggestions (
+        {_memory_scope()}
+        entity_id  TEXT NOT NULL,
+        heard      TEXT NOT NULL CHECK (length(heard) BETWEEN 1 AND 80),
+        times      INTEGER NOT NULL CHECK (times > 0),
+        state      TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'no')),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entity_id),
+        {_entity_link("entity_id")}
+    );
+    """ + _isolate("said_as_suggestions")
 
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
@@ -8501,6 +8544,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
     ("0146_own_writing", OWN_WRITING),  # a DM's own background is its own purpose (#2167)
+    ("0147_said_as_suggestions", SAID_AS_SUGGESTIONS),  # say it this way? (#2171)
     (
         "0149_audio_again_posted",
         RECAP_AUDIO_AGAIN_POSTED,
@@ -8513,6 +8557,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
     ("0153_import_recaps", IMPORT_RECAPS),  # Write recaps for an import, its scan window (#2106)
     ("0154_import_progress", IMPORT_PROGRESS),  # each import session's stage, scan given up
+    (
+        "0155_support_ticket_times",
+        SUPPORT_TICKET_TIMES,
+    ),  # no two of a person's tickets share a time
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -8534,6 +8582,7 @@ ISOLATED_TABLES = (
     "transcript_suggestions",
     "waiting_name_questions",
     "memory_heard",
+    "said_as_suggestions",
     "shared_confirmations",
     "campaign_handover_offers",
     "character_sheets",
