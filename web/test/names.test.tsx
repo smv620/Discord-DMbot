@@ -291,7 +291,8 @@ describe("someone who can't change names", () => {
   it("a signed-out person is asked to sign in", async () => {
     open(DM, mockApi("signed-out"));
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.signIn })).toBeTruthy();
+    // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
+    expect(screen.queryByRole("link", { name: w.signIn })).toBeNull();
   });
 
   it("an API that can't be reached says so and offers another try", async () => {

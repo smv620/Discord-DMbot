@@ -730,6 +730,9 @@ export type NameChange =
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** Sent on `window` whenever the real API answers "not signed in" (#2301). */
+export const SIGNED_OUT_EVENT = "dmbot:signed-out";
+
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
@@ -1105,7 +1108,12 @@ export function httpApi(
     } catch {
       throw new ApiError("network");
     }
-    if (response.status === 401) throw new ApiError("signed-out");
+    if (response.status === 401) {
+      // Tell the page's "who is signed in" line, which asked only once when the page opened: a
+      // sign-in that ends later (expired, signed out elsewhere) must show its Sign in button (#2301).
+      if (!anonymous && typeof window !== "undefined") window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+      throw new ApiError("signed-out");
+    }
     if (!response.ok) {
       let code = "";
       let cueProblems: CueProblem[] = [];
@@ -1157,7 +1165,12 @@ export function httpApi(
         throw error;
       }
     },
-    signInUrl: () => `${root}/auth/discord/start`,
+    // Back to the page the person is on after Discord (#2301). Only an /account page is sent: the
+    // API checks the same rule again, so this is a courtesy, not the guard.
+    signInUrl: () => {
+      const here = typeof window === "undefined" ? "" : window.location.pathname;
+      return `${root}/auth/discord/start${here.startsWith("/account") ? `?next=${encodeURIComponent(here)}` : ""}`;
+    },
     signOut: async () => {
       await call("POST", "/auth/logout");
     },

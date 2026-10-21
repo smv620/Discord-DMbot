@@ -55,11 +55,9 @@ function useRead<T>(read: (() => Promise<T>) | null, deps: unknown[]): Load<T> {
 }
 
 function Shell<T>({
-  api,
   load,
   children,
 }: {
-  api: AccountApi;
   load: Load<T>;
   children: (value: T) => preact.ComponentChildren;
 }) {
@@ -73,9 +71,6 @@ function Shell<T>({
     return (
       <div class="panel" role="status">
         <p>{text.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {text.signIn}
-        </a>
       </div>
     );
   if (load.kind === "error")
@@ -102,7 +97,7 @@ export default function HouseRulesPage({ api, path }: { api: AccountApi; path: s
 function Campaigns({ api }: { api: AccountApi }) {
   const load = useRead(api.houseRuleCampaigns ? () => api.houseRuleCampaigns!() : null, [api]);
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(campaigns: HouseRuleCampaign[]) =>
         campaigns.length === 0 ? (
           <p class="panel" role="status">
@@ -138,7 +133,7 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
     campaignRef,
   ]);
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(found: HouseRules) => (
         <>
           <p>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { importPage as words } from "../content/import-words";
 import { httpApi, type AccountApi } from "./api";
+import SignedInLine from "./SignedInLine";
 import Import from "./Import";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
@@ -25,5 +26,10 @@ export default function ImportIsland() {
         {words.loading}
       </p>
     );
-  return <Import api={api} path={window.location.pathname} />;
+  return (
+    <>
+      <SignedInLine api={api} />
+      <Import api={api} path={window.location.pathname} />
+    </>
+  );
 }
