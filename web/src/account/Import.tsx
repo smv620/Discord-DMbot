@@ -548,7 +548,8 @@ export default function Import({
               {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
                 <a
                   class="small"
-                  href={recapHref(s)}
+                  // A failed recap may have no page of its own to open; its words say "recap list".
+                  href={s.stage === "recap_failed" ? "/account/recaps" : recapHref(s)}
                   aria-label={words.linkFor(words.recapLink, shownApi(s.file))}
                 >
                   {words.recapLink}
