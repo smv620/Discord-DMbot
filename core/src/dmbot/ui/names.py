@@ -1479,13 +1479,13 @@ def recap_names_reminder(count: int) -> str:
     )
 
 
-def after_session_text(names: list[str]) -> str:
+def after_session_text(names: list[str], where: str = "this session") -> str:
     """For the DM screen (players may see it under peek; the names come from the
     transcript anyone can read, so nothing is spoiled)."""
     shown = ", ".join(f"**{_md(n)}**" for n in names[:5])
     more = f" and {len(names) - 5} more" if len(names) > 5 else ""
     return (
-        f"📝 **{_plural(len(names), 'new name')} to check** from this session: {shown}{more}.\n"
+        f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
         "Say which are in your game, so DMbot spells them right. The check opens privately "
         "for the DM."
     )

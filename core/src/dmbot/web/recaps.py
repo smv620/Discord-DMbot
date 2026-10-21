@@ -145,10 +145,60 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # how many days the table keeps transcripts, for the page's words (#2022).
         "transcriptsDeletedAt": row.get("transcripts_deleted_at"),
         "keepDays": row.get("keep_days"),
+        # A recap that exists is no longer waiting for the DM's name answers (#2174); a held one
+        # has no job yet and is listed by `_held_view`.
+        "waitingForNames": False,
+        "namesToAnswer": 0,
         # When a fixed spelling changed this recap's text (Unix seconds, #2170), else null. A
         # posted recap's Discord message keeps the old spelling, so the page says so (#2178).
         "respelledAt": row.get("respelled_at"),
     }
+
+
+def _held_view(
+    guild_id: int, held: dict[str, Any], server_name: str | None = None
+) -> dict[str, Any]:
+    """A recap that is still waiting for the DM's answers about names (#2174): there is no job yet,
+    so nothing to read, edit or post, only that it waits and how many answers it waits on. Built
+    from the read door's counts and times alone."""
+    at = int(held["sessionAt"])
+    return {
+        "ref": job_ref(guild_id, held["campaignId"], at),
+        "campaign": held["campaign"],
+        "sessionAt": at,
+        "gameDay": None,
+        "state": "waiting",
+        "status": "draft",
+        "working": False,
+        "title": "",
+        "text": "",
+        "summary": "",
+        "housekeeping": [],
+        "toConfirm": [],
+        "error": "",
+        "canEdit": False,
+        "canPost": False,
+        "canTryAgain": False,
+        "triesLeft": 0,
+        "canDrop": False,
+        "audio": {"state": "off", "error": "", "current": False, "canAskAgain": False},
+        "approval": {"approved": False, "choice": "", "approvedAt": None, "canApprove": False},
+        "share": {"on": False, "path": None},
+        "cue_words": cues.allowed_words(),
+        "transcriptsDeletedAt": None,
+        "keepDays": None,
+        "waitingForNames": True,
+        "namesToAnswer": int(held["namesOpen"]),
+        **({"serverName": server_name} if server_name else {}),
+    }
+
+
+async def _holds(conn: Conn, guild_id: int) -> list[dict[str, Any]]:
+    """The signed-in DM's held recaps in this server, through the database's read door (it keeps
+    to the campaigns they are a DM of). The server must already be set for the transaction."""
+    cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS held", (guild_id,))
+    found = (await cur.fetchone() or {}).get("held") or []
+    return [h for h in found if isinstance(h, dict)]
 
 
 async def _scoped(conn: Conn, guild_id: int) -> None:
@@ -204,6 +254,13 @@ async def list_recaps(db: Database, session: Session) -> list[dict[str, Any]]:
             )
             rows = await _with_transcript_marks(conn, int(guild.id), await cur.fetchall())
             out += [{**_view(r), "serverName": guild.name} for r in rows]
+            made = {(r["campaign_id"], r["session_at"]) for r in rows}
+            out += [
+                _held_view(int(guild.id), h, guild.name)
+                for h in await _holds(conn, int(guild.id))
+                if (h["campaignId"], int(h["sessionAt"]))
+                not in made  # (a job and a hold for one session)
+            ]
     out.sort(key=lambda v: v["sessionAt"], reverse=True)
     return out[:LIST_LIMIT]
 
@@ -269,7 +326,19 @@ async def _one(
 
 async def read_recap(db: Database, session: Session, ref: str) -> dict[str, Any]:
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        *_, row = await _one(conn, ref, session)
+        try:
+            *_, row = await _one(conn, ref, session)
+        except RecapError as err:
+            if err.code != "not_found" or (parsed := parse_ref(ref)) is None:
+                raise
+            guild_id, campaign_id, session_at = parsed
+            _guild_of(session, guild_id)
+            await _scoped(conn, guild_id)
+            for held in await _holds(conn, guild_id):
+                if held["campaignId"] == campaign_id and int(held["sessionAt"]) == session_at:
+                    return _held_view(guild_id, held)
+            # Released between the list and this page: the job exists now (one more look).
+            *_, row = await _one(conn, ref, session)
     return _view(row)
 
 
