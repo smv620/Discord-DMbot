@@ -14,6 +14,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore, decode_backup, encode_backup
 from dmbot.dm_screen import recap_panel as panel
 from dmbot.dm_screen.settings import settings_view
+from dmbot.transcript.models import Line
 from tests.pg import DatabaseTest
 
 DM, OTHER = 7, 9
@@ -87,6 +88,14 @@ def campaign(**kw: Any) -> Any:
     return SimpleNamespace(**{**base, **kw})
 
 
+ALICE_ID = 7
+
+
+def long_session() -> list[Line]:
+    """Two hours of game talk by one person who agreed: never a short session."""
+    return [Line(i * 120_000, ALICE_ID, "x", "words said", duration_ms=110_000) for i in range(60)]
+
+
 def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool = True) -> Any:
     """A bot with just what the three job paths read, and the real methods bound to it."""
     allowed = {"recap": True, "recap_audio": True, **(plan or {})}
@@ -106,14 +115,18 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         recap_worker=object(),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         transcripts=SimpleNamespace(
-            session=AsyncMock(return_value=SimpleNamespace(started_at=100, lines=5))
+            session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
+            lines=AsyncMock(return_value=long_session()),
         ),
+        consent=SimpleNamespace(consenting=AsyncMock(return_value={ALICE_ID})),
         post=AsyncMock(),
+        post_message=AsyncMock(),
+        _short_asks={},
         mailer=object(),
         meter=None,
     )
     for name in (
-        "recap_session", "recap_allowed", "recap_told", "recap_audio_wanted",
+        "recap_session", "_queue_recap", "recap_allowed", "recap_told", "recap_audio_wanted",
         "recap_audio_switched", "recap_audio_allowed", "recap_plan_facts",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
@@ -197,10 +210,10 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
             self.assertEqual(channel, 66)
             self.assertIn("Recap ready: **The Silver Lock**", line)
-            self.assertIn("Edit it here: https://site.example.com", line)
-            ids = [i.custom_id for i in kwargs["view"].children]
-            acts = ("read", "approve", "post", "drop", "tell")
-            self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in acts])
+            self.assertIn("on your recap page: https://site.example.com", line)
+            children = kwargs["view"].children  # the website link, then Share a recap (#2118)
+            self.assertEqual(children[0].url, "https://site.example.com/account/recaps")
+            self.assertEqual(children[1].item.custom_id, f"dmbot:recapshare:{'c' * 32}")
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
         failed = SimpleNamespace(state="failed", session_at=100, title="")
@@ -261,9 +274,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
 
     def test_the_buttons_follow_the_plan(self) -> None:
         three = panel.RecapsPanel(campaign(), panel.PlanFacts(True, True, "part of your plan"))
-        self.assertEqual(len(three.children), 4)  # and ✍️ Recap style
+        self.assertEqual(len(three.children), 5)  # and ✍️ Recap style and Share a recap
         two = panel.RecapsPanel(campaign(), panel.PlanFacts(True, False))
-        self.assertEqual(len(two.children), 3)
+        self.assertEqual(len(two.children), 4)
         self.assertEqual(
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )
