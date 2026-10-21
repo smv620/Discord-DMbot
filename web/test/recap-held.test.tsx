@@ -52,18 +52,35 @@ describe("the words", () => {
 });
 
 describe("what counts as held", () => {
-  it("is a draft with the flag set, and nothing else, so the list and the page agree", async () => {
-    for (const status of ["posted", "posting", "dropped"] as const) {
-      expect(isHeld({ ...base, status, waitingForNames: true })).toBe(false);
-    }
-    expect(isHeld({ ...base, status: "draft", waitingForNames: true })).toBe(true);
+  it("is the flag alone, whatever the entry's status or state, so the list and the page agree", () => {
+    // The API's held entry (#2174): state "waiting", status "draft", the flag set.
+    expect(isHeld({ ...base, state: "waiting", status: "draft", waitingForNames: true })).toBe(true);
+    expect(isHeld({ ...base, state: "waiting", status: "posted", waitingForNames: true })).toBe(true);
     expect(isHeld({ ...base, status: "draft", waitingForNames: false })).toBe(false);
     const { waitingForNames: _none, ...older } = { ...base, waitingForNames: undefined };
     expect(isHeld(older as Recap)).toBe(false); // an API without the field
-    // A posted recap flagged held still shows its normal page.
-    render(<Recaps api={withHeld({ status: "posted", waitingForNames: true, namesToAnswer: 2 })} path={path} />);
-    expect(await screen.findByText(/The party crossed/)).toBeTruthy();
-    expect(screen.queryByText(/DMbot will write this recap once/)).toBeNull();
+  });
+
+  it("shows the API's own held entry as held, on the page", async () => {
+    render(
+      <Recaps
+        api={withHeld({
+          state: "waiting",
+          status: "draft",
+          working: false,
+          text: "",
+          summary: "",
+          canEdit: false,
+          canPost: false,
+          canTryAgain: false,
+          canDrop: false,
+          waitingForNames: true,
+          namesToAnswer: 4,
+        })}
+        path={path}
+      />,
+    );
+    expect(await screen.findByText(heldWords.line(4))).toBeTruthy();
   });
 
   it("puts held before a failed state in the list, as the page does", () => {
@@ -138,5 +155,23 @@ describe("the page", () => {
     render(<Recaps api={withHeld({ status: "draft", waitingForNames: false, namesToAnswer: 0 })} path={path} />);
     expect(await screen.findByText(/The party crossed/)).toBeTruthy();
     expect(screen.queryByText(/DMbot will write this recap once/)).toBeNull();
+  });
+});
+
+describe("while held", () => {
+  it("does not look again every few seconds, even for a recap marked as working", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const api = withHeld({ status: "draft", working: true, waitingForNames: true, namesToAnswer: 2 });
+      const read = vi.fn(api.recap!.bind(api));
+      api.recap = read;
+      render(<Recaps api={api} path={path} />);
+      await screen.findByText(heldWords.line(2));
+      const opened = read.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(read.mock.calls.length).toBe(opened); // no poll
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

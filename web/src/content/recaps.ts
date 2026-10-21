@@ -118,10 +118,12 @@ export const heldWords = {
     } about names in Discord: 📝 Check new names on the DM screen.`,
 } as const;
 
-/** A draft the bot is holding until the DM answers its questions about names (#2210). One test
- * for the list and the page, so they never disagree. A posted or dropped recap is never held. */
+/** A recap the bot is holding until the DM answers its questions about names (#2210). The API
+ * sends a held recap as its own entry (state "waiting", #2174) and clears the flag once the real
+ * recap exists, so the flag alone says it. One test for the list and the page, so they never
+ * disagree. */
 export function isHeld(recap: Recap): boolean {
-  return recap.status === "draft" && recap.waitingForNames === true;
+  return recap.waitingForNames === true;
 }
 
 /** "Ready to read", "Posted"… for one row of the list. */

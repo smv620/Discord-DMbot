@@ -418,6 +418,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // While DMbot is writing it or posting it, look again every few seconds.
   const waiting =
     recap !== null &&
+    !isHeld(recap) &&
     (recap.working || recap.status === "posting" || recap.audio?.state === "queued");
   useEffect(() => {
     if (!waiting || !api.recap) return;
@@ -559,10 +560,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </section>
       ) : (
         <>
-      {!decided && !recap.working && recap.state !== "failed" && (
-        <>
-          <p class="lead">{text.onlyYou}</p>
-          <p>{text.beforeChoosing}</p>
+        {!decided && !recap.working && recap.state !== "failed" && (
+          <>
+            <p class="lead">{text.onlyYou}</p>
+            <p>{text.beforeChoosing}</p>
         </>
       )}
       {recap.status === "posted" && (
