@@ -30,6 +30,7 @@ from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
@@ -91,6 +92,9 @@ class Inputs:
     notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
     # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
     corrections: Sequence[str] = ()
+    # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
+    campaign_name: str = ""
+    ending: int = 0  # which of the ten closing lines this recap takes (fixed_lines.ENDINGS)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -1063,6 +1067,15 @@ class RecapWorker:
             cid,
             job.session_at,
             state="ready",
+            # The fixed opening and closing lines go on last (#2253), after every check, so they
+            # are never counted or checked as story; the stored original has them too, so the
+            # DM's edit is compared with the text they were shown.
+            summary=(
+                wrapped := fixed_lines.wrap(
+                    job.summary, inputs.campaign_name, inputs.secret_names, inputs.ending
+                )
+            ),
+            original=wrapped,
             title=finish.title,
             housekeeping=list(finish.housekeeping),
             to_confirm=un.to_confirm(
