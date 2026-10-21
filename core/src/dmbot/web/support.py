@@ -24,8 +24,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+import psycopg
+
 from dmbot.db import Database
-from dmbot.entitlements import Entitlement
+from dmbot.entitlements import Access, Entitlement
 from dmbot.web.feedback import clean_text
 from dmbot.web.payments import paid_plan_ids
 
@@ -34,6 +36,9 @@ log = logging.getLogger(__name__)
 MAX_SUBJECT = 120
 MAX_MESSAGE = 4000
 PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
+# How many times `add` tries when another send of the same person took its second (#2214). Each
+# retry finds the next free one, so this is the number of sends that could all land at once.
+ADD_TRIES = 8
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -46,19 +51,21 @@ REASONS: tuple[Reason, ...] = ("unhappy", "asked", "limit", "no-email", "helper-
 STATUSES: tuple[Status, ...] = ("new", "answered", "closed", "escalated")
 
 
-def may_write(plan: Entitlement | None) -> bool:
+def may_write(plan: Entitlement | None, access: Access | None = None) -> bool:
     """Any account with a plan row: Try It, paid (even lapsed), a grant or the free list. A
-    person whose paid plan has lapsed is exactly who most needs to write to us (#1435). Only
-    an account with no plan row yet may not."""
-    return plan is not None
+    person whose paid plan has lapsed is exactly who most needs to write to us (#1435). Free
+    access counts even before any plan row exists (#2190): the free list and a grant live apart
+    from the plan table, so an account on either may never have had a row. Only an account with
+    neither may not."""
+    return plan is not None or (access is not None and access.kind in ("free", "grant"))
 
 
-def is_free(plan: Entitlement, now: int) -> bool:
-    """No working paid plan: Try It, a lapsed plan, a grant or the free list. These accounts
-    cost nothing to make, so they get the free-account guard (`limits.free_ticket_refusal`).
-    The payment grace counts as working: someone whose payment just failed is not a fresh,
-    free account."""
-    return not (plan.plan in paid_plan_ids() and plan.usable(now))
+def is_free(plan: Entitlement | None, now: int) -> bool:
+    """No working paid plan: Try It, a lapsed plan, a grant, the free list or no plan row at all.
+    These accounts cost nothing to make, so they get the free-account guard
+    (`limits.free_ticket_refusal`). The payment grace counts as working: someone whose payment
+    just failed is not a fresh, free account."""
+    return plan is None or not (plan.plan in paid_plan_ids() and plan.usable(now))
 
 
 @dataclass(frozen=True)
@@ -107,12 +114,31 @@ async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
 async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:
     """Keep a ticket for this signed-in person; returns its number. The table's policy lets them
     add a row for their own account and nothing else, which is why the person is set
-    (`db.user`); the number comes back through the same person's `read_own` right."""
+    (`db.user`); the number comes back through the same person's `read_own` right.
+
+    A person's tickets never share a sent time: the account page opens one by that time (#2193).
+    So a new ticket is stamped the next free second, and a unique index (#2214) holds two sends in
+    the same instant apart: the one that commits second finds the time taken and tries again,
+    which stamps it one second later."""
+    # (A UniqueViolation here can only be the (user_id, created_at) index: the other unique
+    # constraint on the table is the identity column, which no insert names.)
+    for attempt in range(ADD_TRIES):
+        try:
+            return await _insert_ticket(db, user_id, plan, ticket, now)
+        except psycopg.errors.UniqueViolation:
+            if attempt == ADD_TRIES - 1:
+                raise
+    raise AssertionError("ADD_TRIES is at least one")
+
+
+async def _insert_ticket(db: Database, user_id: int, plan: str, ticket: Ticket, now: int) -> int:
+    """One try of `add`: the next free second for this person."""
     async with db.user(user_id) as conn:
         cur = await conn.execute(
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (now, user_id, plan, ticket.subject, ticket.message),
+            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+            (now, user_id, user_id, plan, ticket.subject, ticket.message),
         )
         row = await cur.fetchone()
     assert row is not None
@@ -386,6 +412,38 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
         )
         for r in found
     ]
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One part of a person's own conversation: who wrote it (as the page labels it), the words
+    and when. Only ever read for the signed-in person's own ticket; never logged."""
+
+    who: Literal["you", "helper", "team"]
+    text: str
+    created_at: int
+
+
+_TURN_WHO: dict[str, Literal["you", "helper", "team"]] = {
+    "customer": "you",
+    "ai": "helper",
+    "person": "team",
+}
+
+
+async def my_thread(db: Database, user_id: int, sent: int) -> list[Turn] | None:
+    """The whole conversation of the signed-in person's own ticket sent at `sent`, oldest first
+    (#2193), or None when they have no such ticket. Another account's ticket and a missing one
+    look the same. The words come through a door that checks the owner itself, so a wrong line
+    here still cannot show anyone else's."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT who, text, created_at FROM dmbot_support_mine_thread(%s)", (sent,)
+        )
+        found = await cur.fetchall()
+    if not found:
+        return None
+    return [Turn(_TURN_WHO[r["who"]], r["text"], r["created_at"]) for r in found]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
