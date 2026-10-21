@@ -110,9 +110,12 @@ async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int
     (`db.user`); the number comes back through the same person's `read_own` right."""
     async with db.user(user_id) as conn:
         cur = await conn.execute(
+            # A person's tickets never share a sent time: the account page opens one by that time
+            # (#2193), so a second ticket in the same second is stamped one second later.
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (now, user_id, plan, ticket.subject, ticket.message),
+            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+            (now, user_id, user_id, plan, ticket.subject, ticket.message),
         )
         row = await cur.fetchone()
     assert row is not None
@@ -386,6 +389,38 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
         )
         for r in found
     ]
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One part of a person's own conversation: who wrote it (as the page labels it), the words
+    and when. Only ever read for the signed-in person's own ticket; never logged."""
+
+    who: Literal["you", "helper", "team"]
+    text: str
+    created_at: int
+
+
+_TURN_WHO: dict[str, Literal["you", "helper", "team"]] = {
+    "customer": "you",
+    "ai": "helper",
+    "person": "team",
+}
+
+
+async def my_thread(db: Database, user_id: int, sent: int) -> list[Turn] | None:
+    """The whole conversation of the signed-in person's own ticket sent at `sent`, oldest first
+    (#2193), or None when they have no such ticket. Another account's ticket and a missing one
+    look the same. The words come through a door that checks the owner itself, so a wrong line
+    here still cannot show anyone else's."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT who, text, created_at FROM dmbot_support_mine_thread(%s)", (sent,)
+        )
+        found = await cur.fetchall()
+    if not found:
+        return None
+    return [Turn(_TURN_WHO[r["who"]], r["text"], r["created_at"]) for r in found]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:
