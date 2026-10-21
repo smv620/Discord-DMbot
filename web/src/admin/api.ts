@@ -44,6 +44,9 @@ export interface AdminGrant {
   note: string;
   grantedBy: string;
   grantedAt: number;
+  /** Also on the server's free list, so the grant adds nothing (#2196). Missing from an older
+   * API: then the grant is listed as before. */
+  alsoFree?: boolean;
 }
 
 export interface AdminLogEntry {
