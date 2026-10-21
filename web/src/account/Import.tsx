@@ -207,6 +207,7 @@ export default function Import({
   useEffect(() => {
     if (IMPORT_LIVE || !ref) return;
     let live = true;
+    setOpen("unknown");
     const campaign = ref.split(".").slice(1).join(".");
     api
       .me()
