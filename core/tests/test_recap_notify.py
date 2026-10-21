@@ -52,8 +52,8 @@ class TheDailyKind(IsolatedAsyncioTestCase):
     """Two held sessions of one campaign must not share a kind, or the second's email is dropped."""
 
     async def kinds(self, *calls: tuple[int, str]) -> list[str]:
-        mailer = SimpleNamespace(send=AsyncMock(return_value="sent"))
-        store = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
+        mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
+        store: Any = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
         for session_at, group in calls:
             await remind_the_dm(mailer, store, SITE, 5, CID, 7, session_at, 2, 1, group)
         return [c.kwargs["kind"] for c in mailer.send.await_args_list]
