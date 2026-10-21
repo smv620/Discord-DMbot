@@ -278,6 +278,20 @@ class TheDmsPage(Base):
         )
         self.assertIsNone(loose["transcriptsDeletedAt"])
 
+    async def test_a_recap_says_when_a_fixed_spelling_changed_its_text(self) -> None:
+        # Never respelled: null. The bot writes respelled_at when it carries a fixed spelling into
+        # the text (#2170); the page reads it and tells the DM (#2178).
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["respelledAt"])
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET respelled_at = 777 WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = 100",
+                (THURSDAY.id, self.one.id),
+            )
+        self.assertEqual((await read_recap(self.web, self.session, self.ref))["respelledAt"], 777)
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual({r["campaign"]: r["respelledAt"] for r in listed}["One"], 777)
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
