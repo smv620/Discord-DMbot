@@ -394,9 +394,10 @@ class RecapStore:
         text_hash: str | None = None,
         unchanged: tuple[str, str] | None = None,
     ) -> bool:
-        """Record where the audio has got to. Only while the recap is still the DM's to post
-        (a posted or dropped one has no use for it), and, with `unchanged` (title, summary), only
-        if the text is still what the audio was made from. False if nothing was written."""
+        """Record where the audio has got to. Only while the recap is draft, posting or posted (a
+        posted one is narrated again for the page when its text changed, #2183), and, with
+        `unchanged` (title, summary), only if the text is still what the audio was made from.
+        False if nothing was written."""
         sets = ["audio = %s", "audio_error = %s"]
         values: list[Any] = [audio, error[:200]]
         for column, value in (

@@ -577,6 +577,7 @@ def create_app(
         "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
+        "audio_off": (409, "audio_off"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
@@ -652,6 +653,8 @@ def create_app(
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
         """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
         session, _token = signed
+        if not settings.recaps_on:  # DMBOT_RECAPS is off: nothing would make it
+            raise HTTPException(status_code=409, detail="audio_off")
         try:
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),

@@ -307,7 +307,9 @@ function AudioPanel({
             ? panelWords.tooSoon
             : kind === "needs-approval"
               ? panelWords.needsApproval
-              : (errors[kind] ?? errors.other),
+              : kind === "audio-off"
+                ? panelWords.audioOff
+                : (errors[kind] ?? errors.other),
       });
     } finally {
       asking.current = false;
@@ -322,7 +324,9 @@ function AudioPanel({
       : audio.state === "failed"
         ? audio.error || panelWords.failed
         : audio.state === "ready" && !audio.current
-          ? panelWords.stale
+          ? audio.postedNote
+            ? panelWords.stalePosted
+            : panelWords.stale
           : audio.state === "off"
             ? panelWords.off
             : null;

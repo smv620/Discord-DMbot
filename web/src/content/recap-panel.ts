@@ -26,6 +26,9 @@ export const panelWords = {
   failed: "The audio couldn't be made. The text is fine.",
   stale:
     "The audio was made from the earlier text. Make it again after you save.",
+  stalePosted:
+    "This audio was made before a name's spelling was fixed. Press Make the audio again to update it on this page. The message already in Discord keeps the old audio.",
+  audioOff: "Audio is switched off for now, so it can't be made. Try again later.",
   again: "Make the audio again",
   asked: "Making the audio again. This page shows it when it is ready.",
   needsApproval: "Approve the new text first.",

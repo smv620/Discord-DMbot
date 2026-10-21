@@ -77,12 +77,15 @@ def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> 
         "current": current,
         # only for a text the DM approved with audio chosen (the database's door is the rule)
         # A posted recap may be narrated again only when its audio no longer matches its text
-        # (#2183, a spelling fix); a draft or a posting one, whenever it is made or failed.
+        # (#2183, a spelling fix, or a remake that failed); a draft or a posting one, whenever it
+        # is made or failed.
         "canAskAgain": ready
         and state in ("ready", "failed")
         and approved
         and audio_chosen
-        and (row["status"] != "posted" or (state == "ready" and not current)),
+        and (row["status"] != "posted" or not current),
+        # The page says what the new narration is for: the Discord message keeps the old one.
+        "postedNote": row["status"] == "posted",
     }
 
 
@@ -434,13 +437,14 @@ async def audio_again(
 ) -> dict[str, Any]:
     """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
     the campaign, a recap that is ready, and once every 10 minutes. It is also for a posted recap
-    whose narration no longer matches its text (#2183): then the campaign owner's plan must
-    include narration (`audio_in_plan`, from the API as for Approve), and the audio step checks
-    the plan and the month's allowance again before any paid call. The recap page and its shared
-    link get the new files; the Discord message already posted keeps its old attachment."""
+    whose narration no longer matches its text (#2183). The campaign owner's plan must include
+    narration (`audio_in_plan`, from the API as for Approve; checked for every status, since a
+    recap may be posted while the request runs), and the audio step checks the plan and the
+    month's allowance again before any paid call. The recap page and its shared link get the new
+    files; the Discord message already posted keeps its old attachment."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, row = await _one(conn, ref, session, marks=False)
-        if row["status"] == "posted" and not audio_in_plan:
+        if not audio_in_plan:
             raise RecapError("not_in_plan")
         cur = await conn.execute("SELECT dmbot_recap_audio_again(%s, %s, %s) AS r", (gid, cid, at))
         found = await cur.fetchone()

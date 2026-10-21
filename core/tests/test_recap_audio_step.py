@@ -633,6 +633,41 @@ class Choices(Base):
         self.assertTrue(self.fake.paths("text-to-speech"))  # it was really made again
         self.assertEqual(job.audio_text_hash, text_hash(job.title, job.summary))
 
+    async def posted_and_queued_again(self) -> None:
+        await self.worker().run(1, self.one.id, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+        await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0, next_at=0)
+        self.fake.calls.clear()
+
+    async def test_a_posted_remake_over_the_months_allowance_fails_and_spends_nothing(self) -> None:
+        await self.posted_and_queued_again()
+        before = (await self.job()).audio_credits  # what the first making cost
+
+        async def over(gid: int, cid: str, job: Any) -> str | None:
+            return "This month's narrated recaps are used up."
+
+        worker = self.worker()
+        worker._allowance = over
+        job = await worker.run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.audio), ("posted", "failed"))
+        self.assertEqual(self.fake.calls, [])  # nothing was bought
+        self.assertEqual(job.audio_credits, before)  # and nothing more
+
+    async def test_a_posted_remake_with_the_dms_switch_off_makes_nothing(self) -> None:
+        await self.posted_and_queued_again()
+
+        async def off(gid: int, cid: str, job: Any) -> bool:
+            return False
+
+        worker = self.worker()
+        worker._switched = off
+        job = await worker.run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.audio), ("posted", "off"))
+        self.assertEqual(self.fake.calls, [])
+
     async def test_text_only_queues_nothing_and_makes_nothing(self) -> None:
         await self.store.set_audio(1, self.one.id, 100, audio="off")
         job = await self.job()
