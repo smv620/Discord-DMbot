@@ -81,6 +81,7 @@ describe("What's new", () => {
       "Your recap waits for your name answers", // until dev1 deploys it (#2169)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
       "Tell DMbot what to fix", // until the web routes (#2113) are deployed (RECAP_FIX_LIVE, #2114)
+      "Speak a note to DMbot", // until the voice routes (#2113 part 2) are deployed (RECAP_VOICE_LIVE, #2114)
       "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)
       "A 📇 Names button", // until dev1 deploys it (#1987, #2002)
