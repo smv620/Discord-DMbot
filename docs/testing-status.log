@@ -9,8 +9,8 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
-- Supervisor, 2026-10-21 04:40 UTC: development at 65885de6 (or later), i.e. everything merged since 0d5a4b52.
-  Deploy after #2182 merges (it is next in RepoManager's queue; it goes with #2177's 0145).
+- Supervisor, 2026-10-21 13:20 UTC (replaces the 04:40 note): two deploys, in order. Live is 0d5a4b52.
+  STEP A: deploy 6bd9a9db (#2182's merge, migrations 0132-0145). Do it exactly as the 04:40 note said:
   1. Before: back up the database (dry run first, as always). Then run
      `python -m dmbot.devtools.fast_compare --yes` once (cap $5) and post the sidebar table, its pass
      rate and its time on #2152 (Haiku 5.5 becomes the fast tier, #2157).
@@ -27,7 +27,23 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
        pick it up, and Undo works.
      - Names spelled out at the table (#2184): spell a name letter by letter in a test session; it shows as a
        suggestion after the session, never to players.
-  Switches that stay off: DMBOT_IMPORTS, the import help (IMPORT_LIVE), SUPPORT_AI_LIVE.
+  Post the result on #516, then STEP B.
+  STEP B: deploy development at 684a8d54 or later (everything merged since, migrations 0146-0156).
+  1. Back up again (dry run first). Migrations 0146-0156 run on start; 0149 marks old stuck recap-audio
+     rows failed (row-level security opened for itself, tested). Bot before web-api.
+  2. web-api must be RECREATED, not only restarted: the compose file now passes DMBOT_RECAPS to it (#2227).
+     The .env value is the bot's existing one.
+  3. Checks (the owner's requests first):
+     - Admin page: Free access lists a person with an older grant once, with Remove old entry (#2206);
+       the "How much" radios sit beside their labels (#2207); Recent changes and Support tickets are paged
+       windows with a page bar (#2209, #2220).
+     - Account page: open a support question and read its whole conversation (#2205); a free-access account
+       sees the Support form (#2239).
+     - A held recap: its question and reminder lose their buttons when it ends (#2228); ⏳ Later on a
+       suggested name stops holding the recap (#2232).
+     - Say it this way? appears on the name card after a session where a name was said with its
+       pronunciation (#2195, #2226).
+  Switches that stay off: DMBOT_IMPORTS, IMPORT_LIVE, SUPPORT_AI_LIVE, RECAP_VOICE_LIVE.
 - Owner alerts (#1907), once merged: no migration. The owner sets OWNER_ALERT_EMAIL (their private address) and
   optionally MAIL_ALERTS_REPLY_TO in the server's .env at the terminal (dev1 never types the address into the
   repository or a chat), then dev1 restarts bot and web-api (bot first). Check: the start-up log says "Owner
