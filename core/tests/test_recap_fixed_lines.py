@@ -4,6 +4,8 @@ counted as story, said by the narration, never a secret name, and added once. In
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from dmbot.recaps import fixed_lines as fl
 from dmbot.recaps.audio import script
@@ -70,3 +72,45 @@ class TheLines(unittest.TestCase):
         opening, closing = fl.lines("x" * 100)
         self.assertLessEqual(longest + len(opening) + len(closing) + 4, SUMMARY_MAX)
         self.assertGreater(WORDS_CEILING, 0)
+
+    def test_a_story_that_only_reads_like_the_lines_is_left_alone(self) -> None:
+        story = "Previously on the road they walked… and on.\n\nMore."
+        self.assertEqual(fl.without(story), story)
+        self.assertTrue(fl.wrap(story, NAME).startswith("Previously, on The Ember Road…"))
+        ending = "The tale ends: And so the party continues the adventure of the Lost Mine."
+        self.assertEqual(fl.without(ending), ending)  # a sentence is not the closing paragraph
+        self.assertTrue(fl.wrap(ending, NAME).endswith("adventure of The Ember Road."))
+
+    def test_retyped_dots_still_count_and_a_name_cannot_break_the_shape(self) -> None:
+        retyped = (
+            "Previously, on The Ember Road...\n\nStory.\n\n"
+            "And so the party continues the adventure."
+        )
+        self.assertEqual(fl.without(retyped), "Story.")
+        self.assertEqual(fl.usable_name("Road… of Doom...", ()), "Road of Doom")
+        self.assertEqual(fl.without(fl.wrap("Story.", "Dots… and (cues)")), "Story.")
+
+
+class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
+    async def test_last_times_recap_reaches_the_writer_without_the_fixed_lines(self) -> None:
+        from dmbot.recaps.inputs import load_inputs
+
+        bridge = SimpleNamespace(summary=fl.wrap("《Calm》 The keep fell quiet.", NAME))
+        session = SimpleNamespace(started_at=200, id="s")
+        got = await load_inputs(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(name=NAME, dm_user_ids={7}))
+            ),
+            lookup=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(names=[]))),
+            transcripts=SimpleNamespace(
+                sessions=AsyncMock(return_value=[session]), lines=AsyncMock(return_value=[])
+            ),
+            recaps=SimpleNamespace(bridge=AsyncMock(return_value=bridge)),
+            clocks=None,
+            guild_id=1,
+            campaign_id="c" * 32,
+            session_at=200,
+        )
+        assert got is not None
+        self.assertEqual(got.previous, "The keep fell quiet.")
+        self.assertEqual(got.campaign_name, NAME)  # and this recap's lines will carry the name

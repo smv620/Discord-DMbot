@@ -24,16 +24,24 @@ CLOSING_BARE = "And so the party continues the adventure."
 ROOM = 400  # characters the web editor allows beyond the longest draft: both lines and their gap
 
 _CUE_BRACKETS = re.compile(r"[《》()]")
-_OPENS = re.compile(r"^\s*Previously,?\s+on\b.{0,200}?…|^\s*Previously…", re.IGNORECASE | re.DOTALL)
+_DOTS = re.compile(r"…|\.{2,}")
+# The fixed lines are paragraphs of their own (that is how `wrap` writes them), so a story that
+# merely starts "Previously on the road they walked" or ends a sentence the same way as the closing
+# line is never taken for them: the opening must be the text's first paragraph and end in an
+# ellipsis (three dots too, since a DM may retype it), and the closing the last paragraph.
+_OPENS = re.compile(r"\A\s*Previously(?:,\s+on [^\n]{1,200}?)?(?:…|\.{3})[ \t]*(?:\n\s*\n|\Z)")
 _CLOSES = re.compile(
-    r"And so the party continues the adventure(?: of [^\n]{1,200}?)?\.\s*$", re.IGNORECASE
+    r"(?:\A|\n\s*\n)[ \t]*And so the party continues the adventure(?: of [^\n]{1,200}?)?\.[ \t]*\Z",
+    re.IGNORECASE,
 )
 
 
 def usable_name(name: str, secret_names: Collection[str]) -> str:
     """The campaign's name as it may be spoken: one line, no cue brackets, nothing secret. An
     empty result means "go without the name"."""
-    clean = " ".join(_CUE_BRACKETS.sub(" ", name).split())[:100]
+    # (A cue bracket or an ellipsis in a name would break the text or the lines' own shape, so they
+    # become spaces: "Dragon (Heist)" is spoken "Dragon Heist".)
+    clean = " ".join(_DOTS.sub(" ", _CUE_BRACKETS.sub(" ", name)).split())[:100]
     if not clean or names_a_secret(clean, secret_names, []):
         return ""
     return clean
@@ -62,6 +70,5 @@ def wrap(summary: str, name: str, secret_names: Collection[str] = ()) -> str:
 def without(summary: str) -> str:
     """The recap's text without its fixed lines: what the length target and word counts see, and
     what the next recap is given as "last time" (so the writer is not shown lines to copy)."""
-    body = summary.strip()
-    body = _OPENS.sub("", body, count=1).strip()
+    body = _OPENS.sub("", summary.strip(), count=1).strip()
     return _CLOSES.sub("", body).strip()
