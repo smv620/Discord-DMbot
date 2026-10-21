@@ -141,6 +141,22 @@ class ThePastTranscripts(NamesTest):
         text = it.response.edited[0][0]
         self.assertIn("Changed Branok to Brannoch in 2 lines of 1 past session.", text)
 
+    async def test_the_card_also_says_what_happened_to_the_recaps(self) -> None:
+        from dmbot.recaps.store import RecapStore
+
+        self.bot.recaps = RecapStore(self.db)
+        await self.bot.recaps.enqueue(GUILD, self.campaign.id, 100, dm_user_id=DM)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'ready', title = 'Branok', summary = 'Branok runs.'"
+            )
+        it = await self.fix()
+        text = it.response.edited[0][0]
+        self.assertIn("Also changed Branok to Brannoch in 1 recap that is waiting.", text)
+        job = await self.bot.recaps.get(GUILD, self.campaign.id, 100)
+        assert job is not None
+        self.assertEqual(job.summary, "Brannoch runs.")
+
     async def test_one_undo_takes_back_the_name_and_the_lines(self) -> None:
         before = await self.texts()
         it = await self.fix()

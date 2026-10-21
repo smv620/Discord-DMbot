@@ -68,7 +68,8 @@ class MailSettings:
     app_password: str = field(default="", repr=False)
     sender: str = ""  # the From address
     # The support flow's two other senders (#1431): what a person gets from DMbot's helper and the
-    # team (`info@`), and the alerts to the team (`jarvis@`). Empty: `sender` stands in.
+    # team (`info@`), and the alerts to the team (the alerts sender, the `<dmbot private>` email,
+    # docs/EMAIL.md). Empty: `sender` stands in.
     support_from: str = ""
     alerts_from: str = ""
     # Where owner alerts go (#1907): the owner's private address, from the server's .env only,
