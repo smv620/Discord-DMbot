@@ -61,6 +61,24 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Calls: 5", text)  # beats, prose, fact check, grader, finish
         self.assertIn("spend $", text)
 
+    async def test_the_report_shows_how_the_opening_was_split_by_count_never_by_word(self) -> None:
+        from tests import test_recap_split as st
+
+        fast = fx.Canned(
+            st.SPLIT_ANSWER,
+            st.beats_after(len(st.TALK) + len(st.READ_ALOUD)),
+            fx.PROSE_ANSWER,
+            fx.GRADE_ANSWER,
+            fx.FINISH_ANSWER,
+        )
+        lines = st.reading([st.TALK, st.READ_ALOUD, [t for _, t in fx.LINES]])
+        out = await run.run_text(inputs(lines=lines, earlier=st.EARLIER), fast, fx.Canned())
+        self.assertEqual(out.job.state, "ready")
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("Split (ai): talk 2, recap 5, play 7.", text)
+        self.assertIn("lines talk 1-2, recap 3-7, play 8-14", text)
+        self.assertNotIn("Redfall", text)
+
     async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:
         # Both tries cite no real line, so the sheet is refused twice (#1997).
         bad = (

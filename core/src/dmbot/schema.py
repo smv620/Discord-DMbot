@@ -8241,6 +8241,16 @@ NAMES_LATER = f"""
     );
     """ + _isolate("name_later")
 
+RECAP_SPLIT = """
+    -- How a recap's session was split (#2253): its opening into talk, catch-up and last time's
+    -- recap, then play. NULL until the split stage has run (or for a job from before it). Ranges
+    -- of line numbers and a flag only, never a word of the transcript, so nothing here needs
+    -- consent or row-level changes: the column is on a table that already isolates by server. A
+    -- new nullable column changes no rows. The next session reads it to leave this session's
+    -- retelling out of what it compares with.
+    ALTER TABLE recap_jobs ADD COLUMN split JSONB;
+    """
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -8618,6 +8628,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         SUPPORT_TICKET_TIMES,
     ),  # no two of a person's tickets share a time
     ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
+    ("0158_recap_split", RECAP_SPLIT),  # a session's opening split into parts (#2253)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
