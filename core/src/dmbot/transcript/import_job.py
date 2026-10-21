@@ -195,7 +195,7 @@ class ImportStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE session_imports SET scanned = TRUE, scan_finished = TRUE,"
-                " scan_from = 0, scan_to = 0 WHERE session_id = %s",
+                " scan_from = 0, scan_to = 0, scan_gave_up = TRUE WHERE session_id = %s",
                 (session_id,),
             )
 

@@ -114,6 +114,10 @@ class SupportBase(DatabaseTest):
             cur = await conn.execute("SELECT * FROM support_tickets ORDER BY id")
             return list(await cur.fetchall())
 
+    async def rows(self) -> list[support.Row]:
+        """Every ticket, newest first (the admin list's first page, big enough to hold them)."""
+        return (await support.page(self.web, status=None, number=1, size=1000))[0]
+
     async def add_row(self, user_id: int, created_at: int, subject: str = "Old") -> None:
         async with self.web.user(user_id) as conn:
             await conn.execute(
@@ -411,7 +415,7 @@ class SupportRoute(SupportBase):
         await self.add_row(ALICE.id, self.now - 2, "one")
         await self.add_row(ALICE.id, self.now - 1, "two")
         await self.add_row(ALICE.id, self.now, "three")
-        by_subject = {r.subject: r.id for r in await support.newest(self.web)}
+        by_subject = {r.subject: r.id for r in await self.rows()}
         await support.set_status(self.web, by_subject["one"], "answered")
         await support.set_status(self.web, by_subject["two"], "closed")
         answer = await (await self.client()).get("/support/mine")
@@ -421,7 +425,7 @@ class SupportRoute(SupportBase):
         )
 
     async def ticket_id(self, subject: str) -> int:
-        return {r.subject: r.id for r in await support.newest(self.web)}[subject]
+        return {r.subject: r.id for r in await self.rows()}[subject]
 
     async def test_the_list_shows_who_answered_last_and_the_answers_first_line(self) -> None:
         await self.add_row(ALICE.id, self.now - 3, "helped")
@@ -701,7 +705,7 @@ class SupportKeptPrivately(SupportBase):
             row = await cur.fetchone()
             assert row is not None
             self.assertIsNone(row["m"])
-        (listed,) = await support.newest(self.web)
+        (listed,) = await self.rows()
         self.assertEqual(listed.message, "Words")
 
     async def test_a_person_cannot_add_for_someone_else_or_as_answered(self) -> None:
@@ -729,12 +733,12 @@ class SupportKeptPrivately(SupportBase):
             row = await cur.fetchone()
             assert row is not None
             self.assertEqual(row["n"], 0)
-        (ticket,) = await support.newest(self.web)
+        (ticket,) = await self.rows()
         self.assertEqual((ticket.status, ticket.user_id), ("new", ALICE.id))
         self.assertTrue(await support.set_status(self.web, ticket.id, "answered"))
-        self.assertEqual((await support.newest(self.web))[0].status, "answered")
+        self.assertEqual((await self.rows())[0].status, "answered")
         # The words are not a column the website may read, door or no door (#1373): they come
-        # through dmbot_support_message, which `newest` used above.
+        # through dmbot_support_message, which `rows` used above.
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):
             async with self.web.support_admin() as conn:
                 await conn.execute("SELECT message FROM support_tickets")
@@ -758,14 +762,14 @@ class SupportKeptPrivately(SupportBase):
             assert row is not None
             self.assertIsNone(row["e"])
         # Through the door it is the Discord address, or the payment company's when there is one.
-        (ticket,) = await support.newest(self.web)
+        (ticket,) = await self.rows()
         self.assertEqual(ticket.email, "belleros@example.com")
         async with self.web.user(ALICE.id) as conn:
             await conn.execute("UPDATE web_users SET payment_email = 'pays@example.org'")
-        self.assertEqual((await support.newest(self.web))[0].email, "pays@example.org")
+        self.assertEqual((await self.rows())[0].email, "pays@example.org")
         async with self.web.user(ALICE.id) as conn:
             await conn.execute("UPDATE web_users SET email = NULL, payment_email = NULL")
-        self.assertIsNone((await support.newest(self.web))[0].email)
+        self.assertIsNone((await self.rows())[0].email)
 
     async def test_an_account_with_no_ticket_gets_no_address_even_with_the_door_open(self) -> None:
         # The door is one the website's role can open itself, so it can't be a way to read the
@@ -807,7 +811,7 @@ class SupportKeptPrivately(SupportBase):
     async def test_the_list_is_newest_first(self) -> None:
         await self.add_row(ALICE.id, self.now - 50, "older")
         await self.add_row(ALICE.id, self.now, "newer")
-        self.assertEqual([r.subject for r in await support.newest(self.web)], ["newer", "older"])
+        self.assertEqual([r.subject for r in await self.rows()], ["newer", "older"])
 
     async def test_an_unknown_ticket_is_not_found_and_a_bad_status_is_refused(self) -> None:
         self.assertFalse(await support.set_status(self.web, 999, "closed"))
@@ -1007,6 +1011,114 @@ class SupportAdmin(SupportBase):
         body = (await self.client.get("/admin/support")).json()
         self.assertEqual(len(body["tickets"]), 4)
 
+    async def many(self, count: int, *, answered_every: int = 0) -> None:
+        """`count` tickets, one second apart, ticket 0 the oldest; every `answered_every`th is
+        answered, the rest new (invented subjects)."""
+        for n in range(count):
+            await self.add_row(ALICE.id, self.now - count + n, f"ticket {n:03d}")
+        if answered_every:
+            for t in await self.tickets():
+                if int(t["subject"].split()[1]) % answered_every == 0:
+                    await support.set_status(self.web, t["id"], "answered")
+
+    async def test_tickets_come_twenty_a_page_newest_first_with_the_page_count(self) -> None:
+        await self.many(45)
+        await self.sign_in()
+        first = (await self.client.get("/admin/support")).json()
+        self.assertEqual((len(first["tickets"]), first["page"], first["pages"]), (20, 1, 3))
+        self.assertEqual(first["tickets"][0]["subject"], "ticket 044")  # newest first
+        second = (await self.client.get("/admin/support", params={"page": 2})).json()
+        self.assertEqual((len(second["tickets"]), second["page"]), (20, 2))
+        self.assertEqual(second["tickets"][0]["subject"], "ticket 024")
+        last = (await self.client.get("/admin/support", params={"page": 3})).json()
+        self.assertEqual(len(last["tickets"]), 5)  # the remainder
+        self.assertEqual(last["tickets"][-1]["subject"], "ticket 000")
+        subjects = [t["subject"] for p in (first, second, last) for t in p["tickets"]]
+        self.assertEqual(len(subjects), len(set(subjects)))  # every ticket once
+        # The counts cover every ticket, whichever page this is.
+        self.assertEqual(last["counts"]["new"], 45)
+
+    async def test_paging_goes_within_the_filtered_list(self) -> None:
+        await self.many(45, answered_every=3)  # 15 answered, 30 new
+        await self.sign_in()
+        new = (await self.client.get("/admin/support", params={"status": "new"})).json()
+        self.assertEqual((len(new["tickets"]), new["pages"]), (20, 2))
+        answered = (await self.client.get("/admin/support", params={"status": "answered"})).json()
+        self.assertEqual((len(answered["tickets"]), answered["pages"]), (15, 1))
+        page_two = (
+            await self.client.get("/admin/support", params={"status": "new", "page": 2})
+        ).json()
+        self.assertEqual(len(page_two["tickets"]), 10)
+        self.assertEqual({t["status"] for t in page_two["tickets"]}, {"new"})
+        # A page that exists unfiltered but not in this filter is refused.
+        past = await self.client.get("/admin/support", params={"status": "answered", "page": 2})
+        self.assertEqual((past.status_code, past.json()), (400, {"error": "bad_page"}))
+
+    async def test_a_bad_page_is_refused_and_no_tickets_is_one_empty_page(self) -> None:
+        await self.sign_in()
+        empty = (await self.client.get("/admin/support")).json()
+        self.assertEqual((empty["tickets"], empty["page"], empty["pages"]), ([], 1, 1))
+        await self.many(21)  # two pages
+        for bad in (
+            "0",
+            "-1",
+            "3",
+            "abc",
+            "",
+            "1.5",
+            "+2",
+            "%202",
+            "2%0A",
+            "%D9%A2",
+            "99999999999",
+        ):
+            answer = await self.client.get(f"/admin/support?page={bad}")
+            self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
+        self.assertEqual((await self.client.get("/admin/support?page=002")).json()["page"], 2)
+
+    async def test_needs_the_team_pages_longest_waiting_first(self) -> None:
+        """#1485 with pages: the ticket handed over longest ago is first, on page 1, whatever its
+        age. Handed over in the order they were sent (so longest-waiting is the OLDEST, the
+        opposite of newest-first), except ticket 010, handed over before all the others."""
+        await self.many(25)
+        by_subject = {t["subject"]: t["id"] for t in await self.tickets()}
+        for n in range(25):
+            handed = self.now - 5000 if n == 10 else self.now - 1000 + n
+            await support.escalate(self.web, by_subject[f"ticket {n:03d}"], "asked", handed)
+        await self.sign_in()
+        first = (await self.client.get("/admin/support", params={"status": "escalated"})).json()
+        self.assertEqual((len(first["tickets"]), first["pages"]), (20, 2))
+        expected = [10, *[n for n in range(25) if n != 10]]  # 010, then 000, 001, ... in order
+        self.assertEqual(
+            [t["subject"] for t in first["tickets"]], [f"ticket {n:03d}" for n in expected[:20]]
+        )
+        second = (
+            await self.client.get("/admin/support", params={"status": "escalated", "page": 2})
+        ).json()
+        self.assertEqual(
+            [t["subject"] for t in second["tickets"]], [f"ticket {n:03d}" for n in expected[20:]]
+        )
+        # And every other list is still newest first: the order is the escalated list's alone.
+        newest = (await self.client.get("/admin/support", params={"status": "all"})).json()
+        self.assertEqual(newest["tickets"][0]["subject"], "ticket 024")
+
+    async def test_tickets_sent_at_the_same_second_keep_one_order_across_a_page_edge(self) -> None:
+        for n in range(25):
+            await self.add_row(ALICE.id, self.now, f"same {n:03d}")  # one second, 25 tickets
+        await self.sign_in()
+        one = (await self.client.get("/admin/support")).json()["tickets"]
+        two = (await self.client.get("/admin/support", params={"page": 2})).json()["tickets"]
+        subjects = [t["subject"] for t in one + two]
+        self.assertEqual(len(set(subjects)), 25)  # none repeated or lost across the edge
+        self.assertEqual(subjects, sorted(subjects, reverse=True))  # newest id first
+
+    async def test_exactly_twenty_tickets_is_one_page(self) -> None:
+        await self.many(20)
+        await self.sign_in()
+        body = (await self.client.get("/admin/support")).json()
+        self.assertEqual((len(body["tickets"]), body["pages"]), (20, 1))
+        self.assertEqual((await self.client.get("/admin/support?page=2")).status_code, 400)
+
     async def test_the_counts_follow_a_change_and_show_zero_for_none(self) -> None:
         csrf = await self.sign_in()
         empty = (await self.client.get("/admin/support", params={"status": "new"})).json()
@@ -1110,7 +1222,7 @@ class SupportAdmin(SupportBase):
     async def test_the_counts_cover_every_ticket_even_past_the_list_limit(self) -> None:
         for n in range(5):
             await self.add_row(ALICE.id, self.now - n, f"t{n}")
-        listed = await support.newest(self.web, limit=2)
+        listed = (await support.page(self.web, status=None, number=1, size=2))[0]
         self.assertEqual(len(listed), 2)  # the list is cut short...
         self.assertEqual(
             await support.counts(self.web), {"new": 5, "answered": 0, "closed": 0, "escalated": 0}
@@ -1176,7 +1288,7 @@ class DoorBoundary(unittest.TestCase):
 
     def test_only_support_opens_the_door_and_only_the_admin_routes_use_support(self) -> None:
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
-        self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
+        self.assertEqual(self.callers("support.page("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.thread("), {"web/admin_api.py", "web/support_ai.py"})
         # The reply address is read by this one query, and the SQL function only by it.

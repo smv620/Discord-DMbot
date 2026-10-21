@@ -109,6 +109,9 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
+    # again" is refused instead of promising it (#2183).
+    recaps_on: bool = False
 
     @property
     def site_origin(self) -> str:
@@ -269,8 +272,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
     if imports_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_IMPORTS must be 1 (on) or 0 (off), got "{imports_raw}".')
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
