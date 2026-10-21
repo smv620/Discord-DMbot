@@ -389,11 +389,11 @@ class SupportHelper:
         )
         return True
 
-    async def quoted_starts(self, ticket_id: int) -> list[str]:
-        """The first lines of the emails a person may be answering, so a reply sent back with no
-        ">" is cut there (`support_mail.fresh_words`): the newest answer kept on the ticket and
-        the fixed notes DMbot sends. Lines only, never logged."""
-        starts = [ACK_WITH_HELPER, ACK_PERSON, ESCALATED_BODY]
+    async def sent_emails(self, ticket_id: int) -> list[str]:
+        """The emails a person may be answering, so a reply sent back with no ">" is cut where
+        the copy starts (`support_mail.fresh_words`): the newest answer kept on the ticket and
+        the fixed notes DMbot sends. Never logged."""
+        sent = [ACK_WITH_HELPER, ACK_PERSON, ESCALATED_BODY]
         try:
             replies = await support.thread(self._db, ticket_id)
         except Exception as exc:
@@ -401,9 +401,9 @@ class SupportHelper:
             replies = []
         for r in reversed(replies):
             if r.who in ("ai", "person"):
-                starts.append(r.text)
+                sent.append(r.text)
                 break
-        return [line.strip() for text in starts for line in text.splitlines()[:1] if line.strip()]
+        return sent
 
     async def customer_replied(self, ticket_id: int, text: str) -> bool:
         """The person's emailed reply, kept on the ticket. It goes back to waiting for the helper

@@ -96,12 +96,37 @@ class TheHistory(HelperBase):
     async def test_dmbots_own_words_sent_back_with_no_marks_are_not_the_persons(self) -> None:
         number = await self.talk()
         mail = self.mails(to_alice=True)[-1]
-        starts = await self.helper.quoted_starts(number)
+        starts = await self.helper.sent_emails(number)
         sent_back = f"Thanks, that worked.\n\n{new_words(mail)}\n\n{ai.HISTORY_HEADING}\n..."
-        self.assertEqual(sm.fresh_words(sent_back, quoted_starts=starts), "Thanks, that worked.")
+        self.assertEqual(sm.fresh_words(sent_back, sent=starts), "Thanks, that worked.")
         # The hand-over note and the thank-you have no stored part: their fixed lines count too.
         note = f"Ok.\n{ai.ESCALATED_BODY.splitlines()[0]}\nmore"
-        self.assertEqual(sm.fresh_words(note, quoted_starts=starts), "Ok.")
+        self.assertEqual(sm.fresh_words(note, sent=starts), "Ok.")
+
+    async def test_a_short_opening_the_team_also_used_is_still_the_persons(self) -> None:
+        number = await self.talk()
+        await self.helper.team_reply(number, "Hi,\nWe fixed it on our side. Please try again.")
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        reply = "Hi,\nIt still fails for me. The button stays red."
+        self.assertEqual((await self.inbound(to, reply)).status_code, 200)
+        last = (await support.thread(self.web, number))[-1]
+        self.assertEqual((last.who, last.text), ("customer", reply))
+
+    async def test_a_reply_with_the_teams_words_below_and_no_marks_stores_only_the_persons(
+        self,
+    ) -> None:
+        number = await self.talk()
+        await self.helper.team_reply(number, "Hi,\nWe fixed it on our side. Please try again.")
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        sent_back = "Hi,\nYes, it works now.\n\nHi,\nWe fixed it on our side.\nPlease try again."
+        self.assertEqual((await self.inbound(to, sent_back)).status_code, 200)
+        last = (await support.thread(self.web, number))[-1]
+        self.assertEqual(last.text, "Hi,\nYes, it works now.")
+        # DMbot's own words below a person's, with no marks, are cut the same way.
+        mail = self.mails(to_alice=True)[-1]
+        again = f"Thanks, that worked.\n\n{new_words(mail)}"
+        await self.inbound(to, again)
+        self.assertEqual((await support.thread(self.web, number))[-1].text, "Thanks, that worked.")
 
     async def test_a_long_history_keeps_the_newest_parts_and_says_where_the_rest_is(self) -> None:
         number = await self.ticket("first " * 10)
@@ -136,20 +161,27 @@ class TheLimits(HelperBase):
         self.assertLessEqual(len(one), ai.HISTORY_MAX + len(ai.HISTORY_HEADING) + 400)
 
     async def test_the_teams_email_keeps_the_first_message_after_a_long_thread(self) -> None:
-        number = await self.ticket("the very first question")
-        first = await support.one(self.web, number)
-        assert first is not None
-        many = [support.Reply(i, "customer", "q" * 3000, 1_800_000_000) for i in range(1, 12)]
-        text = ai.conversation(first, many, speakers=ai.TEAM_SPEAKERS, limit=ai.NO_LIMIT)
+        await self.ticket("the very first question")
+        for n in range(ai.MAX_AI_ANSWERS):
+            self.fake.answers.append(answer("a" * 3000))
+            await self.helper.run_once()
+            to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+            await self.inbound(to, ("q" * 3000) + str(n))
+        await self.helper.run_once()
+        alert = next(m for m in self.mails() if "needs you" in str(m["Subject"]))
+        text = alert.get_content()
         self.assertIn("the very first question", text)
         self.assertNotIn(ai.HISTORY_OLDER, text)
+        self.assertGreater(len(text), ai.HISTORY_MAX)
 
     async def test_a_newest_part_longer_than_the_limit_ends_with_an_ellipsis(self) -> None:
         number = await self.ticket("short")
         first = await support.one(self.web, number)
         assert first is not None
         text = ai.conversation(first, [support.Reply(1, "ai", "z" * 500, 1)], limit=200)
-        self.assertIn("…", text)
+        newest = text.split("\n\n")[1]  # the cut part, before the line about the older ones
+        self.assertTrue(newest.endswith("…"))
+        self.assertLessEqual(len(newest), 200)
 
     async def test_the_history_goes_only_to_the_tickets_person(self) -> None:
         await self.ticket()
@@ -178,6 +210,19 @@ class TheThreading(HelperBase):
         self.assertEqual(ids(str(team["In-Reply-To"])), [second])
         self.assertEqual(ids(str(team["References"])), [first, second])
         self.assertEqual(await support.mail_ids(self.web, number), [first, second, third])
+
+    async def test_references_keep_the_first_id_and_the_newest_nineteen(self) -> None:
+        number = await self.ticket()
+        (thank_you,) = await support.mail_ids(self.web, number)
+        for n in range(25):
+            await support.keep_mail_id(self.web, number, f"<id{n}@example.org>", now=1)
+        self.fake.answers.append(answer("Open the menu."))
+        await self.helper.run_once()
+        answered = self.mails(to_alice=True)[-1]
+        refs = ids(str(answered["References"]))
+        self.assertEqual(len(refs), ai.MAX_REFERENCES)
+        self.assertEqual(refs[0], thank_you)
+        self.assertEqual(refs[1:], [f"<id{n}@example.org>" for n in range(6, 25)])
 
     async def test_no_header_carries_the_tickets_words_or_the_address(self) -> None:
         await self.ticket()

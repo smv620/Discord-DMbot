@@ -86,17 +86,44 @@ _QUOTE_START = re.compile(
 )
 
 
-def fresh_words(text: str, limit: int = 4000, quoted_starts: Sequence[str] = ()) -> str:
+def _squash(text: str) -> str:
+    """Words only, single-spaced, so a re-wrapped copy of an email still matches the original."""
+    return " ".join(text.split())
+
+
+def _is_sent_back(lines: Sequence[str], sent: Sequence[str]) -> bool:
+    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent. The
+    first line must match the email's first line; then either that line is long enough to be
+    unlikely by chance (25 characters, 4 words) or the lines after it match the email as well. A
+    short common opening ("Hi,", "Thanks!") alone is the person's own."""
+    first = lines[0].strip()
+    rest = _squash("\n".join(lines))
+    for email in sent:
+        opening = next((line.strip() for line in email.splitlines() if line.strip()), "")
+        if not opening or first != opening:
+            continue
+        if len(opening) >= 25 and len(opening.split()) >= 4:
+            return True
+        if rest.startswith(_squash(email)[:80]):
+            return True
+    return False
+
+
+def fresh_words(text: str, limit: int = 4000, sent: Sequence[str] = ()) -> str:
     """What the person wrote, without the email they replied to: cut at the first quoted line or
-    "On ... wrote:" line, tidied and shortened. `quoted_starts` are the first lines of the emails
-    they may be answering (DMbot's or the team's newest words): a mail program that adds no ">"
-    sends those back too, and they must not be kept as the person's. Empty when nothing is left."""
+    "On ... wrote:" line, tidied and shortened. `sent` are the emails they may be answering
+    (DMbot's or the team's newest words): a mail program that adds no ">" sends those back too,
+    and they must not be kept as the person's. New words sit above any quote, so the first
+    non-empty line is never cut as a copy. Empty when nothing is left."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     kept: list[str] = []
-    starts = {s.strip() for s in quoted_starts if s.strip()}
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if _QUOTE_START.match(line) or line.strip() in starts:
+    for number, line in enumerate(lines):
+        if _QUOTE_START.match(line) or (kept and _is_sent_back(lines[number:], sent)):
             break
-        kept.append(line.rstrip())
+        if line.strip():
+            kept.append(line.rstrip())
+        elif kept:
+            kept.append("")
     words = "\n".join(kept).strip()
     words = "".join(c for c in words if c == "\n" or c == "\t" or c.isprintable())
     return words[:limit].strip()
