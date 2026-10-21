@@ -1123,7 +1123,9 @@ async def _respell_past(
                 done_recaps.posted,
             )  # counts only
             if done_recaps.waiting or done_recaps.posted or done_recaps.skipped:
-                notes.append(recaps_note(_md(old), _md(new), done_recaps))
+                notes.append(
+                    recaps_note(_md(old), _md(new), done_recaps, after_transcripts=bool(notes))
+                )
         except Exception:
             log.exception("Fix spelling: couldn't carry it into the recaps")
             notes.append("The recaps were not changed. Press Undo, then fix the spelling again.")

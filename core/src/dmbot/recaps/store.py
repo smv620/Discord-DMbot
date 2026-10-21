@@ -26,6 +26,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.memory.models import name_key
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.transcript.respell import respell
@@ -505,35 +506,50 @@ class RecapStore:
         like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT session_at, status, title, summary, original, approved_hash, audio,"
-                " audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                " AND state = 'ready' AND status IN ('draft', 'posting', 'posted')"
+                "SELECT session_at, status, title, summary, original, to_confirm, approved_hash,"
+                " audio, audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status IN ('draft', 'posted')"
                 " AND (title ILIKE %s ESCAPE '\\' OR summary ILIKE %s ESCAPE '\\'"
                 " OR original ILIKE %s ESCAPE '\\') FOR UPDATE",
                 (guild_id, campaign_id, like, like, like),
             )
             for row in await cur.fetchall():
                 title, summary, original = row["title"], row["summary"], row["original"]
-                changed = {
-                    name: found.text
-                    for name, text in (
-                        ("title", title),
-                        ("summary", summary),
-                        ("original", original),
+                changed: dict[str, str] = {}
+                blocked = False
+                for name, text in (("title", title), ("summary", summary), ("original", original)):
+                    found = respell(text, old, new, longer, hidden)
+                    if found is not None:
+                        changed[name] = found.text
+                    elif hidden and respell(text, old, new, longer) is not None:
+                        blocked = True  # the new spelling would complete a hidden name here
+                if blocked:
+                    skipped += 1  # the recap is left whole, never half respelled
+                    continue
+                # The names the recap asks the DM to check: the same name, spelled right.
+                confirm = list(
+                    dict.fromkeys(
+                        new if name_key(c) == name_key(old) else c for c in row["to_confirm"]
                     )
-                    if (found := respell(text, old, new, longer, hidden)) is not None
-                }
-                if not changed:
+                )
+                confirm_changed = confirm != list(row["to_confirm"])
+                if not changed and not confirm_changed:
                     continue
                 if any(len(text) > _LIMITS[name] for name, text in changed.items()):
                     skipped += 1  # the new spelling is longer and would not fit: left as it was
                     continue
                 if not ({"title", "summary"} & changed.keys()):
-                    # Only the kept original had it: written, but nothing the DM reads changed.
+                    # Only the kept original or the names to check had it: written, but nothing
+                    # the DM reads in the text changed.
+                    quiet = [f"{name} = %s" for name in changed]
+                    quiet_values: list[Any] = list(changed.values())
+                    if confirm_changed:
+                        quiet.append("to_confirm = %s")
+                        quiet_values.append(confirm)
                     await conn.execute(
-                        "UPDATE recap_jobs SET original = %s WHERE guild_id = %s"
+                        f"UPDATE recap_jobs SET {', '.join(quiet)} WHERE guild_id = %s"
                         " AND campaign_id = %s AND session_at = %s",
-                        (changed["original"], guild_id, campaign_id, row["session_at"]),
+                        (*quiet_values, guild_id, campaign_id, row["session_at"]),
                     )
                     continue
                 before = text_hash(title, summary)
@@ -544,6 +560,9 @@ class RecapStore:
                     sets.append("approved_hash = %s")
                     values.append(after)
                     kept += 1
+                if confirm_changed:
+                    sets.append("to_confirm = %s")
+                    values.append(confirm)
                 sets.append("respelled_at = %s")
                 values.append(int(self._now()))
                 await conn.execute(
