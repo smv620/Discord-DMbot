@@ -158,6 +158,34 @@ class TheHeldRecaps(Base):
             self.assertEqual([h["namesOpen"] for h in row["r"]], [3])
             self.assertEqual(set(row["r"][0]), {"campaignId", "campaign", "sessionAt", "namesOpen"})
 
+    async def test_a_job_in_another_campaign_with_the_same_time_does_not_hide_a_hold(self) -> None:
+        three = await self.campaigns.create(THURSDAY.id, "Three", ALICE.id)
+        await self.store.enqueue(THURSDAY.id, three.id, 400, dm_user_id=ALICE.id)
+        await self.hold(self.one.id, 400)  # One waits at the very time Three has a recap
+        listed = await list_recaps(self.web, self.session)
+        at_400 = sorted(
+            (r["campaign"], r["waitingForNames"]) for r in listed if r["sessionAt"] == 400
+        )
+        self.assertEqual(at_400, [("One", True), ("Three", False)])
+
+    async def test_a_hold_with_nothing_left_to_answer_is_not_shown_as_waiting(self) -> None:
+        await self.hold(self.one.id, names=0)  # answered; the next round releases it
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual([r["sessionAt"] for r in listed], [100])
+
+    async def test_the_door_refuses_a_server_set_right_but_not_on_the_sessions_list(self) -> None:
+        other = 5_150_000_000_000_001
+        away = await self.campaigns.create(other, "Away", ALICE.id)  # Alice DMs it, off her list
+        await HoldStore(self.db).hold(
+            other, away.id, 200, session_id="s", dm_user_id=ALICE.id, channel_id=5, names_open=2
+        )
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(other),))
+            cur = await conn.execute("SELECT dmbot_web_recap_holds(%s) AS r", (other,))
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["r"], [])
+
     async def test_the_website_cannot_read_the_holds_table_itself(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):

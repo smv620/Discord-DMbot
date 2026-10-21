@@ -250,11 +250,11 @@ async def list_recaps(db: Database, session: Session) -> list[dict[str, Any]]:
             )
             rows = await _with_transcript_marks(conn, int(guild.id), await cur.fetchall())
             out += [{**_view(r), "serverName": guild.name} for r in rows]
-            made = {r["session_at"] for r in rows}
+            made = {(r["campaign_id"], r["session_at"]) for r in rows}
             out += [
                 _held_view(int(guild.id), h, guild.name)
                 for h in await _holds(conn, int(guild.id))
-                if int(h["sessionAt"]) not in made  # (a released hold now has its job)
+                if (h["campaignId"], int(h["sessionAt"])) not in made  # (released: has its job)
             ]
     out.sort(key=lambda v: v["sessionAt"], reverse=True)
     return out[:LIST_LIMIT]
@@ -332,7 +332,8 @@ async def read_recap(db: Database, session: Session, ref: str) -> dict[str, Any]
             for held in await _holds(conn, guild_id):
                 if held["campaignId"] == campaign_id and int(held["sessionAt"]) == session_at:
                     return _held_view(guild_id, held)
-            raise
+            # Released between the list and this page: the job exists now (one more look).
+            *_, row = await _one(conn, ref, session)
     return _view(row)
 
 

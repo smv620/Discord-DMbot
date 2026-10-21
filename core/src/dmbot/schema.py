@@ -7573,9 +7573,10 @@ RECAP_HOLD_NAMES = """
         CHECK (names_open >= 0);
 
     -- The signed-in person's held recaps in one server: only campaigns they are a DM of, only
-    -- holds the DM was told about (a silent hold is waiting for the story extractor, with nothing
-    -- to answer yet). Counts and times only; no name or text. The server must be one of the
-    -- session's, as for the other website doors.
+    -- holds the DM was told about and that still wait on an answer (a silent hold is waiting for
+    -- the story extractor, and one with nothing left is released by the next round). Counts and
+    -- times only; no name or text. The server must be one of the session's, as for the other
+    -- website doors.
     CREATE FUNCTION dmbot_web_recap_holds(g BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -7590,7 +7591,7 @@ RECAP_HOLD_NAMES = """
                    ORDER BY h.session_at DESC)
             FROM recap_holds h
             JOIN campaigns c ON c.guild_id = h.guild_id AND c.id = h.campaign_id
-            WHERE h.guild_id = g AND h.asked
+            WHERE h.guild_id = g AND h.asked AND h.names_open > 0
               AND EXISTS (SELECT 1 FROM campaign_dms d
                           WHERE d.guild_id = h.guild_id AND d.campaign_id = h.campaign_id
                             AND d.user_id = dmbot_current_user())), '[]'::jsonb);
