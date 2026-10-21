@@ -60,6 +60,9 @@ class WebSettings:
     feedback_repo: str = "smv620/Discord-DMbot"
     # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
     # can say "N of M recaps this month".
+    # The bot's recap switch (DMBOT_RECAPS, #1382), so the import page offers a recap tick only
+    # where a recap can be made (#2225). Off by default, like the bot's.
+    recaps_on: bool = False
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on
@@ -290,6 +293,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
+        recaps_on=(get("DMBOT_RECAPS") or "0").lower() in ("1", "true", "on"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,

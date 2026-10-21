@@ -9,6 +9,7 @@ import time
 import unittest.mock
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import httpx
 
@@ -795,6 +796,91 @@ class TheProgress(WithImports):
     async def test_an_unknown_import_is_not_found(self) -> None:
         with self.assertRaises(RecapError):
             await imports.progress(self.web, self.session, self.ref_c, "f" * 32, outside=None)
+
+
+class TheRecapFacts(WithImports):
+    """Whether the import page may offer a recap tick (#2225): the bot's own gates, read first."""
+
+    async def preview(self, **kw: Any) -> dict[str, Any]:  # type: ignore[override]
+        return await imports.preview(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            **{**self.kw, "site_recaps_on": True, **kw},
+        )
+
+    async def test_it_is_possible_when_every_gate_is_open(self) -> None:
+        got = await self.preview()
+        self.assertEqual((got["recapsPossible"], "recapsWhy" in got), (True, False))
+
+    async def test_switched_off_for_the_server(self) -> None:
+        got = await self.preview(site_recaps_on=False)
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "off"))
+
+    async def test_turned_off_by_the_dm_for_the_campaign(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        got = await self.preview()
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "campaign_off"))
+
+    async def test_the_confirm_step_says_it_too(self) -> None:
+        done = await imports.confirm(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            **{**self.kw, "site_recaps_on": False},
+        )
+        self.assertEqual((done["recapsPossible"], done["recapsWhy"]), (False, "off"))
+
+    async def test_the_plan_decides_from_the_owner_and_costs_nothing(self) -> None:
+        from dmbot.entitlements import Access
+
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), 99)
+        free = Access("free", "Free access", 1, 1, False)
+        paid = Access("paid", "Pro", None, None, True)
+        for access, want in ((free, False), (paid, True), (None, False)):
+            with unittest.mock.patch.object(
+                imports, "plan_grant_access", AsyncMock(return_value=(None, None, access))
+            ) as asked:
+                got = await imports.recap_facts(
+                    self.web,
+                    self.session,
+                    self.ref_c,
+                    campaign,
+                    site_recaps_on=True,
+                    now=NOW,
+                    enforce_plans=True,
+                )
+            self.assertEqual(got["recapsPossible"], want, access)
+            if not want:
+                self.assertEqual(got["recapsWhy"], "plan")
+            asked.assert_awaited_once()  # (the owner's plan is read, nothing is spent)
+
+    async def test_a_campaign_without_an_owner_has_no_plan(self) -> None:
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), None)
+        got = await imports.recap_facts(
+            self.web,
+            self.session,
+            self.ref_c,
+            campaign,
+            site_recaps_on=True,
+            now=NOW,
+            enforce_plans=True,
+        )
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "plan"))
+
+    async def test_the_reasons_come_in_the_bots_order(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        got = await self.preview(site_recaps_on=False)
+        self.assertEqual(got["recapsWhy"], "off")  # the server's switch speaks first
 
 
 class TheGuards(WithImports):

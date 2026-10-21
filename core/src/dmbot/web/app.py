@@ -951,7 +951,7 @@ def create_app(
             return await imports.preview(
                 db, session, ref, body.get("files"), links=body.get("links"),
                 outside=settings.outside_engine, now=int(clock()),
-                enforce_plans=settings.enforce_plans,
+                enforce_plans=settings.enforce_plans, site_recaps_on=settings.recaps_on,
             )  # fmt: skip
         except RecapError as err:
             raise import_refusal(err) from None
@@ -1004,7 +1004,7 @@ def create_app(
             return await imports.confirm(
                 db, session, ref, body.get("files"), body.get("plan"),
                 links=body.get("links"), outside=settings.outside_engine, now=int(clock()),
-                enforce_plans=settings.enforce_plans,
+                enforce_plans=settings.enforce_plans, site_recaps_on=settings.recaps_on,
             )  # fmt: skip
         except RecapError as err:
             raise import_refusal(err) from None
