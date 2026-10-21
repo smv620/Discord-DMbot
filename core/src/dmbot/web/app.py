@@ -1907,6 +1907,23 @@ def create_app(
             "reply": reply,
         }
 
+    @app.get("/support/mine/{sent}")
+    async def my_support_thread(sent: int, signed: Signed) -> dict[str, Any]:
+        """The whole conversation of one of the signed-in person's own questions (#2193): their
+        words, the helper's answers, their emailed replies and the team's, oldest first, each
+        with who wrote it and when. The question is named by its sent time, as the list gives
+        it. Another account's question and a missing one both answer 404. Nothing is logged."""
+        session, _token = signed
+        # A time outside BIGINT can't name a ticket, and psycopg would send it as numeric (a 500).
+        if not 0 <= sent < 2**63:
+            raise HTTPException(status_code=404, detail="not_found")
+        turns = await support.my_thread(db, session.user_id, sent)
+        if turns is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return {
+            "messages": [{"who": t.who, "text": t.text, "at": t.created_at} for t in turns],
+        }
+
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and
     # locks count seconds on their own steady clock (not `clock`, the wall time used for
     # signed tokens), so a changed system time can't end or extend them. Only the spent

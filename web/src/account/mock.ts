@@ -852,6 +852,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return { tickets: questions, reply: true };
     },
+    async supportThread(at) {
+      calls.push("support-thread");
+      signedIn();
+      const found = questions.find((q) => q.at === at);
+      if (!found) throw new ApiError("not-found");
+      // The mock has only the first message; the real API adds the helper's and the team's.
+      return [{ who: "you", text: found.subject, at }];
+    },
     async startTryIt() {
       calls.push("startTryIt");
       const now = signedIn();
