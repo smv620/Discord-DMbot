@@ -35,6 +35,9 @@ CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED = (
 CLAIM_STATUSES = (CLAIM_PROPOSED, CLAIM_CONFIRMED, CLAIM_REJECTED, CLAIM_DROPPED)
 # How a claim was said: what the DM told the table, what a player said or believes, or what
 # someone means to do (never a fact).
+# A suggestion read from the DM's own story starts its note with this and keeps a short quote
+# until the DM decides; confirming, rejecting or merging it clears the note (#2167).
+BACKGROUND_NOTE = "From your background"
 HOW_DM, HOW_PLAYER, HOW_PLAN = "dm_said", "player_said", "plan"
 HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 

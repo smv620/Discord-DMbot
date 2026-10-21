@@ -231,8 +231,8 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
-    title: "Names from your campaign story",
-    what: "In ⚙️ Settings, Names, then Add many, choose 📜 From a story or background. Paste your campaign's background, upload it, or send a link, and DMbot suggests the names in it for you to check, each with the line it came from. It keeps only the names you say yes to, never your text. You can say yes to every place, or every person, at once. This is for your own notes, not a published book.",
+    title: "Names from your own story",
+    what: "In ⚙️ Settings, Names, then Add many, press 📜 From my story. Paste your campaign background, upload it, or send a link, and DMbot suggests the names in it, each with the line it came from. You check them, and you can say yes to a whole group, such as every place, in one press. DMbot keeps only the names you say yes to, never your text. This is for your own writing, not a published book.",
     reason: "In review (#2167); held until dev1 deploys it.",
   },
   {

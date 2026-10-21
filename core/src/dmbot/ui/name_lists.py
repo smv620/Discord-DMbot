@@ -353,7 +353,7 @@ class AddMany(_Menu):
         # On its own row, so four buttons never get squeezed on a phone.
         self.add_item(_Button(self._template, label="📄 Get the template", style=grey, row=1))
         self.add_item(
-            _Button(self._background, label="📜 From a story or background", style=grey, row=1)
+            _Button(self._background, label="📜 From my story", style=grey, row=1)
         )  # (#2167)
 
     async def _paste(self, interaction: discord.Interaction) -> None:

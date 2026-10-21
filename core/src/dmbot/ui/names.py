@@ -22,6 +22,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
@@ -829,7 +830,6 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
-BACKGROUND = "From your background"  # a suggestion read from the DM's own story (#2167)
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 

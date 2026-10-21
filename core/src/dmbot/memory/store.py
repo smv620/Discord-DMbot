@@ -53,6 +53,7 @@ from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
+    BACKGROUND_NOTE,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -1817,7 +1818,8 @@ class MemoryStore:
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
-            check_named(asked, (await _entity_row(w, entity_id))["name"])
+            before = await _entity_row(w, entity_id)
+            check_named(asked, before["name"])
             row = await w.update(
                 ENTITIES,
                 entity_id,
@@ -1828,6 +1830,7 @@ class MemoryStore:
                     "played_by": played_by,
                     "needs_look": False,
                     "unique_item": None,
+                    **_note_cleared(before),
                 },
             )
             for alias in await w.select(
@@ -1904,7 +1907,11 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id, allow_rejected=True)
             check_status_change(current["status"], status, source)
-            row = await w.update(ENTITIES, entity_id, {"status": status})
+            row = await w.update(
+                ENTITIES,
+                entity_id,
+                {"status": status, **(_note_cleared(current) if status == REJECTED else {})},
+            )
             if status == REJECTED:
                 # A rejected entry is not a name at the table any more, so the DM's word that it is
                 # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
@@ -2181,7 +2188,11 @@ class MemoryStore:
                 )
             await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
             # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
-            await w.update(ENTITIES, gone_id, {"status": MERGED, "merged_into": keep_id})
+            await w.update(
+                ENTITIES,
+                gone_id,
+                {"status": MERGED, "merged_into": keep_id, **_note_cleared(gone)},
+            )
             await _sync_plays(w, keep_id)
             await _sync_plays(w, gone_id)
             final = await w.get(ENTITIES, keep_id)
@@ -3596,6 +3607,13 @@ def _new_alias(
         "source": w.source,
         "created_at": w.now,
     }
+
+
+def _note_cleared(row: dict[str, Any]) -> dict[str, Any]:
+    """A suggestion read from the DM's story carries a quote of it until the DM decides; deciding
+    (confirm, reject, merge) takes it away, so the DM's text is not kept (#2167)."""
+    note = str(row.get("description") or "")
+    return {"description": ""} if note.startswith(BACKGROUND_NOTE) else {}
 
 
 def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dict[str, Any]:

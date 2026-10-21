@@ -2163,7 +2163,7 @@ class Lists(NamesTest):
                 "🔗 Paste a link",
                 "📎 Upload a file",
                 "📄 Get the template",
-                "📜 From a story or background",
+                "📜 From my story",
             ],
         )
         it = self.it()

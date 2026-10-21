@@ -130,7 +130,7 @@ class ThePath(NamesTest):
     async def test_the_offer_says_what_it_costs_and_what_it_is_for(self) -> None:
         it, view = await self.offer()
         text = it.response.sent[0][0]
-        self.assertIn("cent", text)
+        self.assertIn("Cost: about", text)
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it", text)
         self.assertEqual([b.label for b in view.children], ["🤖 Find names", "Cancel"])
@@ -184,15 +184,13 @@ class ThePath(NamesTest):
         )
         self.assertIn("5 names to check", text)
         labels = [getattr(b, "label", "") for b in view.children]
-        self.assertIn("✅ Yes to all 2 places", labels)
+        self.assertIn("✅ All 2 places", labels)
         self.assertIn("📝 Check them one by one", labels)
 
     async def test_yes_to_all_places_confirms_only_the_places(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [
-            b for b in view.children if getattr(b, "label", "") == "✅ Yes to all 2 places"
-        ]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ All 2 places"]
         await button.callback(self.it())
         confirmed = {e.name for e in await self.entities(CONFIRMED)}
         self.assertEqual(confirmed, {"Vale Keep", "Oakmere"})
@@ -201,9 +199,7 @@ class ThePath(NamesTest):
     async def test_only_a_dm_may_say_yes_to_all(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [
-            b for b in view.children if getattr(b, "label", "") == "✅ Yes to all 2 places"
-        ]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ All 2 places"]
         await button.callback(self.it(MANAGER))
         self.assertEqual(await self.entities(CONFIRMED), [])
 
@@ -245,7 +241,50 @@ class ThePath(NamesTest):
     async def test_the_add_many_menu_has_the_new_button_for_dms_only(self) -> None:
         menu = AddMany(self.campaign.id)
         labels = [getattr(b, "label", "") for b in menu.children]
-        self.assertIn("📜 From a story or background", labels)
+        self.assertIn("📜 From my story", labels)
         it = self.it(MANAGER)
         await menu._background(it)
         self.assertIn("Only a DM", it.response.sent[0][0])
+
+    async def test_deciding_a_suggestion_clears_the_quote_of_the_dms_text(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        yes = "✅ All 2 places"
+        (button,) = [b for b in view.children if getattr(b, "label", "") == yes]
+        await button.callback(self.it())
+        for entity in await self.entities(CONFIRMED):
+            self.assertEqual(entity.description, "")  # confirmed: the quote is gone
+        waiting = await self.entities()
+        rejected = waiting[0]
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, rejected.id, "rejected", source="dm"
+        )
+        after = await self.memory.entity(GUILD, self.campaign.id, rejected.id)
+        assert after is not None
+        self.assertEqual(after.description, "")
+        merged_away = waiting[1]
+        keep = await ui.save_name(self.memory, self.campaign, "Someone Else", "npc", [], [])
+        await self.memory.merge(
+            GUILD, self.campaign.id, keep.id, merged_away.id, source="dm", dm_said_same=True
+        )
+        gone = await self.memory.entity(GUILD, self.campaign.id, merged_away.id)
+        assert gone is not None
+        self.assertEqual(gone.description, "")
+
+    async def test_a_named_monster_is_a_person_and_yes_to_all_people_says_what_it_does(
+        self,
+    ) -> None:
+        reply = json.dumps(
+            {"names": [
+                {"name": "Brannoch", "kind": "person", "also": [], "quote": "Lord Brannoch rules"},
+                {"name": "Mirelle", "kind": "creature", "also": [], "quote": ""},
+            ]}
+        )  # fmt: skip
+        self.assertEqual([f.kind for f in bg.read_answer(reply, TEXT)], ["npc"])  # (no 'creature')
+
+    async def test_a_spelling_dmbot_already_holds_is_not_offered_again(self) -> None:
+        keeper = await ui.save_name(self.memory, self.campaign, "Vorn", "npc", [], [])
+        self.assertIsNotNone(keeper)
+        found = [bg.Found("Brannoch", "npc", ("Vorn", "Lord Brannoch"), "")]
+        (one,) = bg.merge([found], {"vorn"})
+        self.assertEqual(one.also, ("Lord Brannoch",))

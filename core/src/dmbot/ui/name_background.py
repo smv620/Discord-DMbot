@@ -26,6 +26,7 @@ from dmbot.memory import background as bg
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
+from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -42,6 +43,7 @@ from dmbot.ui.name_lists import (
 )
 from dmbot.ui.names import (
     BACKGROUND,
+    REVIEW_LABEL_MAX,
     _campaign_for,
     _md,
     _memory,
@@ -59,10 +61,9 @@ MAX_BULK_BUTTONS = 4
 
 def rights_text() -> str:
     return (
-        f"This is for {NOT_A_BOOK}. A published adventure or rulebook goes behind the "
-        "**Shared story** switch instead. **Pressing 🤖 Find names confirms this is your own "
-        "writing.** Its text goes to Anthropic (an AI company) to be read, once, and DMbot does "
-        "not keep it."
+        f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
+        "switch.)\n**Pressing 🤖 Find names tells DMbot this is your own writing.** The text is "
+        "sent once to Anthropic, an AI company, to be read. DMbot does not keep it."
     )
 
 
@@ -186,10 +187,10 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
 
     await _send(
         interaction,
-        f"📜 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and suggests the "
-        "names (people, places, groups, gods…) for you to check in 📝 Check new names. "
-        "Nothing is added until you say so.\n"
-        f"It costs about {cents} cent{'' if cents == 1 else 's'} of your AI allowance.\n"
+        f"📜 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and suggests names "
+        "(people, places, groups, gods…). You check each one in 📝 Check new names. Nothing is "
+        "added until you say yes.\n"
+        f"Cost: about {cents} cent{'' if cents == 1 else 's'} of your AI allowance.\n"
         f"{rights_text()}",
         BackgroundOffer(campaign.id, upload),
     )
@@ -215,7 +216,11 @@ class BackgroundOffer(_Menu):
         ai = bot.background_ai
         memory = _memory(interaction)
         if ai is None or memory is None:
-            await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
+            await _tell(
+                interaction,
+                "DMbot's AI was switched off. Nothing was added. Ask your server owner to "
+                "turn it on.",
+            )
             return
         refused = await bot.plan_gate("ai", campaign.guild_id, campaign, interaction.user.id)
         if refused is not None:
@@ -343,8 +348,9 @@ async def summary(
     await interaction.edit_original_response(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
-            f"{parts}. They wait in 📝 Check new names, each with its line from your text. "
-            "Nothing is added until you say yes. It can miss some names or get a kind wrong."
+            f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
+            "Nothing is added until you say yes, and **Yes to all** adds every name of that "
+            "group. DMbot can miss names or put one in the wrong group, so look them over."
         ),
         view=view,
         allowed_mentions=NO_PINGS,
@@ -370,7 +376,7 @@ class BulkConfirm(_Menu):
             self.add_item(
                 _Button(
                     partial(self._all, kind),
-                    label=f"✅ Yes to all {_plural(kind, count)}"[:80],
+                    label=logic.shorten(f"✅ All {_plural(kind, count)}", REVIEW_LABEL_MAX),
                     style=discord.ButtonStyle.success,
                 )
             )
@@ -389,6 +395,7 @@ class BulkConfirm(_Menu):
         await start_review(interaction, self.campaign_id)
 
     async def _all(self, kind: str, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()  # many writes follow (#351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -396,7 +403,6 @@ class BulkConfirm(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
-        await interaction.response.defer()
         waiting = [
             e
             for e in await memory.entities(campaign.guild_id, campaign.id, statuses=["proposed"])
@@ -416,6 +422,9 @@ class BulkConfirm(_Menu):
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
+        with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"✅ Added {_plural(kind, done)}.", ephemeral=True, allowed_mentions=NO_PINGS
+                f"✅ Added {_plural(kind, done)}. See them in 📝 Check new names.",
+                ephemeral=True,
+                allowed_mentions=NO_PINGS,
             )
