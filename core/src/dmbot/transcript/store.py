@@ -34,6 +34,11 @@ class TranscriptStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    @property
+    def db(self) -> Database:
+        """The database, for the other stores that work on a session's lines (imports, #2105)."""
+        return self._db
+
     async def open_session(
         self, guild_id: int, campaign_id: str, started_at: int, engine: str = ""
     ) -> str:
@@ -254,6 +259,19 @@ class TranscriptStore:
             )
             return [_session(r) for r in await cur.fetchall()]
 
+    async def next_session_start(self, guild_id: int, campaign_id: str, after: int) -> int | None:
+        """When the campaign's first session with lines that started after `after` began, or None.
+        A session row is written before anyone speaks (and the one being played now has few
+        lines), so only one with lines ends the window (#2169)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT min(started_at) AS at FROM transcript_sessions"
+                " WHERE campaign_id = %s AND started_at > %s AND line_count > 0",
+                (campaign_id, after),
+            )
+            row = await cur.fetchone()
+        return None if row is None or row["at"] is None else int(row["at"])
+
     async def session_counts(self, guild_id: int) -> dict[str, int]:
         """Saved sessions (with at least one line) per campaign id in this server, in
         one query. Campaigns with none are left out."""
@@ -387,7 +405,9 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " AND ended_at IS NOT NULL AND ended_at < %s AND transcripts_deleted_at IS NULL"
+                " AND ended_at IS NOT NULL AND "
+                + _KEPT_SINCE
+                + " < %s AND transcripts_deleted_at IS NULL"
                 " AND (line_count > 0 OR EXISTS (SELECT 1 FROM transcript_lines l"
                 "   WHERE l.session_id = transcript_sessions.id))"
                 " ORDER BY started_at, id",
@@ -407,8 +427,9 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s AND ended_at IS NOT NULL AND ended_at < %s"
-                " AND transcripts_deleted_at IS NULL FOR UPDATE",
+                " AND id = %s AND ended_at IS NOT NULL AND "
+                + _KEPT_SINCE
+                + " < %s AND transcripts_deleted_at IS NULL FOR UPDATE",
                 (guild_id, campaign_id, session_id, cutoff),
             )
             if await cur.fetchone() is None:
@@ -438,6 +459,14 @@ class TranscriptStore:
                 (now, guild_id, session_id),
             )
             return len(gone)
+
+
+# How long a session has been kept: an imported one from the day it was imported (a 2024 game
+# loaded today is not deleted tonight by a 30-day setting), any other from when it ended (#2105).
+_KEPT_SINCE = (
+    "coalesce((SELECT i.imported_at FROM session_imports i"
+    " WHERE i.session_id = transcript_sessions.id), ended_at)"
+)
 
 
 def _lineage_columns(lines: Sequence[Line]) -> list[list[str | None]]:
