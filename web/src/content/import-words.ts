@@ -34,6 +34,8 @@ export const importPage = {
   back: "Back to the sessions",
   lead: `Bring in sessions DMbot didn't record, from text files or Google Docs. DMbot keeps only the lines of players who have agreed to be recorded. Imported sessions can be read by everyone in your server, like any transcript.`,
   loading: "Loading…",
+  // Shown instead of the page while neither the site switch nor this campaign's server has imports on.
+  notOpen: "This page isn't open yet.",
   signedOut: "Sign in to import sessions. You will need to choose your files again.",
   signIn: "Sign in with Discord",
   pickLabel: `Choose up to ${IMPORT_MAX_FILES} text files (.txt), each up to ${IMPORT_MAX_MB} MB, or paste Google Doc links below`,
