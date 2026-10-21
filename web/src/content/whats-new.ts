@@ -237,16 +237,28 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "Names spelled out at the table",
+    what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot notes it, using only players who agreed to be recorded. After the session it shows up in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can correct that name's spelling with one button. DMbot only suggests. Nothing changes until you press a button, and the suggestion goes only to you.",
+    reason: "In review (#2168); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
     reason: "Waiting for review (#2132) and for dev1 to deploy it.",
   },
   {
     date: "2026-10-20",
+    title: "Your recap waits for your name answers",
+    what: "If a session leaves name questions for you, DMbot waits to write the recap until you have answered them, so it uses the right names. Your DM screen says how many are left, with 📝 Check new names and Write the recap now if you would rather not wait. Nothing is written, and nothing costs anything, while it waits.",
+    reason: "In review (#2169); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Bring in older sessions",
-    what: "On the website, a game master can load text transcripts of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
+    what: "On the website, a game master can load text transcripts (or paste a Google Doc link) of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
-      "Waits for the importer (#2105, #2106) to deploy, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
+      "Waits for the importer (#2105, #2106) and the Google Doc link support (#2143) to be merged and deployed, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
   },
   {
     date: "2026-10-20",

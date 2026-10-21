@@ -188,6 +188,175 @@ describe("the page", () => {
   });
 });
 
+describe("Google Doc links", () => {
+  const link = (text: string) =>
+    fireEvent.input(screen.getByLabelText(w.linkLabel), {
+      target: { value: text },
+    });
+  const add = (text: string) => {
+    link(text);
+    fireEvent.click(screen.getByRole("button", { name: w.addLink }));
+  };
+  const docUrl = (id: string) =>
+    `https://docs.google.com/document/d/${id}/edit`;
+
+  it("adds a link to the same list as the files, and lets it be taken out", async () => {
+    open();
+    await pick([s1]);
+    add(docUrl("abc"));
+    expect(screen.getByText(w.linkName(1))).toBeTruthy();
+    expect(screen.getByText(w.chosenItems(1, 1))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.removeLink(1) }));
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+  });
+
+  it("says how to share a doc, before anything is sent", () => {
+    open();
+    expect(screen.getByText(/Scroll down to General access/)).toBeTruthy();
+    expect(screen.getByText(/Anyone with the link can open it/)).toBeTruthy();
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("previews with only a link, and sends the links with the files", async () => {
+    const api = open();
+    add(docUrl("abc"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    await screen.findByRole("heading", { name: w.matchHeading });
+    expect(api.calls).toContain("importPreview:100.cmp1:|links:1");
+  });
+
+  it("counts files and links together against the limit", async () => {
+    const api = open();
+    await pick(
+      Array.from({ length: IMPORT_MAX_FILES }, (_, i) =>
+        file(`s${i}.txt`, "A: x"),
+      ),
+    );
+    add(docUrl("one-too-many"));
+    // The 21st is refused, so the list stays at the most.
+    expect(screen.getByRole("alert").textContent).toBe(w.tooManyToAdd);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("importPreview"))).toBe(false);
+  });
+
+  it("says in words when a doc is not shared, never the raw code", async () => {
+    open();
+    add(docUrl("private-one"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(
+      await screen.findByText(w.fileError.doc_not_shared ?? ""),
+    ).toBeTruthy();
+    expect(screen.queryByText("doc_not_shared")).toBeNull();
+    expect(w.fileError.doc_not_shared).toContain("Anyone with the link");
+    // Shown as "Google Doc 1", without the ".txt" the API puts on its name.
+    expect(screen.queryByText("Google Doc 1.txt")).toBeNull();
+  });
+
+  it.each([
+    ["not_a_google_doc", docUrl("notadoc")],
+    ["doc_not_shared", docUrl("private")],
+    ["doc_unreachable", docUrl("unreachable")],
+    ["doc_too_big", docUrl("toobig")],
+    ["repeated_link", docUrl("repeat")],
+  ])("shows %s in words, never raw", async (code, url) => {
+    open();
+    add(url);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(await screen.findByText(w.fileError[code] ?? "")).toBeTruthy();
+    expect(screen.queryByText(code)).toBeNull();
+    expect(w.fileError[code]).toBeTruthy();
+  });
+
+  it("accepts a link with no scheme or with http", () => {
+    open();
+    add("docs.google.com/document/d/abc/edit");
+    add("http://docs.google.com/document/d/def/edit");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(w.linkName(2))).toBeTruthy();
+  });
+
+  it("shows a doc that stops opening at Check, and says so at Import", async () => {
+    const api = open();
+    add(docUrl("later"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.input(await screen.findByLabelText(w.dateLabel("Google Doc 1")), {
+      target: { value: "2026-09-21" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    expect(await screen.findByText(w.fileError.doc_not_shared ?? "")).toBeTruthy();
+    expect(screen.queryByText("doc_not_shared")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    expect(await screen.findByText(w.problem["bad-files-docs"] ?? "")).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("importStart"))).toBe(true);
+  });
+
+  it("says so when a link gets no answer at Preview", async () => {
+    const api = open();
+    api.importPreview = async () => ({ files: [], estimate: { sessions: 0, fastCalls: 0 } });
+    add(docUrl("abc"));
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    expect(await screen.findByText(w.docNoAnswer)).toBeTruthy();
+  });
+
+  it("refuses a link that is not a Google Doc, before anything is sent", () => {
+    const api = open();
+    add("https://example.com/notadoc");
+    expect(screen.getByRole("alert").textContent).toBe(w.notAGoogleDocLink);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("importPreview"))).toBe(false);
+  });
+
+  it("does not add the same doc twice", () => {
+    open();
+    add(docUrl("same"));
+    add(docUrl("same"));
+    expect(screen.getByRole("alert").textContent).toBe(w.linkAlreadyAdded);
+    expect(screen.queryByText(w.linkName(2))).toBeNull();
+  });
+
+  it("treats the same doc with a different ending as the same doc", () => {
+    open();
+    add(docUrl("same"));
+    add("https://docs.google.com/document/d/same/edit?usp=sharing");
+    expect(screen.getByRole("alert").textContent).toBe(w.linkAlreadyAdded);
+  });
+
+  it("adds on Enter, announces it, and gives the box focus back", () => {
+    open();
+    link(docUrl("abc"));
+    fireEvent.submit(screen.getByLabelText(w.linkLabel).closest("form")!);
+    expect(screen.getByText(w.linkName(1))).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(
+      w.added(w.linkName(1), 1),
+    );
+    expect(document.activeElement).toBe(screen.getByLabelText(w.linkLabel));
+  });
+
+  it("sends only the links that opened, renamed by place, and keeps their dates", async () => {
+    const api = open();
+    add(docUrl("private-first")); // does not open
+    add(docUrl("good")); // opens, and becomes "Google Doc 1" in what is sent
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.input(
+      await screen.findByLabelText(w.dateLabel("Google Doc 2")),
+      { target: { value: "2026-09-21" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+    expect(api.calls).toContain("importCheck:100.cmp1|links:1");
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    await waitFor(() =>
+      expect(api.calls).toContain(
+        `importStart:100.cmp1:1=Google Doc 1.txt@2026-09-21|links:${docUrl("good")}`,
+      ),
+    );
+    // The DM sees the name from their own list, never the one renamed for the API, and no ".txt".
+    expect(screen.queryByText("Google Doc 1.txt")).toBeNull();
+    expect(screen.queryByText("Google Doc 2.txt")).toBeNull();
+    expect(screen.getAllByText("Google Doc 2").length).toBeGreaterThan(0);
+  });
+});
+
 describe("the limits", () => {
   it("stops more than the most files, before anything is sent", async () => {
     const api = open();
@@ -383,6 +552,35 @@ describe("a busy moment during Check", () => {
     fireEvent.click(screen.getByRole("button", { name: w.importButton }));
     const row = await screen.findByText(/2026-09-14 · Done/);
     expect(row.textContent?.trim().endsWith("·")).toBe(false);
+  });
+});
+
+describe("links over the wire", () => {
+  it("sends the links beside the files only when there are links", async () => {
+    const seen: string[] = [];
+    const real = httpApi("https://api.example.test", (async (
+      _u: string,
+      init: RequestInit,
+    ) => {
+      seen.push(String(init.body));
+      return new Response(
+        JSON.stringify({ files: [], estimate: { sessions: 0, fastCalls: 0 } }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch);
+    await real.importPreview!("100.cmp1", [{ name: "a.txt", text: "A: x" }]);
+    await real.importPreview!(
+      "100.cmp1",
+      [],
+      ["https://docs.google.com/document/d/x/edit"],
+    );
+    expect(JSON.parse(seen[0] ?? "{}")).toEqual({
+      files: [{ name: "a.txt", text: "A: x" }],
+    });
+    expect(JSON.parse(seen[1] ?? "{}")).toEqual({
+      files: [],
+      links: ["https://docs.google.com/document/d/x/edit"],
+    });
   });
 });
 

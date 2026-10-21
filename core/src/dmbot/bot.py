@@ -222,6 +222,7 @@ from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
+from dmbot.members import MemberDirectory
 from dmbot.memory import definitions, document_reader, extractor, plan_reader
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -247,6 +248,7 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
+from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
@@ -255,6 +257,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import cues, short
 from dmbot.recaps import feedback as recap_feedback
+from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
@@ -303,6 +306,7 @@ from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
+from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
@@ -378,6 +382,7 @@ from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton, UndoConnectionButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
+    SPELLED_OUT,
     RecapNamesButton,
     ReviewButton,
     after_session_text,
@@ -390,6 +395,7 @@ from dmbot.ui.names import (
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
+from dmbot.ui.recap_hold import WriteNowButton, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
@@ -424,6 +430,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
+SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
@@ -578,6 +585,15 @@ class Table:
     steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
+    # Names someone spelled out at the table this session (#2168): watched for in every cleaned
+    # line, kept as (spelling, whom it was said by, a word nearby that sounds like it) for the
+    # after-session suggestions, and as speech hints at once. Words only, never a line.
+    spelling: spelled_out.SpellingWatcher = field(default_factory=spelled_out.SpellingWatcher)
+    spelled: list[tuple[str, int, str]] = field(default_factory=list)
+    spelled_hints: tuple[str, ...] = ()
+    held_spelled: dict[tuple[int, int], list[spelled_out.SpelledOut]] = field(
+        default_factory=dict
+    )  # spellings found in lines the off-topic filter holds, until they are labelled
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
     # last read, the schedule, and the loop that runs it (cancelled at the end).
@@ -854,6 +870,7 @@ class DMBot(commands.AutoShardedBot):
         npcs_messages: MessageMap | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
+        recap_holds: recap_hold.HoldStore | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -906,6 +923,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
+        self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
@@ -963,6 +981,7 @@ class DMBot(commands.AutoShardedBot):
         # When each person's Discord name was last kept on their account (#1242): at most
         # once a day, in this process only (a restart simply checks again).
         self._names_noted: dict[int, float] = {}
+        self.members = MemberDirectory(meter.db) if meter is not None else None  # #2141
         self._name_tasks: set[asyncio.Task[None]] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
@@ -1319,6 +1338,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             ShortRecapButton
         )  # "write a recap anyway?" for a short session (#2104)
+        self.add_dynamic_items(WriteNowButton)  # a recap waiting for name answers (#2169)
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
@@ -1500,6 +1520,8 @@ class DMBot(commands.AutoShardedBot):
         member = guild.get_member(user_id) if guild is not None else None
         if member is not None:
             self.note_display_name(user_id, member.global_name or member.name)
+            if user_id in recorded:  # and the import search can offer them (#2141)
+                self.note_member(guild_id, member)
         # Only a yes that really counts (it names this server's speech-to-text, and no
         # stop arrived meanwhile) is shown as recording.
         if user_id in recorded and not already:
@@ -1534,6 +1556,28 @@ class DMBot(commands.AutoShardedBot):
         task = asyncio.create_task(self._keep_display_name(self.meter.db, user_id, name))
         self._name_tasks.add(task)
         task.add_done_callback(self._name_tasks.discard)
+
+    def note_member(self, guild_id: int, member: discord.abc.User) -> None:
+        """Keep a recorded member's names in the server's directory for the website's import
+        search (#2141). Only call it for someone whose consent is current. In the background and
+        never raising: a failure is retried the next time they are seen."""
+        directory = self.members
+        if directory is None:
+            return
+        task = asyncio.create_task(self._keep_member(directory, guild_id, member))
+        self._name_tasks.add(task)
+        task.add_done_callback(self._name_tasks.discard)
+
+    async def _keep_member(
+        self, directory: MemberDirectory, guild_id: int, member: discord.abc.User
+    ) -> None:
+        try:
+            async with asyncio.timeout(DISPLAY_NAME_TIMEOUT_S):
+                await directory.remember(
+                    guild_id, member.id, getattr(member, "global_name", None), member.name
+                )
+        except Exception as exc:  # the type only: a database error's text can quote a name
+            log.warning("Could not keep a member in the directory: %s", type(exc).__name__)
 
     async def _keep_display_name(self, db: Database, user_id: int, name: str) -> None:
         """The background part: one short UPDATE. Never raises; on a failure the person is
@@ -1604,6 +1648,12 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
+            table.held_spelled = {k: v for k, v in table.held_spelled.items() if k[0] != user_id}
+            table.spelled = [
+                x for x in table.spelled if x[1] != user_id
+            ]  # and nothing they spelled
+            table.spelling.forget(user_id)  # nor the words they said just before
+            table.spelled_hints = tuple(w for w, _, _ in table.spelled)[-SPELLED_MAX:]  # nor hints
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
@@ -1843,6 +1893,15 @@ class DMBot(commands.AutoShardedBot):
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
+            if self.members is not None:  # no longer offered by name in the import search (#2141)
+                try:
+                    async with asyncio.timeout(FORGET_TIMEOUT_S):
+                        await self.members.forget(guild_id, user_id)
+                except Exception as exc:  # the type only: a database error can quote a row
+                    log.warning(
+                        "Could not remove a stopped speaker from the member directory: %s",
+                        type(exc).__name__,
+                    )
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
@@ -1996,6 +2055,7 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
+                    self.note_member(gid, member)  # refreshed at each session start (#2141)
                     text = reminder_text(
                         server,
                         voice_name,
@@ -2521,6 +2581,8 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            # After the scan: a spelling can belong to a name the scan just suggested (#2168).
+            ("spelled names", lambda: self.suggest_spelled(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
@@ -2528,10 +2590,12 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
-            # Slow when on (an AI call or two), so last; nothing above waits for it.
+            # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
-            # Slow when on (minutes of AI calls): after the quick steps; the next two need it.
+            # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # The names the extractor proposed are name questions too (#2169): count again.
+            ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.ask_about_claims(table)),
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -4285,7 +4349,19 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
-        if text and not self._topic_holds(table, cleaned or text, names_said):
+        # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
+        # filter holds for a label is left out, as for the word list.
+        # One answer for the whole line, so the callers below can't disagree (#1748).
+        holds = bool(text and self._topic_holds(table, cleaned or text, names_said))
+        if text and self.tables.get(table.guild_id) is table:
+            # Every line goes to the watcher (memory only); what it finds waits with a held line.
+            self._note_spelling(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                held_key=(utterance.user_id, utterance.start_ms) if holds else None,
+            )
+        if text and not holds:
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
             # waiting for the off-topic filter adds its words only once labelled game talk
@@ -4299,7 +4375,7 @@ class DMBot(commands.AutoShardedBot):
                 table,
                 utterance.user_id,
                 str(cleaned or text),
-                held=self._topic_holds(table, cleaned or text, names_said),
+                held=holds,
             )
         labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
@@ -4342,7 +4418,7 @@ class DMBot(commands.AutoShardedBot):
                     )
                 else:
                     self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
-        if text and self._topic_pending(table, utterance, cleaned or text, names_said):
+        if text and self._topic_pending(table, utterance, cleaned or text, holds):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
             # The cleaned line: a known name misheard and fixed live isn't new (#394).
@@ -5340,11 +5416,12 @@ class DMBot(commands.AutoShardedBot):
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
 
-    def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
+    def _topic_pending(self, table: Table, utterance: Utterance, text: str, holds: bool) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
         AI, a window at a time; True if it's waiting. No AI key, or a session still
-        finishing: no filter, nothing is hidden."""
-        if not self._topic_holds(table, text, named):
+        finishing: no filter, nothing is hidden. `holds` is the line's one answer from
+        `_topic_holds` (worked out once, so the callers can't disagree)."""
+        if not holds:
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
@@ -5406,6 +5483,7 @@ class DMBot(commands.AutoShardedBot):
         stopped = [w for w in lines if not self.consent.has_consent(table.guild_id, w.speaker)]
         for waiting in stopped:
             table.held.pop((waiting.speaker, waiting.started_ms), None)
+            table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
         lines = [w for w in lines if w not in stopped]
         if not lines:
             return
@@ -5429,8 +5507,11 @@ class DMBot(commands.AutoShardedBot):
         hide: list[Waiting] = []
         for waiting, topic in zip(lines, topics, strict=True):
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
+            if topic != OFF_TOPIC and spelling:
+                self._record_spelled(table, waiting.speaker, spelling)
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
             if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
@@ -7080,6 +7161,7 @@ class DMBot(commands.AutoShardedBot):
             people=people,
             absent=absent,
             sheet=table.sheet_hints,
+            spelled=table.spelled_hints,
         )
 
     async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople:
@@ -7604,7 +7686,194 @@ class DMBot(commands.AutoShardedBot):
                 self._short_asks[cid] = session.started_at
                 log.info("Recap: asked first (a short session)")  # no numbers of the table's
                 return
-            await self._queue_recap(campaign, session.started_at, table.screen_channel_id, dm)
+            await self._hold_or_queue(
+                campaign, session.id, session.started_at, table.screen_channel_id, dm
+            )
+
+    def _extractor_pending(self) -> bool:
+        """Whether the story extractor will run after this session and so may still propose names
+        (#2169). The same gate as `extract_claims`."""
+        return bool(
+            self.settings.story_extractor_on
+            and self.extractor_ai is not None
+            and self.memory is not None
+        )
+
+    async def _next_session_start(self, gid: int, cid: str, began: int) -> int | None:
+        """When the campaign's next session began after `began`, or None: names proposed from
+        then on belong to that session, not this one (#2169: counted by session)."""
+        if self.transcripts is None:
+            return None
+        return await self.transcripts.next_session_start(gid, cid, began)
+
+    async def _open_name_questions(self, gid: int, cid: str, session_id: str, began: int) -> int:
+        """How many name questions from this session still wait for the DM (#2169): names the name
+        scan or the extractor proposed from `began` (the session's start) to the start of the
+        campaign's next session, that nobody has checked, and its unanswered "Did they mean…?"
+        questions. Counts only; nothing is read aloud or logged."""
+        total = 0
+        if self.memory is not None:
+            until = await self._next_session_start(gid, cid, began)
+            proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            total += sum(
+                1
+                for e in proposed
+                if e.created_at >= began and (until is None or e.created_at < until)
+            )
+        if self.heard_questions is not None:
+            total += await self.heard_questions.count_for_session(gid, session_id)
+        return total
+
+    async def _hold_or_queue(
+        self, campaign: Campaign, session_id: str, session_at: int, channel_id: int, dm: int
+    ) -> None:
+        """Queue the recap, unless the session left name questions open or the story extractor is
+        still to run: then hold it (#2169). With questions open the DM is asked at once; with only
+        the extractor to come the hold is silent until `recheck_recap_hold` has counted again. The
+        recap is never lost: if counting, holding or asking fails, the hold is released into a
+        queued recap (or the recap is queued as before when nothing was held)."""
+        gid, cid = campaign.guild_id, campaign.id
+        store = self.recap_holds
+        if store is not None:
+            held = False
+            try:
+                waiting = await self._open_name_questions(gid, cid, session_id, session_at)
+                pending = self._extractor_pending()
+                if waiting > 0 or pending:
+                    if not await store.hold(
+                        gid, cid, session_at, session_id=session_id, dm_user_id=dm,
+                        channel_id=channel_id, asked=waiting > 0,
+                    ):  # fmt: skip
+                        return  # held already, or a job exists: a repeat of the end of the session
+                    held = True
+                    if waiting == 0:
+                        log.info("Recap: held until the story extractor has run")
+                        return
+                    sent = await self.post(
+                        channel_id,
+                        recap_hold.question_text(waiting),
+                        view=hold_view(cid, session_at),
+                    )
+                    if sent:
+                        log.info("Recap: held for %d name question(s)", waiting)  # a count
+                        return
+                    log.warning("Recap: couldn't ask about the name questions; writing it now")
+            except Exception:
+                log.exception("Recap: couldn't hold it for name questions; writing it now")
+            if held:  # the DM was not told: a wait nobody knows about is no wait
+                try:
+                    if await store.release(gid, cid, session_at) == recap_hold.QUEUED:
+                        await self._say_writing(campaign, channel_id, session_at)
+                        return
+                except Exception:
+                    log.exception("Recap: couldn't release a hold nobody was told about")
+        await self._queue_recap(campaign, session_at, channel_id, dm)
+
+    async def recheck_recap_hold(self, table: Table) -> None:
+        """After the story extractor (#2169): count the name questions again for a recap held
+        while it ran, under the same rules as every round. A recap that was not held is left
+        alone."""
+        store = self.recap_holds
+        if (
+            store is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        session = await self.transcripts.session(gid, table.transcript_session_id)
+        if session is None:
+            return
+        held = await store.get(gid, cid, session.started_at)
+        if held is None or held.asked:
+            return
+        await self._release_one(store, gid, held, extractor_done=True)
+
+    async def release_recap_holds(self, gid: int) -> None:
+        """A round's check: a held recap whose questions are all answered is written (#2169). The
+        hold and the job are made in one transaction, so answering never writes a recap twice.
+        A campaign that is gone, or whose DM switched recaps off, drops the hold and writes
+        nothing; a plan that cannot be checked right now only waits for the next round."""
+        store = self.recap_holds
+        if store is None:
+            return
+        for held in await store.held(gid):
+            try:
+                await self._release_one(store, gid, held)
+            except Exception:  # one campaign's trouble does not hold up the others
+                log.exception("Recap: couldn't check a held recap")
+
+    async def _release_one(
+        self,
+        store: recap_hold.HoldStore,
+        gid: int,
+        held: recap_hold.Hold,
+        *,
+        extractor_done: bool = False,
+    ) -> None:
+        """One held recap, the same rules whether the round or the end of the extractor asks: a
+        campaign that is gone or has recaps off drops it; a silent hold waits for the extractor
+        (`extractor_done`, or `QUIET_WAIT_S` having passed); questions open ask the DM once; none
+        open writes the recap, if the plan allows it. A question that cannot be posted is not
+        waited on: the recap is written instead; if the plan cannot be checked at that moment the
+        hold stays, silent, and the next round tries again."""
+        campaign = await self.campaigns.get(gid, held.campaign_id)
+        if campaign is None or not campaign.recaps_text:  # the DM's own choice: no recap
+            await store.release(gid, held.campaign_id, held.session_at, queue=False)
+            return
+        with log_context(guild_id=gid, campaign_id=held.campaign_id):
+            if (
+                not held.asked
+                and not extractor_done
+                and time.time() - held.created_at < recap_hold.QUIET_WAIT_S
+            ):
+                return  # the story extractor is still running; it counts again when done
+            waiting = await self._open_name_questions(
+                gid, held.campaign_id, held.session_id, held.session_at
+            )
+            if waiting:
+                if held.asked:
+                    return
+                # Claim first, so the round and the end of the extractor never both ask.
+                if not await store.mark_asked(gid, held.campaign_id, held.session_at):
+                    return  # the other one is asking
+                if await self.post(
+                    held.channel_id,
+                    recap_hold.question_text(waiting),
+                    view=hold_view(held.campaign_id, held.session_at),
+                ):
+                    log.info("Recap: held for %d name question(s)", waiting)  # a count
+                    return
+                # Not told: a wait nobody knows about is no wait. Give the claim back and fall
+                # through to write it (if the plan cannot be checked now, the hold stays silent
+                # and the next round asks again).
+                await store.unmark_asked(gid, held.campaign_id, held.session_at)
+            if not await self.recap_allowed(gid, held.campaign_id, None):
+                return  # the plan could not be checked, or lacks it: kept, asked again next round
+            if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                await self._say_writing(campaign, held.channel_id, held.session_at)
+
+    async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
+        """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
+        any session. "queued", "already" (no hold: written or decided before) or "refused". The
+        "writing it now" line goes to the DM screen the hold stored, wherever the button was
+        pressed."""
+        if self.recap_holds is None or self.recaps is None or self.recap_worker is None:
+            return "refused"
+        if not self.settings.recaps_on:
+            return "off"  # switched off for every server: its own words
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.recap_allowed(gid, cid, None):
+            return "refused"
+        held = await self.recap_holds.get(gid, cid, session_at)
+        if held is None:
+            return "already"
+        result = await self.recap_holds.release(gid, cid, session_at)
+        if result == recap_hold.QUEUED:
+            await self._say_writing(campaign, held.channel_id, session_at)
+            return "queued"
+        return "already"
 
     async def _queue_recap(
         self, campaign: Campaign, session_at: int, channel_id: int, dm: int
@@ -7616,7 +7885,12 @@ class DMBot(commands.AutoShardedBot):
         gid, cid = campaign.guild_id, campaign.id
         if not await self.recaps.enqueue(gid, cid, session_at, dm_user_id=dm):
             return False
-        link = page_link(self.settings.site_url, gid, cid, session_at)
+        await self._say_writing(campaign, channel_id, session_at)
+        return True
+
+    async def _say_writing(self, campaign: Campaign, channel_id: int, session_at: int) -> None:
+        """Tell the DM, on the DM screen, that the recap is being written."""
+        link = page_link(self.settings.site_url, campaign.guild_id, campaign.id, session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
         ready = (
             "You'll get an email when it's ready."
@@ -7628,7 +7902,6 @@ class DMBot(commands.AutoShardedBot):
             f"📜 Writing a recap of this session. {ready} "
             f"Nothing goes to the table until you say so.{where}",
         )
-        return True
 
     async def recap_short_expired(self, gid: int, cid: str, session_at: int) -> bool:
         """True once a newer session of the campaign has started or been stored (#2104): the
@@ -8038,6 +8311,11 @@ class DMBot(commands.AutoShardedBot):
         time, and the recaps the DM has pressed Post on. Each campaign has one job at a time."""
         if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
             return
+        for guild in list(self.guilds):  # recaps whose name questions are answered (#2169)
+            try:
+                await self.release_recap_holds(guild.id)
+            except Exception:
+                log.exception("Recap: releasing the held recaps failed for a server")
         for guild in list(self.guilds):  # first: a DM's Post never waits on a slow job
             try:
                 await self.post_recaps(guild.id)
@@ -8388,6 +8666,102 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=cid):
             dms = {table.dm_user_id, *table.dm_user_ids}
             await self.memory.check_people(gid, cid, dms)
+
+    def _note_spelling(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        *,
+        held_key: tuple[int, int] | None = None,
+    ) -> None:
+        """A name spelled out at the table (#2168): the word becomes a speech hint at once (a hint
+        only, nothing says it is a name) and is kept for the end-of-session suggestion. The line is
+        from someone who agreed (the pipeline has just re-checked) and is not kept: only the word,
+        who said it and a nearby word that sounds like it. A secret name is neither hinted nor
+        suggested. The log gets counts only."""
+        found = table.spelling.note(user_id, line, time.monotonic())
+        if not found:
+            return
+        if held_key is not None:
+            # The off-topic filter has this line: its finds count only if it is labelled game
+            # talk (`_label_topics`), never for talk about something else (#1748).
+            table.held_spelled[held_key] = found
+            return
+        self._record_spelled(table, user_id, found)
+
+    def _record_spelled(
+        self, table: Table, user_id: int, found: list[spelled_out.SpelledOut]
+    ) -> None:
+        secret = table.hint_parts.secret if table.hint_parts is not None else frozenset()
+        for hit in found:
+            key = name_key(hit.word)
+            if key in secret or any(name_key(w) == key for w, _, _ in table.spelled):
+                continue
+            if len(table.spelled) >= SPELLED_MAX:
+                break
+            like = set(sound_codes(hit.word))
+            near = next(
+                (w for w in hit.near if name_key(w) != key and like & set(sound_codes(w))), ""
+            )
+            table.spelled.append((hit.word, user_id, near))
+            table.spelled_hints = (*table.spelled_hints, hit.word)[-SPELLED_MAX:]
+            log.info("Spelled out at the table: a name of %d letters", len(hit.word))
+
+    async def suggest_spelled(self, table: Table) -> None:
+        """After a session: the names spelled out at the table become suggestions for the DM to
+        check (#2168), marked "spelled out at the table". Only from people who still agree
+        (checked now, after the session), only a spelling DMbot does not already have, and
+        nothing changes without the DM. A spelling that sounds like a known name with a different
+        spelling is suggested all the same: the review shows which known name it sounds like."""
+        spelled = table.spelled
+        table.spelled = []
+        # (the watcher's recent lines are not kept past the session)
+        table.spelling = spelled_out.SpellingWatcher()
+        if self.memory is None or table.campaign_id is None or not spelled:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            known = set(await self.memory.known_keys(gid, cid))
+            added = 0
+            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            given: set[str] = set()  # suggestions that already got a spelling in this run
+            for word, user_id, near in spelled:
+                key = name_key(word)
+                if user_id not in agreed or key in known:
+                    continue
+                # Said next to a suggestion that sounds like it: that suggestion is what was being
+                # spelled, so it gets the spelling and the DM is offered to fix it (#2168).
+                target = next(
+                    (e for e in waiting if near and name_key(e.name) == name_key(near)), None
+                )
+                if target is not None and name_key(target.name) != key:
+                    if target.id in given or target.description.startswith(SPELLED_OUT):
+                        continue  # the first spelling stays; a second never silently wins
+                    given.add(target.id)
+                    try:
+                        await self.memory.set_note(
+                            gid, cid, target.id, f"{SPELLED_OUT}: {word}", source="scan"
+                        )
+                        added += 1
+                    except MemoryRuleError as exc:
+                        log.info("Skipped a spelling for a suggestion: %s", exc)
+                    continue
+                try:
+                    await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=word,
+                        source="scan",
+                        description=SPELLED_OUT,
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a spelled-out name: %s", exc)
+                    continue
+                added += 1
+            log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
@@ -9897,6 +10271,7 @@ async def run(settings: Settings) -> None:
             npcs_messages=NpcMessageStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
+            recap_holds=recap_hold.HoldStore(db),
         )
         _close_on_sigterm(bot)
         async with bot:

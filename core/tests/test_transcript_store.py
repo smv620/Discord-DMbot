@@ -48,6 +48,22 @@ class StoreTests(DatabaseTest):
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
 
+    async def test_the_next_session_start_counts_only_later_sessions_with_lines(self) -> None:
+        first = await self.store.open_session(GUILD, self.campaign.id, START)
+        await self.store.add_lines(GUILD, first, [line(1, PLAYER, "hello")])
+        empty = await self.store.open_session(GUILD, self.campaign.id, START + 100)  # no lines yet
+        other = await self.campaigns.create(GUILD, "Sunken City", DM)
+        elsewhere = await self.store.open_session(GUILD, other.id, START + 50)
+        await self.store.add_lines(GUILD, elsewhere, [line(2, PLAYER, "another game")])
+        self.assertIsNone(await self.store.next_session_start(GUILD, self.campaign.id, START))
+        self.assertIsNone(await self.store.next_session_start(GUILD, self.campaign.id, START + 500))
+        later = await self.store.open_session(GUILD, self.campaign.id, START + 200)
+        await self.store.add_lines(GUILD, later, [line(3, PLAYER, "next week")])
+        self.assertEqual(
+            await self.store.next_session_start(GUILD, self.campaign.id, START), START + 200
+        )  # the empty one at START + 100 and the other campaign's do not end the window
+        self.assertEqual(empty != later, True)
+
     async def test_a_typed_line_is_saved_and_read_back_as_typed(self) -> None:
         # Typed chat at the table (#1118): the flag survives the database.
         sid = await self.store.open_session(GUILD, self.campaign.id, START)

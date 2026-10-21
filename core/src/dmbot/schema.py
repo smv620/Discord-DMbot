@@ -7458,6 +7458,121 @@ SESSION_IMPORTS = (
     """
 )
 
+MEMBER_DIRECTORY = (
+    """
+    -- Who a name in an imported transcript can be tied to (#2141): the members of a server who
+    -- agreed to be recorded, with the display name and Discord username the bot last saw. Their
+    -- names already appear in the server's shared transcripts, so this keeps nothing new about
+    -- them. It is kept per server (never read across servers), written only by the bot, and a row
+    -- is dropped when the person stops being recorded. The import search shows a row only while
+    -- the person's consent is current, so a stale row is never offered.
+    CREATE TABLE member_directory (
+        guild_id     BIGINT NOT NULL,
+        user_id      BIGINT NOT NULL CHECK (user_id > 0),
+        display_name TEXT NOT NULL DEFAULT '' CHECK (char_length(display_name) <= 100),
+        username     TEXT NOT NULL DEFAULT '' CHECK (char_length(username) <= 100),
+        updated_at   BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    """
+    + _isolate("member_directory")
+    + """
+    -- The import page's member search, now also over the directory: the campaign's people first,
+    -- then the server's recorded members by name or username, at most 25. A name from the
+    -- directory never beats a campaign person who plays the same account. NULL unless a DM.
+    CREATE OR REPLACE FUNCTION dmbot_import_members(
+        g BIGINT, c TEXT, q TEXT, terms INT, outside TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        found JSONB;
+        before TEXT := COALESCE(current_setting('dmbot.import_names', true), '');
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.import_names', 'on', true);
+        SELECT COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'userId', m.user_id::TEXT, 'name', m.name,
+                       'agreed', EXISTS (SELECT 1 FROM consent x
+                                         WHERE x.guild_id = g AND x.user_id = m.user_id
+                                           AND x.terms_version = terms
+                                           AND (outside IS NULL OR x.outside_to = outside)))
+                       ORDER BY (lower(m.name) = lower(q)) DESC, m.rank, lower(m.name))
+            FROM (SELECT one.name, one.user_id, one.rank FROM (
+                      -- One row for each account: the campaign's name for the person if there is
+                      -- one, else the directory's, else the website's. A search matches any of
+                      -- the account's names, so it finds the same person whichever it hits.
+                      SELECT n.user_id,
+                             (array_agg(n.name ORDER BY n.rank, lower(n.name)))[1] AS name,
+                             min(n.rank) AS rank,
+                             lower(string_agg(n.hay, ' ')) AS hay
+                      FROM (
+                          SELECT e.played_by AS user_id, e.name, 0 AS rank, e.name AS hay
+                          FROM memory_entities e
+                          WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'person'
+                            AND e.status = 'confirmed' AND e.played_by IS NOT NULL
+                          UNION ALL
+                          SELECT d.user_id,
+                                 CASE WHEN d.display_name <> '' THEN d.display_name
+                                      ELSE d.username END,
+                                 1, d.display_name || ' ' || d.username
+                          FROM member_directory d
+                          WHERE d.guild_id = g AND (d.display_name <> '' OR d.username <> '')
+                          UNION ALL
+                          SELECT u.user_id, u.display_name, 2, u.display_name
+                          FROM web_users u
+                          WHERE coalesce(u.display_name, '') <> ''
+                      ) n
+                      WHERE EXISTS (SELECT 1 FROM consent x
+                                    WHERE x.guild_id = g AND x.user_id = n.user_id
+                                      AND x.terms_version = terms
+                                      AND (outside IS NULL OR x.outside_to = outside))
+                         OR n.rank = 0
+                      GROUP BY n.user_id
+                  ) one
+                  WHERE q = '' OR position(lower(q) IN one.hay) > 0
+                  ORDER BY (lower(one.name) = lower(q)) DESC, one.rank, lower(one.name)
+                  LIMIT 25) m), '[]'::jsonb) INTO found;
+        PERFORM set_config('dmbot.import_names', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
+    """
+)
+RECAP_HOLDS = f"""
+    -- A session's recap held until the DM has answered DMbot's name questions (#2169). A hold is
+    -- a row here, not a job state: the recap job is made when the hold is released (the last
+    -- question answered, or "Write the recap now"), so the job list and the workers do not
+    -- change and nothing costs anything while it waits. One per session. Per campaign, isolated,
+    -- deleted with the campaign, and left out of backups (it is a wait, not content).
+    CREATE TABLE recap_holds (
+        {_memory_scope()}
+        session_at  BIGINT NOT NULL,
+        session_id  TEXT NOT NULL,
+        dm_user_id  BIGINT NOT NULL CHECK (dm_user_id > 0),
+        channel_id  BIGINT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        -- The DM has been told on the DM screen. A hold made while the story extractor still had
+        -- names to propose is silent until it is done: there may be nothing to ask.
+        asked       BOOLEAN NOT NULL DEFAULT TRUE,
+        PRIMARY KEY (guild_id, campaign_id, session_at)
+    );
+    """ + _isolate("recap_holds")
+
 OLD_SPELLING = """
     -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
     -- still matches it, so a line that says it is fixed to the new spelling and a search finds
@@ -7625,6 +7740,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0135_recap_approval", RECAP_APPROVAL),  # approve the text, then pick the audio (#2083)
     ("0136_session_imports", SESSION_IMPORTS),  # sessions loaded from a file (#2105)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
+    ("0138_member_directory", MEMBER_DIRECTORY),  # who an imported name can be (#2141)
+    ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0146_own_writing", OWN_WRITING),  # a DM's own background is its own purpose (#2167)
 )
@@ -7643,6 +7760,7 @@ ISOLATED_TABLES = (
     "transcript_lines",
     "session_imports",
     "import_speakers",
+    "member_directory",
     "transcript_suggestions",
     "waiting_name_questions",
     "memory_heard",
@@ -7658,6 +7776,7 @@ ISOLATED_TABLES = (
     "game_effects",
     "recap_jobs",
     "recap_dictionaries",
+    "recap_holds",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
