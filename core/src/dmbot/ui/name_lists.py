@@ -1708,13 +1708,14 @@ def download_files(
     people: Sequence[tuple[int, list[str], list[str]]] = (),
 ) -> tuple[list[str], int]:
     """The campaign's confirmed names as list files (the same format Add many reads), and
-    how many names they hold. Misheard spellings DMbot learned aren't other names, so
-    they're left out. A big campaign comes as several files, each small enough to add again
-    (#685). `people`: who is who at the table (Discord id, characters, table names), listed for
-    the campaign's DMs only, as secret names are (#1559)."""
+    how many names they hold. Misheard spellings DMbot learned and old spellings the DM fixed
+    aren't other names (adding them again would make DMbot listen for them), so they're left
+    out. A big campaign comes as several files, each small enough to add again (#685).
+    `people`: who is who at the table (Discord id, characters, table names), listed for the
+    campaign's DMs only, as secret names are (#1559)."""
     by_entity: dict[str, list[NameEntry]] = {}
     for a in names.names:
-        if a.confirmed and a.kind != "misheard":
+        if a.confirmed and a.kind not in ("misheard", "old"):
             by_entity.setdefault(a.entity_id, []).append(a)
     out: list[OutName] = []
     for e in names.entities.values():

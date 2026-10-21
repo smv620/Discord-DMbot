@@ -502,6 +502,19 @@
   display: list-item;
 }
 
+/* Words only a screen reader needs, such as "moved to 2 of 5" on the Import sessions page (#2107). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* A shared recap (#2119), in the look of the recap test review page the owner liked: a serif
    reading text on quiet cards. */
 .public-recap {

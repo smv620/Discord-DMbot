@@ -30,6 +30,7 @@ NOT_A_MESSAGE = {
     "rules/house_file_link.py": "the longest link",
     "rules/rule_sets.py": "the longest link",
     "rules/site_urls.py": "the longest address",
+    "transcript/import_link.py": "the longest Google Doc link",
     "transcript/import_plan.py": "the longest stored line of an imported transcript",
     "sidebar/context.py": "characters of recent scene given to a prompt",
     "sidebar/knowledge.py": "characters in one chunk of the rules knowledge",
