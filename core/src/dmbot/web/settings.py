@@ -58,9 +58,6 @@ class WebSettings:
     # Account emails, such as sign-in links (#1231). Nothing is sent until SMTP is set up.
     mail: MailSettings = field(default_factory=MailSettings)
     feedback_repo: str = "smv620/Discord-DMbot"
-    # The bot's recap switch (DMBOT_RECAPS, #1382), so the import page offers a recap tick only
-    # where a recap can be made (#2225). Off by default, like the bot's.
-    recaps_on: bool = False
     # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
     # can say "N of M recaps this month".
     recaps_per_month: int = 10
@@ -112,6 +109,9 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
+    # again" is refused instead of promising it (#2183).
+    recaps_on: bool = False
 
     @property
     def site_origin(self) -> str:
@@ -272,8 +272,12 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
     if imports_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_IMPORTS must be 1 (on) or 0 (off), got "{imports_raw}".')
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -293,7 +297,6 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
-        recaps_on=(get("DMBOT_RECAPS") or "0").lower() in ("1", "true", "on"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         support_team_email=support_team_email,

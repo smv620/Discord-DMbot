@@ -125,8 +125,6 @@ services:
       STRIPE_PRICE_EXTRA_HOURS: ${STRIPE_PRICE_EXTRA_HOURS:-}
       STRIPE_PRICE_RECAP_AUDIO: ${STRIPE_PRICE_RECAP_AUDIO:-}
       STRIPE_MANAGED_PAYMENTS: ${STRIPE_MANAGED_PAYMENTS:-}
-      # The recap switch (the bot's), so the import page offers a recap only where one can be made.
-      DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       # The monthly recap allowances (#1428), so the page can say "N of M this month".
       DMBOT_RECAPS_PER_MONTH: ${DMBOT_RECAPS_PER_MONTH:-}
       DMBOT_RECAP_AUDIO_PER_MONTH: ${DMBOT_RECAP_AUDIO_PER_MONTH:-}
@@ -166,6 +164,8 @@ services:
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
       # Importing older sessions (#2105): off until dev1 has checked a real import.
       DMBOT_IMPORTS: ${DMBOT_IMPORTS:-0}
+      # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
+      DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
