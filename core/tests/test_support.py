@@ -6,6 +6,7 @@ without its words; old and deleted accounts' tickets go; and its words reach no 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -18,8 +19,9 @@ import httpx
 import psycopg
 
 from dmbot.config import ConfigError
-from dmbot.db import Database
+from dmbot.db import Database, drop_schema
 from dmbot.mail import Mailer
+from dmbot.schema import MIGRATIONS
 from dmbot.web import sessions, support
 from dmbot.web.accounts import delete_person
 from dmbot.web.admin import AdminSessions, FailedTries
@@ -28,7 +30,7 @@ from dmbot.web.feedback import FeedbackError
 from dmbot.web.limits import RateLimit
 from dmbot.web.payments import FakeProvider
 from dmbot.web.settings import load_web_settings
-from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, PASSWORD
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET, SMTP
@@ -839,6 +841,80 @@ class SupportKeptPrivately(SupportBase):
         self.assertEqual([r["subject"] for r in await self.tickets()], ["bob's"])
 
 
+class TicketTimes(SupportBase):
+    """No two of a person's tickets share a sent time (#2214)."""
+
+    async def test_sends_in_the_same_instant_each_get_their_own_second(self) -> None:
+        ids = await asyncio.gather(
+            *(
+                support.add(
+                    self.web, ALICE.id, "table", support.Ticket(f"s{n}", "Words"), now=self.now
+                )
+                for n in range(6)
+            )
+        )
+        self.assertEqual(len(set(ids)), 6)
+        times = sorted(t["created_at"] for t in await self.tickets())
+        self.assertEqual(times, [self.now + n for n in range(6)])
+
+    async def test_another_persons_tickets_are_not_affected(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await support.add(self.web, ALICE.id, "table", support.Ticket("a", "Words"), now=self.now)
+        await support.add(self.web, BOB, "table", support.Ticket("b", "Words"), now=self.now)
+        self.assertEqual({t["created_at"] for t in await self.tickets()}, {self.now})
+
+    async def test_the_database_refuses_a_shared_time_even_without_the_stamp(self) -> None:
+        await self.add_row(ALICE.id, self.now, "one")
+        with self.assertRaises(psycopg.errors.UniqueViolation):
+            await self.add_row(ALICE.id, self.now, "two")
+
+
+class TicketTimesMigration(DatabaseTest):
+    """The migration moves tickets that already share a time apart, then adds the index."""
+
+    async def test_planted_duplicates_are_moved_apart_by_the_later_id(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0155"]
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        planted = [  # (subject, user, created_at): three at one second, one already at the next
+            ("a", 701, 1000),
+            ("b", 701, 1000),
+            ("c", 701, 1000),
+            ("d", 701, 1001),
+            ("e", 702, 1000),  # another person at the same second: untouched
+        ]
+        for subject, user, at in planted:
+            async with self.db.user(user) as conn:
+                await conn.execute(
+                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                    " VALUES (%s, %s, 'table', %s, 'Words')",
+                    (at, user, subject),
+                )
+        await self.db.migrate()
+        async with self.db.support_admin() as conn:
+            cur = await conn.execute(
+                "SELECT subject, user_id, created_at FROM support_tickets ORDER BY id"
+            )
+            got = {r["subject"]: r["created_at"] for r in await cur.fetchall()}
+        # a keeps 1000; b and c step up, run into d at 1001 and push it too (d was not a
+        # duplicate, but the ones below it ran into it): the order by id is kept, all four apart.
+        self.assertEqual([got[k] for k in "abcd"], [1000, 1001, 1002, 1003])
+        self.assertEqual(got["e"], 1000)  # another person at the same second: untouched
+        async with self.db.unscoped() as conn:  # the opening is gone again
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+                " AND tablename = 'support_tickets'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+        with self.assertRaises(psycopg.errors.UniqueViolation):
+            async with self.db.user(701) as conn:
+                await conn.execute(
+                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                    " VALUES (1000, 701, 'table', 'again', 'Words')"
+                )
+
+
 class SupportAdmin(SupportBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -1028,7 +1104,9 @@ class SupportAdmin(SupportBase):
 
     async def test_tickets_sent_at_the_same_second_keep_one_order_across_a_page_edge(self) -> None:
         for n in range(25):
-            await self.add_row(ALICE.id, self.now, f"same {n:03d}")  # one second, 25 tickets
+            # One second, 25 tickets from 25 people: one person can't send two in the same second
+            # (#2214), so it is different people who share a time.
+            await self.add_row(9000 + n, self.now, f"same {n:03d}")
         await self.sign_in()
         one = (await self.client.get("/admin/support")).json()["tickets"]
         two = (await self.client.get("/admin/support", params={"page": 2})).json()["tickets"]

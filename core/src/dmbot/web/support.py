@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+import psycopg
+
 from dmbot.db import Database
 from dmbot.entitlements import Entitlement
 from dmbot.web.feedback import clean_text
@@ -34,6 +36,9 @@ log = logging.getLogger(__name__)
 MAX_SUBJECT = 120
 MAX_MESSAGE = 4000
 PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
+# How many times `add` tries when another send of the same person took its second (#2214). Each
+# retry finds the next free one, so this is the number of sends that could all land at once.
+ADD_TRIES = 8
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -107,11 +112,27 @@ async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
 async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:
     """Keep a ticket for this signed-in person; returns its number. The table's policy lets them
     add a row for their own account and nothing else, which is why the person is set
-    (`db.user`); the number comes back through the same person's `read_own` right."""
+    (`db.user`); the number comes back through the same person's `read_own` right.
+
+    A person's tickets never share a sent time: the account page opens one by that time (#2193).
+    So a new ticket is stamped the next free second, and a unique index (#2214) holds two sends in
+    the same instant apart: the one that commits second finds the time taken and tries again,
+    which stamps it one second later."""
+    # (A UniqueViolation here can only be the (user_id, created_at) index: the other unique
+    # constraint on the table is the identity column, which no insert names.)
+    for attempt in range(ADD_TRIES):
+        try:
+            return await _insert_ticket(db, user_id, plan, ticket, now)
+        except psycopg.errors.UniqueViolation:
+            if attempt == ADD_TRIES - 1:
+                raise
+    raise AssertionError("ADD_TRIES is at least one")
+
+
+async def _insert_ticket(db: Database, user_id: int, plan: str, ticket: Ticket, now: int) -> int:
+    """One try of `add`: the next free second for this person."""
     async with db.user(user_id) as conn:
         cur = await conn.execute(
-            # A person's tickets never share a sent time: the account page opens one by that time
-            # (#2193), so a second ticket in the same second is stamped one second later.
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
             " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
             " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
