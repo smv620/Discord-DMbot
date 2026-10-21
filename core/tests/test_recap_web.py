@@ -595,6 +595,22 @@ class TheAudio(Base):
         soon = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((soon.status_code, soon.json()["error"]), (429, "too_soon"))
 
+    async def test_the_route_refuses_a_posted_recap_when_the_plan_has_no_narration(self) -> None:
+        await self.posted_with_old_audio()
+        app = create_app(
+            settings(enforce_plans=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.addAsyncCleanup(client.aclose)
+        got = await client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_in_plan"))
+        self.assertEqual((await self.state(self.one.id)).audio, "ready")  # nothing was queued
+
     async def test_only_the_campaigns_dm_may_narrate_a_posted_recap_again(self) -> None:
         await self.posted_with_old_audio()
         got = await self.client.post(f"/me/recaps/{self.other}/audio/again")  # Bob's campaign
