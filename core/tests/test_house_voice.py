@@ -339,7 +339,7 @@ class Pressing(TableTest):
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertIn("✅ Saved as house rule 2.", press.response.edited[0][0])
         self.assertIn("✅ Saved as house rule 2.", it.message.edit.await_args.kwargs["content"])
-        self.bot.house_wins.record.assert_awaited_once()  # type: ignore[attr-defined]
+        self.bot.house_wins.record.assert_awaited_once()  # type: ignore[union-attr]
 
     async def test_cancelling_the_question_gives_the_offer_back(self) -> None:
         _, _, view = await self.disagreeing()

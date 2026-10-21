@@ -310,7 +310,7 @@ async def press(
                 pending.campaign_id,
                 user_id,
                 todo,
-                await _checker(bot, guild_id, pending),
+                await _checker(interaction, bot, guild_id, pending),
             )
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
@@ -320,7 +320,7 @@ async def press(
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
                     store, guild_id, pending.campaign_id, user_id, one,
-                    await _checker(bot, guild_id, pending),
+                    await _checker(interaction, bot, guild_id, pending),
                 )  # fmt: skip
                 pending.applied.done += done.done
                 pending.applied.skipped += done.skipped
@@ -331,13 +331,15 @@ async def press(
                 await _show(interaction, review_text(pending), review_view(guild_id, key, pending))
 
 
-async def _checker(bot: Any, guild_id: int, pending: Any) -> Any:
+async def _checker(interaction: discord.Interaction, bot: Any, guild_id: int, pending: Any) -> Any:
     """The disagreement check for rules added from the file (#2284); None without the AI."""
     if getattr(bot, "rule_conflict_ai", None) is None:
         return None
     campaign = await bot.campaigns.get(guild_id, pending.campaign_id)
     if campaign is None:
         return None
+    if not interaction.response.is_done():
+        await interaction.response.defer()  # the check is an AI call: Discord waits 3 seconds
     from dmbot.ui import house_conflicts  # (that module leads back here through the menus)
 
     async def check(texts: Sequence[str]) -> Any:

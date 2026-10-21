@@ -14,6 +14,7 @@ unchecked path does today. DMbot never picks which rule applies.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ MAX_EXISTING = 300  # existing rules shown; a campaign has fewer
 RULE_CHARS = 400
 TOKENS_PER_RULE = 40
 TOKENS_FIXED = 150
+TIMEOUT_S = 20.0  # a save is never held up by the check for longer
 
 SYSTEM = (
     "You compare Dungeons & Dragons house rules. A house rule is a table's own ruling. You are "
@@ -136,19 +138,27 @@ async def check(
     existing: Sequence[Existing],
 ) -> Checked:
     """Compare the new rules with the existing ones in one call. Nothing to compare with, or
-    nothing new, is no call. A failing or unreadable call is `unchecked`."""
-    fresh = [r for r in new if r.strip()][:MAX_NEW]
+    nothing new, is no call. More rules than `MAX_NEW`, or a failing or unreadable call, is
+    `unchecked`."""
+    # Positions in `new` are kept: a blank rule is skipped, and an answer names the rule's place
+    # in the caller's list, so a blank one can't shift later answers onto the wrong rule.
+    asked = [(place, r) for place, r in enumerate(new, start=1) if r.strip()][:MAX_NEW]
+    skipped_some = sum(1 for r in new if r.strip()) > len(asked)
+    fresh = [r for _, r in asked]
     live = list(existing)[:MAX_EXISTING]
     if not fresh or not live:
-        return Checked()
+        return Checked(unchecked=skipped_some)
     try:
-        reply = await complete(
-            SYSTEM,
-            message(fresh, live),
-            max_tokens=answer_tokens(len(fresh)),
-            schema=SCHEMA,
-        )
-    except Exception:  # the AI service, the network: the rule is saved without the check
+        async with asyncio.timeout(TIMEOUT_S):
+            reply = await complete(
+                SYSTEM,
+                message(fresh, live),
+                max_tokens=answer_tokens(len(fresh)),
+                schema=SCHEMA,
+            )
+    except (
+        Exception
+    ):  # (a timeout is one)  # the AI service, the network: the rule is saved without the check
         return Checked(unchecked=True)
     if reply.refused or reply.cut:
         return Checked(unchecked=True)
@@ -157,8 +167,8 @@ async def check(
     if answer is None or len(answer) < len(fresh):
         return Checked(unchecked=True)  # a rule left out was not compared: never taken as "fine"
     found = tuple(
-        Disagreement(n, by_place[place])
+        Disagreement(asked[n - 1][0], by_place[place])
         for n, numbers in sorted(answer.items())
         for place in numbers
     )
-    return Checked(found)
+    return Checked(found, unchecked=skipped_some)  # rules past the limit were not compared

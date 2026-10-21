@@ -167,6 +167,10 @@ UNCHECKED = (
 )
 
 
+def _checked_words(item: Item) -> str:
+    return item.rule + (f" (instead of: {item.instead})" if item.instead else "")
+
+
 def _named(number: int, from_set: str | None) -> str:
     return f"{from_set} rule {number}" if from_set else f"rule {number}"
 
@@ -195,11 +199,11 @@ async def apply(
     held: dict[int, str] = {}  # file rule number -> what it disagrees with
     if check is not None:
         fresh = [i for i in items if i.kind == ADD and (i.rule, i.instead) not in present]
-        found = await check([i.rule for i in fresh])
+        found = await check([_checked_words(i) for i in fresh])
         for d in found.disagreements:
             held.setdefault(fresh[d.new - 1].number, _named(d.other.number, d.other.from_set))
         if found.unchecked and fresh:
-            out.done.append(UNCHECKED)
+            out.skipped.append(UNCHECKED)
     for item in items:
         try:
             if item.kind == ADD:

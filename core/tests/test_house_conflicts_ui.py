@@ -4,6 +4,7 @@ tested in test_rule_conflicts, and the stored pairs in test_rule_wins."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from types import SimpleNamespace
@@ -104,6 +105,23 @@ class Disagreeing(UITest):
         _, it = await self.add()
         for label in self.labels(self.question(it)[1]):
             self.assertLessEqual(len(label), 25, label)
+
+    async def test_two_presses_at_once_save_the_rule_once(self) -> None:
+        _, it = await self.add()
+        _, view = self.question(it)
+        button = self.press(view, "New rule wins")
+        await asyncio.gather(button.callback(self.it()), button.callback(self.it()))
+        self.assertEqual([c[0] for c in self.store.calls], ["add"])
+
+    async def test_a_choice_that_could_not_be_stored_is_not_called_remembered(self) -> None:
+        self.wins.record.side_effect = OSError
+        _, it = await self.add()
+        _, view = self.question(it)
+        press = self.it()
+        await self.press(view, "New rule wins").callback(press)
+        self.assertEqual([c[0] for c in self.store.calls], ["add"])  # still saved
+        self.assertNotIn("is remembered", str(press.followup.send.await_args_list))
+        self.assertNotIn("is remembered", str(press.edit_original_response.await_args_list))
 
     async def test_only_a_dm_can_answer(self) -> None:
         _, it = await self.add()
@@ -223,5 +241,35 @@ class FromTheFile(unittest.IsolatedAsyncioTestCase):
             [self.item(5, "Crits double")],
             check,
         )
-        self.assertIn(house_file_sync.UNCHECKED, done.done)
+        self.assertIn(house_file_sync.UNCHECKED, done.skipped)
         self.assertEqual(store.added, ["Crits double"])
+
+
+class Positions(unittest.IsolatedAsyncioTestCase):
+    async def test_a_blank_rule_does_not_shift_the_answers(self) -> None:
+        async def complete(system: str, text: str, **_: Any) -> Reply:
+            answer = {
+                "checks": [{"new": 1, "disagrees_with": []}, {"new": 2, "disagrees_with": [1]}]
+            }
+            return Reply(json.dumps(answer), cut=False)
+
+        found = await conflicts.check(complete, ["First", "  ", "Third"], [Existing(1, "Old")])
+        self.assertEqual([d.new for d in found.disagreements], [3])  # the third, not the second
+
+    async def test_more_rules_than_one_call_takes_are_said_to_be_unchecked(self) -> None:
+        async def complete(system: str, text: str, **_: Any) -> Reply:
+            checks = [{"new": n, "disagrees_with": []} for n in range(1, conflicts.MAX_NEW + 1)]
+            return Reply(json.dumps({"checks": checks}), cut=False)
+
+        rules = [f"Rule {n}" for n in range(conflicts.MAX_NEW + 1)]
+        found = await conflicts.check(complete, rules, [Existing(1, "Old")])
+        self.assertTrue(found.unchecked)
+
+    async def test_a_call_that_hangs_is_unchecked(self) -> None:
+        async def complete(system: str, text: str, **_: Any) -> Reply:
+            await asyncio.sleep(10)
+            raise AssertionError
+
+        with patch.object(conflicts, "TIMEOUT_S", 0.01):
+            found = await conflicts.check(complete, ["New"], [Existing(1, "Old")])
+        self.assertTrue(found.unchecked)

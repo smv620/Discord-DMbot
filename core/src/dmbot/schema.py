@@ -8006,7 +8006,8 @@ HOUSE_RULE_WINS = f"""
         decided_by  BIGINT NOT NULL,
         decided_at  BIGINT NOT NULL,
         PRIMARY KEY (guild_id, campaign_id, a_set, a_number, b_set, b_number),
-        CHECK (a_set < b_set OR (a_set = b_set AND a_number < b_number))
+        CHECK (a_set COLLATE "C" < b_set COLLATE "C"
+               OR (a_set = b_set AND a_number < b_number))
     );
     """ + _isolate("house_rule_wins")
 

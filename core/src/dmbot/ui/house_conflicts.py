@@ -12,6 +12,7 @@ wording and one place that records the answer (`dmbot.rules.wins`).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
@@ -109,6 +110,8 @@ class DisagreeView(_Menu):
         self._save, self._saved_note, self._replace = save, saved_note, replace
         self._done, self._cancelled = done, cancelled
         self.at = 0
+        self._busy = asyncio.Lock()  # two presses at once must not save the rule twice
+        self.remembered = True
         self.saved: HouseRule | None = None
         self._buttons()
 
@@ -168,6 +171,10 @@ class DisagreeView(_Menu):
             self._cancelled()
         await super().on_timeout()
 
+    @property
+    def stopped(self) -> bool:
+        return self.is_finished()
+
     async def _end(self, interaction: discord.Interaction, note: str) -> None:
         self.stop()
         await self._done(interaction, note)
@@ -191,6 +198,12 @@ class DisagreeView(_Menu):
         await self._keep_both(interaction, new_wins=False)
 
     async def _keep_both(self, interaction: discord.Interaction, *, new_wins: bool) -> None:
+        async with self._busy:
+            await self._keep_both_once(interaction, new_wins=new_wins)
+
+    async def _keep_both_once(self, interaction: discord.Interaction, *, new_wins: bool) -> None:
+        if self.stopped:
+            return  # a second press on a question that is already answered
         try:
             if self.saved is None:
                 self.saved = await self._save()
@@ -210,6 +223,7 @@ class DisagreeView(_Menu):
                 )
             except Exception:
                 log.exception("Couldn't store which house rule wins")
+                self.remembered = False
         self.at += 1
         if self.at < len(self.others):
             self._buttons()
@@ -219,9 +233,14 @@ class DisagreeView(_Menu):
 
     def _summary(self) -> str:
         assert self.saved is not None
+        if not self.remembered:
+            return (
+                f"{self._saved_note(self.saved)} Both rules stay, but I couldn't remember "
+                "which wins just now."
+            )
         return (
             f"{self._saved_note(self.saved)} Both rules stay, and your choice is remembered. "
-            "Change it any time with Edit or Remove."
+            "To change which wins, use `/dmbot houserules`."
         )
 
     async def _on_cancel(self, interaction: discord.Interaction) -> None:
