@@ -353,6 +353,9 @@ def router(
                     "note": r.note,
                     "grantedBy": r.granted_by,
                     "grantedAt": r.granted_at,
+                    # A grant given before the person joined the server's free list: the page
+                    # shows them once, under "Always free" (#2196).
+                    "alsoFree": r.discord_user_id in settings.free_users,
                 }
                 for r in rows
             ],
