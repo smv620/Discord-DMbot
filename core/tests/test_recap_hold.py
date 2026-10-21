@@ -349,7 +349,7 @@ class TheCap(IsolatedAsyncioTestCase):
         bot.recap_holds.mark_reminded.assert_awaited_once_with(GUILD, "c" * 32, AT)
         channel, text = bot.post.await_args.args
         self.assertEqual((channel, text), (66, hold.reminder_text(2)))
-        self.assertIn("about 2 days", text)
+        self.assertIn("in about 2 days", text)
         self.assertIn("Check new names", text)
         ids = [c.custom_id for c in bot.post.await_args.kwargs["view"].children]
         self.assertEqual(ids, [f"dmbot:names:review:{'c' * 32}", f"dmbot:rhold:go:{'c' * 32}:{AT}"])
@@ -376,10 +376,15 @@ class TheCap(IsolatedAsyncioTestCase):
     async def test_the_reminder_counts_the_time_left_from_the_holds_age(self) -> None:
         bot = fake_bot(proposed=2)
         await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
-        self.assertIn("about 2 days", bot.post.await_args.args[1])
+        self.assertIn("in about 2 days", bot.post.await_args.args[1])
         late = fake_bot(proposed=2)  # the reminder came late: little time is left
         await self.round_with(late, self.aged(hold.HOLD_MAX_S - 3600))
-        self.assertIn("about a day", late.post.await_args.args[1])
+        self.assertIn("within a day", late.post.await_args.args[1])
+
+    async def test_the_wording_changes_at_about_twenty_hours_left(self) -> None:
+        self.assertIn("within a day", hold.reminder_text(2, hold.LATE_REMINDER_S - 60))
+        self.assertIn("in about a day", hold.reminder_text(2, hold.LATE_REMINDER_S + 60))
+        self.assertIn("in about 2 days", hold.reminder_text(2))
 
     async def test_a_hold_never_asked_is_not_told_its_questions_got_no_answer(self) -> None:
         bot = fake_bot(proposed=2)  # questions open, but the DM was never asked (bot was down)

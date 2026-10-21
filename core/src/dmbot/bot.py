@@ -7777,8 +7777,9 @@ class DMBot(commands.AutoShardedBot):
         recap is never lost: if counting, holding or asking fails, the hold is released into a
         queued recap (or the recap is queued as before when nothing was held). Returns "held"
         (waiting for answers), "queued" or "already" (a repeat: held or queued before).
-        `extractor_to_come` is False when the DM presses "Write a recap" after the end-of-session
-        steps: the extractor has run then, so only open questions hold it (never a silent hold)."""
+        `extractor_to_come` is False when the story extractor has already run or will never run
+        for the session (the DM pressing "Write a recap" after the end-of-session steps, or an
+        imported session): only open questions hold it, never a silent wait."""
         gid, cid = campaign.guild_id, campaign.id
         store = self.recap_holds
         if store is not None:
