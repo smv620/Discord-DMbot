@@ -15,6 +15,7 @@ prompts, not the decision (a restored campaign's recaps are drafts again, never 
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -497,7 +498,9 @@ class RecapStore:
         Discord message is not touched; its stored text is, and `respelled_at` lets the page say
         so. One transaction. Counts only."""
         waiting = posted = kept = audio = skipped = 0
-        word = max(old.split(), key=len, default="")
+        # The longest run of letters and digits: the name may be written with a look-alike
+        # apostrophe or dash, which a prefilter on a whole word would miss.
+        word = max(re.findall(r"\w+", old), key=len, default="")
         like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

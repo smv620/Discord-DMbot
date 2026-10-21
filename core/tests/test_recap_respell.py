@@ -156,3 +156,13 @@ class Recaps(Base):
         self.assertIn("An approval stays", note)
         self.assertIn("Posts already in Discord are not changed", note)
         self.assertIn("make it again on the website", note)
+
+    async def test_a_curly_apostrophe_in_the_recap_is_found(self) -> None:
+        await self.make(self.one, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET title = %s", ("Ka’zeth waits",))
+        done = await self.store.respell(1, self.one.id, "Ka'zeth", "Kazett", [])
+        self.assertEqual(done.waiting, 1)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.title, "Kazett waits")
