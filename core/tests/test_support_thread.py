@@ -150,8 +150,7 @@ class TheHistory(HelperBase):
 
         number = await self.talk()
         answer = (
-            "We fixed it on our side, so please open the menu, press the green button, and try again. "
-            * 2
+            "We fixed it on our side, so open the menu, press the green button, and try again. " * 2
         )
         await self.helper.team_reply(number, answer.strip())
         to = str(self.mails(to_alice=True)[-1]["Reply-To"])
