@@ -4,12 +4,12 @@
 // the page says one line about what to do, in place of the draft and every button that acts on it.
 // The fields (`waitingForNames`, `namesToAnswer`) are standing in for the API's (#2174).
 import { cleanup, render, screen } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AccountApi, Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
-import { heldWords, statusLine, text } from "../src/content/recaps";
+import { heldWords, isHeld, statusLine, text } from "../src/content/recaps";
 
 afterEach(cleanup);
 
@@ -48,6 +48,39 @@ describe("the words", () => {
     );
     expect(statusLine({ ...base, status: "draft", working: true })).toBe("Being made");
     expect(statusLine({ ...base, status: "posted", waitingForNames: false })).toBe("Posted");
+  });
+});
+
+describe("what counts as held", () => {
+  it("is a draft with the flag set, and nothing else, so the list and the page agree", async () => {
+    for (const status of ["posted", "posting", "dropped"] as const) {
+      expect(isHeld({ ...base, status, waitingForNames: true })).toBe(false);
+    }
+    expect(isHeld({ ...base, status: "draft", waitingForNames: true })).toBe(true);
+    expect(isHeld({ ...base, status: "draft", waitingForNames: false })).toBe(false);
+    const { waitingForNames: _none, ...older } = { ...base, waitingForNames: undefined };
+    expect(isHeld(older as Recap)).toBe(false); // an API without the field
+    // A posted recap flagged held still shows its normal page.
+    render(<Recaps api={withHeld({ status: "posted", waitingForNames: true, namesToAnswer: 2 })} path={path} />);
+    expect(await screen.findByText(/The party crossed/)).toBeTruthy();
+    expect(screen.queryByText(/DMbot will write this recap once/)).toBeNull();
+  });
+
+  it("puts held before a failed state in the list, as the page does", () => {
+    const failed = { ...base, status: "draft" as const, state: "failed", waitingForNames: true };
+    expect(statusLine(failed)).toBe(heldWords.status);
+  });
+
+  it("asks nothing about names or choices while held", async () => {
+    const api = withHeld({ status: "draft", waitingForNames: true, namesToAnswer: 2 });
+    const names = vi.fn(api.campaignNames!.bind(api));
+    const choices = vi.fn(api.recapChoices!.bind(api));
+    api.campaignNames = names;
+    api.recapChoices = choices;
+    render(<Recaps api={api} path={path} />);
+    await screen.findByText(heldWords.line(2));
+    expect(names).not.toHaveBeenCalled();
+    expect(choices).not.toHaveBeenCalled();
   });
 });
 

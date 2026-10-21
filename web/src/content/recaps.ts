@@ -118,13 +118,19 @@ export const heldWords = {
     } about names in Discord: 📝 Check new names on the DM screen.`,
 } as const;
 
+/** A draft the bot is holding until the DM answers its questions about names (#2210). One test
+ * for the list and the page, so they never disagree. A posted or dropped recap is never held. */
+export function isHeld(recap: Recap): boolean {
+  return recap.status === "draft" && recap.waitingForNames === true;
+}
+
 /** "Ready to read", "Posted"… for one row of the list. */
 export function statusLine(recap: Recap): string {
   if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
-  if (recap.waitingForNames) return heldWords.status;
+  if (isHeld(recap)) return heldWords.status;
   if (recap.state === "failed") return "Couldn't be made";
   if (recap.working) return "Being made";
   return "Ready to read";
