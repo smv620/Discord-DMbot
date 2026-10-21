@@ -332,7 +332,8 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
               </li>
             ))}
         </ul>
-        {view.grants.every((g) => g.alsoFree) && <p class="muted">{text.nobody}</p>}
+        {/* Not beside an older-entry note: "nobody yet" would contradict the row above it. */}
+        {view.grants.length === 0 && <p class="muted">{text.nobody}</p>}
       </section>
 
       <section aria-labelledby="add-heading">

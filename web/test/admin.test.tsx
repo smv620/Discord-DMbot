@@ -338,7 +338,7 @@ describe("free access (#773)", () => {
     // One entry: no second row for the same person, and no "nobody" note for the empty rest.
     expect(screen.getAllByText("Sam")).toHaveLength(1);
     expect(document.querySelector(`[data-grant="${FRIEND}"]`)).toBeNull();
-    expect(screen.getByText(text.nobody)).toBeTruthy();
+    expect(screen.queryByText(text.nobody)).toBeNull();
     expect(within(free).getByText(text.olderGrant)).toBeTruthy();
     fireEvent.click(within(free).getByRole("button", { name: `${text.removeOlderGrant}: Sam` }));
     expect(await screen.findByText(text.olderGrantRemoved("Sam"))).toBeTruthy();
