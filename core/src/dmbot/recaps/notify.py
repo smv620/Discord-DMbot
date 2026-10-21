@@ -83,3 +83,39 @@ async def tell_the_dm(
     )
     log.info("Recap: the email was %s", result)
     return result
+
+
+async def remind_the_dm(
+    mailer: Mailer,
+    store: RecapStore,
+    site: str,
+    guild_id: int,
+    campaign_id: str,
+    dm_user_id: int,
+    session_at: int,
+    waiting: int,
+    day: int,
+) -> str:
+    """Email a DM that a held recap still waits on name questions (#2174). At most one a day:
+    the kind carries the day number, so a second round the same day finds it already sent.
+    It holds a count and a link, never a name or any story. Never raises."""
+    if not site or waiting <= 0:
+        return "not_ready"
+    address = await store.address(guild_id, dm_user_id)
+    link = page_link(site, guild_id, campaign_id, session_at)
+    noun = "name question" if waiting == 1 else "name questions"
+    body = (
+        f"{waiting} {noun} from your last session {'is' if waiting == 1 else 'are'} still open, "
+        "so your recap is waiting.\n\n"
+        "Answer in Discord (press Check new names), or press Write the recap now. "
+        f"The recap page is here: {link}\n\n"
+        "If nothing is done, DMbot writes the recap after a few days with the names as they are."
+    )
+    kind = _kind("waiting", guild_id, campaign_id, session_at, day)
+    return await mailer.send(
+        user_id=dm_user_id,
+        kind=kind,
+        to=address,
+        subject="Your recap is waiting for you",
+        body=body,
+    )
