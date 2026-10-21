@@ -37,8 +37,9 @@ def change(sentence: int, kind: str, text: str = "x", *ties: str) -> str:
 
 class Smart(fx.Canned):
     """Canned answers, with the motive check's calls answered from the sentences they carry: by
-    default "no sentence states a reason"; `says` gives (sentence number -> (reason, lines))
-    for a reading, taken in order, or `raw` an answer as it is."""
+    default "the sentences the word list knows state a reason"; `says` gives
+    (sentence number -> (reason, lines)) for a reading, taken in order, or `raw` an answer as
+    it is."""
 
     def __init__(self, *answers: str | Exception | Reply) -> None:
         super().__init__(*answers)
@@ -54,15 +55,16 @@ class Smart(fx.Canned):
             return Reply(self.raw.pop(0), False, 10, 10, "m")
         said = self.says.pop(0) if self.says else {}
         block = text.split("<sentences>")[1].split("</sentences>")[0]
-        numbers = [int(n) for n in re.findall(r"^\[(\d+)\]", block, re.MULTILINE)]
+        asked = re.findall(r"^\[(\d+)\] (.*)$", block, re.MULTILINE)
+        # by default the call agrees with the word list: a sentence that puts a purpose is a reason
         checks = [
             {
-                "sentence": n,
-                "reason": said.get(n, (False, []))[0],
-                "lines": said.get(n, (False, []))[1],
+                "sentence": int(n),
+                "reason": said.get(int(n), (mo.states_purpose(t), []))[0],
+                "lines": said.get(int(n), (False, []))[1],
                 "recap": False,
             }
-            for n in numbers
+            for n, t in asked
         ]
         return Reply(json.dumps({"checks": checks}), False, 10, 10, "m")
 
@@ -327,6 +329,38 @@ class Criticising(WorkerHarness):
         self.assertEqual(fast.motive_sent, [])  # never read, so nothing was asked...
         self.assertNotIn("avenge", job.summary)  # ...and what the word list flags is cut
         self.assertEqual(loop.cut, 1)
+
+    async def test_a_plain_recap_with_ordinary_phrasing_ships_uncut_even_when_the_loop_cannot_run(
+        self,
+    ) -> None:
+        plain = CLEAN.replace(
+            "Mira drew her blade without a word,",
+            "During the fight Oskar fell. They climbed out of the pit. Mira tried the door. "
+            "Mira drew her blade without a word,",
+            1,
+        )
+        for sentence in ("During the fight Oskar fell.", "They climbed out of the pit."):
+            self.assertFalse(mo.states_purpose(sentence))
+        self.assertFalse(mo.states_purpose("Mira tried the door."))
+        fast = self.fast_for(plain)
+        await self.setUpWorker(fast, fx.Canned(), critics=True)
+        with patch.object(pl, "MAX_CALLS", 9):  # the loop does not begin
+            job = await self.go()
+        self.assertEqual(job.state, "ready")
+        for kept in (
+            "During the fight Oskar fell.",
+            "They climbed out of the pit.",
+            "tried the door",
+        ):
+            self.assertIn(kept, job.summary)
+        self.assertEqual(cr.loop_from_json(job.critics).cut, 0)
+
+    async def test_a_grader_that_failed_leaves_a_note_for_the_dm(self) -> None:
+        fast = Smart(fx.BEATS_ANSWER, fx.prose_answer(CLEAN), AIError("down"), fx.FINISH_ANSWER)
+        await self.setUpWorker(fast, fx.Canned(), critics=True)
+        job = await self.settle(await self.go())
+        self.assertEqual(job.state, "ready")
+        self.assertIn(cr.STYLE_UNCHECKED, cr.loop_from_json(job.critics).notes)
 
     async def test_the_days_tally_near_its_cap_stops_the_loop_and_never_fails_the_recap(
         self,

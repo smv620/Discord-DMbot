@@ -48,6 +48,19 @@ PLAIN = [
     "Mira drew her blade and stepped inside.",
     "The hall was bare and a cold wind blew through it.",
     "Oskar picked the silver lock and it clicked open.",
+    "During the fight, Grak fell to one knee.",
+    "They climbed out of the pit.",
+    "Mira had to roll a saving throw.",
+    "Bren tried the door; it was locked.",
+    "Morning came, and the party set off.",
+    "Tomas walked up to meet the guard.",
+    "Following the road, they reached the gate.",
+    "Something moved in the dark.",
+    "Evening fell over the camp.",
+    "The guard waved them through the gate.",
+    "Grak took the key from the table.",
+    "They went out of the room and down the stairs.",
+    "The goal post stood at the end of the yard.",
 ]
 
 
@@ -58,16 +71,43 @@ class TheMotiveCheck(unittest.TestCase):
         self.assertEqual(mo.candidates(["", "  "]), [])
         self.assertEqual([n for n, _ in mo.floor_flagged(SENTENCES)], [2, 3, 4])
 
-    def test_the_word_list_catches_each_way_of_putting_a_purpose(self) -> None:
+    def test_the_word_list_knows_each_way_of_putting_a_purpose_and_no_plain_sentence(self) -> None:
         for text in PURPOSES:
             with self.subTest(text):
                 self.assertTrue(mo.states_purpose(text))
-                (failure,) = mo.failures([(1, text)], [ans(1, reason=False)], LINES, "")
-                self.assertEqual(failure.number, 1)  # even when the call said it is no reason
+                # asked about, the call says it is a reason and nobody said it: a failure
+                self.assertEqual(len(mo.failures([(1, text)], [ans(1)], LINES, "")), 1)
+                # a sentence the call left out of its answer is judged by the list
+                self.assertEqual(len(mo.failures([(1, text)], [], LINES, "")), 1)
         for text in PLAIN:
             with self.subTest(text):
                 self.assertFalse(mo.states_purpose(text))
                 self.assertEqual(mo.failures([(1, text)], [ans(1, reason=False)], LINES, ""), [])
+                self.assertEqual(mo.failures([(1, text)], [], LINES, ""), [])
+
+    def test_the_call_decides_so_a_word_list_hit_is_not_a_failure_by_itself(self) -> None:
+        for text in PURPOSES:
+            with self.subTest(text):
+                self.assertEqual(mo.failures([(1, text)], [ans(1, reason=False)], LINES, ""), [])
+
+    def test_the_budget_covers_the_worst_case_answer_of_a_full_batch(self) -> None:
+        full = json.dumps(
+            {
+                "checks": [
+                    {
+                        "sentence": n,
+                        "reason": True,
+                        "lines": [380 + i for i in range(8)],
+                        "recap": True,
+                    }
+                    for n in range(1, mo.MAX_ASKED + 1)
+                ]
+            }
+        )
+        self.assertGreaterEqual(
+            mo.answer_tokens(mo.MAX_ASKED), len(full) // 3
+        )  # >= 3 chars a token
+        self.assertGreater(mo.answer_tokens(60), mo.answer_tokens(30))
 
     def test_what_the_call_flags_that_the_list_does_not_still_needs_a_line(self) -> None:
         text = "Bren stayed behind, loyal to the last."  # no word the list knows

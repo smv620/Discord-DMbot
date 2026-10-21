@@ -122,7 +122,6 @@ SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
 SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
 SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
 SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
-MOTIVE_TOKENS = 1000  # room for the lines cited for up to thirty sentences, as numbers
 PLOT_TOKENS = 1200  # room for up to eight changes as JSON
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
@@ -1279,7 +1278,7 @@ class RecapWorker:
             for batch in mo.batches(asked):
                 raw = await self._call(
                     gid, cid, job, self._fast, mo.SYSTEM, mo.message(batch, lines, inputs.previous),
-                    MOTIVE_TOKENS, schema=mo.SCHEMA, stage="motives", soft=True,
+                    mo.answer_tokens(len(batch)), schema=mo.SCHEMA, stage="motives", soft=True,
                 )  # fmt: skip
                 if raw is None:
                     return await self._store.get(gid, cid, job.session_at)

@@ -6,12 +6,12 @@ did). Every sentence of a draft that states an intention, a plan, a goal or a re
 a line; one that cannot is a failure, and the writer is told to say what they did instead.
 
 Every sentence of the draft goes to one fast-tier call (in batches), which says which of them state
-a reason, an aim or a plan and which numbered lines carry it. Code adds a floor: a word list of
-the ways a purpose is usually put, so a sentence it matches must cite a line whatever the call
-said (the call can miss a phrasing; the list cannot be argued out of one). Code then checks every
-citation: a cited line must be a play line a recorded person said that the call was shown, and must
-share words with the sentence, so an invented citation cannot pass. The answer carries numbers
-only, never text. Nothing here touches Discord or the database.
+a reason, an aim or a plan and which numbered lines carry it. Code adds a narrow word list of
+the ways a purpose is usually put: it judges only a sentence the call left out, and cuts in code
+when the call could not be made at all. It never fails an ordinary story sentence by itself.
+Code then checks every citation: a cited line must be a play line a recorded person said that
+the call was shown, and must share words with the sentence, so an invented citation cannot
+pass. The answer carries numbers only, never text. Nothing here touches Discord or the database.
 """
 
 from __future__ import annotations
@@ -30,39 +30,56 @@ MAX_CANDIDATES = 200  # more than any draft has: none is ever left unasked
 MIN_SHARED = 2  # content words a sentence and its cited line must share
 LINE_CHARS = 240
 MAX_LINES_SHOWN = 400
+TOKENS_PER_ANSWER = 40  # one entry as JSON, with a few line numbers cited
+TOKENS_FIXED = 200
 
-# Ways a purpose, a plan, a wish or a reason is put. Matched on whole words, case ignored. A floor,
-# not the whole check: it only makes sure a sentence like these is never let through because the
-# call did not flag it.
+
+def answer_tokens(asked: int) -> int:
+    """Room for the call's answer: every asked sentence comes back with its own entry."""
+    return TOKENS_FIXED + TOKENS_PER_ANSWER * asked
+
+
+# Ways a purpose, a plan, a wish or a reason is usually put. Matched on whole words, case ignored.
+# Narrow on purpose: a hit only means "the call must be asked and the answer read", it never fails
+# a sentence by itself (the call decides, so ordinary story sentences are not cut). The list is used
+# when the call could not be made at all (the sentence is then cut in code) and for a sentence the
+# call left out of its answer.
 _INTENT = re.compile(
     r"\b(?:want|wants|wanted|wanting|wish|wishes|wished|hope|hopes|hoped|hoping|plan|plans|"
-    r"planned|planning|intend|intends|intended|intent on|aim|aims|aimed|seek|seeks|sought|"
-    r"seeking|vow|vows|vowed|resolve|resolves|resolved|determined|decide|decides|decided|goal|"
-    r"goals|mission|quest|because|so that|so [^.!?]{0,40}\bcould|in order to|in hopes|eager|"
-    r"desperate|desire|desires|desired|fear|fears|feared|afraid|worry|worries|worried|"
-    r"means to|mean to|meant to|set on|bent on|out to|out of|looking for|looks for|look for|"
-    r"searching for|try|tries|tried|trying|attempt|attempts|attempted|thinking|will|going to|"
-    r"about to|ready to|prepared to|willing to|needs to|needed to|have to|has to|had to|"
+    r"planned|planning|intend|intends|intended|intent on|seek|seeks|sought|seeking|vow|vows|"
+    r"vowed|determined to|decided to|decides to|because|so that|so [^.!?]{0,40}\bcould|"
+    r"in order to|in hopes|eager to|desperate to|desire|desires|desired|fear|fears|feared|"
+    r"afraid|worry|worries|worried|means to|mean to|meant to|set on|bent on|out to|"
+    r"out of (?:loyalty|fear|spite|pity|duty|greed|love|anger|habit|respect|guilt|hatred|"
+    r"jealousy|curiosity|revenge|kindness|desperation)|looking for|looks for|look for|"
+    r"searching for|tried to|tries to|try to|trying to|attempt to|attempts to|attempted to|"
+    r"thinking|(?:he|she|they|we) will|going to|ready to|prepared to|willing to|"
+    r"needs to|needed to|(?:have|has|had) to (?!roll|make|save|pass|fail)|"
     r"for the sake of|in case|lest)\b",
     re.IGNORECASE,
 )
-# A purpose with "to <verb>": "to protect the child", "to save the village, they fought".
+# A purpose with "to <verb>": "to protect the child", "to save the village, they fought". Only verbs
+# that name an aim; "walked up to meet the guard" is just a thing that happened.
 _TO_PURPOSE = re.compile(
-    r"\bto\s+(?:protect|save|find|stop|get|reach|learn|seek|retrieve|rescue|avenge|escape|steal|"
-    r"kill|free|warn|help|take|keep|win|defend|recover|claim|prove|discover|uncover|destroy|"
-    r"end|break|open|reclaim|answer|follow|hide|flee|silence|capture|punish|honou?r|serve|"
-    r"avoid|prevent|ensure|secure|gain|learn|investigate|question|confront|meet|warn)\b",
+    r"\bto\s+(?:protect|save|find|stop|retrieve|rescue|avenge|escape|steal|kill|warn|prove|"
+    r"defend|recover|reclaim|punish|silence|capture|honou?r|prevent|ensure|secure|investigate|"
+    r"confront|uncover|discover|destroy)\b",
     re.IGNORECASE,
 )
 # "they head north to find the king": a way of going followed by "to <verb>".
 _GOING_TO = re.compile(
     r"\b(?:head|heads|headed|heading|travel|travels|travelled|traveled|set out|sets out|ride|"
-    r"rides|rode|march|marches|marched|go|goes|went|going|return|returns|returned|journey|"
-    r"journeys|journeyed|hurry|hurries|hurried|race|races|raced)\b[^.!?]{0,60}?\bto\s+[a-z]{3,}",
+    r"rides|rode|march|marches|marched|journey|journeys|journeyed|hurry|hurries|hurried)\b"
+    r"[^.!?]{0,60}?\bto\s+(?:find|reach|see|warn|stop|get|save|meet|seek|learn|ask)\b",
     re.IGNORECASE,
 )
 # A sentence that opens with a reason: "Wanting answers, ...", "Thinking the vault empty, ..."
-_OPENING_REASON = re.compile(r"^\s*(?:[A-Z][a-z]+ing\b[^,]{0,60},|To\s+[a-z]+\b[^,]{0,60},)")
+_OPENING_REASON = re.compile(
+    r"^\s*(?:(?:Wanting|Hoping|Fearing|Wishing|Seeking|Hunting|Thinking|Believing|Suspecting|"
+    r"Intending|Planning|Hoping|Determined|Desperate|Eager)\b[^,]{0,60},|"
+    r"To\s+[a-z]+\b[^,]{0,60},)",
+    re.IGNORECASE,
+)
 
 
 def states_purpose(text: str) -> bool:
@@ -88,11 +105,11 @@ a purpose put as "to <do something>", "in order to", "so that", "looking for", "
 "thinking", "out of loyalty", "will" or "mean to"). Set it to false for a sentence that only says \
 what happened, what was seen, or what was said.
 
-For a sentence with "reason" true, give the numbers of the lines in which a player or the DM said \
-that intention or reason (the plan, the goal, the reason itself, in their own words or close to \
-it). If nobody said it in the lines, give an empty list: do not guess, and do not count what is \
-only likely, only implied, or only the recap's own idea. Set "recap" to true only when the \
-<earlier_recap> says it.
+For every sentence, give the numbers of the lines in which a player or the DM said that intention \
+or reason (the plan, the goal, the reason itself, in their own words or close to it); an empty \
+list for a sentence with "reason" false. If nobody said it in the lines, give an empty list: do \
+not guess, and do not count what is only likely, only implied, or only the recap's own idea. \
+Set "recap" to true only when the <earlier_recap> says it.
 
 Reply with JSON only, one entry for each sentence:
 {"checks":[{"sentence":<number>,"reason":<true|false>,"lines":[<line numbers>],\
@@ -220,9 +237,10 @@ def failures(
     lines: Mapping[int, str],
     previous: str,
 ) -> list[Failure]:
-    """The asked sentences that state a purpose (the call says so, or the word list does) and have
-    no real citation. A citation counts only when the line is one of the lines shown (a recorded
-    person's play line) and shares at least `MIN_SHARED` content words with the sentence;
+    """The asked sentences that state a purpose (the call says so; the word list judges a sentence
+    the call left out) and have no real citation. A citation counts only when the line is one of
+    the lines shown (a recorded person's play line) and shares at least `MIN_SHARED` content words
+    with the sentence;
     "recap" counts only when the earlier recap shares them. A sentence the call leaves out is
     judged by the word list alone."""
     said = {n: content_words(text) for n, text in shown_lines(asked, lines).items()}
@@ -231,7 +249,8 @@ def failures(
     bad: list[Failure] = []
     for n, text in asked:
         got = by_sentence.get(n)
-        if not (states_purpose(text) or (got is not None and got.reason)):
+        # The call decides. A sentence it left out of its answer is judged by the word list.
+        if not (got.reason if got is not None else states_purpose(text)):
             continue
         mine = content_words(text)
         cited, recap = (got.lines, got.recap) if got is not None else ((), False)
