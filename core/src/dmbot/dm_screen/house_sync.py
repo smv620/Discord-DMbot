@@ -22,7 +22,7 @@ import logging
 import re
 import uuid
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -304,7 +304,14 @@ async def press(
         elif action in ("all", "rest"):
             todo = pending.items[pending.index :]
             await _answer_long_job(interaction, len(todo))
-            done = await house_file_sync.apply(store, guild_id, pending.campaign_id, user_id, todo)
+            done = await house_file_sync.apply(
+                store,
+                guild_id,
+                pending.campaign_id,
+                user_id,
+                todo,
+                await _checker(bot, guild_id, pending),
+            )
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
             await _finish(interaction, key, pending)
@@ -312,8 +319,9 @@ async def press(
             if action == "accept":
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
-                    store, guild_id, pending.campaign_id, user_id, one
-                )
+                    store, guild_id, pending.campaign_id, user_id, one,
+                    await _checker(bot, guild_id, pending),
+                )  # fmt: skip
                 pending.applied.done += done.done
                 pending.applied.skipped += done.skipped
             pending.index += 1
@@ -321,6 +329,21 @@ async def press(
                 await _finish(interaction, key, pending)
             else:
                 await _show(interaction, review_text(pending), review_view(guild_id, key, pending))
+
+
+async def _checker(bot: Any, guild_id: int, pending: Any) -> Any:
+    """The disagreement check for rules added from the file (#2284); None without the AI."""
+    if getattr(bot, "rule_conflict_ai", None) is None:
+        return None
+    campaign = await bot.campaigns.get(guild_id, pending.campaign_id)
+    if campaign is None:
+        return None
+    from dmbot.ui import house_conflicts  # (that module leads back here through the menus)
+
+    async def check(texts: Sequence[str]) -> Any:
+        return await house_conflicts.look(bot, campaign, texts)
+
+    return check
 
 
 # ---- comparing -----------------------------------------------------------------------

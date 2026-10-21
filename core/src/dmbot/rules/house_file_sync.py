@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from dmbot.rules.conflicts import Checked
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file import Diff, FileRule
 
@@ -160,13 +161,27 @@ def describe(item: Item) -> str:
     )
 
 
+UNCHECKED = "Rules added from the file couldn't be checked against your other house rules."
+
+
+def _named(number: int, from_set: str | None) -> str:
+    return f"{from_set} rule {number}" if from_set else f"rule {number}"
+
+
 async def apply(
-    store: Store, guild_id: int, campaign_id: str, user_id: int, items: Sequence[Item]
+    store: Store,
+    guild_id: int,
+    campaign_id: str,
+    user_id: int,
+    items: Sequence[Item],
+    check: Callable[[Sequence[str]], Awaitable[Checked]] | None = None,
 ) -> Applied:
     """Do the items, one by one. One that can't be done is skipped and said, never forced:
     the store refuses it if another DM changed or removed the rule since it was compared.
     A new rule that is already there (the same words) is not added a second time, so doing
-    the same offer twice, or again after a failure part way, never makes copies."""
+    the same offer twice, or again after a failure part way, never makes copies.
+    `check` (#2284) compares the new rules, in one call, with the rules already in force: one that
+    disagrees is not added (the DM adds it by hand and picks which rule wins), and the rest are."""
     out = Applied()
     present: set[tuple[str, str | None]] = set()
     if any(item.kind == ADD for item in items):
@@ -174,11 +189,26 @@ async def apply(
             present = {(r.rule, r.supersedes) for r in await store.list(guild_id, campaign_id)}
         except Exception:
             log.exception("Couldn't read the house rules before adding from the file")
+    held: dict[int, str] = {}  # file rule number -> what it disagrees with
+    if check is not None:
+        fresh = [i for i in items if i.kind == ADD and (i.rule, i.instead) not in present]
+        found = await check([i.rule for i in fresh])
+        for d in found.disagreements:
+            held.setdefault(fresh[d.new - 1].number, _named(d.other.number, d.other.from_set))
+        if found.unchecked and fresh:
+            out.done.append(UNCHECKED)
     for item in items:
         try:
             if item.kind == ADD:
                 if (item.rule, item.instead) in present:
                     out.done.append(f"Rule {item.number} was already there.")
+                    continue
+                if item.number in held:
+                    out.skipped.append(
+                        f"Rule {item.number} in the file seems to disagree with {held[item.number]}"
+                        ", so it wasn't added. Press **Add a house rule** in `/dmbot houserules` "
+                        "to add it and choose which one wins."
+                    )
                     continue
                 saved = await store.add(
                     guild_id, campaign_id, user_id, item.rule, item.instead,
