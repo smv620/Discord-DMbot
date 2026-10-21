@@ -41,7 +41,9 @@ type Session = ImportProgress["sessions"][number];
 /** A session that will not change on its own any more. A session waiting for names is not final:
  * the DM's answers move it on. Without a stage (an older API) the plain state decides. */
 function isFinal(s: Session): boolean {
-  if (!s.stage) return s.state === "done" || s.state === "failed";
+  // A stage this page doesn't know (a newer API) is read by the plain state, never polled forever.
+  if (!s.stage || !(s.stage in words.stage || s.stage === "waiting_for_names"))
+    return s.state === "done" || s.state === "failed";
   return (
     s.stage === "recap_ready" ||
     s.stage === "recap_failed" ||

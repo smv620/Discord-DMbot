@@ -1027,7 +1027,7 @@ function mockHomebrew() {
 }
 
 /** One imported session in each stage the API can report (#2230), for the page's tests and demos:
- * the last two are the old shape, with no stage. */
+ * (the old shape, with no stage, is covered in the tests). */
 export const everyImportStage: ImportProgress = {
   sessions: [
     ...(

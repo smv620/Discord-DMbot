@@ -60,6 +60,13 @@ const one = (over: Partial<ImportProgress["sessions"][number]>): ImportProgress 
   sessions: [{ file: "a.txt", date: "2026-09-14", state: "working", reason: null, ...over }],
 });
 
+/** The delays the page asks to wait between asks; the real timers never get to fire them. */
+async function delaysOf(progress: ImportProgress): Promise<number[]> {
+  const spy = vi.spyOn(globalThis, "setTimeout");
+  await importing(progress);
+  return spy.mock.calls.map((c) => Number(c[1])).filter((n) => n === 3000 || n === 60000);
+}
+
 describe("the words for each stage", () => {
   it("says every stage in plain words, in the order of the sessions", async () => {
     await importing(everyImportStage);
@@ -81,8 +88,17 @@ describe("the words for each stage", () => {
   });
 
   it("says 'name' for one and a general line for none", async () => {
-    expect(w.waitingForNames(1)).toBe("Waiting for your answers about 1 name");
-    expect(w.waitingForNames(0)).toBe("Waiting for your answers about names");
+    await importing(one({ state: "done", stage: "waiting_for_names", namesToAnswer: 1 }));
+    expect(screen.getByText(/Waiting for your answers about 1 name$/)).toBeTruthy();
+    cleanup();
+    await importing(one({ state: "done", stage: "waiting_for_names", namesToAnswer: 0 }));
+    expect(screen.getByText(/Waiting for your answers about names$/)).toBeTruthy();
+  });
+
+  it("reads a stage it does not know by the plain state, and stops asking", async () => {
+    const seen = await delaysOf(one({ state: "done", stage: "recap_queued" as never }));
+    expect(screen.getByText(/2026-09-14 · Done/)).toBeTruthy();
+    expect(seen).toEqual([]);
   });
 
   it("falls back to the old words when the API sends no stage", async () => {
@@ -123,12 +139,7 @@ describe("the name check that was given up", () => {
 });
 
 describe("when the page asks again", () => {
-  /** The delays the page asks to wait between asks; the real timers never get to fire them. */
-  async function delays(progress: ImportProgress): Promise<number[]> {
-    const spy = vi.spyOn(globalThis, "setTimeout");
-    await importing(progress);
-    return spy.mock.calls.map((c) => Number(c[1])).filter((n) => n === 3000 || n === 60000);
-  }
+  const delays = delaysOf;
 
   it("asks every few seconds while something is being worked on", async () => {
     expect(await delays(one({ state: "working", stage: "cleaning" }))).toContain(3000);
@@ -176,5 +187,67 @@ describe("when the page asks again", () => {
 
   it("falls back to the old rule without a stage: stops when done", async () => {
     expect(await delays(one({ state: "done" }))).toEqual([]);
+  });
+});
+
+describe("counting and pace over time", () => {
+  it("counts finished sessions that did not fail, and holds the verdict while one waits", async () => {
+    await importing({
+      sessions: [
+        { file: "a.txt", date: "2026-09-01", state: "done", reason: null, stage: "recap_ready" },
+        { file: "b.txt", date: "2026-09-02", state: "done", reason: null, stage: "done" },
+        { file: "c.txt", date: "2026-09-03", state: "failed", reason: null, stage: "failed" },
+        { file: "d.txt", date: "2026-09-04", state: "done", reason: null, stage: "waiting_for_names", namesToAnswer: 2 },
+      ],
+    });
+    expect(screen.getByText(w.doneCount(2, 4))).toBeTruthy();
+    expect(screen.queryByText(w.someFailed, { exact: false })).toBeNull();
+  });
+
+  it("says all done when the last sessions ended with a recap that failed or none", async () => {
+    await importing({
+      sessions: [
+        { file: "a.txt", date: "2026-09-01", state: "done", reason: null, stage: "recap_failed" },
+        { file: "b.txt", date: "2026-09-02", state: "done", reason: null, stage: "recap_ready" },
+      ],
+    });
+    expect(screen.getByText(w.allDone, { exact: false })).toBeTruthy();
+  });
+
+  it("slows from quick to a minute when the answer changes, and stops asking when it unmounts", async () => {
+    vi.useFakeTimers();
+    try {
+      const answers: ImportProgress[] = [
+        one({ state: "working", stage: "writing_recap" }),
+        one({ state: "done", stage: "waiting_for_names", namesToAnswer: 1 }),
+      ];
+      let asks = 0;
+      const api = mockApi("table");
+      api.importStart = async () => ({ importId: "x", sessions: [], estimate: { sessions: 1, fastCalls: 1 } });
+      api.importProgress = async () => answers[Math.min(asks++, answers.length - 1)]!;
+      live.on = true;
+      const view = render(<Import api={api} path="/account/import/100.cmp1" />);
+      const input = screen.getByLabelText(w.pickLabel, { selector: "input" }) as HTMLInputElement;
+      Object.defineProperty(input, "files", { value: [s1], configurable: true });
+      fireEvent.change(input);
+      fireEvent.click(screen.getByRole("button", { name: w.preview }));
+      await vi.advanceTimersByTimeAsync(10);
+      fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
+      await vi.advanceTimersByTimeAsync(10);
+      fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(asks).toBe(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(asks).toBe(2); // quick while working
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(asks).toBe(2); // now only waiting for names: not before a minute
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(asks).toBe(3);
+      view.unmount();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(asks).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
