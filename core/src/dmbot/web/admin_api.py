@@ -54,7 +54,7 @@ MAX_BODY = 4 * 1024
 WRONG = "wrong_sign_in"
 # A Discord user id: a snowflake, 17 to 20 digits (#773).
 DISCORD_ID = re.compile(r"[0-9]{17,20}")
-RECENT_CHANGES = 50
+RECENT_CHANGES = 20  # entries on one page of Recent changes (#2199)
 # Password tries waiting for the one before them; more than this is a flood, answered
 # "busy" (not WRONG: the owner's own try in a flood mustn't say their password is wrong).
 MAX_WAITING = 8
@@ -310,24 +310,39 @@ def router(
 
     # Free access (#773)
 
+    async def log_page(page: int) -> tuple[list[dict[str, Any]], int]:
+        """One page of the change log, newest first, in the page's shape, and how many pages
+        there are (at least one, so an empty log is still "page 1 of 1")."""
+        rows, pages = await grants.log_page(db, page, RECENT_CHANGES)
+        names = await sessions.display_names(db, [e.discord_user_id for e in rows], now=clock())
+        return [
+            {
+                "discordId": str(e.discord_user_id),
+                "name": names.get(e.discord_user_id),
+                "at": e.at,
+                "by": e.admin_email,
+                "action": e.action,
+            }
+            for e in rows
+        ], pages
+
     @api.get("/grants")
     async def list_grants(session: Admin) -> dict[str, Any]:
         """The owner's free list (server settings, not editable here), the grants still in
-        force or ended (revoked ones live in the history), and the last changes."""
+        force or ended (revoked ones live in the history), and page 1 of the changes (the
+        rest come from `/grants/log`, so this first load stays one call)."""
         rows = [r for r in await grants.grants(db) if r.revoked_at is None]
-        log_rows = await grants.log_entries(db, limit=RECENT_CHANGES)
         free_ids = sorted(settings.free_users)
         # Names, where a person signed in lately: for the ids on this page only.
         names = await sessions.display_names(
-            db,
-            [*free_ids, *(r.discord_user_id for r in rows), *(e.discord_user_id for e in log_rows)],
-            now=clock(),
+            db, [*free_ids, *(r.discord_user_id for r in rows)], now=clock()
         )
 
         def who(user_id: int) -> dict[str, str | None]:
             # Ids are strings: they don't fit in a JavaScript number.
             return {"discordId": str(user_id), "name": names.get(user_id)}
 
+        log_rows, pages = await log_page(1)
         return {
             "free": [who(i) for i in free_ids],
             "grants": [
@@ -344,16 +359,24 @@ def router(
                 }
                 for r in rows
             ],
-            "log": [
-                {
-                    **who(e.discord_user_id),
-                    "at": e.at,
-                    "by": e.admin_email,
-                    "action": e.action,
-                }
-                for e in log_rows
-            ],
+            "log": log_rows,
+            "logPage": 1,
+            "logPages": pages,
         }
+
+    @api.get("/grants/log")
+    async def grants_log(session: Admin, page: str = "1") -> dict[str, Any]:
+        """One page of Recent changes, newest first (#2199): `?page=N` from 1. A page that
+        isn't a whole number from 1 to the last answers 400 `bad_page`, and the site then shows
+        page 1."""
+        # isdecimal: int() would also take " 2", "+2" and non-ASCII digits.
+        wanted = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
+        if wanted < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await log_page(wanted)
+        if wanted > pages:
+            raise HTTPException(status_code=400, detail="bad_page")
+        return {"log": rows, "page": wanted, "pages": pages}
 
     @api.post("/grants")
     async def give(request: Request, session: AdminWrite) -> dict[str, str | None]:

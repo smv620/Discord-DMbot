@@ -218,6 +218,81 @@ class AdminGrants(DatabaseTest):
         self.assertEqual(after["log"][0]["action"], "revoke")
         self.assertEqual(after["log"][0]["discordId"], FRIEND)
 
+    async def fill_log(self, csrf: str, entries: int) -> None:
+        """`entries` log lines: a grant for one person, then changes to it."""
+        await self.give(csrf)
+        for n in range(entries - 1):
+            self.now += 1
+            await self.give(csrf, note=f"change {n}")
+
+    async def test_the_first_page_of_changes_is_the_newest_twenty_with_the_page_count(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 45)
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((len(listed["log"]), listed["logPage"], listed["logPages"]), (20, 1, 3))
+        self.assertEqual(listed["log"][0]["at"], NOW + 44)  # newest first
+        second = (await self.client.get("/admin/grants/log?page=2")).json()
+        self.assertEqual((len(second["log"]), second["page"], second["pages"]), (20, 2, 3))
+        self.assertEqual(second["log"][0]["at"], NOW + 24)
+        last = (await self.client.get("/admin/grants/log?page=3")).json()
+        self.assertEqual(len(last["log"]), 5)  # the remainder
+        self.assertEqual(last["log"][-1]["action"], "grant")  # the very first change is last
+        # The pages together are every entry once, in order, with the same shape as the first.
+        times = [e["at"] for p in (listed, second, last) for e in p["log"]]
+        self.assertEqual(times, sorted(times, reverse=True))
+        self.assertEqual(len(times), 45)
+        self.assertEqual(set(last["log"][0]), set(listed["log"][0]))
+
+    async def test_an_empty_log_is_one_empty_page(self) -> None:
+        await self.sign_in()
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((listed["log"], listed["logPage"], listed["logPages"]), ([], 1, 1))
+        first = (await self.client.get("/admin/grants/log?page=1")).json()
+        self.assertEqual(first, {"log": [], "page": 1, "pages": 1})
+
+    async def test_a_page_that_is_not_there_or_not_a_number_is_a_bad_page(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 21)  # two pages
+        for bad in (
+            "0",
+            "-1",
+            "3",
+            "abc",
+            "",
+            "1.5",
+            "+2",
+            "%202",
+            "2%20",
+            "2%0A",
+            "%D9%A2",
+            "%C2%B2",
+            "999999999",
+            "99999999999999999999",
+        ):
+            answer = await self.client.get(f"/admin/grants/log?page={bad}")
+            self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
+        self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 200)
+        # Leading zeros are the same number.
+        self.assertEqual((await self.client.get("/admin/grants/log?page=002")).json()["page"], 2)
+        # No page given is page 1.
+        self.assertEqual((await self.client.get("/admin/grants/log")).json()["page"], 1)
+
+    async def test_a_full_page_has_no_empty_page_after_it(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 20)
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((len(listed["log"]), listed["logPages"]), (20, 1))
+        self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 400)
+        await self.give(csrf, note="the twenty-first")
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual(len((await self.client.get("/admin/grants/log?page=2")).json()["log"]), 1)
+        await self.fill_log(csrf, 19)  # 40 in all
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual((await self.client.get("/admin/grants/log?page=3")).status_code, 400)
+
+    async def test_the_log_pages_need_an_admin_sign_in(self) -> None:
+        self.assertEqual((await self.client.get("/admin/grants/log?page=1")).status_code, 401)
+
     async def test_the_server_logs_name_the_id_only(self) -> None:
         csrf = await self.sign_in()
         with self.assertLogs("dmbot.web.admin_api", level=logging.INFO) as logs:

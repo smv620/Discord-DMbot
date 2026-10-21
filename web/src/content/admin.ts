@@ -94,6 +94,21 @@ export const text = {
     `Done. Changed free access for ${who}: ${how}.`,
   historyHeading: "Recent changes",
   noHistory: "No changes yet.",
+  // The page bar under Recent changes (#2199).
+  historyList: "Recent changes, newest first",
+  pagesNav: "Pages of recent changes",
+  pageNewest: "Newest",
+  pageNewer: "Newer",
+  pageOlder: "Older",
+  pageOldest: "Oldest",
+  pageBox: "Page",
+  pageGo: "Go",
+  pageOf: (pages: number): string => `of ${pages}`,
+  pageNow: (page: number, pages: number): string => `Page ${page} of ${pages}`,
+  pagePick: (pages: number): string => `Pick a page from 1 to ${pages}.`,
+  pageDown: "We couldn't load that page. Try again.",
+  pageGone: "That page isn't there any more, so here is the newest one.",
+  pageLoading: "Loading…",
   logLine: (when: string, by: string, action: string, who: string): string =>
     `${when}: ${by} ${
       action === "grant"
