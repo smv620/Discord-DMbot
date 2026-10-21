@@ -71,7 +71,7 @@ describe("the filter", () => {
   it("starts on what needs a reply and shows a count on each button", async () => {
     const api = filtering(ROWS());
     expect(await screen.findByText("New A")).toBeTruthy();
-    expect(api.tickets).toHaveBeenCalledWith("new");
+    expect(api.tickets).toHaveBeenCalledWith("new", 1);
     expect(shown()).toEqual(["New A", "New B"]);
     const group = screen.getByRole("group", { name: text.ticketsFilterLabel });
     expect([...group.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
@@ -220,7 +220,7 @@ describe("the API call", () => {
     const fetcher = reply({ tickets: [row(1, "A", "new")], counts });
     const found = await httpAdminApi("https://api.example", fetcher).tickets("new");
     expect(found.counts).toEqual(counts);
-    expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("https://api.example/admin/support?status=new");
+    expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("https://api.example/admin/support?status=new&page=1");
   });
 
   it("does not trust counts that are not numbers", async () => {
