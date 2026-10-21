@@ -159,6 +159,26 @@ async def log_count(db: Database) -> int:
     return int(row["n"]) if row else 0
 
 
+async def log_page(db: Database, page: int, size: int) -> tuple[list[LogEntry], int]:
+    """Page `page` (from 1) of the log, newest first, and the number of pages (at least one).
+    The count and the rows are read in one transaction, so a change made meanwhile can't make
+    the two disagree (a repeated row, or a last page that is missing)."""
+    async with db.grant_writer() as conn:
+        cur = await conn.execute("SELECT count(*) AS n FROM access_log")
+        row = await cur.fetchone()
+        pages = max(1, -(-(int(row["n"]) if row else 0) // size))
+        cur = await conn.execute(
+            "SELECT admin_email, action, discord_user_id, at FROM access_log"
+            " ORDER BY id DESC LIMIT %s OFFSET %s",
+            (size, (page - 1) * size),
+        )
+        rows = await cur.fetchall()
+    return [
+        LogEntry(r["admin_email"], cast(Action, r["action"]), int(r["discord_user_id"]), r["at"])
+        for r in rows
+    ], pages
+
+
 async def _lock(conn: Conn, discord_user_id: int) -> None:
     """One change per person at a time (give or revoke): a row lock can't cover a grant
     not made yet, so two at once could log a fresh grant as a "change"."""

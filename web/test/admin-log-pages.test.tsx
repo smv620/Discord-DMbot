@@ -76,7 +76,7 @@ const shown = () =>
   within(screen.getByRole("region", { name: text.historyList }))
     .getAllByRole("listitem")
     .map((li) => li.textContent ?? "");
-const status = () => screen.getByText(/^Page \d+ of \d+$|^Pick a page|^We couldn't load/);
+const status = () => screen.getByText(/^Page \d+ of \d+$|^Pick a page|^We couldn't load|^That page isn't/);
 
 describe("the window", () => {
   it("shows the newest twenty first, with the page number under it", async () => {
@@ -229,6 +229,28 @@ describe("after a change, and when a page can't be read", () => {
     expect(shown()[0]).toContain("admin0@example.com");
   });
 
+  it("says the page is gone, and shows the newest, when the API no longer has the page asked for", async () => {
+    const grantsLog = vi.fn(async (page: number): Promise<LogPage> => {
+      if (page !== 1) throw new AdminApiError("stale");
+      return { log: makeLog(45).slice(0, SIZE), page: 1, pages: 3 };
+    });
+    setup(45, { grantsLog });
+    await nav();
+    fireEvent.click(button(text.pageOlder));
+    await waitFor(() => expect(grantsLog).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(text.pageGone));
+  });
+
+  it("opens each page at its top, not where the last was scrolled to", async () => {
+    setup(45);
+    await nav();
+    const box = screen.getByRole("region", { name: text.historyList });
+    box.scrollTop = 120;
+    fireEvent.click(button(text.pageOlder));
+    await waitFor(() => expect(status().textContent).toBe(text.pageNow(2, 3)));
+    expect(box.scrollTop).toBe(0);
+  });
+
   it("lets only the newest request set what is shown", async () => {
     let slow!: (page: LogPage) => void;
     const pagesOf = (page: number): LogPage => ({
@@ -244,7 +266,7 @@ describe("after a change, and when a page can't be read", () => {
     await nav();
     // Older starts (slowly) and is answered by a later Oldest; the late answer is ignored.
     fireEvent.click(button(text.pageOlder));
-    await waitFor(() => expect(button(text.pageOldest).disabled).toBe(true)); // busy: no double press
+    await waitFor(() => expect(grantsLog).toHaveBeenCalledTimes(1));
     slow(pagesOf(2));
     await waitFor(() => expect(status().textContent).toBe(text.pageNow(2, 3)));
     fireEvent.click(button(text.pageOldest));

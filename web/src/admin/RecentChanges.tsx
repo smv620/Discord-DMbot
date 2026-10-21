@@ -30,6 +30,7 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
   const [busy, setBusy] = useState(false);
   // Only the newest request may set what is shown, so a slow older page can't overwrite it.
   const latest = useRef(0);
+  const windowBox = useRef<HTMLDivElement>(null);
 
   // The panel loaded again (a change was made, or the page opened): back to page 1.
   // (Not on the first run: the panel's page 1 is already what is shown, and an effect that runs
@@ -47,9 +48,14 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
     setBusy(false);
   }, [first, pages]);
 
-  async function go(wanted: number) {
+  // A new page opens at its top, not partway down where the last one was left.
+  useEffect(() => {
+    if (windowBox.current) windowBox.current.scrollTop = 0;
+  }, [page, entries]);
+
+  async function go(wanted: number, notice: string | null = null) {
     const mine = ++latest.current;
-    setProblem(null);
+    setProblem(notice);
     setBusy(true);
     try {
       const read = await api.grantsLog?.(wanted);
@@ -65,8 +71,7 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
       else if (kind === "off") onOff();
       else if (kind === "stale") {
         // The page is gone (the log shrank): the first one is always there.
-        setProblem(text.pageDown);
-        void go(1);
+        void go(1, text.pageGone);
         return;
       } else setProblem(text.pageDown);
       setTyped(String(page));
@@ -95,7 +100,14 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
         // A fixed-height window that scrolls inside itself, so the box never grows or shrinks
         // as pages change; focusable so the keyboard can scroll it.
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must take focus
-        <div class="history-window" tabIndex={0} role="region" aria-label={text.historyList}>
+        <div
+          class="history-window"
+          ref={windowBox}
+          tabIndex={0}
+          role="region"
+          aria-label={text.historyList}
+          aria-busy={busy}
+        >
           <ul class="history">
             {entries.map((e, i) => (
               <li key={`${page}-${e.at}-${i}`}>
@@ -110,17 +122,19 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
           <button
             type="button"
             class="button secondary"
-            disabled={busy || page <= 1}
+            disabled={page <= 1}
             onClick={() => void go(1)}
           >
+            <span aria-hidden="true">« </span>
             {text.pageNewest}
           </button>
           <button
             type="button"
             class="button secondary"
-            disabled={busy || page <= 1}
+            disabled={page <= 1}
             onClick={() => void go(page - 1)}
           >
+            <span aria-hidden="true">‹ </span>
             {text.pageNewer}
           </button>
           <form class="page-jump" onSubmit={jump} noValidate>
@@ -145,23 +159,29 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
           <button
             type="button"
             class="button secondary"
-            disabled={busy || page >= total}
+            disabled={page >= total}
             onClick={() => void go(page + 1)}
           >
             {text.pageOlder}
+            <span aria-hidden="true"> ›</span>
           </button>
           <button
             type="button"
             class="button secondary"
-            disabled={busy || page >= total}
+            disabled={page >= total}
             onClick={() => void go(total)}
           >
             {text.pageOldest}
+            <span aria-hidden="true"> »</span>
           </button>
         </nav>
       )}
       {/* Always on the page, so a screen reader hears the page change and any refusal. */}
-      <p id="log-page-note" class={problem ? "warn small" : "muted small"} role="status">
+      <p
+        id="log-page-note"
+        class={problem ? "warn small" : "muted small"}
+        role={problem ? "alert" : "status"}
+      >
         {problem ?? (showBar ? text.pageNow(page, total) : "")}
       </p>
     </>

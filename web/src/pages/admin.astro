@@ -110,11 +110,25 @@ import Base from "../layouts/Base.astro";
     border-radius: var(--radius);
   }
 
+  /* Wide: one row, Newest Newer [Page n of N Go] Older Oldest. Narrow: the jump box on a row of
+     its own, then the four buttons in a grid, so Newer and Older never end up apart. */
   .admin :global(.page-bar) {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  @media (max-width: 40rem) {
+    .admin :global(.page-bar) {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .admin :global(.page-jump) {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
   }
 
   .admin :global(.page-bar .button) {

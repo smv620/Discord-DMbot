@@ -313,11 +313,7 @@ def router(
     async def log_page(page: int) -> tuple[list[dict[str, Any]], int]:
         """One page of the change log, newest first, in the page's shape, and how many pages
         there are (at least one, so an empty log is still "page 1 of 1")."""
-        total = await grants.log_count(db)
-        pages = max(1, -(-total // RECENT_CHANGES))
-        rows = await grants.log_entries(
-            db, limit=RECENT_CHANGES, offset=(page - 1) * RECENT_CHANGES
-        )
+        rows, pages = await grants.log_page(db, page, RECENT_CHANGES)
         names = await sessions.display_names(db, [e.discord_user_id for e in rows], now=clock())
         return [
             {
@@ -372,8 +368,10 @@ def router(
         page 1."""
         # isdecimal: int() would also take " 2", "+2" and non-ASCII digits.
         wanted = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
-        rows, pages = await log_page(max(wanted, 1))
-        if wanted < 1 or wanted > pages:
+        if wanted < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await log_page(wanted)
+        if wanted > pages:
             raise HTTPException(status_code=400, detail="bad_page")
         return {"log": rows, "page": wanted, "pages": pages}
 

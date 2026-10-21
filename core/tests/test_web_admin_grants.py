@@ -209,12 +209,42 @@ class AdminGrants(DatabaseTest):
     async def test_a_page_that_is_not_there_or_not_a_number_is_a_bad_page(self) -> None:
         csrf = await self.sign_in()
         await self.fill_log(csrf, 21)  # two pages
-        for bad in ("0", "-1", "3", "abc", "", "1.5", "+2", "%202", "99999999999999999999"):
+        for bad in (
+            "0",
+            "-1",
+            "3",
+            "abc",
+            "",
+            "1.5",
+            "+2",
+            "%202",
+            "2%20",
+            "2%0A",
+            "%D9%A2",
+            "%C2%B2",
+            "999999999",
+            "99999999999999999999",
+        ):
             answer = await self.client.get(f"/admin/grants/log?page={bad}")
             self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
         self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 200)
+        # Leading zeros are the same number.
+        self.assertEqual((await self.client.get("/admin/grants/log?page=002")).json()["page"], 2)
         # No page given is page 1.
         self.assertEqual((await self.client.get("/admin/grants/log")).json()["page"], 1)
+
+    async def test_a_full_page_has_no_empty_page_after_it(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 20)
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((len(listed["log"]), listed["logPages"]), (20, 1))
+        self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 400)
+        await self.give(csrf, note="the twenty-first")
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual(len((await self.client.get("/admin/grants/log?page=2")).json()["log"]), 1)
+        await self.fill_log(csrf, 19)  # 40 in all
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual((await self.client.get("/admin/grants/log?page=3")).status_code, 400)
 
     async def test_the_log_pages_need_an_admin_sign_in(self) -> None:
         self.assertEqual((await self.client.get("/admin/grants/log?page=1")).status_code, 401)
