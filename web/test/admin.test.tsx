@@ -371,7 +371,7 @@ describe("free access (#773)", () => {
       free: [{ discordId: FRIEND, name: "Sam" }],
       grants: [{ ...view().grants[0]!, alsoFree: true }],
     };
-    const revoke = vi.fn(async () => Promise.reject(new AdminApiError("network")));
+    const revoke = vi.fn(async () => Promise.reject(new AdminApiError("down")));
     signedIn({ grants: vi.fn(async () => both), revoke });
     fireEvent.click(await screen.findByRole("button", { name: `${text.removeOlderGrant}: Sam` }));
     await waitFor(() => expect(revoke).toHaveBeenCalled());
