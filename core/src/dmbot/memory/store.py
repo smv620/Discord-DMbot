@@ -1892,7 +1892,8 @@ class MemoryStore:
                     [BACKGROUND_SOURCE, wanted],
                 )
             ]
-            plain = [i for i in wanted if i not in set(quoted_ids)]
+            quoted_set = set(quoted_ids)
+            plain = [i for i in wanted if i not in quoted_set]
             fields = {"type": type, "role": role, "status": CONFIRMED, "needs_look": False}
             confirmed = []
             for group, extra in ((quoted_ids, {"description": ""}), (plain, {})):
@@ -1904,7 +1905,7 @@ class MemoryStore:
                 )
             ids = [row["id"] for row in confirmed]
             await states.settle_kind(w, onto, ids, type)
-            await _forget_quotes(w, [r["id"] for r in confirmed if r["id"] in set(quoted_ids)])
+            await _forget_quotes(w, [r["id"] for r in confirmed if r["id"] in quoted_set])
             if ids:
                 await w.update_where(
                     ALIASES,

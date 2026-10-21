@@ -254,6 +254,53 @@ class ThePath(NamesTest):
         for word in ("from his tower", "near Oakmere", "carries Heartseeker"):
             self.assertEqual(await self.log_count(ids, word), 0, word)  # nowhere in the log
 
+    def test_two_that_hold_each_other_keep_the_first_and_a_chain_loses_nothing(self) -> None:
+        def entry(name: str, *secret: str) -> bg.Found:
+            return bg.Found(name, "npc", (), secret, "")
+
+        pair = bg.merge(
+            [[entry("Vecnor", "Brother Aldric"), entry("Brother Aldric", "Vecnor")]], ()
+        )
+        self.assertEqual([f.name for f in pair], ["Vecnor"])
+        chain = bg.merge(
+            [[entry("Brother Aldric"), entry("Vecnor", "Brother Aldric"), entry("Mira", "Vecnor")]],
+            (),
+        )
+        self.assertEqual([f.name for f in chain], ["Brother Aldric", "Mira"])  # nobody lost
+
+    async def test_the_log_gate_leaves_a_later_note_alone(self) -> None:
+        from dmbot.memory.store import _forget_quotes
+
+        await self.read()
+        (place,) = [e for e in await self.entities() if e.name == "Oakmere"]
+        await self.memory.confirm_entity(GUILD, self.campaign.id, place.id, "place", source="dm")
+        async with self.db.guild(GUILD) as conn:  # a note the DM wrote after deciding
+            await conn.execute(
+                "UPDATE memory_entities SET description = 'DM note' WHERE id = %s", (place.id,)
+            )
+        await self.memory.set_entity_type(
+            GUILD, self.campaign.id, place.id, "faction", source="dm"
+        )  # a change whose log row holds that note
+        async with self.memory._write(GUILD, self.campaign.id, "scan") as w:
+            await _forget_quotes(w, [place.id])
+        self.assertEqual(await self.log_count([place.id], "DM note"), 1)  # not blanked
+        self.assertEqual(await self.log_count([place.id], "near Oakmere"), 0)
+
+    async def test_adding_all_when_every_name_was_answered_says_so(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        for entity in await self.entities():
+            if entity.type == "place":
+                await self.memory.confirm_entity(
+                    GUILD, self.campaign.id, entity.id, "place", source="dm"
+                )
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
+        it = self.it()
+        await button.callback(it)
+        sent = [text for text, _ in it.response.sent]
+        self.assertTrue(any("Nothing was added" in t for t in sent), sent)
+        self.assertFalse(any("Added" in t for t in sent), sent)
+
     def test_a_kind_gets_the_right_article(self) -> None:
         self.assertEqual(ui.a_kind("item"), "an item")
         self.assertEqual(ui.a_kind("event"), "an event")

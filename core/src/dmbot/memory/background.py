@@ -276,12 +276,29 @@ def merge(
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:
-    # never a second, public entry.
-    secret_of: dict[str, str] = {}
+    # never a second, public entry. An entry folds only into one that is itself kept: of two that
+    # hold each other, the first stays, and a chain folds from the top.
+    holder: dict[str, str] = {}
     for f in out:
         for a in f.secret:
-            secret_of.setdefault(name_key(a), name_key(f.name))
-    out = [f for f in out if secret_of.get(name_key(f.name), name_key(f.name)) == name_key(f.name)]
+            holder.setdefault(name_key(a), name_key(f.name))
+    place = {name_key(f.name): i for i, f in enumerate(out)}
+    folds: dict[str, bool] = {}
+
+    def folds_up(key: str, path: tuple[str, ...] = ()) -> bool:
+        if key in folds:
+            return folds[key]
+        above = holder.get(key)
+        if above is None or above == key or above not in place or key in path:
+            result = False
+        elif holder.get(above) == key and place[key] < place[above]:
+            result = False  # each holds the other: the first stays
+        else:
+            result = not folds_up(above, (*path, key))
+        folds[key] = result
+        return result
+
+    out = [f for f in out if not folds_up(name_key(f.name))]
     # An other spelling that is another name's own name is that name's, not an alias; and a
     # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}

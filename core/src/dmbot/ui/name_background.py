@@ -452,7 +452,7 @@ class BulkConfirm(_Menu):
         done = (
             f"✅ Added {_plural(kind, written.value)}."
             if written.value
-            else "Nothing was added: you had already answered those names."
+            else "Nothing was added: those names were already answered."
         )
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
