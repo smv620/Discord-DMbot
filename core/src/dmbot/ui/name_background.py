@@ -449,9 +449,14 @@ class BulkConfirm(_Menu):
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
+        done = (
+            f"✅ Added {_plural(kind, written.value)}."
+            if written.value
+            else "Nothing was added: you had already answered those names."
+        )
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"✅ Added {_plural(kind, written.value)}.",
+                done,
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

@@ -857,11 +857,22 @@ def background_kind(entity: Entity) -> str:
     return entity.type if entity.type in ("place", "faction", "item", "event") else ""
 
 
+def a_kind(kind: str) -> str:
+    """ "a place", "an item": the kind with its article."""
+    word = kind_label(kind)
+    return f"{'an' if word[:1] in 'aeiou' else 'a'} {word}"
+
+
 def kind_label(kind: str) -> str:
     """ "person", "place"…: a kind in plain words (the same ones the background reader uses)."""
     from dmbot.memory.background import LABELS
 
     return LABELS.get(kind, (kind, kind))[0]
+
+
+def _bold_kind(kind: str) -> str:
+    article, _, word = a_kind(kind).partition(" ")
+    return f"{article} **{word}**"
 
 
 def suggestion_text(
@@ -885,7 +896,7 @@ def suggestion_text(
         if match is not None
         else "Is this a name in your game?"
     )
-    read = f"\nDMbot's guess: a **{kind_label(kind)}**." if kind else ""
+    read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     return f"📝 **{_md(entity.name)}**{_heard(entity)}{others}{read}\n{question}{more}"
 
 
@@ -987,7 +998,7 @@ class SuggestionReview(_Menu):
             buttons = [
                 (
                     self._yes,
-                    logic.shorten(f"✅ Yes, a {kind_label(self.known_kind)}", REVIEW_LABEL_MAX),
+                    logic.shorten(f"✅ Yes, {a_kind(self.known_kind)}", REVIEW_LABEL_MAX),
                     discord.ButtonStyle.success,
                 ),
                 (self._pick_kind, "✏️ Something else", discord.ButtonStyle.primary),

@@ -1880,21 +1880,31 @@ class MemoryStore:
                 raise MemoryRuleError("A player's character needs its player.")
             # A few statements for the whole group, not a chain per name (#580). Names
             # checked or removed since aren't proposed any more, so they're left alone.
-            confirmed = await w.update_where(
-                ENTITIES,
-                {"type": type, "role": role, "status": CONFIRMED, "needs_look": False},
-                " AND status = 'proposed' AND id = ANY(%s)",
-                [sorted(set(entity_ids))],
-            )
+            # Names read from the DM's story lose their quote with the decision (#2167). One
+            # change per entry (a second change to the same entry in one batch could not be
+            # undone), so the two groups are changed apart.
+            wanted = sorted(set(entity_ids))
+            quoted_ids = [
+                str(r["id"])
+                for r in await w.select(
+                    ENTITIES,
+                    " AND status = 'proposed' AND source = %s AND id = ANY(%s)",
+                    [BACKGROUND_SOURCE, wanted],
+                )
+            ]
+            plain = [i for i in wanted if i not in set(quoted_ids)]
+            fields = {"type": type, "role": role, "status": CONFIRMED, "needs_look": False}
+            confirmed = []
+            for group, extra in ((quoted_ids, {"description": ""}), (plain, {})):
+                confirmed += await w.update_where(
+                    ENTITIES,
+                    {**fields, **extra},
+                    " AND status = 'proposed' AND id = ANY(%s)",
+                    [group],
+                )
             ids = [row["id"] for row in confirmed]
             await states.settle_kind(w, onto, ids, type)
-            # Names read from the DM's story: the quote goes with the decision (#2167).
-            quoted = [r["id"] for r in confirmed if r["source"] == BACKGROUND_SOURCE]
-            if quoted:
-                await w.update_where(
-                    ENTITIES, {"description": ""}, " AND id = ANY(%s)", [sorted(quoted)]
-                )
-                await _forget_quotes(w, quoted)
+            await _forget_quotes(w, [r["id"] for r in confirmed if r["id"] in set(quoted_ids)])
             if ids:
                 await w.update_where(
                     ALIASES,
@@ -3634,7 +3644,8 @@ def _note_cleared(row: dict[str, Any]) -> dict[str, Any]:
     """A suggestion read from the DM's story carries a quote of it until the DM decides; any way
     out of "waiting" (confirm, reject, merge) takes it away, so the DM's text is not kept
     (#2167)."""
-    return {"description": ""} if row.get("source") == BACKGROUND_SOURCE else {}
+    waiting = row.get("source") == BACKGROUND_SOURCE and row.get("status") == PROPOSED
+    return {"description": ""} if waiting else {}  # (a decided entry's later note is the DM's)
 
 
 async def _forget_quotes(w: Changes, entity_ids: Sequence[str]) -> None:
@@ -3645,9 +3656,9 @@ async def _forget_quotes(w: Changes, entity_ids: Sequence[str]) -> None:
         return
     await w.conn.execute(
         "UPDATE memory_changes SET"
-        " before = CASE WHEN before ->> 'source' = %s"
+        " before = CASE WHEN before ->> 'source' = %s AND before ->> 'status' = 'proposed'"
         " THEN before || jsonb_build_object('description', ''::text) ELSE before END,"
-        " after = CASE WHEN after ->> 'source' = %s"
+        " after = CASE WHEN after ->> 'source' = %s AND after ->> 'status' = 'proposed'"
         " THEN after || jsonb_build_object('description', ''::text) ELSE after END"
         " WHERE guild_id = %s AND campaign_id = %s AND table_name = 'memory_entities'"
         " AND row_id = ANY(%s)",

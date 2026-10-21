@@ -218,14 +218,17 @@ def read_answer(reply: str, piece: str) -> list[Found]:
 
 def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
     """Is this a kind of monster, or a spell, in the rules? Those belong to the rules, not to the
-    campaign (a proper name like "Snot" is not a monster). A named person counts as a monster
-    when the rules hold it by that name ("Owlbear")."""
+    campaign (a proper name like "Snot" is not a monster). A person counts as a monster when the
+    rules hold that name ("Owlbear"). A spell name is only looked for among ideas and items: a
+    place called "Sanctuary" or a person called "Wish" is a real name."""
     from dmbot.rules import index  # late: the rules data loads on first use
 
     rules = index.srd()
     if kind == "npc" and rules.is_monster(name):
         return True
-    return rules.lookup(name, target, fallback, kind="spell") is not None
+    if kind in ("concept", "item"):
+        return rules.lookup(name, target, fallback, kind="spell") is not None
+    return False
 
 
 def merge(
@@ -271,6 +274,14 @@ def merge(
                 old.quote or item.quote,
             )
     out = [merged[k] for k in order]
+    # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
+    # name of its own (as it is told to), that entry folds into the real one's secret spelling:
+    # never a second, public entry.
+    secret_of: dict[str, str] = {}
+    for f in out:
+        for a in f.secret:
+            secret_of.setdefault(name_key(a), name_key(f.name))
+    out = [f for f in out if secret_of.get(name_key(f.name), name_key(f.name)) == name_key(f.name)]
     # An other spelling that is another name's own name is that name's, not an alias; and a
     # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}
@@ -283,7 +294,7 @@ def merge(
                 for a in f.also
                 if name_key(a) not in names and name_key(a) not in {name_key(x) for x in f.secret}
             ),
-            tuple(a for a in f.secret if name_key(a) not in names),
+            f.secret,
             f.quote,
         )
         for f in out

@@ -95,13 +95,27 @@ class TheReader(unittest.TestCase):
 
     def test_a_disguise_is_a_secret_spelling_never_a_public_one(self) -> None:
         text = "Brother Aldric is really the lich Vecnor in disguise."
-        reply = json.dumps({"names": [
-            {"name": "Brother Aldric", "kind": "person", "also": ["Vecnor"],
-             "secret": ["Vecnor"], "quote": "Brother Aldric is really the lich Vecnor"},
+        reply = json.dumps({"names": [  # as the prompt asks: the real one, the disguise secret
+            {"name": "Vecnor", "kind": "person", "also": ["Brother Aldric"],
+             "secret": ["Brother Aldric"], "quote": "Brother Aldric is really the lich Vecnor"},
+            {"name": "Brother Aldric", "kind": "person", "also": [], "secret": [],
+             "quote": "Brother Aldric is really"},
         ]})  # fmt: skip
-        (found,) = bg.read_answer(reply, text)
-        self.assertEqual((found.also, found.secret), ((), ("Vecnor",)))  # the secret one wins
+        found = bg.read_answer(reply, text)
+        self.assertEqual((found[0].also, found[0].secret), ((), ("Brother Aldric",)))
+        merged = bg.merge([found], ())
+        self.assertEqual(
+            [f.name for f in merged], ["Vecnor"]
+        )  # the disguise is no entry of its own
+        self.assertEqual(merged[0].secret, ("Brother Aldric",))
         self.assertIn("never in also", bg.instructions())
+
+    def test_a_spell_is_looked_for_among_ideas_and_items_only(self) -> None:
+        place = bg.Found("Sanctuary", "place", (), (), "")
+        wish = bg.Found("Wish", "npc", (), (), "")
+        fireball = bg.Found("Fireball", "concept", (), (), "")
+        kept = bg.merge([[place, wish, fireball]], (), rules=("2024", "2014"))
+        self.assertEqual([f.name for f in kept], ["Sanctuary", "Wish"])
 
     def test_a_name_is_matched_as_whole_words(self) -> None:
         reply = json.dumps({"names": [{"name": "Ann", "kind": "person", "also": [], "secret": [],
@@ -139,7 +153,8 @@ class ThePath(NamesTest):
         self.ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(json.dumps(ANSWER), False)))
         self.bot.background_ai = self.ai  # type: ignore[assignment]
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        self.bot.campaigns.record_confirmation = AsyncMock()  # type: ignore[method-assign]
+        self.confirmed = AsyncMock()
+        self.bot.campaigns.record_confirmation = self.confirmed  # type: ignore[method-assign]
 
     async def asyncTearDown(self) -> None:
         _ai_busy.clear()  # module state: other tests' document reads must not see ours
@@ -207,25 +222,53 @@ class ThePath(NamesTest):
         sent = self.ai.complete.await_args.args[1]
         self.assertIn("<document>", sent)  # the text went out as data, once
 
-    async def test_a_decision_blanks_the_quote_in_the_change_log_too(self) -> None:
-        await self.read()
-        waiting = await self.entities()
-        first, second, third = waiting[0], waiting[1], waiting[2]
-        quote = first.description.split('"')[1]
-        await self.memory.set_entity_status(
-            GUILD, self.campaign.id, first.id, "rejected", source="dm"
-        )
-        await self.memory.confirm_entity(GUILD, self.campaign.id, second.id, "place", source="dm")
-        await self.memory.confirm_kinds(GUILD, self.campaign.id, [third.id], "place", source="dm")
+    async def log_count(self, ids: list[str], word: str) -> int:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM memory_changes WHERE row_id = ANY(%s)"
                 " AND (before::text LIKE %s OR after::text LIKE %s)",
-                ([first.id, second.id, third.id], "%tower%", "%tower%"),
+                (ids, f"%{word}%", f"%{word}%"),
             )
             row = await cur.fetchone()
         assert row is not None
-        self.assertEqual(row["n"], 0, quote)  # none of the three keeps its quote anywhere
+        return int(row["n"])
+
+    async def test_a_decision_blanks_the_quote_in_the_change_log_too(self) -> None:
+        await self.read()
+        by_name = {e.name: e for e in await self.entities()}
+        rejected, confirmed = by_name["Vale Keep"], by_name["Oakmere"]
+        kinds, merged = by_name["Heartseeker"], by_name["Brannoch"]
+        ids = [rejected.id, confirmed.id, kinds.id, merged.id]
+        self.assertEqual(await self.log_count(ids, "from his tower"), 2)  # in the log at first
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, rejected.id, "rejected", source="dm"
+        )
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, confirmed.id, "place", source="dm"
+        )
+        await self.memory.confirm_kinds(GUILD, self.campaign.id, [kinds.id], "item", source="dm")
+        keep = await ui.save_name(self.memory, self.campaign, "Someone Else", "npc", [], [])
+        await self.memory.merge(
+            GUILD, self.campaign.id, keep.id, merged.id, source="dm", dm_said_same=True
+        )
+        for word in ("from his tower", "near Oakmere", "carries Heartseeker"):
+            self.assertEqual(await self.log_count(ids, word), 0, word)  # nowhere in the log
+
+    def test_a_kind_gets_the_right_article(self) -> None:
+        self.assertEqual(ui.a_kind("item"), "an item")
+        self.assertEqual(ui.a_kind("event"), "an event")
+        self.assertEqual(ui.a_kind("place"), "a place")
+
+    def test_only_a_waiting_suggestion_has_its_note_cleared(self) -> None:
+        from dmbot.memory.store import _note_cleared
+
+        note = "From your background"
+        row = {"source": "background", "status": "proposed", "description": note}
+        self.assertEqual(_note_cleared(row), {"description": ""})
+        self.assertEqual(
+            _note_cleared({**row, "status": "confirmed"}), {}
+        )  # later notes are the DM's
+        self.assertEqual(_note_cleared({**row, "source": "scan"}), {})
 
     async def test_any_way_out_of_waiting_clears_the_quote(self) -> None:
         await self.read()
@@ -255,29 +298,33 @@ class ThePath(NamesTest):
 
     async def test_the_confirmation_is_recorded_as_the_dms_own_writing(self) -> None:
         await self.read()
-        self.assertEqual(self.bot.campaigns.record_confirmation.await_args.args[3], "own_writing")
+        self.assertEqual(self.confirmed.await_args.args[3], "own_writing")
 
-    async def test_a_disguise_is_stored_as_a_secret_name(self) -> None:
+    async def test_a_disguise_ends_as_a_secret_name_of_the_real_one_after_add_all(self) -> None:
         text = "Brother Aldric is really the lich Vecnor in disguise."
         reply = json.dumps({"names": [
-            {"name": "Brother Aldric", "kind": "person", "also": [], "secret": ["Vecnor"],
+            {"name": "Vecnor", "kind": "person", "also": [], "secret": ["Brother Aldric"],
              "quote": "Brother Aldric is really the lich Vecnor"},
+            {"name": "Brother Aldric", "kind": "person", "also": [], "secret": [],
+             "quote": "Brother Aldric is really"},
         ]})  # fmt: skip
         self.ai.complete = AsyncMock(return_value=Reply(reply, False))
         it = self.it()
         await ui_bg.offer(it, self.campaign.id, Upload(text, "my notes"))
         press = self.it()
         await it.response.sent[0][1]["view"]._read(press)
-        press.edit_original_response.await_args.kwargs["view"]._build()
-        (aldric,) = await self.entities()
-        aliases = {
-            a.text: a.secret
-            for a in await self.memory.aliases(
-                GUILD, self.campaign.id, entity_id=aldric.id, include_secret=True
-            )
-        }
-        self.assertTrue(aliases["Vecnor"])
-        self.assertFalse(aliases["Brother Aldric"])  # only the disguise is secret
+        view = press.edit_original_response.await_args.kwargs["view"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 1 person"]
+        await button.callback(self.it())
+        (vecnor,) = await self.entities(CONFIRMED)
+        self.assertEqual(vecnor.name, "Vecnor")
+        public = await self.memory.aliases(GUILD, self.campaign.id, entity_id=vecnor.id)
+        every = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=vecnor.id, include_secret=True
+        )
+        self.assertNotIn("Brother Aldric", {a.text for a in public})
+        self.assertTrue({a.text: a.secret for a in every}["Brother Aldric"])
+        self.assertEqual(await self.entities(), [])  # and no public entry of its own
 
     async def test_a_long_quote_goes_but_the_name_stays(self) -> None:
         long = bg.Found("Brannoch", "npc", (), (), "x" * 400)
@@ -327,7 +374,7 @@ class ThePath(NamesTest):
         self.assertRegex(text, r"DMbot's guess: a \*\*[a-z]+\*\*")  # the kind, said plainly
         view = kw["view"]
         labels = [b.label for b in view.children]
-        self.assertTrue(labels[0].startswith("✅ Yes, a "))
+        self.assertTrue(labels[0].startswith("✅ Yes, a"))
         self.assertIn("✏️ Something else", labels)
         first = view.queue[0]
         await view._yes(self.it())
@@ -439,7 +486,7 @@ class ThePath(NamesTest):
         await view._cancel(it)
         self.assertIn("Nothing was sent", it.response.edited[0][0])
         self.ai.complete.assert_not_awaited()
-        self.bot.campaigns.record_confirmation.assert_not_awaited()
+        self.confirmed.assert_not_awaited()
 
     async def test_a_non_dm_is_refused_on_every_form(self) -> None:
         paste = ui_bg.PasteBackground(self.campaign.id)

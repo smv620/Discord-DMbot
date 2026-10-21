@@ -339,7 +339,9 @@ CAMPAIGN_MEMORY = f"""
         WHERE other_id IS NOT NULL;
 
     -- Append-only log of every change, so any operation can be undone. One operation
-    -- (a "batch") may change several rows. Not part of backups.
+    -- (a "batch") may change several rows. Not part of backups. The one exception: the quote
+    -- kept with a name read from the DM's story (#2167) is blanked here too once the DM decides
+    -- on the name, so none of the DM's text outlives the decision.
     CREATE TABLE memory_changes (
         {_memory_scope()}
         version    BIGINT NOT NULL,
