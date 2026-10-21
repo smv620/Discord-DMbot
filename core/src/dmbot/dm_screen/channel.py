@@ -343,6 +343,14 @@ async def setup_dm_screen(
             if channel is None:
                 channel, overwrites = await _create(guild, campaign, store, me, category)
             else:
+                if campaign.dm_screen_visibility != "private":
+                    # Players may look at the screen (or are about to): a question there that shows
+                    # a secret name is pulled back BEFORE the permissions open it (#2097). Decided
+                    # from the state, so a restored backup is covered, and the whole history is
+                    # searched for what a restart forgot.
+                    from dmbot.dm_screen import secret_posts
+
+                    await secret_posts.hide(guild.id, campaign_id, channel=channel, bot_id=me.id)
                 overwrites = await _apply(channel, campaign, me)
                 if not shared:  # two campaigns renaming one channel would fight over it
                     await _try_rename(channel, campaign)

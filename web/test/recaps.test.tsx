@@ -9,6 +9,7 @@ import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps, { refFromPath } from "../src/account/Recaps";
 import { text } from "../src/content/recaps";
+import { RECAPS_LIVE } from "../src/content/recap-words";
 
 afterEach(cleanup);
 
@@ -41,7 +42,7 @@ describe("the list", () => {
   it("says so when there are none", async () => {
     const api = { ...mockApi("table"), recaps: async () => [] };
     renderPage("/account/recaps", api);
-    expect(await screen.findByText(text.emptyOff)).toBeTruthy(); // recaps are off today (RECAPS_LIVE)
+    expect(await screen.findByText(RECAPS_LIVE ? text.empty : text.emptyOff)).toBeTruthy();
   });
 
   it("asks a signed-out person to sign in", async () => {
