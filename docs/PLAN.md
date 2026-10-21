@@ -4107,6 +4107,81 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     campaign applies, and it is counted in docs/costs.md.
   - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
     check leans on the earlier accepted recaps. It grows more useful as memory fills.
+- **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
+  2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
+  project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
+  of 16 retold 15, and session 17's spoken recap of 16 then carried 15 again. Details Supervisor's.
+  - **How a session opens.** Most transcripts start with some of these, usually in this order, any of
+    them missing:
+    1. table talk ("sorry I'm late", "what did you do last weekend");
+    2. catching up on mechanics ("did we level up?", "did she still have exhaustion?", "did we get
+       loot from him?");
+    3. the recap of last time, read by the DM or told by the players;
+    4. the new session itself.
+  - **Every recap DMbot writes has fixed opening and closing lines**, so it can be found when it is
+    read aloud next time. It opens with "Previously, on <campaign name>…" and closes with "And so the
+    party continues the adventure of <campaign name>." The narration says both. Only the campaign's
+    display name is used, never a secret one.
+  - **Step 1: split the session (before the beats).** DMbot finds where each part begins and ends.
+    - **The opening and closing lines,** matched loosely, since speech-to-text garbles names.
+      The closing line is often not read, so it is a strong sign, never required.
+    - **Lines that retell earlier sessions,** compared with the previous accepted recap and that
+      session's beats.
+    - **One fast-tier call** labels the opening lines as table talk, catch-up, recap or play. Code
+      checks that the parts are in order, and that the "recap" part really overlaps the earlier
+      recap. When it does not, the split is kept but marked unsure.
+    - **What each part is used for:**
+      - *Table talk* is left out.
+      - *Catch-up* feeds the housekeeping bullets, and only what the table settled.
+      - *The spoken recap* is **context, not news**: its mood and its reminders of what matters may
+        shape this recap, but no event in it is told as something that happened this session.
+      - *Play* is where this recap's beats come from.
+    - **Stored with the session** (the line ranges and how sure), so the beats, the story extractor
+      and the import read the same split, and a test run can show it.
+  - **Step 2: PlotBot marks what matters (after the beats).**
+    - **What it reads:** the story so far, meaning the accepted recaps and the confirmed story memory
+      (threads, factions, who carries what, promises).
+    - **What it adds:** a note to each beat, and to any small detail the beats left out, saying why it
+      matters and which thread or fact it ties to. For example, "he wears an amulet with a shard of
+      obsidian" ties to the obsidian faction, so it must stay in the recap.
+    - **Secrets:** significance decides **what is kept and stressed**, never what is revealed.
+      The recap may say why something matters only when the players have heard it: said at the table
+      in a consented line, or in a posted recap. When only the DM knows (the faction is secret), the
+      recap keeps the detail and does not explain it. DM-only knowledge never reaches the text,
+      as today's secret checks already ensure.
+    - **Early campaigns:** with little confirmed memory, PlotBot leans on the earlier accepted
+      recaps, as the plot check does.
+  - **Step 3: the writer** (the creative model, as today) writes from the beats and PlotBot's notes,
+    with the spoken recap as context. Its three jobs, in order:
+    1. plot development;
+    2. character development;
+    3. where the characters came from, where they are, and where they are going next.
+  - **"Where next" and motives only as said.** A character's plan, goal or reason appears only when a
+    player or the DM said it in a consented line of this session or an earlier posted recap, and it
+    cites that line. **DMbot never speaks for a player character** and never guesses a motive. If
+    nobody said why, the recap says what they did, not why.
+  - **Step 4: the critics, until they agree.**
+    - **Who reviews each draft:**
+      - PlotBot: anything that matters left out or wrongly weighted, contradictions, continuity, a
+        secret;
+      - the grounding check (today's beat and claim checks);
+      - a motive check: every intention, plan or reason cites a line where it was said;
+      - the style grader.
+    - **How each answers:** pass, or a short list of specific changes.
+    - **The loop:** the writer revises with the changes, and the critics read the new draft. This
+      repeats until all of them pass, **at most four rounds**.
+    - **If they still disagree,** the best draft goes to the DM, and the remaining notes show on the
+      DM's recap page. The DM decides, as always.
+    - **This is DMbot's own loop,** before the DM sees anything. PlotBot's DM-facing check before
+      Accept (above) still runs on the result.
+  - **Cost:** the owner accepts **two to five times** today's recap cost for this. The per-recap call
+    ceiling and the campaign's daily ceiling rise to match. docs/costs.md is updated in its own PR,
+    which needs the owner's label.
+  - **Order:** first the split and the fixed lines (they fix the owner's bug on their own), then
+    PlotBot's notes, then the critic loop. #2122 (the DM-facing plot check) builds on the same reading
+    of the campaign. Each step is measured with `recap_run` on the owner's own transcripts, run
+    locally and never put in the repository, before and after: the split's accuracy, and the owner's
+    read of the recap.
 - **Where the DM hears about it:** on the DM screen, always, with three buttons that survive a
   restart: **Read it**, **Post to the table** (asks once: "Post it to the table now? The players
   will all see it.") and **Not this one** (#1455, #1457); and by email unless the DM turned the
