@@ -238,6 +238,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "Make the audio again for a recap you already posted",
+    what: "If you fix a name's spelling after a recap was posted, the recap page offers Make the audio again. The new audio is used on the recap page and its link. The message already in Discord keeps its old audio. Only the DM sees the button, and audio has to be part of your plan.",
+    reason: "In review (#2203); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Recaps for the older sessions you bring in",
     what: "When you bring in older sessions on the website, you can ask for a recap of each one. DMbot first looks for new names in each session, in date order, then asks you about them on your DM screen the usual way. A recap waits for your answers about its names, like a recap of a live session, and counts toward your monthly recaps. Only you, the DM, can ask for it, and it only uses the words of people who agreed to be recorded.",
     reason: "In review (#2106); held until dev1 deploys it and the import page offers the choice (IMPORT_LIVE).",
@@ -296,6 +302,13 @@ export const held: Held[] = [
     what: "On the website, a game master can load text transcripts (or paste a Google Doc link) of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
       "Waits for the importer (#2105, #2106) and the Google Doc link support (#2143) to be merged and deployed, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Tell DMbot what to fix",
+    what: "On a recap's page, type what you'd like changed. DMbot sorts your note into points, you keep the ones you want, and it writes the recap again with them. That uses one Try again, you approve the new text again, and style notes you keep are saved for this campaign's later recaps too (the newest 10 are kept). To remove them, go to ⚙️ Settings → 📜 Recaps → ✍️ Recap style.",
+    reason:
+      "Waits for the website's new routes (#2113) to deploy and for dev1 to see it work. When it is live, move this up and turn on RECAP_FIX_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },
   {
     date: "2026-10-20",

@@ -233,10 +233,35 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
             <li key={`free-${p.discordId}`} data-free={p.discordId}>
               {person(p.name, p.discordId)}
               <span class="muted">{text.alwaysFree}</span>
+              {/* An older grant for someone now on the free list: it adds nothing, so it is a
+                  note and a way to remove it, not a second entry (#2196). */}
+              {view.grants
+                .filter((g) => g.alsoFree && g.discordId === p.discordId)
+                .map((g) => (
+                  <span class="row" key={`old-${g.discordId}`}>
+                    <span class="muted small">{text.olderGrant}</span>
+                    <button
+                      type="button"
+                      class="button secondary"
+                      disabled={busy}
+                      aria-label={`${text.removeOlderGrant}: ${who(g.name, g.discordId)}`}
+                      onClick={() =>
+                        void act(async () => {
+                          await api.revoke(csrf, g.discordId);
+                          if (editing?.id === g.discordId) clearForm();
+                          return text.olderGrantRemoved(who(g.name, g.discordId));
+                        }, setListNews)
+                      }
+                    >
+                      {text.removeOlderGrant}
+                    </button>
+                  </span>
+                ))}
             </li>
           ))}
           {/* Live grants first; ended ones stay listed (to renew or remove) after them. */}
-          {[...view.grants]
+          {view.grants
+            .filter((g) => !g.alsoFree)
             .sort((a, b) => Number(ended(a)) - Number(ended(b)))
             .map((g) => (
               <li key={g.discordId} data-grant={g.discordId}>
@@ -308,6 +333,7 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
               </li>
             ))}
         </ul>
+        {/* Not beside an older-entry note: "nobody yet" would contradict the row above it. */}
         {view.grants.length === 0 && <p class="muted">{text.nobody}</p>}
       </section>
 

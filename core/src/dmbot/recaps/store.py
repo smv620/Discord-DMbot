@@ -344,14 +344,15 @@ class RecapStore:
 
     async def audio_due(self, guild_id: int, *, limit: int = 10) -> list[tuple[str, int]]:
         """(campaign, session) of recaps whose text is ready and whose audio waits to be made
-        and may run now: not leased, past their wait, not dropped or posted. One for each
+        and may run now: not leased, past their wait, not dropped. A posted recap is included: its
+        narration can be made again after a spelling fix changed its words (#2183). One for each
         campaign at a time, so a campaign's audio never runs side by side."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT ON (campaign_id) campaign_id, session_at FROM recap_jobs"
                 " WHERE guild_id = %s AND state = 'ready' AND audio = 'queued'"
-                " AND audio_tries < %s AND status IN ('draft', 'posting')"
+                " AND audio_tries < %s AND status IN ('draft', 'posting', 'posted')"
                 " AND audio_next_at <= %s AND leased_to <= %s"
                 " ORDER BY campaign_id, session_at LIMIT %s",
                 (guild_id, AUDIO_MAX_TRIES, now, now, limit),
@@ -369,7 +370,8 @@ class RecapStore:
                 " WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s AND leased_to <= %s AND audio_next_at <= %s"
                 " AND audio_tries < %s"
-                " AND state = 'ready' AND audio = 'queued' AND status IN ('draft', 'posting')"
+                " AND state = 'ready' AND audio = 'queued'"
+                " AND status IN ('draft', 'posting', 'posted')"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
@@ -413,9 +415,10 @@ class RecapStore:
         text_hash: str | None = None,
         unchanged: tuple[str, str] | None = None,
     ) -> bool:
-        """Record where the audio has got to. Only while the recap is still the DM's to post
-        (a posted or dropped one has no use for it), and, with `unchanged` (title, summary), only
-        if the text is still what the audio was made from. False if nothing was written."""
+        """Record where the audio has got to. Only while the recap is draft, posting or posted (a
+        posted one is narrated again for the page when its text changed, #2183), and, with
+        `unchanged` (title, summary), only if the text is still what the audio was made from.
+        False if nothing was written."""
         sets = ["audio = %s", "audio_error = %s"]
         values: list[Any] = [audio, error[:200]]
         for column, value in (
@@ -431,7 +434,7 @@ class RecapStore:
             values.append(text_hash)
         where = (
             " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
-            " AND status IN ('draft', 'posting')"
+            " AND status IN ('draft', 'posting', 'posted')"
         )
         args: list[Any] = [guild_id, campaign_id, session_at]
         if unchanged is not None:
