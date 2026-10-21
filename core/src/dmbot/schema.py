@@ -7870,11 +7870,17 @@ IMPORT_SUGGEST = r"""
                     SELECT array_agg(DISTINCT p.played_by) INTO found FROM memory_entities p
                         WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
                           AND p.status = 'confirmed' AND p.played_by IS NOT NULL
-                          AND (lower(p.name) = s
-                               OR EXISTS (SELECT 1 FROM memory_aliases a
-                                          WHERE a.guild_id = g AND a.campaign_id = c
-                                            AND a.entity_id = p.id AND a.status = 'confirmed'
-                                            AND NOT a.secret AND lower(a.text) = s));
+                          AND NOT p.audience_limited
+                          AND EXISTS (SELECT 1 FROM memory_aliases a
+                                      WHERE a.guild_id = g AND a.campaign_id = c
+                                        AND a.entity_id = p.id AND a.status = 'confirmed'
+                                        AND NOT a.secret AND lower(a.text) = s
+                                        AND (lower(p.name) <> s OR a.key = (
+                                             SELECT n.key FROM memory_aliases n
+                                             WHERE n.guild_id = g AND n.campaign_id = c
+                                               AND n.entity_id = p.id AND n.text = p.name
+                                               AND n.status <> 'rejected'
+                                             ORDER BY n.id LIMIT 1)));
                     IF found IS NOT NULL THEN
                         why := 'people';
                     END IF;
@@ -7899,6 +7905,16 @@ IMPORT_SUGGEST = r"""
                         SELECT p.name INTO who FROM memory_entities p
                             WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
                               AND p.status = 'confirmed' AND p.played_by = uid
+                              AND NOT p.audience_limited
+                              AND EXISTS (SELECT 1 FROM memory_aliases a
+                                          WHERE a.guild_id = g AND a.campaign_id = c
+                                            AND a.entity_id = p.id AND a.text = p.name
+                                            AND a.status = 'confirmed' AND NOT a.secret
+                                            AND a.key = (SELECT n.key FROM memory_aliases n
+                                                         WHERE n.guild_id = g AND n.campaign_id = c
+                                                           AND n.entity_id = p.id AND n.text = p.name
+                                                           AND n.status <> 'rejected'
+                                                         ORDER BY n.id LIMIT 1))
                             ORDER BY p.created_at, p.id LIMIT 1;
                     END IF;
                     who := coalesce(who, '');

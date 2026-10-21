@@ -56,6 +56,15 @@ class WithImports(Base):
                     " VALUES (%s, %s, %s, 'person', %s, '', 'confirmed', 'dm', 0, %s)",
                     (THURSDAY.id, self.one.id, f"{n:032x}", f"Player {n}", who),
                 )
+                await conn.execute(  # the name as the name list holds it
+                    "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                    " kind, secret, status, sound_codes, source, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, 'full', false, 'confirmed', '{}', 'dm', 1)",
+                    (
+                        THURSDAY.id, self.one.id, f"{n + 20_000:032x}", f"{n:032x}",
+                        f"Player {n}", f"player {n}",
+                    ),
+                )  # fmt: skip
         self.transcripts = TranscriptStore(self.db)
         self.kw: dict[str, Any] = {"outside": None, "now": NOW, "enforce_plans": False}
 
@@ -429,8 +438,33 @@ class TheSuggestions(WithImports):
         self.assertIsNone((await self.guess("Veyra (mira_v)"))["suggestedCharacter"])
         self.assertIsNone((await self.guess("Brannock (mira_v)"))["suggestedCharacter"])
         # the character they play: the same rules
-        for ident, kw in ((512, {"secret_name": True}), (513, {"audience_limited": True})):
-            self.assertIsNone(await self.played(ident, **kw))
+        self.assertIsNone(await self.played(512, secret_name=True))
+        self.assertIsNone(await self.played(513, audience_limited=True))
+
+    async def test_a_campaign_person_whose_name_is_secret_or_limited_is_never_matched_or_shown(
+        self,
+    ) -> None:
+        # A person played by a member with no directory row, known only by the campaign's name.
+        for ident, name, kw in (
+            (520, "Lord Vex", {"secret_name": True}),
+            (521, "Lady Hush", {"audience_limited": True}),
+        ):
+            await self.character(
+                ident,
+                name,
+                played_by=ALICE.id + ident,
+                type_="person",
+                secret_name=bool(kw.get("secret_name")),
+                audience_limited=bool(kw.get("audience_limited")),
+            )
+            await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id + ident)
+            self.assertIsNone((await self.guess(name))["suggested"], name)
+        # and the remembered path never names them either
+        await self.directory(ALICE.id + 520, "x", "x")
+        await self.directory(ALICE.id + 521, "x", "y")
+        for ident in (520, 521):
+            one = await self.guess(f"Someone ({'x' if ident == 520 else 'y'})")
+            self.assertNotIn(one["suggested"]["name"], ("Lord Vex", "Lady Hush"))
 
     async def test_a_secret_plays_link_is_never_followed(self) -> None:
         await self.directory(MIRA, "Mira the Bold", "mira_v")
@@ -438,11 +472,19 @@ class TheSuggestions(WithImports):
         await self.plays(f"{0:032x}", hidden, secret=True)
         self.assertIsNone((await self.guess("Mira (mira_v)"))["suggestedCharacter"])
 
-    async def played(self, ident: int, **kw: bool) -> object:
+    async def played(
+        self, ident: int, *, secret_name: bool = False, audience_limited: bool = False
+    ) -> object:
         """What is offered for Mira when the character she plays is made with these flags."""
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute("DELETE FROM memory_relations")
-        chosen = await self.character(ident, f"Played{ident}", played_by=MIRA, **kw)
+        chosen = await self.character(
+            ident,
+            f"Played{ident}",
+            played_by=MIRA,
+            secret_name=secret_name,
+            audience_limited=audience_limited,
+        )
         await self.plays(f"{0:032x}", chosen)
         return (await self.guess("Mira (mira_v)"))["suggestedCharacter"]
 
