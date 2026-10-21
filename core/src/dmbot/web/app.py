@@ -1774,8 +1774,8 @@ def create_app(
         if isinstance(ticket, str):
             raise HTTPException(status_code=400, detail=ticket)
         now = clock()
-        plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, now)
-        if plan is None or not support.may_write(plan):
+        plan, _grant, access = await entitlements.plan_grant_access(db, session.user_id, now)
+        if not support.may_write(plan, access):
             # No account yet: pointed to the public Q&A, on the page itself.
             raise HTTPException(status_code=403, detail="not_paying")
         if support.is_free(plan, now):
@@ -1795,7 +1795,9 @@ def create_app(
                         # A wrong answer uses the turn, so guessing Turnstile answers is slow.
                         raise _Refused("not_human")
                     raise HTTPException(status_code=400, detail="not_human")
-            ticket_id = await support.add(db, session.user_id, plan.plan, ticket, now=now)
+            ticket_id = await support.add(
+                db, session.user_id, plan.plan if plan else access.kind, ticket, now=now
+            )
         except _Refused as refused:
             raise HTTPException(status_code=400, detail=refused.code) from None
         except FeedbackError as exc:
@@ -1809,11 +1811,12 @@ def create_app(
         log.info("Support ticket added by user %s", session.user_id)
         if settings.support_team_email and mailer is not None:
             # The ticket is already kept: a failed email loses nothing, the admin page lists it.
+            plan_name = plan.plan if plan else access.kind  # free access may have no plan row
             await mailer.notify_team(
                 settings.support_team_email,
                 "A DMbot support ticket is waiting",
                 "An account sent a support ticket.\n\n"
-                f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan.plan}\n\n"
+                f"DMbot ID: {to_dmbot_id(session.user_id)}\nPlan: {plan_name}\n\n"
                 f"Read it on the admin page: {settings.site_url}/admin\n",
                 sender=mailer.settings.alerts_sender,  # (#1431: alerts come from their own address)
             )

@@ -17,6 +17,7 @@ from typing import Any, ClassVar, cast
 import httpx
 import psycopg
 
+from dmbot import entitlements
 from dmbot.config import ConfigError
 from dmbot.db import Database
 from dmbot.mail import Mailer
@@ -263,6 +264,29 @@ class SupportRoute(SupportBase):
         await self.add_row(BOB, self.now)
         await self.give_plan(ALICE.id, "try-it", "active")
         self.assertEqual((await self.send(await self.client())).status_code, 201)
+
+    async def no_plan_row(self, *, free: bool = False) -> None:
+        async with self.db.plan_writer(ALICE.id) as conn:
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (ALICE.id,))
+        if free:
+            entitlements.configure_free_users({ALICE.id})
+            self.addCleanup(entitlements.configure_free_users, frozenset())
+
+    async def test_free_access_without_a_plan_row_may_write_and_keeps_the_free_guard(self) -> None:
+        await self.no_plan_row(free=True)
+        client = await self.client()
+        self.assertIs((await client.get("/me")).json()["canSupport"], True)
+        self.assertEqual((await self.send(client)).status_code, 201)
+        self.assertEqual([t["plan"] for t in await self.tickets()], ["free"])
+        self.tick += 3600
+        answer = await self.send(client)  # (still one waiting at a time)
+        self.assertEqual((answer.status_code, answer.json()), (429, {"error": "one_waiting"}))
+
+    async def test_an_account_with_no_plan_row_and_no_free_access_still_may_not(self) -> None:
+        await self.no_plan_row()
+        client = await self.client()
+        self.assertIs((await client.get("/me")).json()["canSupport"], False)
+        self.assertEqual((await self.send(client)).status_code, 403)
 
     async def test_a_paid_account_is_not_held_to_the_free_guard(self) -> None:
         client = await self.client()

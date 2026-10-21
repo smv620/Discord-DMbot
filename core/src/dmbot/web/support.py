@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from dmbot.db import Database
-from dmbot.entitlements import Entitlement
+from dmbot.entitlements import Access, Entitlement
 from dmbot.web.feedback import clean_text
 from dmbot.web.payments import paid_plan_ids
 
@@ -46,19 +46,21 @@ REASONS: tuple[Reason, ...] = ("unhappy", "asked", "limit", "no-email", "helper-
 STATUSES: tuple[Status, ...] = ("new", "answered", "closed", "escalated")
 
 
-def may_write(plan: Entitlement | None) -> bool:
+def may_write(plan: Entitlement | None, access: Access | None = None) -> bool:
     """Any account with a plan row: Try It, paid (even lapsed), a grant or the free list. A
-    person whose paid plan has lapsed is exactly who most needs to write to us (#1435). Only
-    an account with no plan row yet may not."""
-    return plan is not None
+    person whose paid plan has lapsed is exactly who most needs to write to us (#1435). Free
+    access counts even before any plan row exists (#2190): the free list and a grant live apart
+    from the plan table, so an account on either may never have had a row. Only an account with
+    neither may not."""
+    return plan is not None or (access is not None and access.kind in ("free", "grant"))
 
 
-def is_free(plan: Entitlement, now: int) -> bool:
-    """No working paid plan: Try It, a lapsed plan, a grant or the free list. These accounts
-    cost nothing to make, so they get the free-account guard (`limits.free_ticket_refusal`).
-    The payment grace counts as working: someone whose payment just failed is not a fresh,
-    free account."""
-    return not (plan.plan in paid_plan_ids() and plan.usable(now))
+def is_free(plan: Entitlement | None, now: int) -> bool:
+    """No working paid plan: Try It, a lapsed plan, a grant, the free list or no plan row at all.
+    These accounts cost nothing to make, so they get the free-account guard
+    (`limits.free_ticket_refusal`). The payment grace counts as working: someone whose payment
+    just failed is not a fresh, free account."""
+    return plan is None or not (plan.plan in paid_plan_ids() and plan.usable(now))
 
 
 @dataclass(frozen=True)
