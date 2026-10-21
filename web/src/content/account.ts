@@ -346,7 +346,7 @@ export const text = {
   conversationLabel: (subject: string) => `Conversation: ${subject}`,
   conversationWho: {
     you: "You",
-    helper: "DMbot's helper (a program, not a person)",
+    helper: "DMbot's helper (a program)",
     team: "DMbot team",
   },
   questionStatus: {

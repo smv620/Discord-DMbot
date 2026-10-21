@@ -536,6 +536,15 @@ class SupportRoute(SupportBase):
         bobs = await (await self.client(BOB)).get(f"/support/mine/{self.now - 5}")
         self.assertEqual([m["text"] for m in bobs.json()["messages"]], ["Words", "Bob's."])
 
+    async def test_a_time_too_big_for_the_database_is_a_404_not_a_crash(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        client = await self.client()
+        for sent in ("99999999999999999999", str(2**63), str(2**63 - 1), "0"):
+            answer = await client.get(f"/support/mine/{sent}")
+            self.assertEqual(
+                (answer.status_code, answer.json()), (404, {"error": "not_found"}), sent
+            )
+
     async def test_signed_out_gets_401_for_a_conversation(self) -> None:
         await self.add_row(ALICE.id, self.now, "q")
         anonymous = httpx.AsyncClient(

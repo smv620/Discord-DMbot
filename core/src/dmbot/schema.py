@@ -5219,10 +5219,12 @@ SUPPORT_MINE_ANSWER = """
 SUPPORT_MINE_THREAD = """
     -- A person reads the whole conversation of one of their own tickets (#2193; docs/PLAN.md,
     -- "Support flow"): their question, the helper's answers, their emailed replies and the team's
-    -- replies, oldest first. Like the latest-answer door, it answers only for a ticket whose
+    -- replies, oldest first. Like the latest-answer door, it asks only for a ticket whose
     -- user_id is the signed-in person (`dmbot_current_user()`, set by Database.user), so another
-    -- account's ticket and a missing one look the same (no rows). The website's role still has no
-    -- column right on any of the words: this door is the only way they come back.
+    -- account's ticket and a missing one look the same (no rows). The forced `read_own` policy on
+    -- support_tickets says the same thing a second time: two layers, either of which holds.
+    -- The website's role still has no column right on any of the words: this door is the only
+    -- way they come back.
     -- A ticket is named by its sent time because the list shows no ticket numbers (they would
     -- show how many other people write); a person's tickets never share a sent time (the insert
     -- stamps a second ticket one second later), and if one ever did the newer would be shown.

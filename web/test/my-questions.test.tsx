@@ -137,6 +137,7 @@ describe("the API call", () => {
               { at: 5, subject: "ok", status: "new" },
               { at: "x", subject: "bad time", status: "new" },
               { at: 6, subject: "bad status", status: "weird" },
+              { at: 7, subject: "with the team", status: "escalated" },
               null,
             ],
             reply: false,
@@ -146,7 +147,14 @@ describe("the API call", () => {
     );
     const api = httpApi("https://api.dmbot.example", fetchMock as unknown as typeof fetch);
     const found = await api.mySupport!();
-    expect(found).toEqual({ tickets: [{ at: 5, subject: "ok", status: "new" }], reply: false });
+    // A question that is with the team is kept (it was once dropped from the list).
+    expect(found).toEqual({
+      tickets: [
+        { at: 5, subject: "ok", status: "new" },
+        { at: 7, subject: "with the team", status: "escalated" },
+      ],
+      reply: false,
+    });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.dmbot.example/support/mine");
     expect(init.method).toBe("GET");
@@ -243,7 +251,7 @@ describe("the whole conversation (#2193)", () => {
     expect(read).toHaveBeenCalledWith(DAY);
     expect(within(region).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
       "You15 January 2027Why was I charged\ntwice?",
-      "DMbot's helper (a program, not a person)15 January 2027Check the Billing page.",
+      "DMbot's helper (a program)15 January 2027Check the Billing page.",
       "You16 January 2027<b>That</b> did not help.",
       "DMbot team17 January 2027Fixed, sorry.",
     ]);
