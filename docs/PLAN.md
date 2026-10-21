@@ -535,6 +535,38 @@ happened). Ways in:
 3. **By typing** in the DM screen ("House rule: …"), with the same approval.
 4. **`/dmbot houserules`:** list with Edit and Remove.
 
+**Two house rules that disagree** (owner, 2026-10-21, with the example "drinking a potion is a bonus
+action" against "drinking a potion is an item interaction"; details Supervisor's). The DM decides,
+always; DMbot never picks one.
+- **Today's gap:** a clash is found only when both rules name the same spell, condition or creature
+  (the name matcher). "Drinking a potion" names none, so both would be saved, and an answer could
+  quote either.
+- **When a rule is saved** (by voice, typed, Add or Edit, or accepted from the linked file): one
+  fast-tier call compares it with the campaign's own house rules and the set it follows, on topic and
+  not only by name. If it disagrees with one, the DM sees both and picks **Replace rule N**, **Keep
+  both, this one wins**, **Keep both, rule N wins** or **Cancel**. "Wins" is stored on the pair, so
+  later answers know it. Nothing is saved until the DM picks.
+- **When an answer finds two that disagree** with no "wins" recorded (older rules, or a followed
+  set), the DM's sidebar quotes both with their numbers and asks "Which one applies?", with buttons
+  for each that record the answer. It never chooses. A player's table question gets "That's one for
+  your DM.", and the DM is told privately.
+- **Between sources** the order is unchanged: the campaign's own house rules, then the set it
+  follows, then homebrew, then the book rules. The check above is only for rules at the same level.
+- **Cost:** one fast call per saved rule. A file accept with many rules checks them in one call.
+
+**Seeing where house rules come from** (owner, 2026-10-21). The House rules menu gets **📂 Sources**,
+a private list with one line for each place the campaign's rules came from:
+- the **linked file of record**, with **🔗 Open the file** (its share link) and **📥 Download**;
+- each **uploaded file**, by its name and date, with **📥 Download**;
+- rules **added in Discord** (by voice, typed, from an alert), as one line with **📥 Download**;
+- the **set the campaign follows**, if any, by its name and publisher, with **📥 Download**.
+
+Download gives that source's rules in the plain numbered format. The words come from DMbot's
+copy; an uploaded file itself is not kept. To know which source a rule came from, each rule records
+it (`source`: linked, upload with its file name, voice, typed, alert, or the followed set). Rules
+from before are "added in Discord". The Homebrew menu gets the same **📂 Sources** list for its
+entries: typed, each upload, each site linked, and each followed pack.
+
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
 
