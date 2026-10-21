@@ -44,6 +44,7 @@ function fileFor(url) {
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
   if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
+  if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(

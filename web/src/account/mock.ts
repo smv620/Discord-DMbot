@@ -12,6 +12,12 @@ import type {
   Character,
   ImportProgress,
   Me,
+  NameChanged,
+  NameChange,
+  NameKind,
+  NameRow,
+  NamesPage,
+  NamesQuery,
   Offer,
   Person,
   CampaignName,
@@ -351,10 +357,60 @@ function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" |
   return { recapsPossible: true };
 }
 
+
+/** The pretend campaign behind the Names page (#2295): about fifty names across the kinds, some secret,
+ * some with other names. Which view comes back depends on the campaign's address: ending in
+ * `.names-manager` is a server manager who isn't a DM of it (no secret names, nothing to change), and
+ * `.names-none` is someone who may not see the list (not found). Any other address is a DM. */
+const NAME_KINDS: { key: string; label: string }[] = [
+  { key: "npc", label: "NPCs" },
+  { key: "place", label: "Places" },
+  { key: "group", label: "Groups" },
+  { key: "item", label: "Items" },
+  { key: "event", label: "Events" },
+];
+
+function startNames(): NameRow[] {
+  const people = ["Mira Voss", "Aldric Thorn", "Sister Ilse", "Captain Brask", "Old Pell", "Tamsin Reed", "Gorrak", "The Ferryman", "Lady Orsolya", "Dunmar", "Hobb Fenwick", "Yselle", "Corvin", "Brother Anselm", "Nadia Quill"];
+  const places = ["Brynwater Crossing", "The Gilded Hook", "Ashen Crown Keep", "Varrow Shrine", "Saltmarsh", "Greywatch", "The Low Docks", "Thorn Hollow", "Windmere"];
+  const groups = ["The Tide Wardens", "Red Lantern Guild", "House Orsolya", "The Quiet Choir", "Brask's Company"];
+  const items = ["The Brass Compass", "Voss's Ledger", "Shrine Key", "Stormglass", "The Ferrywoman's Token"];
+  const events = ["The Night of Lanterns", "The Flooding", "The Council at Greywatch"];
+  const rows: NameRow[] = [];
+  const add = (kind: string, names: string[], npc: boolean): void => {
+    for (const name of names) {
+      const n = rows.length + 1;
+      rows.push({
+        id: `n${n}`,
+        name,
+        kind,
+        others: n % 4 === 0 ? [`${name.split(" ")[0]}`, `${name} the Elder`] : n % 7 === 0 ? [`${name.split(" ").pop()}`] : [],
+        secret: n % 9 === 0,
+        npcId: npc ? `n${n}` : null,
+      });
+    }
+  };
+  add("npc", people, true);
+  add("place", places, false);
+  add("group", groups, false);
+  add("item", items, false);
+  add("event", events, false);
+  // A long name and a long unbroken word, for the layout checks.
+  rows.push({ id: `n${rows.length + 1}`, name: "Ser Alaric-of-the-Many-Hills-and-Rivers-Beyond-the-Greywatch-Wall", kind: "npc", others: ["Alaric-of-the-Many-Hills-and-Rivers-Beyond-the-Greywatch-Wall-Elder-Brother"], secret: false, npcId: `n${rows.length + 1}` });
+  return rows;
+}
+
+function namesView(ref: string): "dm" | "manager" | "none" {
+  if (/\.names-none$/.test(ref)) return "none";
+  if (/\.names-manager$/.test(ref)) return "manager";
+  return "dm";
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  const memory = startNames();
   // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
   let questions: SupportQuestion[] = [];
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
@@ -564,6 +620,82 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (which === "audio" && on && !choices.canAudio) throw new ApiError("not-in-plan");
       choices[which] = on;
       return { ...choices };
+    },
+    async allNames(ref, query: NamesQuery): Promise<NamesPage> {
+      calls.push(`allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}`);
+      await reachable();
+      signedIn();
+      const view = namesView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const visible = memory.filter((n) => view === "dm" || !n.secret);
+      const kinds: NameKind[] = NAME_KINDS.map((k) => ({ ...k, count: visible.filter((n) => n.kind === k.key).length })).filter((k) => k.count > 0);
+      const needle = query.q.trim().toLowerCase();
+      const found = visible
+        .filter((n) => query.kind === "" || n.kind === query.kind)
+        .filter((n) => needle === "" || [n.name, ...n.others].some((x) => x.toLowerCase().includes(needle)));
+      const sorted = [...found].sort((a, b) => (query.sort === "name" ? a.name.localeCompare(b.name) : Number(b.id.slice(1)) - Number(a.id.slice(1))));
+      const pageSize = 20;
+      const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
+      if (query.page < 1 || query.page > pages) throw new ApiError("bad-page");
+      return {
+        campaign: "The Brynwater Crossing",
+        canEdit: view === "dm",
+        names: sorted.slice((query.page - 1) * pageSize, query.page * pageSize).map((n) => ({ ...n, others: [...n.others] })),
+        kinds,
+        total: sorted.length,
+        page: query.page,
+        pages,
+        pageSize,
+      };
+    },
+    async changeName(ref, id, change: NameChange): Promise<NameChanged> {
+      calls.push(`changeName:${ref}:${id}:${JSON.stringify(change)}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      const row = memory.find((n) => n.id === id);
+      if (!row) throw new ApiError("not-found");
+      const taken = (text: string): boolean =>
+        memory.some((n) => n.id !== id && [n.name, ...n.others].some((x) => x.toLowerCase() === text.trim().toLowerCase()));
+      switch (change.action) {
+        case "spell": {
+          const next = change.name.trim();
+          if (next === "") throw new ApiError("bad-name");
+          if (next.length > 80) throw new ApiError("ticket-too-long");
+          if (taken(next)) throw new ApiError("name-exists");
+          row.name = next;
+          break;
+        }
+        case "kind":
+          if (!NAME_KINDS.some((k) => k.key === change.kind)) throw new ApiError("bad-kind");
+          row.kind = change.kind;
+          if (change.kind !== "npc") row.npcId = null;
+          break;
+        case "add-other": {
+          const other = change.other.trim();
+          if (other === "") throw new ApiError("bad-name");
+          if (taken(other) || row.others.includes(other)) throw new ApiError("name-exists");
+          row.others.push(other);
+          break;
+        }
+        case "remove-other":
+          row.others = row.others.filter((o) => o !== change.other);
+          break;
+        case "secret":
+          row.secret = change.secret;
+          break;
+        case "merge": {
+          const into = memory.find((n) => n.id === change.into);
+          if (!into || into.id === id) throw new ApiError("not-found");
+          into.others.push(row.name, ...row.others.filter((o) => !into.others.includes(o)));
+          memory.splice(memory.indexOf(row), 1);
+          return { ...into, others: [...into.others] };
+        }
+        case "remove":
+          memory.splice(memory.indexOf(row), 1);
+          return { removed: true };
+      }
+      return { ...row, others: [...row.others] };
     },
     async transcriptCampaigns() {
       calls.push("transcriptCampaigns");

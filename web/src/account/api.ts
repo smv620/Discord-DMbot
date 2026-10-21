@@ -672,6 +672,62 @@ export type RecapAudioLinks = Partial<
 export type RecapAction = "post" | "again" | "drop";
 
 /** Why a call failed, in a form the page can turn into plain words. */
+/** One name in a campaign's memory, as the Names page lists it (#2295). */
+export interface NameRow {
+  id: string;
+  name: string;
+  /** The kind's key; its words are in the page's `kinds`. */
+  kind: string;
+  /** Other names it goes by: nicknames and old spellings. */
+  others: string[];
+  /** Only the campaign's DMs see a secret name. */
+  secret: boolean;
+  /** The NPC's own page (#2266), for an NPC; null otherwise. */
+  npcId: string | null;
+}
+
+export interface NameKind {
+  key: string;
+  label: string;
+  /** How many names of this kind the campaign has, whatever is typed in the search. */
+  count: number;
+}
+
+export type NameSort = "name" | "newest";
+
+/** One page of the Names list. `canEdit` is true for the campaign's DMs only. */
+export interface NamesPage {
+  campaign: string;
+  canEdit: boolean;
+  names: NameRow[];
+  kinds: NameKind[];
+  total: number;
+  page: number;
+  pages: number;
+  pageSize: number;
+}
+
+export interface NamesQuery {
+  q: string;
+  /** A kind's key, or "" for every kind. */
+  kind: string;
+  sort: NameSort;
+  page: number;
+}
+
+/** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
+export type NameChange =
+  | { action: "spell"; name: string }
+  | { action: "kind"; kind: string }
+  | { action: "add-other"; other: string }
+  | { action: "remove-other"; other: string }
+  | { action: "secret"; secret: boolean }
+  | { action: "merge"; into: string }
+  | { action: "remove"; confirm: true };
+
+/** The changed row, or `{ removed: true }` after a removal. */
+export type NameChanged = NameRow | { removed: true };
+
 export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
@@ -707,6 +763,11 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
+  | "bad-kind" // a kind the campaign doesn't have (#2295)
+  | "name-exists" // another name already goes by that (#2295)
+  | "needs-confirm" // a removal sent without its confirmation (#2295)
+  | "bad-page" // a page of the Names list that isn't there any more (#2295)
   | "no-tries" // no Try again left, so no rewrite (#2114)
   | "sort-failed" // DMbot could not sort the note into points (#2114)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
@@ -799,6 +860,11 @@ export interface AccountApi {
     which: RecapChoice,
     on: boolean,
   ): Promise<RecapChoices>;
+  /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
+   * `<server>.<campaign>`. Missing from an API older than that. */
+  allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** One change to one name (DMs only); the same action as the name card in Discord. */
+  changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
@@ -958,6 +1024,11 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  bad_name: "bad-name",
+  bad_kind: "bad-kind",
+  exists: "name-exists",
+  needs_confirm: "needs-confirm",
+  bad_page: "bad-page",
   not_ending: "not-ending",
   use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
@@ -1339,6 +1410,19 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
         withLinks({ files, plan }, links),
       )) as ImportStarted,
+    allNames: async (ref, q) => {
+      const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
+      )) as NamesPage;
+    },
+    changeName: async (ref, id, change) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(ref)}/all-names/${encodeURIComponent(id)}`,
+        change,
+      )) as NameChanged,
     importProgress: async (ref, importId) =>
       (await call(
         "GET",

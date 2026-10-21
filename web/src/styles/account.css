@@ -661,3 +661,149 @@
   margin-block: var(--space-4);
   overflow-wrap: anywhere;
 }
+
+  /* The Names page (#2295): a toolbar over a list of names, each a card with its tags and, for a DM,
+     an editor that opens under it. A long name or nickname breaks instead of overflowing. */
+  /* A labelled box: the label's words over the box (the Names page and the Import link box). */
+  .account label.field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    font-weight: 600;
+  }
+
+  .account .names-tools {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+
+  @media (min-width: 48rem) {
+    .account .names-tools {
+      grid-template-columns: 2fr 1fr 1fr;
+      align-items: start;
+    }
+
+    .account .names-tools > p {
+      grid-column: 1;
+      margin-top: calc(-1 * var(--space-2));
+    }
+  }
+
+  .account .names-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .account .name-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow-wrap: anywhere;
+  }
+
+  .account .name-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .account .name-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+
+  .account .name-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+
+  .account .name-form > label.field {
+    flex: 1 1 14rem;
+  }
+
+  .account .name-edit fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .account .name-edit fieldset ul {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  /* The page bar under the Names list: the same bar and the same look as the admin page's (see
+     admin.astro): one row when wide; narrow, the jump box on a row of its own, then the four
+     buttons in a grid so Next and Previous never end up apart. */
+  .account .page-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+
+  @media (max-width: 40rem) {
+    .account .page-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .account .page-jump {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
+  }
+
+  .account .page-bar .button {
+    align-self: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4em;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    padding-inline: var(--space-3);
+  }
+
+  .account .page-jump {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .account .page-jump input[type="text"] {
+    width: 4rem;
+    padding-inline: var(--space-2);
+    text-align: center;
+  }
+
+  /* Read by a screen reader but not shown (the page bar's own "Page n of N" says it). */
+  .account .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
