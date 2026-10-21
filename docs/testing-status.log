@@ -9,6 +9,25 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- Supervisor, 2026-10-21 04:40 UTC: development at 65885de6 (or later), i.e. everything merged since 0d5a4b52.
+  Deploy after #2182 merges (it is next in RepoManager's queue; it goes with #2177's 0145).
+  1. Before: back up the database (dry run first, as always). Then run
+     `python -m dmbot.devtools.fast_compare --yes` once (cap $5) and post the sidebar table, its pass
+     rate and its time on #2152 (Haiku 5.5 becomes the fast tier, #2157).
+  2. Migrations 0132-0145 run on start. Bot before web-api.
+  3. .env: `scripts/update-env AI_MODEL_FAST=claude-haiku-5-5`. Add DMBOT_IMPORTS=0 if missing (the
+     compose file now passes it to web-api; leave it 0 until you have checked one real import).
+  4. After: run `sidebar_check`. Roll back to Haiku 4.5 (AI_MODEL_FAST=claude-haiku-4-5-20251001, restart
+     core) if the sidebar passes fewer cases or is about 1 s slower per answer; report on #2152.
+  5. Checks:
+     - Recap music: remake one narrated recap and listen. The music bed is now at 30% of the old level (#2179).
+     - Recaps wait for name answers (#2169): end a short test session with an unanswered name question;
+       the recap must wait until it is answered.
+     - Spelling chain (#2175-#2177, #2182): fix a name's spelling once; check a past transcript and a recap
+       pick it up, and Undo works.
+     - Names spelled out at the table (#2184): spell a name letter by letter in a test session; it shows as a
+       suggestion after the session, never to players.
+  Switches that stay off: DMBOT_IMPORTS, the import help (IMPORT_LIVE), SUPPORT_AI_LIVE.
 - Owner alerts (#1907), once merged: no migration. The owner sets OWNER_ALERT_EMAIL (their private address) and
   optionally MAIL_ALERTS_REPLY_TO in the server's .env at the terminal (dev1 never types the address into the
   repository or a chat), then dev1 restarts bot and web-api (bot first). Check: the start-up log says "Owner

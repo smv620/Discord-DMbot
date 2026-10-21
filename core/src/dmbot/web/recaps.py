@@ -36,7 +36,8 @@ _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
-    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token"
+    " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
+    " r.respelled_at"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -153,6 +154,9 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # how many days the table keeps transcripts, for the page's words (#2022).
         "transcriptsDeletedAt": row.get("transcripts_deleted_at"),
         "keepDays": row.get("keep_days"),
+        # When a fixed spelling changed this recap's text (Unix seconds, #2170), else null. A
+        # posted recap's Discord message keeps the old spelling, so the page says so (#2178).
+        "respelledAt": row.get("respelled_at"),
     }
 
 

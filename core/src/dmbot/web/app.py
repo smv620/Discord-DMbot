@@ -71,6 +71,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
+from dmbot.web.recap_requests import STATUS, read_instructions, rewrite, send_instructions
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -581,6 +582,7 @@ def create_app(
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
+        "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -632,6 +634,63 @@ def create_app(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
+    # polled by the page. The words are never logged.
+    instructions_limit = RateLimit(60, count=12)
+    request_status = STATUS
+
+    async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
+        """A small JSON body, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            return json.loads(bytes(data))
+        except ValueError:
+            return None
+
+    @app.post("/me/recaps/{ref}/instructions", status_code=202)
+    async def me_recap_instructions(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if instructions_limit.take(f"instructions:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await send_instructions(
+                db, session, ref, body.get("text") if isinstance(body, dict) else None
+            )
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/instructions/{request_id}")
+    async def me_recap_instructions_state(
+        ref: str, request_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_instructions(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/rewrite")
+    async def me_recap_rewrite(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if instructions_limit.take(f"rewrite:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await rewrite(db, session, ref, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/recaps/{ref}/audio")

@@ -236,7 +236,7 @@ jobs:
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
-      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/ci-changes.sh scripts/ci-already-green.sh scripts/tests/*.sh   # on the runner
+      - run: shellcheck scripts/set-key scripts/update-env scripts/set-admin-password scripts/replay scripts/set-variables scripts/ci-changes.sh scripts/ci-already-green.sh scripts/tests/*.sh   # on the runner
       - run: bash scripts/tests/test-set-key.sh
       - run: bash scripts/tests/test-update-env.sh
       - run: bash scripts/tests/test-set-admin-password.sh

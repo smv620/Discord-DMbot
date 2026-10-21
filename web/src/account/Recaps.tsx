@@ -9,6 +9,8 @@ import {
   allowanceLines,
   cueWords,
   errors,
+  heldWords,
+  isHeld,
   sessionDay,
   statusLine,
   text,
@@ -420,6 +422,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // While DMbot is writing it or posting it, look again every few seconds.
   const waiting =
     recap !== null &&
+    !isHeld(recap) &&
     (recap.working || recap.status === "posting" || recap.audio?.state === "queued");
   useEffect(() => {
     if (!waiting || !api.recap) return;
@@ -551,15 +554,30 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
         </p>
       )}
-      {!decided && !recap.working && recap.state !== "failed" && (
+      {isHeld(recap) ? (
+        // Held for the DM's answers about names: one line instead of the draft, and none of its
+        // buttons (#2210). It goes back to normal on the next load once they are answered (no
+        // live updates). A result note and an open edit box are left unseen meanwhile.
+        <section class="panel" aria-labelledby="recap-held">
+          <h3 id="recap-held">{heldWords.heading}</h3>
+          <p role="status">{heldWords.line(recap.namesToAnswer)}</p>
+        </section>
+      ) : (
         <>
-          <p class="lead">{text.onlyYou}</p>
-          <p>{text.beforeChoosing}</p>
+        {!decided && !recap.working && recap.state !== "failed" && (
+          <>
+            <p class="lead">{text.onlyYou}</p>
+            <p>{text.beforeChoosing}</p>
         </>
       )}
       {recap.status === "posted" && (
         <p class="ok" role="status">
           {text.posted}
+        </p>
+      )}
+      {recap.status === "posted" && recap.respelledAt && (
+        <p class="small">
+          <strong>{text.respelledHeading}.</strong> {text.respelled(sessionDay(recap.respelledAt))}
         </p>
       )}
       {recap.status === "posting" && (
@@ -738,6 +756,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )}
       {!decided && !recap.canTryAgain && recap.triesLeft === 0 && (
         <p class="small">{text.noTriesLeft}</p>
+      )}
+        </>
       )}
       <p>
         <a href="/account/recaps">{text.back}</a>
