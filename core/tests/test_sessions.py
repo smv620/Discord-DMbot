@@ -1582,11 +1582,12 @@ class SaveAndResume(SessionTests):
         self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
         self.assertTrue(all(key is not None for _, key in calls))  # both are held
 
-    async def test_a_table_that_is_no_longer_live_is_not_looked_at(self) -> None:
+    async def test_a_table_that_is_only_finishing_is_not_looked_at(self) -> None:
         table = await self.filtered("1 game\n2 game")
         calls = self.pronounced_calls(table)
         self.bot.topic_ai = None
-        self.bot.tables.pop(GUILD, None)  # the session has moved on
+        self.bot.tables.pop(GUILD, None)  # the session has ended, but is still finishing
+        self.bot._ending[GUILD] = [table]
         self.said(table, "Cerric is pronounced Seh-rick")
         self.assertEqual(calls, [])
 
