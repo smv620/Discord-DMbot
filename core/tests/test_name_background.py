@@ -106,9 +106,9 @@ class ThePath(NamesTest):
         _ai_busy.clear()
         _ai_reads.clear()
         self.ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(json.dumps(ANSWER), False)))
-        self.bot.background_ai = self.ai
-        self.bot.plan_gate = AsyncMock(return_value=None)
-        self.bot.campaigns.record_confirmation = AsyncMock()
+        self.bot.background_ai = self.ai  # type: ignore[assignment]
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.campaigns.record_confirmation = AsyncMock()  # type: ignore[method-assign]
 
     async def offer(self, user: int = DM) -> tuple[Any, Any]:
         it = self.it(user)
@@ -217,7 +217,7 @@ class ThePath(NamesTest):
         self.assertEqual(entity.status, CONFIRMED)  # no "What is it?" question
 
     async def test_the_plan_gate_and_a_busy_server_stop_it(self) -> None:
-        self.bot.plan_gate = AsyncMock(return_value="Not in your plan.")
+        self.bot.plan_gate = AsyncMock(return_value="Not in your plan.")  # type: ignore[method-assign]
         _, view = await self.offer()
         press = self.it()
         await view._read(press)

@@ -23,11 +23,12 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
 from dmbot.memory import background as bg
+from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
-from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _tell
+from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     AI_READS_PER_DAY,
@@ -42,7 +43,6 @@ from dmbot.ui.name_lists import (
     read_link_once,
 )
 from dmbot.ui.names import (
-    BACKGROUND,
     REVIEW_LABEL_MAX,
     _campaign_for,
     _md,
@@ -183,8 +183,6 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
     cents = bg.estimate_cents(len(upload.text))
-    from dmbot.ui.name_lists import _send
-
     await _send(
         interaction,
         f"📜 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and suggests names "
