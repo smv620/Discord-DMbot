@@ -905,6 +905,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
+    async renewPlan() {
+      calls.push("renew");
+      if (me?.plan?.state !== "ending") throw new ApiError("not-ending");
+      const { endsOn: _ended, ...rest } = me.plan;
+      me = { ...me, plan: { ...rest, state: "active" } };
+    },
     async recapAudioUrl() {
       calls.push("recap-audio");
       return "#demo-recap-audio";

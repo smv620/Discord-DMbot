@@ -232,7 +232,7 @@ export const held: Held[] = [
   {
     date: "2026-10-21",
     title: "DMbot offers how to say a name",
-    what: "When your table says a name differently from how it's spelled, DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
+    what: "When your table says a name differently from how it's spelled, or says out loud how it is said (\"it's pronounced Kay-el\"), DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
   },
   {
@@ -271,6 +271,13 @@ export const held: Held[] = [
     title: "Link a server you added with a plain link",
     what: "If you added DMbot to your server with a plain invite link, \"Link this server\" on the website now finds it and puts your name on it. DMbot also notes when it is taken out of a server.",
     reason: "In review (#2163); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "See what your plan is doing",
+    what: "My Account now shows when your plan renews, ends or changes. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
+    reason:
+      "Waits for the website's API change (#2165) to deploy and for the owner to check it in Stripe's test mode. When it is live, move this up.",
   },
   {
     date: "2026-10-20",

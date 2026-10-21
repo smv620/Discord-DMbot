@@ -1532,7 +1532,7 @@ class SaveAndResume(SessionTests):
 
         counted: list[Any] = []
         table.name_lookup = object()
-        patcher = patch("dmbot.bot.mentions", return_value=set())
+        patcher = patch("dmbot.bot.find_mentions", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
         self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
@@ -1556,6 +1556,40 @@ class SaveAndResume(SessionTests):
             self.said(table, "Kerr sneaks past the guards", at_ms=5_000)
             await self.settle()
             self.assertEqual(counted, [], answer)
+
+    def pronounced_calls(self, table: Any) -> list[Any]:
+        """Every line is looked at for a name said with its pronunciation; the calls are kept."""
+        calls: list[Any] = []
+        self.fixing(table)
+        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign]
+            (user, kw.get("held_key"))
+        )
+        return calls
+
+    async def test_a_game_talk_line_is_looked_at_for_a_pronunciation_at_once(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [(PLAYER, None)])
+
+    async def test_a_held_line_is_looked_at_with_its_key_so_it_waits_for_its_label(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.said(table, "Kerr called about the spreadsheet")
+        self.said(table, "Cerric is pronounced Seh-rick", at_ms=5_000)
+        await self.settle()
+        self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
+        self.assertTrue(all(key is not None for _, key in calls))  # both are held
+
+    async def test_a_table_that_is_only_finishing_is_not_looked_at(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None
+        self.bot.tables.pop(GUILD, None)  # the session has ended, but is still finishing
+        self.bot._ending[GUILD] = [table]
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [])
 
     async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
         table = await self.filtered("1 other\n2 game")
