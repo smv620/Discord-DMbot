@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.ai import FAST_CANDIDATE, AIError, AIModels, AIModelTier, AnthropicClient
+from dmbot.ai import FAST_CANDIDATE, PREVIOUS_FAST, AIError, AIModels, AIModelTier, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools import sidebar_check
 from dmbot.devtools.claims import cost
@@ -198,6 +198,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"the model to try (default {FAST_CANDIDATE})",
     )
     parser.add_argument(
+        "--baseline",
+        default=PREVIOUS_FAST,
+        help=f"the model to measure it against (default {PREVIOUS_FAST}, the tier before #2152)",
+    )
+    parser.add_argument(
         "--tool", action="append", choices=TOOLS, default=[], help="a tool to run (default: all)"
     )
     parser.add_argument("--yes", action="store_true", help="make the paid calls")
@@ -226,9 +231,12 @@ async def main_async(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"fast_compare: {exc}", file=sys.stderr)
         return 2
-    models = [base.fast, args.candidate]
+    models = [args.baseline, args.candidate]
     tools = args.tool or list(TOOLS)
-    print(f"fast tier now: {base.fast}; candidate: {args.candidate}; tools: {', '.join(tools)}")
+    print(
+        f"fast tier now: {base.fast}; baseline: {args.baseline}; candidate: {args.candidate}; "
+        f"tools: {', '.join(tools)}"
+    )
     if unpriced := [m for m in models if dollars_for(m, 1, 1) is None]:
         print(
             f"fast_compare: no price on file for {', '.join(unpriced)}: add it to "

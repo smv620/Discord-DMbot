@@ -182,6 +182,32 @@ def _field(value: object) -> str | None:
     return text[:FIELD_MAX] if text else None
 
 
+_LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
+
+
+def _whole_items(text: str) -> list[object]:
+    """The complete claims at the start of an answer that was cut off in the middle of its list
+    (Haiku 5.5 writes longer, and a batch can end mid-claim): every item before the broken one is
+    as good as in a whole answer, so it is kept instead of losing the batch (#2152). Only an
+    answer whose first `{` opens the claims list and whose list never closes is read this way: a
+    list that ended properly in an answer that is broken elsewhere stays rejected, and words
+    before the JSON (which may quote a transcript) are never searched for a list."""
+    first = text.find("{")
+    found = _LIST_START.match(text, first) if first >= 0 else None
+    if found is None:
+        return []
+    decoder, at = json.JSONDecoder(), found.end()
+    items: list[object] = []
+    while True:
+        while at < len(text) and text[at] in " \t\r\n,":
+            at += 1
+        try:
+            item, at = decoder.raw_decode(text, at)
+        except ValueError:  # the cut item, or the end of the list
+            return [] if text[at:].lstrip().startswith("]") else items
+        items.append(item)
+
+
 def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int]:
     """The claims in an extractor's JSON answer, and how many items were not well-formed.
     Only line references that were sent count; a claim citing none of them is dropped here
@@ -192,19 +218,26 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
     except ValueError:
         data = None
     items = data.get("claims") if isinstance(data, dict) else None
+    cut = 0
     if not isinstance(items, list):
-        return [], 1
+        items = _whole_items(text) if data is None else []
+        if not items:
+            return [], 1
+        cut = 1  # the item the answer broke off in counts as malformed
     known = set(refs)
     out: list[Extracted] = []
-    bad = max(0, len(items) - MAX_CLAIMS)
+    bad = cut + max(0, len(items) - MAX_CLAIMS)
     for item in items[:MAX_CLAIMS]:
         if not isinstance(item, dict):
             bad += 1
             continue
         subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
         obj = _field(item.get("object")) or ""
-        details = " ".join(str(item.get("details") or "").split())[:DETAIL_MAX]
+        said = item.get("details")  # words only: a list or a number is no detail
+        details = " ".join(said.split())[:DETAIL_MAX] if isinstance(said, str) else ""
         how = item.get("how")
+        if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
+            how = how.strip().rstrip(".").lower()
         cited = item.get("lines")
         lines = tuple(
             dict.fromkeys(

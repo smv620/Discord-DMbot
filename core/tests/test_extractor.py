@@ -14,6 +14,7 @@ from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
 from dmbot.memory import extractor
 from dmbot.memory.claims import ClaimStore, Extracted, Proposed
+from dmbot.sidebar import answer as sidebar
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
@@ -32,6 +33,19 @@ def line(n: int, user: int = ALICE, text: str = "", **kw: Any) -> Line:
 
 def session(count: int, user: int = ALICE) -> list[Line]:
     return [line(n, user) for n in range(1, count + 1)]
+
+
+class OutputRoom(unittest.TestCase):
+    def test_the_limits_are_pinned_with_their_reason(self) -> None:
+        # Haiku 5.5 writes about three times the tokens of 4.5: 9 story answers were cut off at
+        # 1500 (#2152). A change to either number is a decision, so it is written down here.
+        self.assertEqual(extractor.MAX_TOKENS, 3000)
+        self.assertEqual(
+            sidebar.MAX_TOKENS, 150
+        )  # the sidebar stays short: its prompt is tightened
+
+    def test_the_sidebar_is_told_to_write_only_the_answer(self) -> None:
+        self.assertIn("no thinking out loud", sidebar.SYSTEM)
 
 
 class Pure(unittest.TestCase):
