@@ -74,7 +74,7 @@ const many = (n: number, status: SupportTicketRow["status"] = "new"): SupportTic
   Array.from({ length: n }, (_, i) => row(i + 1, status));
 
 const nav = () => screen.findByRole("navigation", { name: text.ticketPagesNav });
-/** A page-bar button, by its move: a screen reader hears "<move>, page <n>" (#2249); the Go button has no page. */
+/** A page-bar button, by its move: a screen reader hears "<move>, page <n>" (#2249); the Go button, and a disabled move, have no page. */
 const button = (move: string) =>
   screen.getByRole("button", { name: new RegExp(`^${move}(, page \\d+)?$`) }) as HTMLButtonElement;
 const shown = () => screen.queryAllByRole("heading", { level: 3 }).map((h) => h.textContent);

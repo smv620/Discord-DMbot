@@ -174,16 +174,29 @@ describe("what axe cannot see in happy-dom (#2249)", () => {
     expect(document.querySelectorAll('input[type="radio"]').length).toBeGreaterThan(0);
   });
 
-  it("admin: the page bar's buttons say which page they go to, and the box marks the current page", async () => {
+  it("admin: the page bar's buttons say which page they go to, and a disabled one says only the move", async () => {
     render(<Admin api={adminApi()} search="" />);
     const bar = await screen.findByRole("navigation", { name: /pages of recent changes/i });
-    const names = within(bar)
-      .getAllByRole("button")
-      .map((b) => b.getAttribute("aria-label") ?? b.textContent);
-    expect(names).toEqual(
-      expect.arrayContaining(["Newest, page 1", "Newer, page 1", "Older, page 2", "Oldest, page 3"]),
+    const button = (b: HTMLElement) => ({
+      name: b.getAttribute("aria-label") ?? b.textContent,
+      off: (b as HTMLButtonElement).disabled,
+    });
+    const found = within(bar).getAllByRole("button").map(button);
+    expect(found).toEqual(
+      expect.arrayContaining([
+        { name: expect.stringMatching(/^«?Newest$/), off: true },
+        { name: expect.stringMatching(/^‹?Newer$/), off: true },
+        { name: "Older, page 2", off: false },
+        { name: "Oldest, page 3", off: false },
+      ]),
     );
-    expect(within(bar).getByLabelText("Page").getAttribute("aria-current")).toBe("page");
+    // On page 2 every move is open and each says where it goes.
+    fireEvent.click(within(bar).getByRole("button", { name: "Older, page 2" }));
+    await waitFor(() => expect(within(bar).getByRole("button", { name: "Newer, page 1" })).toBeTruthy());
+    expect(within(bar).getByRole("button", { name: "Newest, page 1" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Older, page 3" })).toBeTruthy();
+    // The current page is said in the polite status, not by a mark on the box.
+    expect(bar.parentElement?.textContent).toContain("Page 2 of 3");
   });
 
   it("the import page: buttons have names in words, and the ticks sit in a group with a legend", async () => {
