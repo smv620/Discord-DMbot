@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "See where your homebrew came from",
+    what: "On the Homebrew menu, 📂 Sources shows where your homebrew came from: what you typed, each file you uploaded, each website you linked it from, and each pack you follow. Pick one to download just those entries as a text file.",
+    reason: "In review (#2285); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Recaps are checked before you see them",
     what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
     reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
