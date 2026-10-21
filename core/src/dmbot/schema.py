@@ -7678,7 +7678,8 @@ IMPORT_RECAPS = """
 
 IMPORT_PROGRESS = """
     -- A scan let go after its tries (#2106 step 3) is remembered, so the progress call can tell the
-    -- DM "couldn't check names for this session" instead of showing a clean finish.
+    -- DM "couldn't check names for this session" instead of showing a clean finish. The column is
+    -- added with a default, so no row changes and no backfill policy is needed.
     ALTER TABLE session_imports ADD COLUMN scan_gave_up BOOLEAN NOT NULL DEFAULT FALSE;
 
     -- dmbot_import_progress: each session of one import with where it has got to (`stage`), the
@@ -7699,7 +7700,7 @@ IMPORT_PROGRESS = """
                        'file', i.file_name, 'state', i.state, 'reason', i.reason,
                        'date', t.started_at,
                        'namesUnchecked', i.scan_gave_up,
-                       'namesToAnswer', COALESCE(h.names_open, 0),
+                       'namesToAnswer', CASE WHEN h.asked THEN h.names_open ELSE 0 END,
                        'stage', CASE
                            WHEN i.state = 'failed' THEN 'failed'
                            WHEN i.state <> 'done' THEN 'cleaning'

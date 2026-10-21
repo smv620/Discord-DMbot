@@ -9250,31 +9250,34 @@ class DMBot(commands.AutoShardedBot):
                 )
 
     async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
-        """Say once, on the DM screen, what an import found: the new names (when its last session
-        has been scanned), and the recaps that were asked for and could not be written."""
-        for cid in list(self._import_names):
+        """Say once, on the DM screen, what an import found: the new names and the sessions whose
+        name check was given up, in one 📝 line when the import's last session has been scanned
+        (the given-up note stands alone only when no names were found), and the recaps that were
+        asked for and could not be written."""
+        for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            names = self._import_names.pop(cid)
+            names = self._import_names.pop(cid, [])
+            skipped = self._import_unchecked.pop(cid, 0)
             campaign = await self.campaigns.get(gid, cid)
-            if names and campaign is not None and campaign.dm_screen_channel_id is not None:
-                await self.post(
-                    campaign.dm_screen_channel_id,
-                    after_session_text(names, where="your imported sessions"),
-                    view=review_view(cid),
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                continue
+            text = after_session_text(names, where="your imported sessions") if names else ""
+            if skipped:
+                one = skipped == 1
+                more = " more" if names else ""
+                what = (
+                    f"one{more} imported session" if one else f"{skipped}{more} imported sessions"
                 )
-        for cid in list(self._import_unchecked):
-            if await store.pending_scans(gid, cid):
-                continue  # once, at the end of the import
-            skipped = self._import_unchecked.pop(cid)
-            campaign = await self.campaigns.get(gid, cid)
-            if campaign is not None and campaign.dm_screen_channel_id is not None:
-                what = "one imported session" if skipped == 1 else f"{skipped} imported sessions"
+                note = (
+                    f"I couldn't check {what} for new names, so names from "
+                    f"{'it' if one else 'them'} may be missing. Add any with ➕ Add a name "
+                    "on the names panel."
+                )
+                text = f"{text}\n{note}" if text else f"📝 {note}"
+            if text:
                 await self.post(
-                    campaign.dm_screen_channel_id,
-                    f"📝 I couldn't check {what} for new names, so any in "
-                    f"{'it' if skipped == 1 else 'them'} aren't on your list. "
-                    "Add them by hand with ➕ Add a name in your names list.",
+                    campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
                 )
         for cid in list(self._import_queued):
             if await store.pending_scans(gid, cid):

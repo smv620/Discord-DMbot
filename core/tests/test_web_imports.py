@@ -851,6 +851,26 @@ class TheProgress(WithImports):
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
 
+    async def test_the_door_answers_only_a_dm_of_the_campaign_on_a_listed_server(self) -> None:
+        imp, _, _ = await self.one_import(True)
+
+        async def ask(user: Any, token_hash: str, guild: int) -> Any:
+            async with self.web.user(user.id, session=token_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
+                cur = await conn.execute(
+                    "SELECT dmbot_import_progress(%s, %s, %s) AS r", (guild, self.one.id, imp)
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            return row["r"]
+
+        self.assertEqual(len(await ask(ALICE, self.session.id_hash, THURSDAY.id)), 1)  # the DM
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        self.assertIsNone(await ask(BOB, bob.id_hash, THURSDAY.id))  # same server, not a DM
+        self.assertIsNone(await ask(ALICE, self.session.id_hash, 999))  # a server not on her list
+
     async def test_a_hold_or_job_of_another_campaign_changes_nothing_here(self) -> None:
         from dmbot.recaps.hold import HoldStore
         from dmbot.recaps.store import RecapStore

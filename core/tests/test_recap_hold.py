@@ -602,6 +602,25 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
         self.assertEqual(bot._group_made, {})  # nothing is kept
 
+    async def test_two_released_early_and_the_last_one_expiring_are_told_as_three(self) -> None:
+        bot = fake_bot()
+        members = self.group(hold.HOLD_MAX_S + 60, 3)
+        remaining = list(members)
+
+        async def release(gid: int, cid: str, at: int, **kw: Any) -> str:
+            remaining[:] = [m for m in remaining if m.session_at != at]
+            return hold.QUEUED
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = AsyncMock(side_effect=lambda gid: list(remaining))
+        for m in members[1:]:  # answered in time, one by one
+            early = dataclasses.replace(m, created_at=int(time.time()))
+            await bot._release_one(bot.recap_holds, GUILD, early, group=list(remaining))
+        self.assertEqual(bot.post.await_count, 0)  # the oldest is still held
+        await bot._release_one(bot.recap_holds, GUILD, members[0], group=list(remaining))
+        self.assertEqual(bot.post.await_count, 1)
+        self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
+
     async def test_recaps_released_early_are_told_with_the_press_too(self) -> None:
         bot = fake_bot(proposed=2)
         bot._group_made["imp"] = [AT + 7]  # one was released by its answers

@@ -303,6 +303,28 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("one imported session", told[0])
         self.assertIn("➕ Add a name", told[0])
 
+    async def test_nothing_is_said_until_the_last_session_and_names_fold_into_one_line(
+        self,
+    ) -> None:
+        first = await self.imported(1)
+        await self.imported(2)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            if ready.session_id == first:
+                raise RuntimeError("down")  # the first session's check keeps failing
+            return ["Kazeth"]
+
+        bot._scan_import = scan
+        await rounds(bot, 8)
+        told = [c.args[1] for c in bot.post.await_args_list if "📝" in c.args[1]]
+        self.assertEqual(len(told), 1)  # one line at the end, names and the given-up note together
+        self.assertIn("Kazeth", told[0])
+        self.assertIn("I couldn't check one more imported session for new names", told[0])
+        self.assertIn("on the names panel", told[0])
+        self.assertNotIn("your list", told[0])
+
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
