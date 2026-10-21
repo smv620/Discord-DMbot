@@ -540,6 +540,8 @@ class _RuleForm(discord.ui.Modal):
 
 
 class AddForm(_RuleForm, title="Add a house rule"):
+    source = "typed"  # where the rule says it came from (#2285)
+
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
         saved = await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
@@ -555,6 +557,8 @@ class OverrideForm(AddForm, title="Add a house rule"):
     """⚖️ Override on a rules card (#931): the same form as Add, with "Instead of" already
     holding the name on the card. The card is in the DM screen, which this must not turn into
     the list, so the answer is a private message."""
+
+    source = "alert"  # made from a rules card
 
     def __init__(self, campaign: Campaign, name: str) -> None:
         super().__init__(campaign)
@@ -615,6 +619,7 @@ class ProposalForm(AddForm, title="Edit before saving"):
                 self.instead.value,
                 scenario=self.proposal.scenario,
                 session_id=self.proposal.session_id,
+                source="voice",
             )
         except BaseException as exc:
             proposals[self.proposal_id] = self.proposal

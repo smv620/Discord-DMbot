@@ -47,6 +47,7 @@ class FakeStore:
         self.rules: dict[str, list[HouseRule]] = {}
         self.made: dict[str, int] = {}
         self.calls: list[tuple[Any, ...]] = []
+        self.sources: list[str] = []
 
     def _next(self, cid: str) -> int:
         self.made[cid] = self.made.get(cid, 0) + 1
@@ -73,9 +74,17 @@ class FakeStore:
         return sorted(self.rules.get(cid, []), key=lambda r: -r.number)
 
     async def add(
-        self, guild_id: int, cid: str, user_id: int, text: str, instead: str | None = None
+        self,
+        guild_id: int,
+        cid: str,
+        user_id: int,
+        text: str,
+        instead: str | None = None,
+        *,
+        source: str = "typed",
     ) -> HouseRule:
         self.calls.append(("add", cid, user_id, text, instead))
+        self.sources.append(source)
         self._dm(cid, user_id)
         saved = HouseRule(
             self._next(cid),

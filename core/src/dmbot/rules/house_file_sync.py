@@ -53,6 +53,8 @@ class Store(Protocol):
         scenario: str | None = None,
         session_id: str | None = None,
         wanted: int | None = None,
+        source: str = "typed",
+        source_name: str | None = None,
     ) -> HouseRule: ...
 
     async def edit(
@@ -161,7 +163,14 @@ def describe(item: Item) -> str:
 
 
 async def apply(
-    store: Store, guild_id: int, campaign_id: str, user_id: int, items: Sequence[Item]
+    store: Store,
+    guild_id: int,
+    campaign_id: str,
+    user_id: int,
+    items: Sequence[Item],
+    *,
+    source: str = "linked",
+    source_name: str | None = None,
 ) -> Applied:
     """Do the items, one by one. One that can't be done is skipped and said, never forced:
     the store refuses it if another DM changed or removed the rule since it was compared.
@@ -183,6 +192,7 @@ async def apply(
                 saved = await store.add(
                     guild_id, campaign_id, user_id, item.rule, item.instead,
                     scenario=SCENARIO, wanted=item.number,
+                    source=source, source_name=source_name,
                 )  # fmt: skip
                 present.add((item.rule, item.instead))
                 if saved.number == item.number:

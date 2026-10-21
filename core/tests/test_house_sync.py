@@ -626,7 +626,9 @@ class Uploading(SyncTest):
     def form(self, data: bytes | None, size: int | None = None) -> Any:
         form = file_ui.UploadForm(campaign())
         attachment = SimpleNamespace(
-            size=size or len(data or b""), read=AsyncMock(return_value=data)
+            size=size or len(data or b""),
+            filename="our-rules.txt",
+            read=AsyncMock(return_value=data),
         )
         form.file.component._values = [attachment] if data is not None else []  # type: ignore[attr-defined]
         form.attachment = attachment  # type: ignore[attr-defined]
