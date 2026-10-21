@@ -59,7 +59,9 @@ async def answer(
     if action not in ACTIONS:
         raise RecapError("bad_action")
     kind = _text(body.get("kind")) if action == "confirm" else ""
-    target = _entity_id(body.get("known")) if action == "same" else ""
+    if kind and kind not in {k["key"] for k in name_answers.kinds()}:
+        raise RecapError("bad_text")  # not one of the kinds the page offers
+    target = _known_id(body.get("known")) if action == "same" else ""
     text = ""
     if action in ("respell", "explain"):
         text = _text(body.get("text"))
@@ -79,6 +81,13 @@ async def answer(
     if got["status"] != "ok":
         raise RecapError(got["status"])
     return {"answerId": got["id"]}
+
+
+def _known_id(value: object) -> str:
+    try:
+        return _entity_id(value)
+    except RecapError:
+        raise RecapError("bad_target") from None
 
 
 def _text(value: object) -> str:

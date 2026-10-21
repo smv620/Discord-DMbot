@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
-NOTE_MAX = 300  # the note kept with a name
+NOTE_MAX = 300  # the note kept with a name (the same limit in the database's door and table)
 
 # What a failed answer says, in words the page can turn into plain ones.
 NOT_ALLOWED = "not_allowed"  # the sender is not a DM of the campaign any more
@@ -144,6 +144,10 @@ async def apply(
     entity = await memory.entity(guild_id, cid, answer.entity_id)
     if entity is None or entity.status != PROPOSED:
         return GONE
+    # Read again now: a name may have been made secret since the answer was queued (the door
+    # checked only then), and a secret name is never answered from the page.
+    if await _has_secret(memory, guild_id, cid, entity.id):
+        return GONE
     try:
         if answer.action == "confirm":
             if answer.kind == PLAYER_CHARACTER:
@@ -154,8 +158,17 @@ async def apply(
                 return BAD_KIND
         elif answer.action == "same":
             keep = await memory.entity(guild_id, cid, answer.target_id)
-            if keep is None or keep.status != CONFIRMED or keep.id == entity.id:
-                return GONE
+            # The page offers only confirmed names with nothing secret about them; a hand-made
+            # request for any other (a secret one, a person at the table) is refused here too, so
+            # the suggestion's spelling can never become a public name of a secret entry.
+            if (
+                keep is None
+                or keep.status != CONFIRMED
+                or keep.id == entity.id
+                or keep.type == "person"
+                or await _has_secret(memory, guild_id, cid, keep.id)
+            ):
+                return NOT_JOINED
             try:
                 await memory.merge(
                     guild_id,
@@ -184,6 +197,13 @@ async def apply(
     except MemoryRuleError:
         return GONE  # the name changed under us (answered in Discord a moment ago)
     return ""
+
+
+async def _has_secret(memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str) -> bool:
+    """Any secret spelling on the entry: such an entry is never listed, offered or joined from the
+    page."""
+    aliases = await memory.aliases(guild_id, campaign_id, entity_id=entity_id, include_secret=True)
+    return any(a.secret for a in aliases)
 
 
 def kinds() -> list[dict[str, Any]]:

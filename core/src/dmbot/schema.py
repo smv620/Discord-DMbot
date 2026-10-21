@@ -8361,7 +8361,8 @@ NAME_ANSWERS = (
     -- see: the caller is a DM of the campaign, the name is one of this recap's waiting
     -- suggestions, the words are within their limits, and nothing is in flight for it; the bot
     -- checks the rest (the kind, the known name) when it applies the answer. Answers 'ok' with
-    -- the answer's id, or 'bad_action', 'bad_text', 'not_found', 'busy' or 'too_soon'.
+    -- the answer's id, or 'bad_action', 'bad_text', 'bad_target', 'not_found', 'busy' or
+    -- 'too_soon'.
     CREATE FUNCTION dmbot_name_answer_add(
         g BIGINT, c TEXT, at_ BIGINT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT
     ) RETURNS JSONB
@@ -8390,6 +8391,17 @@ NAME_ANSWERS = (
            OR (act = 'same' AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
            OR (act <> 'same' AND COALESCE(tgt, '') <> '') THEN
             RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        -- A merge target must be one the list offers: confirmed, not a person at the table, and
+        -- with no secret spelling. (The bot checks again when it applies the answer.)
+        IF act = 'same' AND NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person'
+                 AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                 WHERE s.guild_id = g AND s.campaign_id = c
+                                   AND s.entity_id = t.id AND s.secret)) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('name_answer:' || g::TEXT || c, 0));
         DELETE FROM name_answers a

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -157,6 +158,26 @@ class TheDoors(WithChecks):
                 self.assertIsNone((await cur.fetchone() or {})["r"])
 
 
+class TheDoorsFloor(WithChecks):
+    async def test_the_database_refuses_control_characters_and_odd_lengths_by_itself(self) -> None:
+        mira = await self.suggest("Mirelle")
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            for action, text in (
+                ("explain", "bad\x01note"),
+                ("explain", "x" * 301),
+                ("respell", "x" * 81),
+                ("respell", ""),
+                ("not_a_name", "text"),
+            ):
+                cur = await conn.execute(
+                    "SELECT dmbot_name_answer_add(%s, %s, %s, %s, %s, '', '', %s) AS r",
+                    (GUILD, self.one.id, AT, mira, action, text),
+                )
+                got = (await cur.fetchone() or {})["r"]
+                self.assertEqual(got["status"], "bad_text", (action, text[:10]))
+
+
 class TheAnswers(WithChecks):
     async def test_each_answer_is_queued_and_the_name_shows_it_is_on_its_way(self) -> None:
         mira = await self.suggest("Mirelle")
@@ -180,12 +201,18 @@ class TheAnswers(WithChecks):
             ({}, "bad_action"),
             ({"action": "confirm"}, "bad_text"),
             ({"action": "confirm", "kind": "Not A Kind!"}, "bad_text"),
-            ({"action": "same"}, "not_found"),
-            ({"action": "same", "known": "zz"}, "not_found"),
+            ({"action": "same"}, "bad_target"),
+            ({"action": "same", "known": "zz"}, "bad_target"),
+            ({"action": "same", "known": "0" * 32}, "bad_target"),
             ({"action": "respell", "text": ""}, "bad_text"),
             ({"action": "respell", "text": "x" * 81}, "bad_text"),
             ({"action": "explain", "text": "x" * 301}, "bad_text"),
             ({"action": "explain", "text": "ok\x00"}, "bad_text"),
+            ({"action": "respell", "text": "Mi\x00rel"}, "bad_text"),
+            ({"action": "respell", "text": "Mi\x7frel"}, "bad_text"),
+            ({"action": "confirm", "kind": "pla\x00ce"}, "bad_text"),
+            ({"action": "confirm", "kind": "player_character"}, "bad_text"),
+            ({"action": "confirm", "kind": "not_a_kind"}, "bad_text"),
             ({"action": "explain", "text": 7}, "bad_text"),
         ]
         for body, code in bad:
@@ -236,7 +263,17 @@ class TheBot(WithChecks):
 
     async def test_a_players_character_is_asked_in_discord_not_here(self) -> None:
         mira = await self.suggest("Mirelle")
-        await self.ask(mira, action="confirm", kind="player_character")
+        # the page does not offer it, and the web layer refuses it...
+        self.assertEqual(
+            await self.code(self.ask(mira, action="confirm", kind="player_character")), "bad_text"
+        )
+        # ...and a request that got past (written by hand) is refused by the bot, with a reason
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO name_answers (guild_id, campaign_id, id, entity_id, user_id, action,"
+                " kind, created_at) VALUES (%s, %s, %s, %s, %s, 'confirm', 'player_character', %s)",
+                (GUILD, self.one.id, "a" * 32, mira, ALICE.id, int(time.time())),
+            )
         self.assertEqual(await self.apply_next(), na.BAD_KIND)
         entity = await self.memory.entity(GUILD, self.one.id, mira)
         assert entity is not None and entity.status == PROPOSED
@@ -255,10 +292,43 @@ class TheBot(WithChecks):
         self.assertIn("mirelle", [a.key for a in aliases if a.status == CONFIRMED])
         self.assertEqual((await self.listed())["names"], [])
 
-    async def test_a_known_name_that_is_not_confirmed_is_not_joined(self) -> None:
+    async def test_a_known_name_the_page_would_not_offer_is_refused_at_the_door_and_the_bot(
+        self,
+    ) -> None:
         mira = await self.suggest("Mirelle")
-        other = await self.suggest("Vale Keep")
-        await self.ask(mira, action="same", known=other)
+        waiting = await self.suggest("Vale Keep")  # not confirmed
+        hidden = await self.known("The Hidden Keep", secret=True)  # a secret name
+        for target in (waiting, hidden):
+            self.assertEqual(
+                await self.code(self.ask(mira, action="same", known=target)), "bad_target"
+            )
+        # and a request that got past the door (written by hand) is refused by the bot as well
+        for target in (waiting, hidden):
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "INSERT INTO name_answers (guild_id, campaign_id, id, entity_id, user_id,"
+                    " action, target_id, created_at) VALUES (%s, %s, %s, %s, %s, 'same', %s, %s)",
+                    (GUILD, self.one.id, target[:32], mira, ALICE.id, target, int(time.time())),
+                )
+            self.assertEqual(await self._apply_row(), na.NOT_JOINED)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute("DELETE FROM name_answers")
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == PROPOSED  # nothing was merged
+
+    async def _apply_row(self) -> str:
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer)
+        await self.answers.finish(GUILD, answer, error=why)
+        return why
+
+    async def test_a_name_made_secret_after_it_was_queued_is_not_answered(self) -> None:
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="explain", text="the innkeeper's sister")
+        await self.memory.add_alias(
+            GUILD, self.one.id, mira, "Mirelle", kind="full", source="scan", secret=True
+        )
         self.assertEqual(await self.apply_next(), na.GONE)
 
     async def test_a_fixed_spelling_renames_the_suggestion_and_it_stays_to_answer(self) -> None:
@@ -313,10 +383,9 @@ class TheBot(WithChecks):
         self.assertFalse(await self.answers.finish(GUILD, first))  # the old holder changes nothing
         self.assertTrue(await later.finish(GUILD, second))
 
-    async def test_old_answers_are_swept_and_the_words_are_never_logged(self) -> None:
+    async def test_old_answers_are_swept(self) -> None:
         mira = await self.suggest("Mirelle")
-        with self.assertNoLogs(level=logging.DEBUG):
-            await self.ask(mira, action="explain", text="Secret-ish words about Mirelle")
+        await self.ask(mira, action="explain", text="note")
         self.assertEqual(await self.answers.sweep(GUILD), 0)
         later = na.AnswerStore(self.db, clock=lambda: 10**10)
         self.assertEqual(await later.sweep(GUILD), 1)
@@ -348,6 +417,32 @@ class TheLoop(WithChecks):
         entity = await self.memory.entity(GUILD, self.one.id, mira)
         assert entity is not None and entity.status == REJECTED
         self.assertEqual(bot.stale, [(GUILD, self.one.id)])
+
+    async def test_a_sender_who_stopped_being_a_dm_is_refused_by_the_loop(self) -> None:
+        bot = self.bot()
+        mira = await self.suggest("Mirelle")
+        await self.ask(mira, action="not_a_name")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM campaign_dms WHERE user_id = %s", (ALICE.id,))
+        await bot.run_name_answers()
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None and entity.status == PROPOSED
+        self.assertEqual(bot.stale, [])
+
+    async def test_the_loop_logs_outcomes_never_the_dms_words(self) -> None:
+        bot = self.bot()
+        mira = await self.suggest("Mirelle")
+        word = "Zanzibarquill"
+        await self.ask(mira, action="explain", text=f"{word} is her sister")
+        with self.assertLogs(level=logging.INFO) as logs:
+            await bot.run_name_answers()
+            logging.getLogger("probe").info("probe")  # (assertLogs needs one record)
+        self.assertNotIn(word, "\n".join(logs.output))
+        bot.memory = SimpleNamespace(entity=self._boom)
+        await self.ask(mira, action="not_a_name")
+        with self.assertLogs(level=logging.INFO) as failed:
+            await bot.run_name_answers()
+        self.assertNotIn("down", "\n".join(failed.output))  # the type only, not the message
 
     async def test_a_failed_answer_is_marked_for_the_page_and_the_loop_goes_on(self) -> None:
         bot = self.bot()

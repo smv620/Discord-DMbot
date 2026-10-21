@@ -8778,6 +8778,8 @@ class DMBot(commands.AutoShardedBot):
         if self.memory is None or self.name_answers is None:
             return
         try:
+            # (A waiting suggestion an earlier recap also kept is listed under both recaps: it is
+            # one name, answered once.)
             wanted = {name_key(n) for n in job.to_confirm}
             waiting = await self.memory.entities(gid, cid, statuses=(PROPOSED,))
             ids = [e.id for e in waiting if name_key(e.name) in wanted]
