@@ -18,7 +18,7 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine, Hashable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -325,7 +325,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
-from dmbot.transcript.import_job import ImportJob, ImportStore
+from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Ready
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
@@ -491,6 +491,8 @@ SECRET_QUESTION_WAITING = (
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
+IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
+IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -960,6 +962,12 @@ class DMBot(commands.AutoShardedBot):
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
+        self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
+        self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
+        # campaign -> the sessions of its import whose recap was queued at once (told in one line)
+        self._import_queued: dict[str, list[int]] = {}
+        # import id -> the sessions of a held group released by answers so far (one line at the end)
+        self._group_made: dict[str, list[int]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # The rules archive channel (#1752) hears about every change to a campaign's house rules
@@ -7769,12 +7777,21 @@ class DMBot(commands.AutoShardedBot):
         questions. Counts only; nothing is read aloud or logged."""
         total = 0
         if self.memory is not None:
-            until = await self._next_session_start(gid, cid, began)
+            # A live session owns the names proposed from its start to the next session's start;
+            # an imported one (old words, scanned now) owns those proposed while its own scan ran
+            # (#2106). Another proposal made in the same seconds (a live scan) is counted too:
+            # an over-count only makes the DM answer a little more, and the 3-day cap bounds it.
+            scan = await self.import_job.store.window(gid, session_id) if self.import_job else None
+            until: int | None
+            if scan is not None:
+                since, until = scan[0], scan[1] + 1  # (the scan's own seconds, both ends)
+            else:
+                since, until = began, await self._next_session_start(gid, cid, began)
             proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
             total += sum(
                 1
                 for e in proposed
-                if e.created_at >= began and (until is None or e.created_at < until)
+                if e.created_at >= since and (until is None or e.created_at < until)
             )
         if self.heard_questions is not None:
             total += await self.heard_questions.count_for_session(gid, session_id)
@@ -7789,6 +7806,9 @@ class DMBot(commands.AutoShardedBot):
         dm: int,
         *,
         extractor_to_come: bool = True,
+        quiet: bool = False,
+        group_id: str = "",
+        say: bool = True,
     ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
@@ -7798,7 +7818,10 @@ class DMBot(commands.AutoShardedBot):
         (waiting for answers), "queued" or "already" (a repeat: held or queued before).
         `extractor_to_come` is False when the story extractor has already run or will never run
         for the session (the DM pressing "Write a recap" after the end-of-session steps, or an
-        imported session): only open questions hold it, never a silent wait."""
+        imported session): only open questions hold it, never a silent wait. `quiet`: the DM was
+        asked about another recap of the same import already, so this hold is made asked but its
+        question is not posted again. `group_id`: the import's id; its holds go together.
+        `say` False: a recap queued here is not announced (an import round says it once)."""
         gid, cid = campaign.guild_id, campaign.id
         store = self.recap_holds
         if store is not None:
@@ -7810,6 +7833,7 @@ class DMBot(commands.AutoShardedBot):
                     if not await store.hold(
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
                         channel_id=channel_id, asked=waiting > 0, names_open=waiting,
+                        group_id=group_id,
                     ):  # fmt: skip
                         if await store.get(gid, cid, session_at) is not None:
                             return "held"  # it is waiting already: a repeat of the end or press
@@ -7818,7 +7842,7 @@ class DMBot(commands.AutoShardedBot):
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
                         return "held"
-                    sent = await self.post(
+                    sent = quiet or await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
                         view=hold_view(cid, session_at),
@@ -7832,12 +7856,15 @@ class DMBot(commands.AutoShardedBot):
             if held:  # the DM was not told: a wait nobody knows about is no wait
                 try:
                     if await store.release(gid, cid, session_at) == recap_hold.QUEUED:
-                        await self._say_writing(campaign, channel_id, session_at)
+                        if say:
+                            await self._say_writing(campaign, channel_id, session_at)
                         return "queued"
                 except Exception:
                     log.exception("Recap: couldn't release a hold nobody was told about")
         return (
-            "queued" if await self._queue_recap(campaign, session_at, channel_id, dm) else "already"
+            "queued"
+            if await self._queue_recap(campaign, session_at, channel_id, dm, say=say)
+            else "already"
         )
 
     async def recheck_recap_hold(self, table: Table) -> None:
@@ -7869,9 +7896,13 @@ class DMBot(commands.AutoShardedBot):
         store = self.recap_holds
         if store is None:
             return
-        for held in await store.held(gid):
+        holds = await store.held(gid)
+        for held in holds:
+            # The holds of one import go together (#2106): the oldest speaks for the group (the
+            # question, the reminder, the expiry line); the others only follow their own answers.
+            group = recap_hold.group_of(holds, held)
             try:
-                await self._release_one(store, gid, held)
+                await self._release_one(store, gid, held, group=group or [held])
             except Exception:  # one campaign's trouble does not hold up the others
                 log.exception("Recap: couldn't check a held recap")
 
@@ -7882,6 +7913,7 @@ class DMBot(commands.AutoShardedBot):
         held: recap_hold.Hold,
         *,
         extractor_done: bool = False,
+        group: list[recap_hold.Hold] | None = None,
     ) -> None:
         """One held recap, the same rules whether the round or the end of the extractor asks: a
         campaign that is gone or has recaps off drops it; a silent hold waits for the extractor
@@ -7894,6 +7926,8 @@ class DMBot(commands.AutoShardedBot):
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
+            members = group or [held]
+            lead = held.session_at == min(m.session_at for m in members)  # speaks for its group
             age = store.now() - held.created_at  # the store's clock wrote created_at
             if not held.asked and not extractor_done and age < recap_hold.QUIET_WAIT_S:
                 return  # the story extractor is still running; it counts again when done
@@ -7913,20 +7947,41 @@ class DMBot(commands.AutoShardedBot):
                 if not await self.recap_allowed(gid, held.campaign_id, None):
                     log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
                     return
+                note = recap_hold.EXPIRED_NOTE if waiting and held.asked else ""
+                if len(members) > 1:
+                    if not lead:
+                        return  # the oldest of the import ends them all, with one line
+                    made = [
+                        m.session_at
+                        for m in members
+                        if await store.release(gid, m.campaign_id, m.session_at)
+                        == recap_hold.QUEUED
+                    ]
+                    if made:
+                        await self._say_group_writing(
+                            campaign, held.channel_id, len(made), note=note, session_at=made[-1]
+                        )
+                    return
                 if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
-                    await self._say_writing(
-                        campaign,
-                        held.channel_id,
-                        held.session_at,
-                        note=recap_hold.EXPIRED_NOTE if waiting and held.asked else "",
-                    )
+                    await self._say_writing(campaign, held.channel_id, held.session_at, note=note)
                 return
             if waiting:
                 if held.asked:
                     # One reminder after a day, claimed first so the round and a restart never
                     # send it twice; any failure to post gives the claim back for the next round.
-                    if age >= recap_hold.HOLD_REMIND_S and not held.reminded:
-                        await self._remind(store, gid, held, waiting, age)
+                    # A group is reminded once, whoever of it is oldest by then: the claim is made
+                    # for every member, so one released by answers leaves the rest marked.
+                    if (
+                        lead
+                        and age >= recap_hold.HOLD_REMIND_S
+                        and not any(m.reminded for m in members)
+                    ):
+                        for m in members:
+                            if m is not held:  # the whole group's questions, as Discord shows them
+                                waiting += await self._open_name_questions(
+                                    gid, m.campaign_id, m.session_id, m.session_at
+                                )
+                        await self._remind(store, gid, held, waiting, age, members)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -7945,6 +8000,16 @@ class DMBot(commands.AutoShardedBot):
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                if held.group_id:  # an import's recaps start one by one: the last says so, once
+                    made = self._group_made.setdefault(held.group_id, [])
+                    made.append(held.session_at)
+                    if recap_hold.group_of(await store.held(gid), held):
+                        return
+                    del self._group_made[held.group_id]
+                    await self._say_group_writing(
+                        campaign, held.channel_id, len(made), session_at=made[-1]
+                    )
+                    return
                 await self._say_writing(campaign, held.channel_id, held.session_at)
 
     async def _remind(
@@ -7954,11 +8019,17 @@ class DMBot(commands.AutoShardedBot):
         held: recap_hold.Hold,
         waiting: int,
         age: float,
+        members: list[recap_hold.Hold] | None = None,
     ) -> None:
         """The one reminder of a hold (#2174). The claim comes first so two rounds never both send
-        it; a post that fails or raises gives the claim back, so the reminder is not lost."""
+        it; a post that fails or raises gives the claim back, so the reminder is not lost. An
+        import's holds are claimed together (`members`), so it is one reminder for the group."""
+        group = members or [held]
         if not await store.mark_reminded(gid, held.campaign_id, held.session_at):
             return  # another round has it
+        for m in group:
+            if m is not held:
+                await store.mark_reminded(gid, m.campaign_id, m.session_at)
         sent = False
         try:
             sent = bool(
@@ -7970,7 +8041,8 @@ class DMBot(commands.AutoShardedBot):
             )
         finally:
             if not sent:
-                await store.unmark_reminded(gid, held.campaign_id, held.session_at)
+                for m in group:
+                    await store.unmark_reminded(gid, m.campaign_id, m.session_at)
 
     async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
@@ -7987,14 +8059,21 @@ class DMBot(commands.AutoShardedBot):
         held = await self.recap_holds.get(gid, cid, session_at)
         if held is None:
             return "already"
-        result = await self.recap_holds.release(gid, cid, session_at)
-        if result == recap_hold.QUEUED:
-            await self._say_writing(campaign, held.channel_id, session_at)
-            return "queued"
-        return "already"
+        group = [held]
+        if held.group_id:  # one press writes all of an import's held recaps (#2106)
+            group = recap_hold.group_of(await self.recap_holds.held(gid), held)
+        made = [
+            h.session_at
+            for h in group
+            if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED
+        ]
+        if not made:
+            return "already"
+        await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])
+        return "queued"
 
     async def _queue_recap(
-        self, campaign: Campaign, session_at: int, channel_id: int, dm: int
+        self, campaign: Campaign, session_at: int, channel_id: int, dm: int, *, say: bool = True
     ) -> bool:
         """Queue the recap of a session and say so on the DM screen. False when there already is
         one (a restart, or the session ended twice)."""
@@ -8003,7 +8082,8 @@ class DMBot(commands.AutoShardedBot):
         gid, cid = campaign.guild_id, campaign.id
         if not await self.recaps.enqueue(gid, cid, session_at, dm_user_id=dm):
             return False
-        await self._say_writing(campaign, channel_id, session_at)
+        if say:
+            await self._say_writing(campaign, channel_id, session_at)
         return True
 
     async def _say_writing(
@@ -8023,6 +8103,32 @@ class DMBot(commands.AutoShardedBot):
             channel_id,
             f"📜 {lead}Writing a recap of this session. {ready} "
             f"Nothing goes to the table until you say so.{where}",
+        )
+
+    async def _say_group_writing(
+        self,
+        campaign: Campaign,
+        channel_id: int,
+        count: int,
+        note: str = "",
+        *,
+        session_at: int = 0,
+    ) -> None:
+        """One line for the recaps of an import that start together (#2106), not one for each.
+        A single one (`session_at`) is told like any recap, never as "1 recaps"."""
+        if count == 1 and session_at:
+            await self._say_writing(campaign, channel_id, session_at, note=note)
+            return
+        ready = (
+            "You'll get an email as each is ready."
+            if campaign.recaps_email
+            else "Find them on your recap page when they're ready."
+        )
+        lead = f"{note} " if note else ""
+        await self.post(
+            channel_id,
+            f"📜 {lead}Writing {count} recaps from your imported sessions. {ready} "
+            "Nothing goes to the table until you say so.",
         )
 
     async def recap_short_expired(self, gid: int, cid: str, session_at: int) -> bool:
@@ -8919,6 +9025,55 @@ class DMBot(commands.AutoShardedBot):
                 added += 1
             log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
 
+    async def _propose_new_names(
+        self, gid: int, cid: str, lines: Sequence[str], users: Collection[int]
+    ) -> list[str]:
+        """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
+        scan of a live session's end and of an imported one, #2106). `users`: the people whose
+        names are not story names. Returns the names proposed; nothing is confirmed."""
+        assert self.memory is not None
+        # People at the table aren't story names: skip their whole display names and
+        # each word of them ("Mia Stone" → "Mia", "Stone").
+        skip = set(await self.memory.known_keys(gid, cid))
+        for uid in users:
+            name = self.name_of(gid, uid)
+            if not name.startswith("<@"):
+                skip.add(name_key(name))
+                skip.update(name_key(word) for word in name.split())
+        # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
+        # (#394). Which known name each sounds like is worked out when the DM looks,
+        # never saved: names can change, or be made secret, before then.
+        found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        added: list[str] = []
+        for suggestion in found:
+            try:
+                written = await self.memory.add_entity(
+                    gid,
+                    cid,
+                    type="concept",
+                    name=suggestion.name,
+                    source="scan",
+                    description=f"Heard {suggestion.times} times",
+                )
+            except MemoryRuleError as exc:
+                log.info("Skipped a suggested name: %s", exc)
+                continue
+            added.append(suggestion.name)
+            for other in suggestion.also:  # suggested with it, confirmed with it
+                part = name_key(other) in name_key(suggestion.name)
+                try:
+                    await self.memory.add_alias(
+                        gid,
+                        cid,
+                        written.value.id,
+                        other,
+                        kind="short" if part else "misheard",
+                        source="scan",
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a name heard with a suggestion: %s", exc)
+        return added
+
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
         check. Only lines from people who still agree; never anything DMbot already has
@@ -8933,48 +9088,9 @@ class DMBot(commands.AutoShardedBot):
             table.heard = []  # the session is over; free it
             if not lines:
                 return
-            # People at the table aren't story names: skip their whole display names and
-            # each word of them ("Mia Stone" → "Mia", "Stone").
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
-            skip = set(await self.memory.known_keys(gid, cid))
-            for uid in users:
-                name = self.name_of(gid, uid)
-                if not name.startswith("<@"):
-                    skip.add(name_key(name))
-                    skip.update(name_key(word) for word in name.split())
-            # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
-            # (#394). Which known name each sounds like is worked out when the DM looks,
-            # never saved: names can change, or be made secret, before then.
-            found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
-            added: list[str] = []
-            for suggestion in found:
-                try:
-                    written = await self.memory.add_entity(
-                        gid,
-                        cid,
-                        type="concept",
-                        name=suggestion.name,
-                        source="scan",
-                        description=f"Heard {suggestion.times} times",
-                    )
-                except MemoryRuleError as exc:
-                    log.info("Skipped a suggested name: %s", exc)
-                    continue
-                added.append(suggestion.name)
-                for other in suggestion.also:  # suggested with it, confirmed with it
-                    part = name_key(other) in name_key(suggestion.name)
-                    try:
-                        await self.memory.add_alias(
-                            gid,
-                            cid,
-                            written.value.id,
-                            other,
-                            kind="short" if part else "misheard",
-                            source="scan",
-                        )
-                    except MemoryRuleError as exc:
-                        log.info("Skipped a name heard with a suggestion: %s", exc)
+            added = await self._propose_new_names(gid, cid, lines, users)
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
@@ -9062,9 +9178,173 @@ class DMBot(commands.AutoShardedBot):
             for guild in list(self.guilds):
                 try:
                     await self.import_job.run_round(guild.id)
+                    await self.run_import_followups(guild.id)
                 except Exception:
-                    log.exception("Import: cleaning failed for a server")
+                    log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
+
+    async def run_import_followups(self, gid: int) -> int:
+        """After an imported session is cleaned (#2106): in date order, one per campaign, its name
+        scan (once), then, for the sessions the DM chose Write recaps for, the recap through the
+        same hold as a live session, so it waits for the name answers. Returns how many scans were
+        done. The scan is claimed before it runs, so two bots never both propose names (a claim
+        that never finished is retaken after a while); a scan that fails is given back and tried
+        again, and let go (empty window, no hold) after `IMPORT_SCAN_TRIES` so it never blocks the
+        sessions after it. The DM hears of new names once per import, when its last session is
+        scanned, never once per session. Counts only in the log."""
+        assert self.import_job is not None
+        store = self.import_job.store
+        done = 0
+        for ready in await store.ready_for_scan(gid):
+            with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                began = int(time.time())
+                if not await store.claim_scan(gid, ready.session_id, began):
+                    continue  # another round or bot has it
+                try:
+                    # Well inside the stale claim. A scan cancelled here may have proposed names
+                    # already: they are on the review list, just not in the "new names" post.
+                    async with asyncio.timeout(STALE_SCAN_S // 3):
+                        added = await self._scan_import(gid, ready)
+                    await store.finish_scan(gid, ready.session_id, int(time.time()))
+                    done += 1
+                    self._import_names.setdefault(ready.campaign_id, []).extend(added)
+                except Exception:
+                    log.exception("Import: a session's name scan failed")
+                    if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
+                        log.warning("Import: giving up on a session's name scan")
+                        await store.give_up_scan(gid, ready.session_id)
+        for ready in await store.ready_for_recap(gid):
+            with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                await self._start_import_recap(gid, store, ready)
+        await self._tell_import_news(gid, store)
+        return done
+
+    async def _start_import_recap(self, gid: int, store: ImportStore, ready: Ready) -> None:
+        """Start the recap of one scanned import. One that cannot be started is tried again next
+        round, up to `IMPORT_RECAP_TRIES` times, so it never blocks the others for ever."""
+        try:
+            campaign = await self.campaigns.get(gid, ready.campaign_id)
+            if campaign is not None:
+                why = await self._import_recap(campaign, ready)
+                if why:
+                    self._import_unhonoured.setdefault(ready.campaign_id, []).append(why)
+            await store.mark_recap_started(gid, ready.session_id)
+        except PlanUnchecked:
+            log.warning("Import: the plan could not be checked; the recap is tried again")
+        except Exception:
+            log.exception("Import: a session's recap could not be started")
+            if await store.note_recap_failure(gid, ready.session_id) >= IMPORT_RECAP_TRIES:
+                await store.mark_recap_started(gid, ready.session_id)  # let go
+                self._import_unhonoured.setdefault(ready.campaign_id, []).append(
+                    "it could not be started"
+                )
+
+    async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
+        """Say once, on the DM screen, what an import found: the new names (when its last session
+        has been scanned), and the recaps that were asked for and could not be written."""
+        for cid in list(self._import_names):
+            if await store.pending_scans(gid, cid):
+                continue  # the import is not over: say it once at the end
+            names = self._import_names.pop(cid)
+            campaign = await self.campaigns.get(gid, cid)
+            if names and campaign is not None and campaign.dm_screen_channel_id is not None:
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    after_session_text(names, where="your imported sessions"),
+                    view=review_view(cid),
+                )
+        for cid in list(self._import_queued):
+            if await store.pending_scans(gid, cid):
+                continue  # once, at the end of the import
+            queued = self._import_queued.pop(cid)
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and campaign.dm_screen_channel_id is not None:
+                await self._say_group_writing(
+                    campaign, campaign.dm_screen_channel_id, len(queued), session_at=queued[-1]
+                )
+        for cid, reasons in list(self._import_unhonoured.items()):
+            if await store.pending_scans(gid, cid):
+                continue  # once, at the end of the import
+            campaign = await self.campaigns.get(gid, cid)
+            del self._import_unhonoured[cid]
+            if campaign is not None and campaign.dm_screen_channel_id is not None:
+                why = "; ".join(sorted(set(reasons)))
+                if len(reasons) == 1:
+                    head = "1 recap you asked for from your imported sessions wasn't written"
+                else:
+                    head = (
+                        f"{len(reasons)} recaps you asked for from your imported sessions "
+                        "weren't written"
+                    )
+                await self.post(campaign.dm_screen_channel_id, f"📜 {head}: {why}.")
+
+    async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
+        """The name scan of one imported session: the lines of people who still agree (asked after
+        the lines are read, since a person can stop at any moment) and nobody else's. Returns the
+        names proposed."""
+        assert self.import_job is not None
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if self.memory is None or campaign is None:
+            log.info("Import: no name scan (names are off, or the campaign is gone)")
+            return []
+        rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+        agreed = await self.consent.consenting(gid)
+        lines = [(uid, text) for uid, text in rows if uid in agreed]
+        if not lines:
+            return []
+        users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
+        added = await self._propose_new_names(gid, ready.campaign_id, [t for _, t in lines], users)
+        log.info("Import scan: %d lines, %d new names", len(lines), len(added))
+        return added
+
+    async def _import_recap(self, campaign: Campaign, ready: Ready) -> str:
+        """The recap of one scanned import the DM asked for: through the same gates as after a live
+        session (the switch, the DM's own choice, the plan) and the same hold for the DM's name
+        answers (#2174). Without a DM-screen channel to ask in, it is queued without a hold.
+        Returns why it was not written ("" when it was started or held); raises when it could not
+        be tried (a plan that cannot be checked), so the round tries again."""
+        gid = campaign.guild_id
+        if self.recaps is None:
+            return ""
+        if not self.settings.recaps_on:
+            log.info("Import: no recap written (recaps are off)")
+            return "recaps are switched off"
+        if not campaign.recaps_text:
+            log.info("Import: no recap written (the DM chose none)")
+            return "recaps are off for this campaign"
+        if not await self.plan_allows("recap", gid, campaign, fail_open=False):
+            if await self.plan_allows("recap", gid, campaign, fail_open=True):
+                raise PlanUnchecked  # not a no: try again, and don't count it
+            log.info("Import: no recap written (not in the plan)")
+            return "your plan doesn't include recaps"
+        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        if dm <= 0:
+            log.warning("Import: no recap written (the campaign has no DM)")
+            return "the campaign has no DM"
+        channel = campaign.dm_screen_channel_id
+        if channel is None:
+            await self.recaps.enqueue(gid, campaign.id, ready.started_at, dm_user_id=dm)
+            return ""
+        # One question for the whole import, not one per session: when an earlier recap of this
+        # campaign is already waiting and was asked about, this one waits quietly beside it.
+        asked_before = self.recap_holds is not None and any(
+            h.group_id == ready.import_id and h.asked for h in await self.recap_holds.held(gid)
+        )
+        # `say` False: the round tells the DM once for all of the import's recaps.
+        result = await self._hold_or_queue(
+            campaign,
+            ready.session_id,
+            ready.started_at,
+            channel,
+            dm,
+            extractor_to_come=False,
+            quiet=asked_before,
+            group_id=ready.import_id,
+            say=False,
+        )
+        if result == "queued":
+            self._import_queued.setdefault(campaign.id, []).append(ready.started_at)
+        return ""
 
     async def _recap_audio_loop(self) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
@@ -10493,6 +10773,10 @@ async def run(settings: Settings) -> None:
     finally:
         with contextlib.suppress(Exception):
             await db.close()
+
+
+class PlanUnchecked(Exception):
+    """The plan could not be checked right now (a timeout, the database): not a "no"."""
 
 
 def _close_on_sigterm(bot: DMBot) -> None:
