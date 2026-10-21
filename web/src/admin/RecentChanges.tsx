@@ -3,11 +3,12 @@
 // one page of the log, newest first, with a bar underneath to move between pages. The first page
 // comes with the panel's own load, so that stays one call; the others are read when asked for.
 // After any change the panel loads again and its `first` page replaces this one, so a new
-// entry is always in view.
+// entry is always in view. The bar itself is the shared PageBar (also used by the tickets).
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { text, who } from "../content/admin";
 import { type AdminApi, AdminApiError, type AdminLogEntry } from "./api";
+import PageBar from "./PageBar";
 
 interface Props {
   api: AdminApi;
@@ -23,10 +24,11 @@ interface Props {
 
 export default function RecentChanges({ api, first, pages, day, onSignedOut, onOff }: Props) {
   const [page, setPage] = useState(1);
+  // The page showing, for a read that fails to hand back.
+  const showing = useRef(1);
   const [entries, setEntries] = useState(first);
   const [total, setTotal] = useState(pages ?? 1);
-  const [typed, setTyped] = useState("1");
-  const [problem, setProblem] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Only the newest request may set what is shown, so a slow older page can't overwrite it.
   const latest = useRef(0);
@@ -41,10 +43,10 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
     loaded.current = { first, pages };
     latest.current++;
     setPage(1);
+    showing.current = 1;
     setEntries(first);
     setTotal(pages ?? 1);
-    setTyped("1");
-    setProblem(null);
+    setNotice(null);
     setBusy(false);
   }, [first, pages]);
 
@@ -53,45 +55,33 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
     if (windowBox.current) windowBox.current.scrollTop = 0;
   }, [page, entries]);
 
-  async function go(wanted: number, notice: string | null = null) {
+  async function go(wanted: number, news: string | null = null): Promise<number> {
     const mine = ++latest.current;
-    setProblem(notice);
+    setNotice(news);
     setBusy(true);
     try {
       const read = await api.grantsLog?.(wanted);
-      if (!read || mine !== latest.current) return;
+      if (!read || mine !== latest.current) return showing.current;
       setEntries(read.log);
       setPage(read.page);
+      showing.current = read.page;
       setTotal(read.pages);
-      setTyped(String(read.page));
+      return read.page;
     } catch (error) {
-      if (mine !== latest.current) return;
+      if (mine !== latest.current) return showing.current;
       const kind = error instanceof AdminApiError ? error.kind : "down";
       if (kind === "signed-out") onSignedOut();
       else if (kind === "off") onOff();
       else if (kind === "stale") {
         // The page is gone (the log shrank): the first one is always there.
-        void go(1, text.pageGone);
-        return;
-      } else setProblem(text.pageDown);
-      setTyped(String(page));
+        return go(1, text.pageGone);
+      } else setNotice(text.pageDown);
+      return showing.current;
     } finally {
       if (mine === latest.current) setBusy(false);
     }
   }
 
-  function jump(event: Event) {
-    event.preventDefault();
-    const value = typed.trim();
-    // Whole numbers only: "2.5", "-1", "1e1" and words are refused before anything is asked.
-    if (!/^[0-9]{1,9}$/.test(value) || Number(value) < 1 || Number(value) > total) {
-      setProblem(text.pagePick(total));
-      return;
-    }
-    void go(Number(value));
-  }
-
-  const showBar = Boolean(api.grantsLog) && total > 1;
   return (
     <>
       {entries.length === 0 ? (
@@ -117,73 +107,9 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
           </ul>
         </div>
       )}
-      {showBar && (
-        <nav class="page-bar" aria-label={text.pagesNav}>
-          <button
-            type="button"
-            class="button secondary"
-            disabled={page <= 1}
-            onClick={() => void go(1)}
-          >
-            <span aria-hidden="true">«</span>
-            {text.pageNewest}
-          </button>
-          <button
-            type="button"
-            class="button secondary"
-            disabled={page <= 1}
-            onClick={() => void go(page - 1)}
-          >
-            <span aria-hidden="true">‹</span>
-            {text.pageNewer}
-          </button>
-          <form class="page-jump" onSubmit={jump} noValidate>
-            <label for="log-page">{text.pageBox}</label>
-            <input
-              id="log-page"
-              type="text"
-              inputMode="numeric"
-              autocomplete="off"
-              value={typed}
-              aria-describedby="log-page-note"
-              onInput={(e) => {
-                setTyped(e.currentTarget.value);
-                setProblem(null);
-              }}
-            />
-            <span>{text.pageOf(total)}</span>
-            <button type="submit" class="button secondary" disabled={busy}>
-              {text.pageGo}
-            </button>
-          </form>
-          <button
-            type="button"
-            class="button secondary"
-            disabled={page >= total}
-            onClick={() => void go(page + 1)}
-          >
-            {text.pageOlder}
-            <span aria-hidden="true">›</span>
-          </button>
-          <button
-            type="button"
-            class="button secondary"
-            disabled={page >= total}
-            onClick={() => void go(total)}
-          >
-            {text.pageOldest}
-            <span aria-hidden="true">»</span>
-          </button>
-        </nav>
+      {api.grantsLog && (
+        <PageBar id="log-page" page={page} pages={total} busy={busy} notice={notice} onGo={go} />
       )}
-      {/* Always on the page, so a screen reader hears the page change and any refusal. */}
-      <p
-        id="log-page-note"
-        class={problem ? "warn small" : "visually-hidden"}
-        role={problem ? "alert" : "status"}
-      >
-        {problem ?? (showBar ? text.pageNow(page, total) : "")}
-      </p>
     </>
   );
 }
