@@ -267,6 +267,19 @@ class ThePath(NamesTest):
             (),
         )
         self.assertEqual([f.name for f in chain], ["Brother Aldric", "Mira"])  # nobody lost
+        loop = bg.merge(
+            [
+                [
+                    entry("Vecnor", "Brother Aldric"),
+                    entry("Brother Aldric", "Mira"),
+                    entry("Mira", "Vecnor"),
+                ]
+            ],
+            (),
+        )
+        shown = {f.name for f in loop} | {s for f in loop for s in f.secret}
+        self.assertEqual(shown, {"Vecnor", "Brother Aldric", "Mira"})  # every name is somewhere
+        self.assertEqual([f.name for f in loop], ["Vecnor", "Mira"])
 
     async def test_the_log_gate_leaves_a_later_note_alone(self) -> None:
         from dmbot.memory.store import _forget_quotes

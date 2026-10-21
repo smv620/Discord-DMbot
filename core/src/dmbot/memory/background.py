@@ -283,22 +283,33 @@ def merge(
         for a in f.secret:
             holder.setdefault(name_key(a), name_key(f.name))
     place = {name_key(f.name): i for i, f in enumerate(out)}
-    folds: dict[str, bool] = {}
+    # Walk down from the entries nobody holds. An entry whose holder is kept folds into it; one
+    # whose holder was folded stays (its holder is not there to keep it), and so on down. A loop
+    # with no top (each holds the next) keeps its earliest entry and walks from there, so every
+    # name is either an entry or a kept entry's secret. (In a chain, a folded entry's own secret
+    # becomes a public entry rather than moving under the top one: allowed, nothing is lost.)
+    children: dict[str, list[str]] = {}
+    for key, above in holder.items():
+        if above != key and above in place and key in place:
+            children.setdefault(above, []).append(key)
+    kept_keys: dict[str, bool] = {}
 
-    def folds_up(key: str, path: tuple[str, ...] = ()) -> bool:
-        if key in folds:
-            return folds[key]
-        above = holder.get(key)
-        if above is None or above == key or above not in place or key in path:
-            result = False
-        elif holder.get(above) == key and place[key] < place[above]:
-            result = False  # each holds the other: the first stays
-        else:
-            result = not folds_up(above, (*path, key))
-        folds[key] = result
-        return result
+    def settle(start: str, keep: bool) -> None:
+        stack = [(start, keep)]
+        while stack:
+            key, is_kept = stack.pop()
+            if key in kept_keys:
+                continue
+            kept_keys[key] = is_kept
+            for child in children.get(key, ()):
+                stack.append((child, not is_kept))
 
-    out = [f for f in out if not folds_up(name_key(f.name))]
+    for key in place:
+        if holder.get(key) is None or holder[key] == key or holder[key] not in place:
+            settle(key, True)  # nobody holds it
+    for key in place:  # what is left hangs in a loop: the earliest stays
+        settle(key, True)
+    out = [f for f in out if kept_keys[name_key(f.name)]]
     # An other spelling that is another name's own name is that name's, not an alias; and a
     # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}
