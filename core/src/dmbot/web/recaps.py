@@ -129,8 +129,8 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "housekeeping": list(row["housekeeping"]),
         "toConfirm": list(row["to_confirm"]),  # the DM's copy only (#2027): never posted
         # What the recap's critics still asked when they could not agree (#2255): the DM's copy
-        # only, never in a posted recap or on a shared link. Soft notes in the critics' own
-        # words (the plot kinds' wording passed the same word check as any note to the writer).
+        # only, never in a posted recap or on a shared link. Soft notes in fixed wording
+        # ("Check: ..."): things for the DM to look at, never orders.
         "criticNotes": list(critics.loop_from_json(row.get("critics")).notes),
         "error": row["last_error"],
         "canEdit": ready,

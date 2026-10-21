@@ -1240,7 +1240,10 @@ class RecapWorker:
             )
         if not loop.pending:  # every critic passed
             log.info("Recap: the critics agree after %d reading(s)", loop.round)
-            return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=()))
+            unchecked = (
+                () if job.grade else (cr.STYLE_UNCHECKED,)
+            )  # (the grader failed on this one)
+            return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=unchecked))
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
         if loop.round >= cr.MAX_ROUNDS or job.calls > room:
             return await self._stop_critics(gid, cid, job, loop, inputs, "no agreement")
@@ -1283,16 +1286,18 @@ class RecapWorker:
                 if not set(job.speakers) <= set(await consenting()):  # again, after the answer
                     return await self._restart(gid, cid, job)
                 answer = None if unusable(raw) else mo.parse(raw.text)
-                # An answer that cannot be read counts as "nobody said it": when in doubt it is
-                # the writer who is asked to say less.
-                bad = mo.failures(batch, answer or [], lines, inputs.previous)
+                if answer is None:  # neither agreement nor a finding: ask again, or stop
+                    return await self._unreadable(gid, cid, job, "motives")
+                bad = mo.failures(batch, answer, lines, inputs.previous)
                 found += [cr.Change("motive", mo.instruction(f), True, f.number) for f in bad]
             self._annotate(gid, cid, job, "motives", checks=["motive"] if found else [])
-            # A provisional best right away, so that if PlotBot cannot be reached a motive nobody
-            # said is still cut (or fails the job) and never ships.
+            # A provisional best for the first draft only, right away, so that if PlotBot cannot be
+            # reached a motive nobody said is still cut (or fails the job) and never ships. A later
+            # draft that PlotBot has not read never takes the place of one that it has.
             first = cr.best_from(job.summary, job.music, job.grade, found)
-            keep = first if found and first.better_than(loop.best) else loop.best
-            loop = replace(loop, motives=tuple(found), best=keep)
+            loop = replace(
+                loop, motives=tuple(found), best=first if loop.best is None else loop.best
+            )
             await self._save_loop(gid, cid, job, loop)
             job = await self._store.get(gid, cid, job.session_at) or job
         plot: list[cr.Change] = []
@@ -1314,6 +1319,9 @@ class RecapWorker:
             if not set(job.speakers) <= set(await consenting()):
                 return await self._restart(gid, cid, job)
             parsed = None if unusable(raw) else cr.parse_plot(raw.text)
+            if parsed is None:  # an answer that cannot be read is not "nothing to change"
+                self._annotate(gid, cid, job, "plotbot", checks=["shape"])
+                return await self._unreadable(gid, cid, job, "plotbot")
             if parsed is not None:
                 vocabulary = sg.known_words(
                     sheet, memory, inputs.previous, [s.text for s in play], retold
@@ -1328,8 +1336,6 @@ class RecapWorker:
                     secret_names=inputs.secret_names,
                 )
                 self._annotate(gid, cid, job, "plotbot", checks=lambda: cl.kinds(cut))
-            else:
-                self._annotate(gid, cid, job, "plotbot", checks=["shape"])
         style = cr.style_changes(rd.weak(job.grade)) if job.grade else []
         changes = [*(loop.motives or ()), *plot, *style]
         hard, soft = cr.count(changes)
@@ -1493,18 +1499,25 @@ class RecapWorker:
         does. A draft the critics never got to read (the service failed twice before the motive
         check ran, or the ceiling was already near) goes on as it is: the loop is optional, like
         the grader, and a recap already written is never failed for it."""
+        self._written.pop((gid, cid, job.session_at), None)  # (a writer's text is not kept on)
         best = loop.best
+        sheet = bt.from_json(job.beats)
+        said = self._said(inputs, set(job.speakers))
+        length = rd.length_for(rd.session_hours(self._parts(job, said)[0], inputs.hours))
+        transcript = "\n".join(s.text for s in said)
         if best is None:
-            return await self._save_loop(gid, cid, job, replace(loop, done=True))
+            # The draft was never read (the service failed, or a ceiling was near): every sentence
+            # the word list says states a purpose is cut in code. When in doubt nobody said it.
+            flagged = mo.floor_flagged(rd.sentences_of(job.summary))
+            best = cr.Best(
+                job.summary, tuple(job.music), dict(job.grade), len(flagged), 0, (),
+                tuple(n for n, _ in flagged),
+            )  # fmt: skip
         prose = rd.Prose(best.summary, best.music)
         cut = 0
         if best.hard:
             if best.unfixable:
                 return await self._fail(gid, cid, job, FAILED_CHECKS)
-            sheet = bt.from_json(job.beats)
-            said = self._said(inputs, set(job.speakers))
-            length = rd.length_for(rd.session_hours(self._parts(job, said)[0], inputs.hours))
-            transcript = "\n".join(s.text for s in said)
             prose = rd.cut_sentences(prose, best.cuts)
             if rd.check_prose(
                 prose, beats=sheet, transcript=transcript,
@@ -1518,15 +1531,19 @@ class RecapWorker:
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
             why, loop.round, len(best.notes), cut,
         )  # fmt: skip
-        sheet = bt.from_json(job.beats)
-        transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
         await self._store.update(
             gid, cid, job.session_at,
             summary=prose.summary, original=prose.summary, music=list(prose.music),
             grade=best.grade or job.grade, errors=0,
             to_confirm=self._to_confirm(prose.summary, sheet, transcript, inputs),
-            critics=replace(loop, done=True, pending=None, motives=None, notes=best.notes, cut=cut)
-            .to_json(),
+            critics=replace(
+                loop,
+                done=True,
+                pending=None,
+                motives=None,
+                notes=best.notes + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
+                cut=cut,
+            ).to_json(),
         )  # fmt: skip
         return await self._store.get(gid, cid, job.session_at)
 
@@ -1675,6 +1692,13 @@ class RecapWorker:
             last_error=why,
             **extra,
         )
+        return await self._store.get(gid, cid, job.session_at)
+
+    async def _unreadable(self, gid: int, cid: str, job: Job, stage: str) -> Job | None:
+        """A critic's answer could not be read. That is never agreement: it counts as a failed
+        call (asked again after a wait, and the loop stops after `CRITIC_ERRORS_MAX`)."""
+        fresh = await self._store.get(gid, cid, job.session_at) or job
+        await self._soft_wait(gid, cid, fresh, fresh.calls, fresh.spent, f"unreadable {stage}")
         return await self._store.get(gid, cid, job.session_at)
 
     async def _soft_wait(

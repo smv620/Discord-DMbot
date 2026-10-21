@@ -43,6 +43,7 @@ NOTES = {
     "contradiction": 'Check: sentence {n} ("{s}") may not match the story so far.',
     "continuity": 'Check: sentence {n} ("{s}") may not follow from where the story left off.',
 }
+STYLE_UNCHECKED = "Check: the style could not be checked this time."
 GENERIC = {
     "missed": "include what matters to the story so far that the draft leaves out",
     "weight": "give what matters to the story so far more room, and what does not less",
@@ -326,10 +327,15 @@ def plot_changes(
         if kind not in KINDS:
             cut["kind"] += 1
             continue
+        if kind == "secret" and (type(number) is not int or not 1 <= number <= len(sentences)):
+            # A secret that cannot be pinned to a sentence is still a secret found: kept, as a
+            # hard change about the draft as a whole, which cannot be cut. It fails the job.
+            out.append(Change(kind, f"the draft: {GENERIC[kind]}", True, 0))
+            continue
         if type(number) is not int or not 0 <= number <= len(sentences):
             cut["sentence"] += 1
             continue
-        if number == 0 and kind in ("contradiction", "continuity", "secret"):
+        if number == 0 and kind in ("contradiction", "continuity"):
             cut["sentence"] += 1  # those are about one sentence
             continue
         ties_raw = raw.get("ties", [])
