@@ -256,9 +256,9 @@ def _cues(text: str, kind: str) -> Transcript:
                     out[-1].speaker, out[-1].at_ms, f"{out[-1].text} {parts[0].strip()}"
                 )
             for who, words in zip(parts[1::2], parts[2::2], strict=True):
-                said = re.sub(r"</?[a-z][^>]*>", "", words).strip()
-                if said:
-                    out.append(Utterance(who.strip(), start, said))
+                spoken = re.sub(r"</?[a-z][^>]*>", "", words).strip()
+                if spoken:
+                    out.append(Utterance(who.strip(), start, spoken))
             block = []
             return
         said = _CUE_SPEAKER.match(text)
