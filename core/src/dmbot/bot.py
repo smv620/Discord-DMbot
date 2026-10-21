@@ -4302,7 +4302,7 @@ class DMBot(commands.AutoShardedBot):
         # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
         # filter holds for a label is left out, as for the word list.
         # One answer for the whole line, so the callers below can't disagree (#1748).
-        holds = bool(text) and self._topic_holds(table, cleaned or text, names_said)
+        holds = bool(text and self._topic_holds(table, cleaned or text, names_said))
         if text and self.tables.get(table.guild_id) is table:
             # Every line goes to the watcher (memory only); what it finds waits with a held line.
             self._note_spelling(
