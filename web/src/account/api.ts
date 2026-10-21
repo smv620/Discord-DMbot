@@ -216,6 +216,9 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** When a fixed spelling changed this recap's text (Unix seconds), else null (#2178). A posted
+   * recap's Discord message keeps the old spelling. Missing from an older API. */
+  respelledAt?: number | null;
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */

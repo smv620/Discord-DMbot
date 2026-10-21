@@ -255,6 +255,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "A note when a spelling changed a posted recap",
+    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website now says \"Spelling updated\". It reminds you that the message in Discord still shows the old spelling.",
+    reason: "Waits for the spelling change to reach recaps (#2170) and for dev1 to deploy it (#2178).",
+  },
+  {
+    date: "2026-10-20",
     title: "Your recap waits for your name answers",
     what: "If a session leaves name questions for you, DMbot waits to write the recap until you have answered them, so it uses the right names. Your DM screen says how many are left, with 📝 Check new names and Write the recap now if you would rather not wait. Nothing is written, and nothing costs anything, while it waits.",
     reason: "In review (#2169); held until dev1 deploys it.",
