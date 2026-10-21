@@ -1,0 +1,18 @@
+---
+// A shared recap, opened from its link at /r/<secret> with no sign-in (#2119). One page serves every
+// link (a rewrite in public/_redirects) and reads the secret from the address. No menu or footer, no
+// search listing, and the address is never sent on to another site (public/_headers).
+import PublicRecapIsland from "../account/PublicRecapIsland";
+import Base from "../layouts/Base.astro";
+import "../styles/account.css";
+---
+
+<Base title="A shared recap" description="A recap shared by a game master." noindex nofollow bare plain>
+  <div class="account">
+    <h1 class="sr-only">A shared recap</h1>
+    <PublicRecapIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the recap. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

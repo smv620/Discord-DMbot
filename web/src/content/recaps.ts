@@ -4,6 +4,8 @@
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
 import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
+import { shareWords } from "./recap-share";
+import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "./recap-words";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -47,9 +49,9 @@ export function allowanceLines(
 
 export const text = {
   heading: "Your recaps",
-  lead: "After a session, DMbot writes a short recap for your table. Only you can see it until you post it.",
+  lead: "After a session, DMbot can write a short recap for your table (paid plans). Only you can see it until you post it.",
   loading: "Loading your recaps…",
-  empty: "No recaps yet. DMbot emails you when one is ready.",
+  empty: "No recaps yet. DMbot tells you when one is ready.",
   // While recaps are off (RECAPS_LIVE false) the page promises nothing: no email, no recap to come.
   emptyOff: "No recaps yet.",
   back: "All your recaps",
@@ -73,6 +75,11 @@ export const text = {
     keepDays
       ? `Transcript deleted on ${day}, as your table keeps transcripts for ${keepDays === 365 ? "1 year" : `${keepDays} ${keepDays === 1 ? "day" : "days"}`}. The recap is kept.`
       : `Transcript deleted on ${day}. The recap is kept.`,
+  // A name's fixed spelling changed this recap's text after it was posted (#2170, #2178): the
+  // message in Discord is not changed, so the DM is told. Only on a posted recap.
+  respelledHeading: "Spelling updated",
+  respelled: (day: string): string =>
+    `A name's spelling was fixed in this recap on ${day}. The text on this page has the new spelling. The message already posted in Discord still has the old one.`,
   housekeepingHeading: "Housekeeping",
   housekeepingNone: "Nothing to sort out.",
   toConfirmHeading: "Facts to be confirmed",
@@ -103,11 +110,34 @@ export const text = {
     "DMbot is making it again. You will get an email when it is ready.",
 } as const;
 
+/** What a held recap says instead of its draft (#2210): it waits for the DM's answers about
+ * names, and where to give them. */
+export const heldWords = {
+  status: "Waiting for your answers about names",
+  heading: "Waiting for your answers",
+  line: (left: number | undefined): string =>
+    `DMbot will write this recap once you answer ${
+      left && left > 0
+        ? `the ${left} ${left === 1 ? "question" : "questions"}`
+        : "its questions"
+    } about names in Discord: 📝 Check new names on the DM screen.`,
+} as const;
+
+/** A recap the bot is holding until the DM answers its questions about names (#2210). The API
+ * sends a held recap as its own entry (state "waiting", #2174) and clears the flag once the real
+ * recap exists, so the flag alone says it. One test for the list and the page, so they never
+ * disagree. */
+export function isHeld(recap: Recap): boolean {
+  return recap.waitingForNames === true;
+}
+
 /** "Ready to read", "Posted"… for one row of the list. */
 export function statusLine(recap: Recap): string {
+  if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
+  if (isHeld(recap)) return heldWords.status;
   if (recap.state === "failed") return "Couldn't be made";
   if (recap.working) return "Being made";
   return "Ready to read";

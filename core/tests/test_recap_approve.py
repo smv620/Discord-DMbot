@@ -19,7 +19,6 @@ from dmbot.ui.recap_dm import (
     TOO_LATE,
     RecapButton,
     choice_view,
-    ready_view,
 )
 from tests.test_recap_dm import AT, CID, DM_ID, PLAYER, job, press, told
 
@@ -135,9 +134,10 @@ class TheApproveButton(unittest.IsolatedAsyncioTestCase):
 
 
 class TheButtonsThemselves(unittest.TestCase):
-    def test_the_line_carries_the_approve_button_with_an_id_that_survives_a_restart(self) -> None:
-        ids = [getattr(c, "custom_id", "") for c in ready_view(CID, AT).children]
-        self.assertIn(f"dmbot:recap:approve:{CID}:{AT}", ids)
+    def test_the_approve_button_has_an_id_that_survives_a_restart(self) -> None:
+        self.assertEqual(
+            RecapButton("approve", CID, AT).item.custom_id, f"dmbot:recap:approve:{CID}:{AT}"
+        )
         for act in ("approve", "cv", "cm", "cb", "ct"):
             longest = f"dmbot:recap:{act}:{CID}:{10**11}"
             self.assertLessEqual(len(longest), 100)

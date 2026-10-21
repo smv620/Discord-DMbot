@@ -1,6 +1,7 @@
 """Speech-to-text hints that follow the scene (#126, #127), without Discord or a database."""
 
 import unittest
+from dataclasses import replace
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
@@ -53,7 +54,10 @@ def link(
 
 
 def lookup(
-    *relations: Relation, more: tuple[Entity, ...] = (), corrections: tuple[Correction, ...] = ()
+    *relations: Relation,
+    more: tuple[Entity, ...] = (),
+    corrections: tuple[Correction, ...] = (),
+    extra: tuple[Alias, ...] = (),
 ) -> CampaignLookup:
     entities = (
         entity(TRIBE, "Frostwolf tribe", "faction"),
@@ -77,6 +81,7 @@ def lookup(
         alias(STRANGER, "Belleros"),
         alias(STRANGER, "the hooded stranger", secret=True),
         *(alias(e.id, e.name) for e in more),
+        *extra,
     )
     return CampaignLookup.build(LookupData(1, entities, aliases, corrections, relations))
 
@@ -202,6 +207,28 @@ class Hints(unittest.TestCase):
         self.assertEqual(len(hints), MAX_HINTS)
         self.assertEqual(len({name_key(h) for h in hints}), len(hints))
         self.assertNotIn("cerric", hints)  # same name as the character, already there
+
+    def test_an_old_spelling_is_matched_but_never_a_hint(self) -> None:
+        more = entity("9" * 32, "Garrick")
+        old = replace(alias(more.id, "Garik"), kind="old")
+        names = lookup(more=(more,), extra=(old,))
+        self.assertEqual(mentions(names, "ask garik about it"), {more.id})
+        hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0)
+        self.assertNotIn("Garik", hints)
+        self.assertIn("Garrick", hints)
+
+    def test_the_names_download_leaves_old_spellings_out(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.ui import name_lists
+
+        more = entity("9" * 32, "Garrick")
+        old = replace(alias(more.id, "Garik"), kind="old")
+        names = lookup(more=(more,), extra=(old,))
+        campaign = SimpleNamespace(name="Test", id="c" * 32)
+        files, _ = name_lists.download_files(names, campaign, secrets=False)  # type: ignore[arg-type]
+        self.assertIn("Garrick", "".join(files))
+        self.assertNotIn("Garik", "".join(files))  # added again, it would be listened for
 
     def test_a_long_session_keeps_a_bounded_history(self) -> None:
         names = lookup()

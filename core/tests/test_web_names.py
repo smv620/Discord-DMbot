@@ -55,6 +55,12 @@ class Names(Base):
                 status="confirmed",
             )
         ).value.id  # fmt: skip
+        self.old = (
+            await self.memory.add_alias(
+                g, self.one.id, self.kazeth, "Kazet", kind="old", source=DM_SOURCE,
+                status="confirmed",
+            )
+        ).value.id  # fmt: skip
         await add(g, self.one.id, type="npc", name="Maybe Manor", source=DM_SOURCE)  # a guess
         self.other = (
             await add(
@@ -107,7 +113,7 @@ class Names(Base):
         self.assertEqual(set(shown["Zeth"]), {"id", "text", "kind", "saidAs"})
         self.assertIsNone(shown["Zeth"]["saidAs"])
         everything = str(await list_names(self.web, self.session, self.cref))
-        for hidden in ("Grey Voice", "Kayzeth", "Maybe Manor", "Alice Real", "Brynwater"):
+        for hidden in ("Grey Voice", "Kayzeth", "Kazet", "Maybe Manor", "Alice Real", "Brynwater"):
             self.assertNotIn(hidden, everything)
 
     async def test_another_campaigns_dm_a_stranger_and_a_bad_address_get_not_found(self) -> None:
@@ -189,6 +195,7 @@ class Names(Base):
         for who, ref, alias in (
             (self.session, self.cref, self.title),  # a secret name: told as "not found"
             (self.session, self.cref, self.heard),  # a note of how a name was misheard
+            (self.session, self.cref, self.old),  # an old spelling: nothing is spoken from it
             (self.session, self.cref, "0" * 32),
             (self.session, self.cref, "not-an-id"),
             (self.session, self.cref, theirs),  # another campaign's name through my campaign

@@ -395,5 +395,47 @@ reset
 DMBOT_CONFIG_SOURCE="$work/missing.py" run $'1\n' DMBOT_SWITCH
 check "no config.py to check: a commented setting is refused" refused
 
+# Descriptions (#2181): the list says what each setting is, and picking one explains it before the
+# value is asked for, without printing the current value in the description.
+descriptions_file="$work/descriptions"
+printf '%s\n' '# comment' 'TRANSCRIBER|Which service writes the text|Long text about the transcriber. Needs a restart.' >"$descriptions_file"
+export DMBOT_SETTING_DESCRIPTIONS="$descriptions_file"
+reset
+run $'\n'
+check "the list shows a short description" says "TRANSCRIBER (set) - Which service writes the text"
+check "a setting with no description is still listed" says "LOG_LEVEL (empty)"
+check "no stray dash for a setting with no description" never_says "LOG_LEVEL (empty) -"
+reset
+run $'\n' TRANSCRIBER
+check "picking a setting shows its detail" says "Long text about the transcriber. Needs a restart."
+check "the detail comes before the current value" test "$(grep -n 'Long text' <<<"$out" | cut -d: -f1)" -lt "$(grep -n 'Now:' <<<"$out" | cut -d: -f1)"
+check "the detail does not print the value" never_says "Long text about the transcriber. Needs a restart. deepgram"
+reset
+run $'\n' LOG_LEVEL
+check "a setting with no description still works" says "Now:"
+unset DMBOT_SETTING_DESCRIPTIONS
+
+# Every setting the real menu lists has a description, so a new setting cannot appear without one.
+real_root=$(cd "$(dirname "$script")/.." && pwd)
+real_out=$(printf '\n' | DMBOT_ENV_FILE="$work/real.env" DMBOT_ENV_EXAMPLE="$real_root/.env.example" \
+  DMBOT_CONFIG_SOURCE="$real_root/core/src/dmbot/config.py" \
+  DMBOT_SETTING_DESCRIPTIONS="$real_root/scripts/setting-descriptions" "$script" 2>&1 || true)
+listed_names=$(sed -nE 's/^ +[0-9]+\) ([A-Z][A-Z0-9_]*) .*/\1/p' <<<"$real_out")
+missing=""
+for name in $listed_names; do
+  grep -q "^$name|[^|]\+|[^|]\+$" "$real_root/scripts/setting-descriptions" || missing+=" $name"
+done
+code=0
+out="no description for:$missing"
+check "the real menu lists settings" test "$(wc -l <<<"$listed_names")" -gt 50
+check "every listed setting has a short and a detailed description" test -z "$missing"
+stale=""
+while IFS='|' read -r name _; do
+  [[ $name == \#* || -z $name ]] && continue
+  grep -qx "$name" <<<"$listed_names" || stale+=" $name"
+done <"$real_root/scripts/setting-descriptions"
+out="described but not in the menu:$stale"
+check "no description is left for a setting the menu does not list" test -z "$stale"
+
 printf '%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

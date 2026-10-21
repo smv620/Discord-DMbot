@@ -126,6 +126,10 @@ export const siteButtons = [
   "Session transcripts",
   "Forgot your password",
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
+  // The recap page's share controls (#2119), on the website, not in Discord.
+  "Make a link",
+  "Turn the link off",
+  "Make a new link",
 ];
 
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that
