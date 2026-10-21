@@ -1714,6 +1714,33 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **How:** the website's role still has no right on the memory tables. It reads and writes through
     database doors scoped to one campaign and checked against the signed-in DM on every call, like the
     "said as" spelling (#1451). Logs hold counts, never names.
+- **The name card's connections, one per line, with a dropdown** (owner, 2026-10-21). The card reads:
+  ```
+  Jack Uzi · character · NPC · not heard in a session yet
+  🤫 Secret: Jack Uzi (hidden from players)
+  Connections:
+  • is the boss of Sss'thlix 🤫
+  • is a member of The Thieves' Guild
+  ```
+  Each connection is its own line. Only a secret one carries 🤫; a known one has no icon. Discord can't put a
+  button on a line of text, so the card gets one **✏️ Edit a connection…** dropdown listing each connection
+  in the same order and words (🤫 on secret ones). Choosing one opens that connection's choices: change the
+  words, mark secret or known, or remove it (one confirmation). Each is the same action and Undo as today.
+  More than 25 connections: the dropdown's last choice is "🌐 All connections on the website…".
+- **The relationship web on the website** (owner, 2026-10-21): a graph of names (nodes) and connections
+  (edges) at `/account/web/<server>.<campaign>`.
+  - **Centre and distance:** pick the centre from a searchable list of every name; the graph shows
+    everything within **N hops** (default 2), set with a spinner or by typing 1 to the campaign's largest
+    useful number. If the chosen N would draw more than about 300 names, it warns first ("This will be
+    slow; show it anyway?"). Clicking a name makes it the centre and redraws.
+  - **Edges:** between two names, one line with the most relevant connection's words and "(+n)" for the
+    others ("works with (+3)"). Most relevant: the DM's latest confirmed connection, never a secret one
+    when a known one exists. Clicking the line lists all of them, each secret one marked 🤫.
+  - **Editing in place** (the campaign's DMs only): rename or change a name's kind, add, change or remove
+    a connection, mark secret or known, the same actions and Undo as the Discord card.
+  - **Who sees what:** DMs see everything, secret ones marked. Anyone else in the server sees the players'
+    view only (what the NPC pages show) and cannot edit. Secret names and connections are never sent to
+    them.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
