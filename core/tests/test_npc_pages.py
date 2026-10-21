@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -83,7 +83,7 @@ class WithNpcs(Base):
 
     async def notes(self, who: sessions.Session) -> list[dict[str, Any]]:
         got = await web.my_notes(self.web, who, f"{GUILD}.{self.one.id}")
-        return got["notes"]
+        return cast(list[dict[str, Any]], got["notes"])
 
 
 class ThePage(WithNpcs):
@@ -254,6 +254,7 @@ class TheNotes(WithNpcs):
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM npc_notes")
             row = await cur.fetchone()
+            assert row is not None
             self.assertEqual(row["n"], 0)
 
     async def test_a_note_is_not_in_the_log(self) -> None:
@@ -360,7 +361,7 @@ class TheRoutes(WithNpcs):
             ("carol", CAROL, [THURSDAY]),
             ("dave", DAVE, [QUILLON]),
         ):
-            token = await sessions.sign_in(self.web, user, guilds, now=NOW, days=30)
+            token = await sessions.sign_in(self.web, cast(Any, user), guilds, now=NOW, days=30)
             client = httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
             )
@@ -458,23 +459,23 @@ class TheButton(WithNpcs):
 
         async def run(site: str) -> Any:
             return await nc.sync_roster(
-                chan,
+                cast(Any, chan),
                 ME,
                 entries,
                 mapping,
                 guild_id=1,
                 campaign_id="c" * 32,
-                site_url=site,  # type: ignore[arg-type]
+                site_url=site,
             )
 
         first = await run("")  # no site: no button
         self.assertEqual((first.sent, first.edited), (2, 0))
-        self.assertTrue(all(not m.components for m in chan.messages))
+        self.assertTrue(all(not getattr(m, "components", None) for m in chan.messages))
         again = await run("")
         self.assertEqual((again.sent, again.edited), (0, 0))
         gained = await run("https://dmbot.example")  # an edit gives each its button
         self.assertEqual((gained.sent, gained.edited), (0, 2))
-        urls = [npg.message_link(m) for m in chan.messages]
+        urls = [npg.message_link(cast(Any, m)) for m in chan.messages]
         self.assertEqual(
             urls,
             [f"https://dmbot.example/account/npc/1.{'c' * 32}/{e.id}" for e in entries],
@@ -483,11 +484,15 @@ class TheButton(WithNpcs):
         settled = await run("https://dmbot.example")
         self.assertEqual((settled.sent, settled.edited), (0, 0))
         lost = await run("")  # and the button goes if the site address does
-        self.assertEqual((lost.edited, [npg.message_link(m) for m in chan.messages]), (2, ["", ""]))
+        self.assertEqual(
+            (lost.edited, [npg.message_link(cast(Any, m)) for m in chan.messages]), (2, ["", ""])
+        )
         # a message posted new gets its button at once
         entries.append(entry(3, "Cerric"))
         await run("https://dmbot.example")
-        self.assertEqual(npg.message_link(chan.messages[-1]).rsplit("/", 1)[1], entries[-1].id)
+        self.assertEqual(
+            npg.message_link(cast(Any, chan.messages[-1])).rsplit("/", 1)[1], entries[-1].id
+        )
 
     async def test_the_edits_are_paced_like_any_other(self) -> None:
         chan = Chan()
@@ -551,12 +556,12 @@ class TheListPass(WithNpcs):
         recall = SimpleNamespace(roster=AsyncMock(return_value=[aldric]))
         with mock.patch.object(nc, "_fresh", AsyncMock(return_value=Chan())):
             done = await nc.sync_campaign(
-                guild,
+                cast(Any, guild),
                 self.one,
-                recall,
+                cast(Any, recall),
                 MemMap(),
                 roster=Broken(self.db),
-                now=NOW,  # type: ignore[arg-type]
+                now=NOW,
             )
         assert done is not None
         self.assertGreaterEqual(done.left_for_next_time, 1)  # so the bot runs it again
