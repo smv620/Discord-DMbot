@@ -4298,7 +4298,7 @@ class DMBot(commands.AutoShardedBot):
         else:
             names_said = 0
             line_fixes = ()
-        if line_fixes and not self._topic_holds(table, cleaned or text, names_said):
+        if line_fixes and text and not self._topic_holds(table, cleaned or text, names_said):
             # (a line held for the off-topic filter is not counted: when unsure, offer less)
             self._count_heard_forms(table, utterance.user_id, line_fixes)
         if text and not self._topic_holds(table, cleaned or text, names_said):

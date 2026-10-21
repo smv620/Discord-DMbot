@@ -12,17 +12,17 @@ from dmbot.memory._changes import NOT_FOUND
 from dmbot.memory.models import MemoryRuleError, SaidAsSuggestion
 from dmbot.memory.store import SAID_AS_MAX
 from dmbot.ui import logic
-from dmbot.ui.dmbot_commands import _Button, _Menu, _replace, _send, _tell
-from dmbot.ui.names import (
+from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
-    _campaign_for,
+    _Button,
     _failed,
-    _md,
-    _memory,
-    changed,
-    sees_secrets,
+    _Menu,
+    _replace,
+    _send,
+    _tell,
 )
+from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
 log = logging.getLogger(__name__)
 
