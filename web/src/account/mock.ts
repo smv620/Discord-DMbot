@@ -319,10 +319,12 @@ export function mockRecaps(): Recap[] {
       triesLeft: 2,
       canDrop: true,
       approval: { approved: false, choice: "", approvedAt: null, canApprove: true },
+      share: { on: false, path: null },
     },
     {
       ...base,
       ref: "200000000000000001.cmp1.1790000000",
+      share: { on: false, path: null },
       sessionAt: 1790000000,
       status: "posted",
       title: "The vault door",
@@ -370,6 +372,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
+  let sharedCount = 0;
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
     signedIn();
@@ -597,6 +600,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         canAskAgain: false,
       };
       return { ...r };
+    },
+    // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
+    async shareRecap(ref, action) {
+      calls.push(`shareRecap:${ref}:${action}`);
+      const r = await find(ref);
+      if (r.status !== "posted") throw new ApiError("not-posted");
+      if (action === "off") r.share = { on: false, path: null };
+      else if (action === "new" || !r.share?.on) {
+        sharedCount += 1;
+        r.share = { on: true, path: `/r/secret${sharedCount}` };
+      }
+      r.shared = r.share?.on ?? false;
+      return { ...(r.share ?? { on: false, path: null }) };
+    },
+    async publicRecap(token) {
+      calls.push(`publicRecap:${token}`);
+      await reachable();
+      const r = recaps.find((x) => x.share?.on && x.share.path === `/r/${token}`);
+      if (!r) throw new ApiError("not-found");
+      return { title: r.title, text: r.text, postedAt: r.sessionAt, audio: {} };
     },
     async decideRecap(ref, action) {
       calls.push(`${action}Recap:${ref}`);

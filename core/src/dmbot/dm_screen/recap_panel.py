@@ -121,6 +121,9 @@ class RecapsPanel(discord.ui.View):
         )
         style.callback = self._style  # type: ignore[method-assign]
         self.add_item(style)
+        from dmbot.ui.recap_share import ShareButton  # here: that module imports the bot's UI
+
+        self.add_item(ShareButton(campaign.id, row=3))  # Share a recap (#2118)
 
     async def _style(self, interaction: discord.Interaction) -> None:
         # Imported here: the style panel borrows this module's DM check and words.

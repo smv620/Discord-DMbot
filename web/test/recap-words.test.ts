@@ -145,6 +145,7 @@ describe("the switches and What's new agree", () => {
     ["Recaps fit your session", RECAPS_LIVE],
     ["Recaps stick to what happened", RECAPS_LIVE],
     ["New names from your recap", RECAP_NAMES_LIVE],
+    ["Share a recap by a link", RECAP_SHARE_LIVE],
     ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
     ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
