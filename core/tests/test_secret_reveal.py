@@ -197,6 +197,34 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         await ask(bot, table, "the Arcane Brotherhood again", [BROTHERHOOD])
         self.assertEqual(bot.sidebar_send_dm.await_count, 1)  # the key stays claimed
 
+    async def test_the_waiting_line_goes_up_once_a_session_not_for_every_secret(self) -> None:
+        from dmbot.bot import SECRET_QUESTION_WAITING
+
+        table = fake_table()
+        bot = fake_bot(table, visibility="peek")
+        bot.sidebar_send_dm = AsyncMock(return_value="forbidden")  # their messages are closed
+        for line in ("the Arcane Brotherhood", "and Auril too"):
+            await ask(bot, table, line, [BROTHERHOOD, AURIL])
+        self.assertEqual(bot.sidebar_send_dm.await_count, 2)  # two secrets, each tried once
+        waiting = [c for c in bot.post.await_args_list if c.args[1] == SECRET_QUESTION_WAITING]
+        self.assertEqual(len(waiting), 1)
+
+    async def test_a_send_that_only_failed_posts_no_waiting_line(self) -> None:
+        # A failure may work next time and needs no setting changed: no "turn on Direct Messages".
+        table = fake_table()
+        bot = fake_bot(table, visibility="peek")
+        bot.sidebar_send_dm = AsyncMock(return_value="failed")
+        for line in ("the Arcane Brotherhood", "the Arcane Brotherhood again"):
+            await ask(bot, table, line, [BROTHERHOOD])
+        self.assertEqual(bot.sidebar_send_dm.await_count, 2)  # and it is tried again
+        bot.post.assert_not_awaited()
+
+    def test_the_waiting_line_says_what_to_do(self) -> None:
+        from dmbot.bot import SECRET_QUESTION_WAITING
+
+        self.assertIn("Privacy Settings", SECRET_QUESTION_WAITING)
+        self.assertNotIn("Open your private messages.", SECRET_QUESTION_WAITING)
+
     async def test_a_failed_private_send_may_be_tried_again(self) -> None:
         table = fake_table()
         bot = fake_bot(table, visibility="peek")
@@ -354,6 +382,27 @@ def press(act: str, user: int, *, in_server: bool = True, guild: int = GUILD) ->
 
 
 class TheButtons(unittest.IsolatedAsyncioTestCase):
+    async def test_an_answered_question_leaves_the_list_of_open_ones(self) -> None:
+        from dmbot.dm_screen import secret_posts
+
+        secret_posts._posts.clear()
+        asked = SimpleNamespace(id=777, edit=AsyncMock(), components=[object()])
+        secret_posts.remember(GUILD, CID, asked)
+        button, _bot, interaction = press("n", DM_ID)
+        interaction.message.id = 777
+        await button.callback(interaction)
+        self.assertEqual(secret_posts.pending(GUILD, CID), 0)
+        # a press whose edit fails leaves the question listed, so it can still be pulled back
+        again = SimpleNamespace(id=778, edit=AsyncMock(), components=[object()])
+        secret_posts.remember(GUILD, CID, again)
+        button, _bot, interaction = press("n", DM_ID)
+        interaction.message.id = 778
+        interaction.response.edit_message = AsyncMock(side_effect=RuntimeError("gone"))
+        with self.assertRaises(RuntimeError):
+            await button.callback(interaction)
+        self.assertEqual(secret_posts.pending(GUILD, CID), 1)
+        secret_posts._posts.clear()
+
     async def test_yes_turns_the_secret_off_through_the_change_path(self) -> None:
         button, bot, interaction = press("y", DM_ID)
         await button.callback(interaction)

@@ -20,7 +20,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import game_masters as gm
 from dmbot.dm_screen.channel import DMScreenError
-from dmbot.dm_screen.settings import settings_view
+from dmbot.dm_screen.settings import management_view
 from dmbot.sessions import SessionStore
 from tests.pg import DatabaseTest
 
@@ -141,7 +141,7 @@ class GameMasters(DatabaseTest):
         campaign = await self.campaigns.get(GUILD, self.campaign.id)
         assert campaign is not None
         for viewer, expected in ((OWNER, True), (CO, True), (MANAGER, False), (PLAYER, False)):
-            view = settings_view(campaign, None, viewer)
+            view = management_view(campaign, None, viewer)
             has = any(isinstance(c, gm.GameMastersButton) for c in view.children)
             self.assertEqual(has, expected, viewer)
 

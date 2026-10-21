@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 from dmbot import retention_channels as rc
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.dm_screen import delete_campaign as dc
-from dmbot.dm_screen.settings import settings_view
+from dmbot.dm_screen.settings import management_view
 from tests import test_retention_channels as rcs
 from tests.answer_first import Timeline
 from tests.pg import DatabaseTest
@@ -50,7 +50,7 @@ class Words(unittest.TestCase):
         from tests import test_dm_screen_settings as st
 
         def has_it(viewer: int) -> bool:
-            children: list[Any] = list(settings_view(st.campaign(), None, viewer).children)
+            children: list[Any] = list(management_view(st.campaign(), None, viewer).children)
             ids = [str(getattr(i, "item", i).custom_id) for i in children]
             return any(i.startswith("dmbot:delcampaign:") for i in ids)
 

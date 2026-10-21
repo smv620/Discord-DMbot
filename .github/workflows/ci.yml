@@ -124,6 +124,10 @@ jobs:
       - run: npm run check:weight  # page weight against a budget, and no picture over 150 KB (#1947)
       - run: npm run check:smoke  # real browser: the signed-in pages load and their main buttons work (#1488)
         timeout-minutes: 5
+      - run: npm run check:phone  # real browser at 360 and 390 px: no sideways scroll, thumb-sized targets (#2250)
+        timeout-minutes: 5
+        env:
+          PHONE_SKIP_BUILD: "1"  # reuses the build check:smoke just made (dist-smoke/)
 
   # The core tests ran as one 15-minute job on a 4-core runner (#1984; `-n auto` finds the same 4
   # cores, so more workers would not help). They now run as four parts side by side (three finished in 8.2 minutes, the slowest part 6:40 of tests, so a fourth brings the whole job under 8), each on its

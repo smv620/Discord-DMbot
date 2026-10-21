@@ -116,7 +116,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep transcripts for a set time",
-    what: "A DM can choose how long a campaign keeps its transcripts: forever, 1 year, 90 days or 30 days (Settings, then Transcripts). Anything older is deleted every night, and recaps stay.",
+    what: "A DM can choose how long a campaign keeps its transcripts: forever, 1 year, 90 days or 30 days (Settings, then Campaign management, then Transcript retention). Anything older is deleted every night, and recaps stay.",
   },
   {
     date: "2026-10-16",
@@ -234,6 +234,9 @@ export const held: Held[] = [
     title: "Recaps are checked before you see them",
     what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
     reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
+    title: "Settings has two small menus",
+    what: "Settings is now in the DM Bot channel, under DMbot Main Menu. The choices you use least are grouped: Who can see the DM screen, and Campaign management (hand over, pause, how long transcripts are kept, game masters and delete). Each has a Back button.",
+    reason: "In review (#2281); held until dev1 deploys it.",
   },
   {
     date: "2026-10-21",
@@ -562,7 +565,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A DMbot channel for buttons",
-    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 My buttons there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
+    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 DMbot Main Menu there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
     reason:
       "Held until it has been seen working on the test server (#1666).",
   },
