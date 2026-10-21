@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot import bot as bot_module
+from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.bot import DMBot, Table
 from dmbot.campaigns import Campaign
@@ -311,6 +312,43 @@ class Pressing(TableTest):
         self.assertIn("✅ Saved as house rule 1.", content)
         self.assertTrue(content.startswith("🏠 **Save as a house rule?**"))
         self.assertEqual(self.table.house_voice.proposals, {})
+
+    async def disagreeing(self) -> tuple[Any, Any, Any]:
+        """A proposal that the check says disagrees with rule 1: the press, and the question."""
+        self.store.seed("Potions take an item interaction")
+        reply = '{"checks":[{"new":1,"disagrees_with":[1]}]}'
+        self.bot.rule_conflict_ai = SimpleNamespace(  # type: ignore[assignment]
+            complete=AsyncMock(return_value=Reply(reply, cut=False))
+        )
+        self.bot.house_wins = SimpleNamespace(record=AsyncMock())  # type: ignore[assignment]
+        view = await self.proposal()
+        it = self.interaction(content=self.posts[0][1])
+        it.message.edit = AsyncMock()
+        await self.button(view, "Save rule").callback(it)
+        question = it.followup.send.await_args
+        return it, question.args[0], question.kwargs["view"]
+
+    async def test_a_rule_that_disagrees_waits_for_the_dms_choice(self) -> None:
+        it, text, view = await self.disagreeing()
+        self.assertEqual(self.store.added, [])  # nothing saved yet
+        self.assertIn("rule 1", text)
+        self.assertEqual(self.table.house_voice.proposals, {})  # nobody else can save it meanwhile
+        press = self.interaction()
+        await next(b for b in view.children if b.label == "Keep both, this one wins").callback(
+            press
+        )
+        (added,) = self.store.added
+        self.assertEqual(added["rule"].rule, "Potions are a bonus action")
+        self.assertIn("✅ Saved as house rule 2.", press.response.edited[0][0])
+        self.assertIn("✅ Saved as house rule 2.", it.message.edit.await_args.kwargs["content"])
+        self.bot.house_wins.record.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_cancelling_the_question_gives_the_offer_back(self) -> None:
+        _, _, view = await self.disagreeing()
+        press = self.interaction()
+        await next(b for b in view.children if b.label == "Cancel").callback(press)
+        self.assertEqual(self.store.added, [])
+        self.assertEqual(len(self.table.house_voice.proposals), 1)  # it can be pressed again
 
     async def test_cancel_saves_nothing_and_takes_the_buttons_away(self) -> None:
         view = await self.proposal()

@@ -53,6 +53,21 @@ class TheStore(DatabaseTest):
         # (the set's rule 2 is not the campaign's rule 2)
         self.assertEqual([w.winner for w in await self.wins.all(GUILD_A, self.one.id)], [SET_RULE])
 
+    async def test_changing_or_removing_a_rule_forgets_what_was_decided_about_it(self) -> None:
+        from dmbot.rules.house import HouseRuleStore
+
+        rules = HouseRuleStore(self.db)
+        for words in ("Potions are a bonus action", "Potions take an item interaction", "Other"):
+            await rules.add(GUILD_A, self.one.id, DM, words)
+        await self.wins.record(GUILD_A, self.one.id, winner=RuleRef("", 2), loser=OWN, by=DM)
+        await self.wins.record(GUILD_A, self.one.id, winner=RuleRef("", 3), loser=OWN, by=DM)
+        await rules.edit(GUILD_A, self.one.id, DM, 2, "Potions are a free action")
+        self.assertEqual(
+            [w.winner for w in await self.wins.all(GUILD_A, self.one.id)], [RuleRef("", 3)]
+        )
+        await rules.remove(GUILD_A, self.one.id, DM, 3)
+        self.assertEqual(await self.wins.all(GUILD_A, self.one.id), [])
+
     async def test_another_server_never_sees_them(self) -> None:
         await self.wins.record(GUILD_A, self.one.id, winner=OWN, loser=OTHER, by=DM)
         self.assertEqual(await self.wins.all(GUILD_B, self.one.id), [])
