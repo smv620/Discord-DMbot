@@ -107,7 +107,7 @@ describe("the pages that show it", () => {
 describe("every signed-in page has it", () => {
   // The public recap (no sign-in) and My Account itself ("Hi, <name>. Sign out", its own panel) are the
   // two that don't; any other account page's island must carry the shared line.
-  it.each(["Recaps", "Transcripts", "HouseRules", "Homebrew", "Import"])("%sIsland", (name) => {
+  it.each(["Recaps", "Transcripts", "HouseRules", "Homebrew", "Import", "Names"])("%sIsland", (name) => {
     const source = readFileSync(`src/account/${name}Island.tsx`, "utf8");
     expect(source).toContain("<SignedInLine api={api} />");
   });
