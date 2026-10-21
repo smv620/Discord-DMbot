@@ -39,6 +39,7 @@ from dmbot.web import (
     entitlements_writer,
     feedback,
     imports,
+    npc_pages,
     offers,
     sessions,
     shared_recaps,
@@ -601,6 +602,7 @@ def create_app(
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
+        "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -1206,6 +1208,68 @@ def create_app(
             # `name` is `house_file.filename`'s slug (letters, digits, dashes): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
+
+    # An NPC's page and the caller's private notes on it (#2265): any member of the campaign's
+    # server. A note is read and written only by its own person; nothing here logs one.
+    npc_note_limit = RateLimit(60, count=60)
+
+    def npc_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.get("/me/campaigns/{ref}/npcs/{entry}")
+    async def me_npc_page(ref: str, entry: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await npc_pages.read_page(db, session, ref, entry)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+
+    @app.put("/me/campaigns/{ref}/npcs/{entry}/note")
+    async def me_npc_note(ref: str, entry: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save or clear my note: `{"body": "..."}` (empty clears it)."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > npc_pages.NOTE_MAX * 8:
+            raise HTTPException(status_code=413, detail="too_big")  # (read nothing bigger)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("body") if isinstance(body, dict) else None
+        try:
+            await npc_pages.save_note(db, session, ref, entry, text)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return {"ok": True}
+
+    @app.get("/me/npc-notes")
+    async def me_npc_notes(campaign: str, signed: Signed) -> Response:
+        """All of my notes in one campaign, as a file (including those on names no longer
+        listed)."""
+        session, _token = signed
+        try:
+            found = await npc_pages.my_notes(db, session, campaign)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return Response(
+            json.dumps(found, ensure_ascii=False, indent=2).encode(),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="my-npc-notes.json"'},
+        )
+
+    @app.delete("/me/npc-notes")
+    async def me_npc_notes_delete(campaign: str, signed: Signed) -> dict[str, Any]:
+        """Delete all of my notes in one campaign."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            return {"deleted": await npc_pages.delete_my_notes(db, session, campaign)}
+        except RecapError as err:
+            raise npc_refusal(err) from None
 
     # A campaign's homebrew the DM let the players know (#1525): any member of the server; hidden
     # entries never leave the database. No plan rule, as the bot has none for homebrew.
