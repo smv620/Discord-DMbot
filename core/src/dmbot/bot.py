@@ -257,7 +257,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, short
+from dmbot.recaps import cues, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -353,6 +353,7 @@ from dmbot.transcript.waiting_questions import (
 from dmbot.transcription.base import (
     PlaceholderTranscriber,
     Transcriber,
+    TranscriptionProblem,
     confidence_of,
     engine_of,
 )
@@ -445,6 +446,7 @@ SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
+VOICE_TRANSCRIBE_S = 65.0  # a spoken note is up to two minutes: far longer than a live line
 # The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
@@ -487,6 +489,9 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+CLIP_SWEEP_EVERY = (
+    30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
+)
 SECRET_QUESTION_WAITING = (
     "🤫 DMbot has a question for you about a secret name. Open your private messages."
 )
@@ -942,6 +947,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
+        self._clip_sweep_rounds = 0
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
@@ -9517,6 +9523,15 @@ class DMBot(commands.AutoShardedBot):
     async def run_recap_requests(self) -> None:
         store = self.recap_requests
         ai = self.recap_feedback_ai
+        if store is not None:
+            # No clip outlives about ten minutes, whatever happened to its request and whether or
+            # not recaps are on: this runs before that is looked at, about once a minute.
+            self._clip_sweep_rounds += 1
+            if self._clip_sweep_rounds % CLIP_SWEEP_EVERY == 1:
+                try:  # every server, the ones the bot has left included
+                    await store.sweep_clips()
+                except Exception as exc:
+                    log.warning("The clip sweep failed: %s", type(exc).__name__)
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
         for guild in list(self.guilds):
@@ -9524,6 +9539,18 @@ class DMBot(commands.AutoShardedBot):
                 request = await store.claim_next(guild.id)
                 if request is None:
                     break
+                if request.kind == "voice":
+                    with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
+                        outcome = await recap_requests.run_voice(
+                            store,
+                            guild.id,
+                            request,
+                            gate=lambda req, gid=guild.id: self._voice_gate(gid, req),  # type: ignore[misc]
+                            write=lambda req, gid=guild.id: self.recap_voice_text(gid, req),  # type: ignore[misc]
+                            meter=lambda req, secs, gid=guild.id: self._meter_voice(gid, req, secs),  # type: ignore[misc]
+                        )
+                        log.info("Recap voice request: %s", outcome)  # the word only
+                    continue
 
                 async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
                     campaign = await self.campaigns.get(gid, req.campaign_id)
@@ -9552,6 +9579,117 @@ class DMBot(commands.AutoShardedBot):
                         store, guild.id, request, gate=gate, sort=sort
                     )
                     log.info("Recap request: %s", outcome)  # the word only, never the text
+
+    async def _voice_gate(self, guild_id: int, request: RecapRequest) -> str | None:
+        """Why a spoken note is not written down, or None: the sender is still a DM of the
+        campaign, the recap is still a draft, and its switch and plan allow it. No AI is used."""
+        campaign = await self.campaigns.get(guild_id, request.campaign_id)
+        job = await self.recaps.get(guild_id, request.campaign_id, request.session_at)  # type: ignore[union-attr]
+
+        async def allowed() -> str | None:
+            ok = await self.recap_allowed(guild_id, request.campaign_id, job)
+            return None if ok else recap_requests.NOT_ALLOWED
+
+        return await recap_requests.stop_reason(
+            request, campaign, job, has_ai=True, feedback_gate=allowed
+        )
+
+    async def recap_voice_text(self, guild_id: int, request: RecapRequest) -> tuple[str, float]:
+        """A DM's spoken note on the recap page, written down (#2113): decoded in memory, sent
+        to the table's speech-to-text with the campaign's name hints (never a secret name), names
+        the Cleaner is sure of fixed, and its length added to the hours meter. Only a DM who has
+        agreed to be recorded; consent is asked again after every wait. The audio is never
+        written anywhere here; the caller deletes the clip with the outcome and adds the minutes
+        to the meter once its own claim has finished the row. Returns the words and the clip's
+        length. Raises `voice.ClipError` for a clip it can't use."""
+        gid, cid, user = guild_id, request.campaign_id, request.user_id
+        # `consenting` loads the server's consent when it is not loaded yet (after a restart);
+        # the cache-only `has_consent` would refuse a DM who did agree.
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)
+        pcm = await asyncio.to_thread(voice.decode, request.clip, request.clip_type)
+        seconds = voice.seconds(pcm)
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)
+        hints, lookup, people = await self._recap_voice_hints(gid, cid)
+        if user not in await self.consent.consenting(
+            gid
+        ):  # asked again right before the audio leaves
+            raise voice.ClipError(voice.NO_CONSENT)
+        now_ms = int(time.time() * 1000)
+        utterance = Utterance(gid, user, now_ms - int(seconds * 1000), now_ms, pcm, 0)
+        try:
+            heard = await asyncio.wait_for(
+                self.pipeline.transcriber.transcribe(utterance, hints), VOICE_TRANSCRIBE_S
+            )
+        except (TranscriptionProblem, TimeoutError) as exc:
+            raise voice.ClipError(voice.TRANSCRIBE_FAILED) from exc
+        finally:
+            del pcm, utterance  # the audio goes as soon as it is written down
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)  # they stopped meanwhile: nothing is kept
+        text = str(heard).strip() if heard else ""
+        if not text:
+            return "", seconds
+        if lookup is not None:
+            try:
+                text = clean(lookup, text, people=people, unsure=False).text
+            except Exception:
+                log.warning("Couldn't fix names in a spoken note; kept it as heard")
+        return text, seconds
+
+    async def _recap_voice_hints(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[list[str], CampaignLookup | None, list[str]]:
+        """The name hints a live session would send for this campaign, without a running table:
+        characters, then people who agreed. The lookup is None when the names could not be
+        loaded (the note then goes with people only and no name is fixed)."""
+        people, absent = await self._hint_people(guild_id, None)
+        everyone = [*people, *absent]
+        if self.lookup is None:
+            return everyone, None, everyone
+        try:
+            found = await self.lookup.get_within(guild_id, campaign_id, HINTS_WAIT_S)
+            if found is None:
+                return everyone, None, everyone
+            parts = await asyncio.to_thread(prepare_hints, found, time.time())
+        except Exception:
+            log.warning("Couldn't load the campaign's names for a spoken note")
+            return everyone, None, everyone
+        hints = scene_hints(
+            found, parts, SceneTracker(), time.monotonic(), people=people, absent=absent
+        )
+        return hints, found, everyone
+
+    async def _meter_voice(self, guild_id: int, request: RecapRequest, seconds: float) -> None:
+        """Add a spoken note's length to the hours meter, rounded up to a whole minute, against
+        the recap's session. Never raises: the words are worth more than a missed minute."""
+        if self.meter is None:
+            return
+        try:
+            campaign = await self.campaigns.get(guild_id, request.campaign_id)
+            if campaign is None:
+                return
+            minutes, now = voice.meter_minutes(seconds), int(time.time())
+            if campaign.owner_user_id is None:
+                await self.meter.add_unowned(
+                    guild_id=guild_id,
+                    campaign_id=request.campaign_id,
+                    session_started_at=request.session_at,
+                    minutes=minutes,
+                    now=now,
+                )
+            else:
+                await self.meter.add(
+                    guild_id=guild_id,
+                    campaign_id=request.campaign_id,
+                    owner_user_id=campaign.owner_user_id,
+                    session_started_at=request.session_at,
+                    minutes=minutes,
+                    now=now,
+                )
+        except Exception as exc:
+            log.warning("A spoken note's minutes could not be recorded: %s", type(exc).__name__)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
