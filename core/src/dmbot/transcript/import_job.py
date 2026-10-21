@@ -135,16 +135,71 @@ class ImportStore:
                 for r in await cur.fetchall()
             ]
 
-    async def mark_scanned(self, guild_id: int, session_id: str, began: int, ended: int) -> bool:
-        """The name scan of this import is done, and ran from `began` to `ended` (seconds). False
-        when it was marked already (a second round, or another process)."""
+    async def claim_scan(self, guild_id: int, session_id: str, began: int) -> bool:
+        """Take the name scan of this import before doing it, so two bots never both propose its
+        names. `began` starts its window. False when it was taken already."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE session_imports SET scanned = TRUE, scan_from = %s, scan_to = %s"
                 " WHERE session_id = %s AND NOT scanned",
-                (began, ended, session_id),
+                (began, began, session_id),
             )
             return bool(cur.rowcount)
+
+    async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
+        """The scan ran to `ended` (seconds): its window is closed."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scan_to = %s WHERE session_id = %s",
+                (ended, session_id),
+            )
+
+    async def release_scan(self, guild_id: int, session_id: str) -> int:
+        """The scan failed: give it back for the next round and count the try. Returns the tries."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scanned = FALSE, scan_tries = scan_tries + 1"
+                " WHERE session_id = %s RETURNING scan_tries",
+                (session_id,),
+            )
+            row = await cur.fetchone()
+        return int(row["scan_tries"]) if row else 0
+
+    async def give_up_scan(self, guild_id: int, session_id: str) -> None:
+        """A scan that keeps failing is let go with an empty window, so it blocks no later session
+        and the recap is not held for questions it never raised."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scanned = TRUE, scan_from = 0, scan_to = 0"
+                " WHERE session_id = %s",
+                (session_id,),
+            )
+
+    async def ready_for_recap(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
+        """Scanned imports whose recap the DM asked for and that has not been dealt with, in date
+        order. Separate from the scan, so a recap that failed to start is tried again."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.scanned AND i.write_recap AND NOT i.recap_started"
+                " ORDER BY t.started_at, i.session_id LIMIT %s",
+                (limit,),
+            )
+            return [
+                Ready(
+                    r["campaign_id"], r["session_id"], int(r["started_at"]), bool(r["write_recap"])
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def mark_recap_started(self, guild_id: int, session_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET recap_started = TRUE WHERE session_id = %s",
+                (session_id,),
+            )
 
     async def window(self, guild_id: int, session_id: str) -> tuple[int, int] | None:
         """When this import's name scan ran, or None for a session that was not imported (or

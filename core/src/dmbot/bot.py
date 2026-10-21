@@ -486,6 +486,7 @@ SECRET_QUESTION_WAITING = (
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
+IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -7745,7 +7746,9 @@ class DMBot(commands.AutoShardedBot):
         total = 0
         if self.memory is not None:
             # A live session owns the names proposed from its start to the next session's start;
-            # an imported one (old words, scanned now) owns those its own scan proposed (#2106).
+            # an imported one (old words, scanned now) owns those proposed while its own scan ran
+            # (#2106). Another proposal made in the same seconds (a live scan) is counted too:
+            # an over-count only makes the DM answer a little more, and the 3-day cap bounds it.
             scan = await self.import_job.store.window(gid, session_id) if self.import_job else None
             if scan is not None:
                 since, until = scan[0], scan[1] + 1  # (the scan's own seconds, both ends)
@@ -9060,57 +9063,78 @@ class DMBot(commands.AutoShardedBot):
 
     async def run_import_followups(self, gid: int) -> int:
         """After an imported session is cleaned (#2106): in date order, one per campaign, its name
-        scan (once; the DM is asked about the new names the usual way) and, if the DM chose Write
-        recaps for it, the recap through the same hold as a live session, so it waits for the
-        name answers. Returns how many sessions were taken. A session that cannot be scanned is
-        left for the next round; counts only in the log."""
+        scan (once; the DM is asked about the new names the usual way), then, for the sessions
+        the DM chose Write recaps for, the recap through the same hold as a live session, so it
+        waits for the name answers. Returns how many scans were done. The scan is claimed before
+        it runs, so two bots never both propose names; a scan that fails is given back and tried
+        again, and let go (empty window, no hold) after `IMPORT_SCAN_TRIES` so it never blocks the
+        sessions after it. A recap that fails to start is tried again next round. Counts only in
+        the log."""
         assert self.import_job is not None
         store = self.import_job.store
         done = 0
         for ready in await store.ready_for_scan(gid):
-            campaign = await self.campaigns.get(gid, ready.campaign_id)
+            with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                began = int(time.time())
+                if not await store.claim_scan(gid, ready.session_id, began):
+                    continue  # another round or bot has it
+                try:
+                    await self._scan_import(gid, ready)
+                    await store.finish_scan(gid, ready.session_id, int(time.time()))
+                    done += 1
+                except Exception:
+                    log.exception("Import: a session's name scan failed")
+                    if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
+                        log.warning("Import: giving up on a session's name scan")
+                        await store.give_up_scan(gid, ready.session_id)
+        for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 try:
-                    began = int(time.time())
-                    if self.memory is not None and campaign is not None:
-                        agreed = await self.consent.consenting(gid)
-                        lines = [
-                            (uid, text)
-                            for uid, text in await store.scan_lines(gid, ready.session_id)
-                            if uid in agreed
-                        ]
-                        if lines:
-                            users = {uid for uid, _ in lines} | set(agreed) | campaign.dm_user_ids
-                            added = await self._propose_new_names(
-                                gid, ready.campaign_id, [t for _, t in lines], users
-                            )
-                            log.info(
-                                "Import scan: %d line(s), %d new name(s)", len(lines), len(added)
-                            )
-                    if not await store.mark_scanned(gid, ready.session_id, began, int(time.time())):
-                        continue  # another round has it
-                    done += 1
-                    if ready.write_recap and campaign is not None:
+                    campaign = await self.campaigns.get(gid, ready.campaign_id)
+                    if campaign is not None:
                         await self._import_recap(campaign, ready)
+                    await store.mark_recap_started(gid, ready.session_id)
                 except Exception:
-                    log.exception("Import: a session's name scan or recap failed")
+                    log.exception("Import: a session's recap could not be started; trying again")
         return done
+
+    async def _scan_import(self, gid: int, ready: Any) -> None:
+        """The name scan of one imported session: the lines of people who still agree (asked after
+        the lines are read, since a person can stop at any moment) and nobody else's."""
+        assert self.import_job is not None
+        campaign = await self.campaigns.get(gid, ready.campaign_id)
+        if self.memory is None or campaign is None:
+            log.info("Import: no name scan (names are off, or the campaign is gone)")
+            return
+        rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+        agreed = await self.consent.consenting(gid)
+        lines = [(uid, text) for uid, text in rows if uid in agreed]
+        if not lines:
+            return
+        users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
+        added = await self._propose_new_names(gid, ready.campaign_id, [t for _, t in lines], users)
+        log.info("Import scan: %d lines, %d new names", len(lines), len(added))
 
     async def _import_recap(self, campaign: Campaign, ready: Any) -> None:
         """The recap of one scanned import the DM asked for: through the same gates as after a live
         session (the switch, the DM's own choice, the plan) and the same hold for the DM's name
-        answers (#2174). Without a DM-screen channel to ask in, it is queued without a hold."""
+        answers (#2174). Without a DM-screen channel to ask in, it is queued without a hold.
+        Raises when it could not be started, so the round tries again."""
         gid = campaign.guild_id
-        if (
-            self.recaps is None
-            or not self.settings.recaps_on
-            or not campaign.recaps_text
-            or not await self.plan_allows("recap", gid, campaign, fail_open=False)
-        ):
-            log.info("Import: no recap written (off, or not in the plan)")
+        if self.recaps is None:
+            return
+        if not self.settings.recaps_on:
+            log.info("Import: no recap written (recaps are off)")
+            return
+        if not campaign.recaps_text:
+            log.info("Import: no recap written (the DM chose none)")
+            return
+        if not await self.plan_allows("recap", gid, campaign, fail_open=False):
+            log.info("Import: no recap written (not in the plan, or it can't be checked)")
             return
         dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
         if dm <= 0:
+            log.warning("Import: no recap written (the campaign has no DM)")
             return
         channel = campaign.dm_screen_channel_id
         if channel is None:

@@ -56,7 +56,7 @@ class TheStore(WithImports):
         early = await self.imported(1)
         ready = await self.store.ready_for_scan(GUILD)
         self.assertEqual([r.session_id for r in ready], [early])  # the later one waits its turn
-        self.assertTrue(await self.store.mark_scanned(GUILD, early, 10, 20))
+        self.assertTrue(await self.store.claim_scan(GUILD, early, 10))
         self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [late])
 
     async def test_an_earlier_session_still_being_cleaned_holds_the_later_ones_back(self) -> None:
@@ -69,13 +69,36 @@ class TheStore(WithImports):
         later = await self.imported(2)
         self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [later])
 
-    async def test_a_scan_is_marked_once_and_its_window_is_kept(self) -> None:
+    async def test_a_scan_is_claimed_once_and_its_window_is_kept(self) -> None:
         sid = await self.imported(1)
         self.assertIsNone(await self.store.window(GUILD, sid))
-        self.assertTrue(await self.store.mark_scanned(GUILD, sid, 100, 160))
-        self.assertFalse(await self.store.mark_scanned(GUILD, sid, 300, 400))  # once
+        self.assertTrue(await self.store.claim_scan(GUILD, sid, 100))
+        self.assertFalse(await self.store.claim_scan(GUILD, sid, 300))  # once
+        await self.store.finish_scan(GUILD, sid, 160)
         self.assertEqual(await self.store.window(GUILD, sid), (100, 160))
         self.assertEqual(await self.store.ready_for_scan(GUILD), [])
+
+    async def test_a_failed_scan_is_given_back_with_a_count_and_can_be_let_go(self) -> None:
+        sid = await self.imported(1)
+        await self.store.claim_scan(GUILD, sid, 100)
+        self.assertEqual(await self.store.release_scan(GUILD, sid), 1)
+        self.assertEqual([r.session_id for r in await self.store.ready_for_scan(GUILD)], [sid])
+        await self.store.claim_scan(GUILD, sid, 200)
+        self.assertEqual(await self.store.release_scan(GUILD, sid), 2)
+        await self.store.give_up_scan(GUILD, sid)
+        self.assertEqual(await self.store.window(GUILD, sid), (0, 0))  # no questions to wait on
+        self.assertEqual(await self.store.ready_for_scan(GUILD), [])
+
+    async def test_a_recap_is_ready_once_scanned_asked_for_and_not_yet_started(self) -> None:
+        sid = await self.imported(1, recap=True)
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])  # not scanned yet
+        await self.store.claim_scan(GUILD, sid, 100)
+        self.assertEqual([r.session_id for r in await self.store.ready_for_recap(GUILD)], [sid])
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        other = await self.imported(2)  # (the DM did not ask for this one's recap)
+        await self.store.claim_scan(GUILD, other, 100)
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
 
     async def test_the_choice_travels_with_the_session(self) -> None:
         await self.imported(1, recap=True)
@@ -113,87 +136,141 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _hold_or_queue=AsyncMock(return_value="held"),
         **kw,
     )
-    for name in ("run_import_followups", "_import_recap"):
+    for name in ("run_import_followups", "_scan_import", "_import_recap"):
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot, campaign
 
 
+async def rounds(bot: Any, n: int = 4) -> None:
+    for _ in range(n):  # one session per campaign each round
+        await bot.run_import_followups(GUILD)
+
+
 class TheFollowUp(WithImports):
+    async def bot(self, **kw: Any) -> tuple[Any, Any]:
+        bot, campaign = fake_bot(self.store, **kw)
+        campaign.id = self.campaign.id
+        return bot, campaign
+
     async def test_each_session_is_scanned_once_in_date_order_and_only_asked_ones_get_recaps(
         self,
     ) -> None:
         a = await self.imported(1, recap=True)
         b = await self.imported(2)
         c = await self.imported(3, recap=True)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
-        for _ in range(4):  # rounds: one session per campaign each, then nothing more
-            await bot.run_import_followups(GUILD)
+        bot, _ = await self.bot()
+        await rounds(bot)
         self.assertEqual(bot._propose_new_names.await_count, 3)  # one scan for each session
         scanned = [await self.store.window(GUILD, x) for x in (a, b, c)]
         self.assertTrue(all(w is not None for w in scanned))
         asked = [call.args[1] for call in bot._hold_or_queue.await_args_list]
         self.assertEqual(asked, [a, c])  # b was not asked for
         for call in bot._hold_or_queue.await_args_list:
-            self.assertFalse(
-                call.kwargs["extractor_to_come"]
-            )  # imports have no extractor to wait for
+            self.assertFalse(call.kwargs["extractor_to_come"])  # no extractor for an import
             self.assertEqual(call.args[3], 66)  # asked on the campaign's DM screen
         starts = sorted(call.args[2] for call in bot._hold_or_queue.await_args_list)
         self.assertEqual(starts, [START + DAY, START + 3 * DAY])
 
     async def test_the_scan_asks_only_about_lines_of_people_who_still_agree(self) -> None:
         await self.imported(1)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
+        bot, _ = await self.bot()
         bot.consent.consenting = AsyncMock(return_value=set())  # Mira stopped being recorded
-        await bot.run_import_followups(GUILD)
+        await rounds(bot, 1)
         bot._propose_new_names.assert_not_awaited()
 
-    async def test_no_recap_while_recaps_are_off_the_dm_chose_none_or_the_plan_lacks_it(
-        self,
-    ) -> None:
-        await self.imported(1, recap=True)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
-        bot.settings.recaps_on = False
-        await bot.run_import_followups(GUILD)
-        bot._hold_or_queue.assert_not_awaited()
-        self.assertTrue(await self.store.window(GUILD, (await self._only())) is not None)
+    async def test_who_agrees_is_asked_after_the_lines_are_read(self) -> None:
+        await self.imported(1)
+        bot, _ = await self.bot()
+        order: list[str] = []
+        real = self.store.scan_lines
 
-    async def test_the_plan_is_checked_and_a_lack_of_it_writes_nothing(self) -> None:
-        await self.imported(1, recap=True)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
-        bot.plan_allows = AsyncMock(return_value=False)
-        await bot.run_import_followups(GUILD)
-        bot._hold_or_queue.assert_not_awaited()
-        bot.recaps.enqueue.assert_not_awaited()
+        async def lines(*a: Any) -> Any:
+            order.append("lines")
+            return await real(*a)
+
+        async def agreed(*a: Any) -> Any:
+            order.append("consent")
+            return {MIRA}
+
+        self.store.scan_lines = lines  # type: ignore[method-assign]
+        bot.consent.consenting = agreed
+        await rounds(bot, 1)
+        self.assertEqual(order, ["lines", "consent"])  # a stop during the read is not missed
+
+    async def test_each_gate_stops_the_recap_on_its_own(self) -> None:
+        cases = {
+            "recaps off": lambda b, c: setattr(b.settings, "recaps_on", False),
+            "the DM chose none": lambda b, c: setattr(c, "recaps_text", False),
+            "the plan lacks it": lambda b, c: setattr(
+                b, "plan_allows", AsyncMock(return_value=False)
+            ),
+            "no DM": lambda b, c: (
+                setattr(c, "owner_user_id", 0),
+                setattr(c, "dm_user_ids", frozenset()),
+            ),
+        }
+        for name, change in cases.items():
+            with self.subTest(name):
+                await self.imported(1, recap=True)
+                bot, campaign = await self.bot()
+                change(bot, campaign)
+                await rounds(bot, 1)
+                bot._hold_or_queue.assert_not_awaited()
+                bot.recaps.enqueue.assert_not_awaited()
+                async with self.db.guild(GUILD) as conn:  # decided against: not asked again
+                    await conn.execute("DELETE FROM session_imports")
+                    await conn.execute("DELETE FROM transcript_sessions")
 
     async def test_without_a_dm_screen_the_recap_is_queued_without_a_hold(self) -> None:
         await self.imported(1, recap=True)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
+        bot, campaign = await self.bot()
         campaign.dm_screen_channel_id = None
-        await bot.run_import_followups(GUILD)
+        await rounds(bot, 1)
         bot._hold_or_queue.assert_not_awaited()
         bot.recaps.enqueue.assert_awaited_once()
 
     async def test_a_scan_that_fails_is_tried_again_next_round(self) -> None:
         sid = await self.imported(1, recap=True)
-        bot, campaign = fake_bot(self.store)
-        campaign.id = self.campaign.id
+        bot, _ = await self.bot()
         bot._propose_new_names = AsyncMock(side_effect=[RuntimeError("memory"), ["Kazeth"]])
-        await bot.run_import_followups(GUILD)
-        self.assertIsNone(await self.store.window(GUILD, sid))  # not marked: nothing lost
+        await rounds(bot, 1)
+        self.assertEqual(len(await self.store.ready_for_scan(GUILD)), 1)  # given back
         bot._hold_or_queue.assert_not_awaited()
-        await bot.run_import_followups(GUILD)
+        await rounds(bot, 2)
         self.assertIsNotNone(await self.store.window(GUILD, sid))
         bot._hold_or_queue.assert_awaited_once()
 
-    async def _only(self) -> str:
-        (sid,) = [s.id for s in await self.transcripts.sessions(GUILD, self.campaign.id)]
-        return sid
+    async def test_a_scan_that_always_fails_is_let_go_and_blocks_nothing_after_it(self) -> None:
+        stuck = await self.imported(1)
+        later = await self.imported(2, recap=True)
+        bot, _ = await self.bot()
+        bot._propose_new_names = AsyncMock(
+            side_effect=lambda gid, cid, lines, users: (
+                (_ for _ in ()).throw(RuntimeError("memory")) if "Kazeth rides." in lines else []
+            )
+        )
+        await rounds(bot, 6)
+        self.assertEqual(await self.store.window(GUILD, stuck), (0, 0))  # let go, no questions
+        self.assertIsNotNone(await self.store.window(GUILD, later))  # the next one went on
+        asked = [call.args[1] for call in bot._hold_or_queue.await_args_list]
+        self.assertEqual(asked, [later])
+
+    async def test_a_recap_that_could_not_start_is_tried_again_and_the_scan_is_not_redone(
+        self,
+    ) -> None:
+        await self.imported(1, recap=True)
+        bot, _ = await self.bot()
+        bot._hold_or_queue = AsyncMock(side_effect=[RuntimeError("discord"), "held"])
+        await rounds(bot, 3)
+        self.assertEqual(bot._hold_or_queue.await_count, 2)  # tried again after the failure
+        self.assertEqual(bot._propose_new_names.await_count, 1)  # the scan was not redone
+
+    async def test_two_bots_do_not_both_scan_one_session(self) -> None:
+        sid = await self.imported(1)
+        await self.store.claim_scan(GUILD, sid, 1)  # another bot took it
+        bot, _ = await self.bot()
+        await rounds(bot, 1)
+        bot._propose_new_names.assert_not_awaited()
 
 
 class TheQuestionCount(WithImports):
@@ -202,7 +279,8 @@ class TheQuestionCount(WithImports):
     async def test_an_imported_sessions_count_uses_its_scan_window(self) -> None:
         sid = await self.imported(1)
         now = int(time.time())
-        await self.store.mark_scanned(GUILD, sid, now, now + 5)
+        await self.store.claim_scan(GUILD, sid, now)
+        await self.store.finish_scan(GUILD, sid, now + 5)
         proposals = [
             SimpleNamespace(created_at=now - 100),  # before this scan: another session's
             SimpleNamespace(created_at=now + 2),  # inside it
