@@ -574,6 +574,8 @@ class TheSpokenWay(SaidAsTest):
             ("Kount", "Count"),
             ("Duka", "Duke"),
             ("Viktor", "Victor"),
+            ("Tor", "Traitor"),
+            ("Champa", "Champion"),
         ):
             with self.subTest(name=name):
                 await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
@@ -590,6 +592,17 @@ class TheSpokenWay(SaidAsTest):
         await ui.save_name(self.memory, self.campaign, "Torin", "npc", [], [])
         table = await self.said((SPEAKER, "Torin was pronounced Thorin"))  # one letter off: kept
         self.assertEqual([w for c in table.pronounced.values() for w in c], ["Thorin"])
+
+    async def test_a_long_real_name_is_still_found_through_the_sound_codes(self) -> None:
+        """The length rule is only on the plain-letters path: these differ by 2 or more letters
+        and are found by their sound codes, so the gap must never move onto that path."""
+        from dmbot.ui import names as ui
+
+        for name, said in (("Brannoch", "Branok"), ("Llewellyn", "Lewelin"), ("Vaughn", "Von")):
+            with self.subTest(name=name):
+                await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+                table = await self.said((SPEAKER, f"{name} was pronounced {said}"))
+                self.assertEqual([w for c in table.pronounced.values() for w in c], [said])
 
     async def test_the_names_that_are_said_the_way_they_sound_are_still_found(self) -> None:
         from dmbot.ui import names as ui
