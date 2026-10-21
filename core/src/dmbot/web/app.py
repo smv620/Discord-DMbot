@@ -31,6 +31,7 @@ from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
+from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     email_signin,
@@ -71,7 +72,14 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
-from dmbot.web.recap_requests import STATUS, read_instructions, rewrite, send_instructions
+from dmbot.web.recap_requests import (
+    STATUS,
+    read_instructions,
+    read_voice,
+    rewrite,
+    send_instructions,
+    send_voice,
+)
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -640,6 +648,8 @@ def create_app(
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
     request_status = STATUS
+    voice_types = voice.TYPES
+    voice_max = voice.MAX_CLIP_BYTES
 
     async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
         """A small JSON body, read with a running cap (a declared length is not trusted)."""
@@ -677,6 +687,43 @@ def create_app(
         session, _token = signed
         try:
             return await read_instructions(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # A short spoken note (#2113): the clip is held in memory and in the request row only until the
+    # bot has written it down. The web side has no speech key either.
+    voice_limit = RateLimit(60, count=6)
+
+    @app.post("/me/recaps/{ref}/voice", status_code=202)
+    async def me_recap_voice(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if voice_limit.take(f"voice:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        kind = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if kind not in voice_types:
+            raise HTTPException(status_code=415, detail="bad_type")
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > voice_max:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():  # a running cap: a declared length is not trusted
+            data += chunk
+            if len(data) > voice_max:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            return await send_voice(
+                db, session, ref, bytes(data), kind, outside=settings.outside_engine
+            )
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/voice/{request_id}")
+    async def me_recap_voice_state(ref: str, request_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_voice(db, session, ref, request_id)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1858,6 +1905,23 @@ def create_app(
                 for r in rows
             ],
             "reply": reply,
+        }
+
+    @app.get("/support/mine/{sent}")
+    async def my_support_thread(sent: int, signed: Signed) -> dict[str, Any]:
+        """The whole conversation of one of the signed-in person's own questions (#2193): their
+        words, the helper's answers, their emailed replies and the team's, oldest first, each
+        with who wrote it and when. The question is named by its sent time, as the list gives
+        it. Another account's question and a missing one both answer 404. Nothing is logged."""
+        session, _token = signed
+        # A time outside BIGINT can't name a ticket, and psycopg would send it as numeric (a 500).
+        if not 0 <= sent < 2**63:
+            raise HTTPException(status_code=404, detail="not_found")
+        turns = await support.my_thread(db, session.user_id, sent)
+        if turns is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return {
+            "messages": [{"who": t.who, "text": t.text, "at": t.created_at} for t in turns],
         }
 
     # The admin page's sign-in (#772); off while ADMIN_EMAILS is empty. Its sessions and

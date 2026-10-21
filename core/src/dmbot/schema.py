@@ -3067,6 +3067,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_rewrite",
         "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
     ),
+    # A spoken note: the clip is held until the bot has written it down (#2113).
+    (
+        "dmbot_recap_voice_add",
+        "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)",
+    ),
+    ("dmbot_recap_voice_read", "dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)"),
     (
         "dmbot_recap_check_names",
         "dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)",
@@ -3074,6 +3080,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
+    # A person's own whole conversation, on their own ticket only (#2193).
+    ("dmbot_support_mine_thread", "dmbot_support_mine_thread(BIGINT)"),
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
     # The signed-in DM's recaps still waiting for their name answers (#2174).
@@ -5300,6 +5308,88 @@ SUPPORT_MINE_ANSWER = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_support_latest_answer(BIGINT) FROM PUBLIC;
+    """
+
+SUPPORT_MINE_THREAD = """
+    -- A person reads the whole conversation of one of their own tickets (#2193; docs/PLAN.md,
+    -- "Support flow"): their question, the helper's answers, their emailed replies and the team's
+    -- replies, oldest first. Like the latest-answer door, it asks only for a ticket whose
+    -- user_id is the signed-in person (`dmbot_current_user()`, set by Database.user), so another
+    -- account's ticket and a missing one look the same (no rows). The forced `read_own` policy on
+    -- support_tickets says the same thing a second time: two layers, either of which holds.
+    -- The website's role still has no column right on any of the words: this door is the only
+    -- way they come back.
+    -- A ticket is named by its sent time because the list shows no ticket numbers (they would
+    -- show how many other people write); a person's tickets never share a sent time (the insert
+    -- stamps a second ticket one second later), and if one ever did the newer would be shown.
+    -- The policy lets the door (not the role's own queries, which have no right on the words) see
+    -- a person's own emailed replies too; the ids, kinds and times of those are the only new thing
+    -- a person's own session could list, and they are their own messages.
+    CREATE POLICY read_own_replies ON support_replies FOR SELECT
+        USING (who = 'customer' AND EXISTS (
+            SELECT 1 FROM support_tickets t
+            WHERE t.id = support_replies.ticket_id AND t.user_id = dmbot_current_user()));
+    CREATE FUNCTION dmbot_support_mine_thread(sent BIGINT)
+        RETURNS TABLE (who TEXT, text TEXT, created_at BIGINT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        mine support_tickets%ROWTYPE;
+    BEGIN
+        IF dmbot_current_user() IS NULL THEN
+            RETURN;
+        END IF;
+        SELECT * INTO mine FROM support_tickets t
+            WHERE t.user_id = dmbot_current_user() AND t.created_at = sent
+            ORDER BY t.id DESC LIMIT 1;
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT o.who, o.text, o.created_at FROM (
+                SELECT 0::BIGINT AS ord, 'customer'::TEXT AS who, mine.message AS text,
+                       mine.created_at AS created_at
+                UNION ALL
+                SELECT r.id, r.who, r.text, r.created_at FROM support_replies r
+                WHERE r.ticket_id = mine.id
+            ) o ORDER BY o.ord;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_mine_thread(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_mine_thread(BIGINT) FROM PUBLIC;
+    """
+
+SUPPORT_TICKET_TIMES = """
+    -- A person's tickets never share a sent time (#2214): the account page opens a ticket by that
+    -- time (#2193). `support.add` stamps the next free second; this index is what holds two sends
+    -- in the same instant apart, whichever commits second retries.
+    -- Tickets already sharing a time are moved apart first: each pass moves every ticket that
+    -- shares its second with an earlier id up by one, until none do. A ticket that was alone can
+    -- be pushed too when the ones below it run into it, so a cluster of k ends up at most k-1
+    -- seconds late; the order by id is kept. (The table has forced row-level security, so the
+    -- migration opens it for itself and closes it again, as the other backfills do.) The older
+    -- index (user_id, created_at DESC) is left as it is: dropping an index is not this change.
+    CREATE POLICY migrate_backfill ON support_tickets FOR ALL USING (true) WITH CHECK (true);
+    DO $do$
+    BEGIN
+        LOOP
+            UPDATE support_tickets t SET created_at = t.created_at + 1
+            FROM (SELECT id, row_number() OVER (PARTITION BY user_id, created_at ORDER BY id) AS n
+                  FROM support_tickets) d
+            WHERE t.id = d.id AND d.n > 1;
+            EXIT WHEN NOT FOUND;
+        END LOOP;
+    END
+    $do$;
+    DROP POLICY migrate_backfill ON support_tickets;
+    CREATE UNIQUE INDEX support_tickets_one_time ON support_tickets (user_id, created_at);
     """
 
 WEB_RECAP_CHOICES = """
@@ -8069,6 +8159,202 @@ RECAP_REQUESTS = (
     """
 )
 
+RECAP_VOICE = r"""
+    -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
+    -- until the bot has written it down; the same statement that stores the text sets the clip
+    -- to NULL, and a sweep clears any clip older than ten minutes whatever happened. It is never
+    -- written to disk, never logged, and the table is left out of backups. The words are the
+    -- DM's own and live in the row for an hour at most.
+    ALTER TABLE recap_requests DROP CONSTRAINT recap_requests_kind_check;
+    ALTER TABLE recap_requests ADD CONSTRAINT recap_requests_kind_check
+        CHECK (kind IN ('instructions', 'voice'));
+    ALTER TABLE recap_requests DROP CONSTRAINT recap_requests_body_check;
+    ALTER TABLE recap_requests ADD CONSTRAINT recap_requests_body_check CHECK (
+        (kind = 'instructions' AND char_length(body) BETWEEN 1 AND 1000)
+        OR (kind = 'voice' AND body = ''));
+    ALTER TABLE recap_requests ADD COLUMN clip BYTEA
+        CHECK (clip IS NULL OR octet_length(clip) BETWEEN 1 AND 2097152);
+    ALTER TABLE recap_requests ADD COLUMN clip_type TEXT NOT NULL DEFAULT ''
+        CHECK (clip_type IN ('', 'audio/webm', 'audio/ogg'));
+
+    CREATE FUNCTION dmbot_recap_voice_add(
+        g BIGINT, c TEXT, at_ BIGINT, data BYTEA, ctype TEXT, terms INT, outside TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        -- Best effort (#2163: nothing writes installs.left_at yet): a server the bot has left
+        -- takes no new clips. The promise that no clip outlives ten minutes does not rest on this:
+        -- the all-server sweep (dmbot_sweep_old_clips) keeps it.
+        IF EXISTS (SELECT 1 FROM installs i WHERE i.guild_id = g AND i.left_at IS NOT NULL) THEN
+            RETURN jsonb_build_object('status', 'not_allowed');
+        END IF;
+        -- Audio DMbot holds, even for minutes, needs the speaker's agreement to be recorded
+        -- under the current wording, naming the outside company in use if there is one
+        -- (`terms` and `outside` are the code's TERMS_VERSION and TRANSCRIBER). The bot checks
+        -- again.
+        IF NOT EXISTS (SELECT 1 FROM consent k
+                       WHERE k.guild_id = g AND k.user_id = dmbot_current_user()
+                         AND k.terms_version = terms
+                         AND (outside IS NULL OR k.outside_to = outside)) THEN
+            RETURN jsonb_build_object('status', 'no_consent');
+        END IF;
+        IF ctype IS NULL OR ctype NOT IN ('audio/webm', 'audio/ogg') THEN
+            RETURN jsonb_build_object('status', 'bad_type');
+        END IF;
+        IF data IS NULL OR octet_length(data) = 0 THEN
+            RETURN jsonb_build_object('status', 'bad_clip');
+        END IF;
+        IF octet_length(data) > 2097152 THEN
+            RETURN jsonb_build_object('status', 'too_big');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM recap_jobs j
+                       WHERE j.guild_id = g AND j.campaign_id = c AND j.session_at = at_
+                         AND j.state = 'ready' AND j.status = 'draft') THEN
+            RETURN jsonb_build_object('status', 'not_editable');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
+        -- A clip older than ten minutes and any row older than an hour go here, for this
+        -- campaign, whenever a new clip comes (the bot's own sweep covers the servers it is in).
+        UPDATE recap_requests r SET clip = NULL
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.clip IS NOT NULL
+              AND r.created_at < now_s - 600;
+        DELETE FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.kind = 'voice'
+              AND r.state IN ('waiting', 'working', 'done')  -- not a failed one
+              AND r.created_at > now_s - 600) >= 3 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind, body,
+                                    clip, clip_type, created_at)
+            VALUES (g, c, rid, at_, dmbot_current_user(), 'voice', '', data, ctype, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- Emptying old clips in every server, the ones the bot has left included, by one function
+    -- and nothing else: it sets the cleanup marker for its own statement only and does one
+    -- thing, empty the clip of a request older than ten minutes. It is the bot's: not granted
+    -- to the website's role (the policies below mean nothing without the marker, and the
+    -- website's role has no right to the table anyway).
+    -- (An UPDATE's new row must pass the SELECT rule too, so that rule cannot ask for the clip.)
+    CREATE POLICY old_clips_seen ON recap_requests FOR SELECT
+        USING (dmbot_cleanup() = 'old-clips' AND created_at < dmbot_now() - 600);
+    CREATE POLICY old_clips_emptied ON recap_requests FOR UPDATE
+        USING (dmbot_cleanup() = 'old-clips' AND clip IS NOT NULL
+               AND created_at < dmbot_now() - 600)
+        WITH CHECK (dmbot_cleanup() = 'old-clips' AND clip IS NULL);
+    CREATE FUNCTION dmbot_sweep_old_clips() RETURNS BIGINT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        emptied BIGINT;
+    BEGIN
+        PERFORM set_config('dmbot.cleanup', 'old-clips', true);
+        UPDATE recap_requests SET clip = NULL
+            WHERE clip IS NOT NULL AND created_at < dmbot_now() - 600;
+        GET DIAGNOSTICS emptied = ROW_COUNT;
+        PERFORM set_config('dmbot.cleanup', '', true);
+        RETURN emptied;
+    END
+    $fn$;
+
+    -- A clip's state and the words written from it, to the DM who sent it and no one else.
+    CREATE FUNCTION dmbot_recap_voice_read(g BIGINT, c TEXT, at_ BIGINT, rid TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r recap_requests%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM recap_requests x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.session_at = at_ AND x.id = rid
+              AND x.kind = 'voice' AND x.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'answer', r.answer);
+    END
+    $fn$;
+    -- The typed notes' limit counts typed notes only: clips have their own (above).
+    CREATE OR REPLACE FUNCTION dmbot_recap_request_add(g BIGINT, c TEXT, at_ BIGINT, txt TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF txt IS NULL OR char_length(btrim(txt)) = 0 OR char_length(txt) > 1000 THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM recap_jobs j
+                       WHERE j.guild_id = g AND j.campaign_id = c AND j.session_at = at_
+                         AND j.state = 'ready' AND j.status = 'draft') THEN
+            RETURN jsonb_build_object('status', 'not_editable');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('recap_request:' || g::TEXT || c, 0));
+        -- The one-hour promise holds for a server the bot has left too: old words go here.
+        DELETE FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM recap_requests r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.kind = 'instructions'
+              AND r.state IN ('waiting', 'working')
+              AND r.created_at > now_s - 600) >= 3 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind, body,
+                                    created_at)
+            VALUES (g, c, rid, at_, dmbot_current_user(), 'instructions', btrim(txt), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());  -- (reset by REPLACE)
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_sweep_old_clips()'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_voice_add(
+        BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_sweep_old_clips() FROM PUBLIC;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -8224,6 +8510,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
     ("0138_member_directory", MEMBER_DIRECTORY),  # who an imported name can be (#2141)
     ("0139_recap_requests", RECAP_REQUESTS),  # the recap page's notes to DMbot (#2113)
+    ("0140_recap_voice", RECAP_VOICE),  # ... and a short clip it may speak instead (#2113)
     ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
@@ -8232,10 +8519,18 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0149_audio_again_posted",
         RECAP_AUDIO_AGAIN_POSTED,
     ),  # make it again for a posted recap (#2183)
+    (
+        "0150_support_mine_thread",
+        SUPPORT_MINE_THREAD,
+    ),  # a person reads their own ticket's thread (#2193)
     ("0151_recap_hold_names", RECAP_HOLD_NAMES),  # how many answers it waits on (#2174)
     ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
     ("0153_import_recaps", IMPORT_RECAPS),  # Write recaps for an import, its scan window (#2106)
     ("0154_import_progress", IMPORT_PROGRESS),  # each import session's stage, scan given up
+    (
+        "0155_support_ticket_times",
+        SUPPORT_TICKET_TIMES,
+    ),  # no two of a person's tickets share a time
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

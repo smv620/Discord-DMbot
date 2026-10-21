@@ -231,6 +231,13 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Your support questions now show the whole conversation",
+    what: "On your account page, press \"Read the conversation\" under one of your questions to read all of it: what you wrote, the answers from DMbot's helper (a program, not a person), the replies you sent by email and the team's replies, with the dates. On our website, only you and the team can read it.",
+    reason:
+      "Waits for the website's API change (#2193) to deploy, and for the support helper to be on (SUPPORT_AI_LIVE, #1431). When it is live, move this up with the helper's entry.",
+  },
+  {
+    date: "2026-10-21",
     title: "Make the audio again for a recap you already posted",
     what: "If you fix a name's spelling after a recap was posted, the recap page offers Make the audio again. The new audio is used on the recap page and its link. The message already in Discord keeps its old audio. Only the DM sees the button, and audio has to be part of your plan.",
     reason: "In review (#2203); held until dev1 deploys it.",

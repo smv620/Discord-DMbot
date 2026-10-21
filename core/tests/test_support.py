@@ -6,6 +6,7 @@ without its words; old and deleted accounts' tickets go; and its words reach no 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -18,8 +19,9 @@ import httpx
 import psycopg
 
 from dmbot.config import ConfigError
-from dmbot.db import Database
+from dmbot.db import Database, drop_schema
 from dmbot.mail import Mailer
+from dmbot.schema import MIGRATIONS
 from dmbot.web import sessions, support
 from dmbot.web.accounts import delete_person
 from dmbot.web.admin import AdminSessions, FailedTries
@@ -28,7 +30,7 @@ from dmbot.web.feedback import FeedbackError
 from dmbot.web.limits import RateLimit
 from dmbot.web.payments import FakeProvider
 from dmbot.web.settings import load_web_settings
-from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, PASSWORD
 from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET, SMTP
@@ -481,6 +483,107 @@ class SupportRoute(SupportBase):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 await conn.execute("SELECT text FROM support_replies")
 
+    async def test_a_person_opens_their_own_ticket_and_sees_the_whole_conversation(self) -> None:
+        await self.add_row(ALICE.id, self.now - 100, "q")
+        ticket = await self.ticket_id("q")
+        await support.add_reply(self.web, ticket, "ai", "Try the Billing page.", now=self.now - 90)
+        await support.add_reply(
+            self.web, ticket, "customer", "That did not help.", now=self.now - 80
+        )
+        await support.add_reply(
+            self.web, ticket, "person", "I fixed it for you.", now=self.now - 70
+        )
+        answer = await (await self.client()).get(f"/support/mine/{self.now - 100}")
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(
+            answer.json(),
+            {
+                "messages": [
+                    {"who": "you", "text": "Words", "at": self.now - 100},
+                    {"who": "helper", "text": "Try the Billing page.", "at": self.now - 90},
+                    {"who": "you", "text": "That did not help.", "at": self.now - 80},
+                    {"who": "team", "text": "I fixed it for you.", "at": self.now - 70},
+                ]
+            },
+        )
+        # No ticket number comes back to count the other people's by.
+        self.assertNotIn('"id"', answer.text)
+
+    async def test_two_tickets_sent_in_one_second_each_open_their_own_conversation(self) -> None:
+        first = await support.add(
+            self.web, ALICE.id, "table", support.Ticket("one", "First words"), now=self.now
+        )
+        second = await support.add(
+            self.web, ALICE.id, "table", support.Ticket("two", "Second words"), now=self.now
+        )
+        self.assertNotEqual(first, second)
+        await support.add_reply(self.web, first, "ai", "Answer to one.", now=self.now)
+        client = await self.client()
+        listed = (await client.get("/support/mine")).json()["tickets"]
+        self.assertEqual(sorted(t["subject"] for t in listed), ["one", "two"])
+        self.assertEqual(len({t["at"] for t in listed}), 2)
+        by_subject = {t["subject"]: t["at"] for t in listed}
+        one = (await client.get(f"/support/mine/{by_subject['one']}")).json()["messages"]
+        two = (await client.get(f"/support/mine/{by_subject['two']}")).json()["messages"]
+        self.assertEqual([m["text"] for m in one], ["First words", "Answer to one."])
+        self.assertEqual([m["text"] for m in two], ["Second words"])
+
+    async def test_another_accounts_ticket_and_a_missing_one_both_answer_404(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await self.add_row(BOB, self.now - 5, "bobs")
+        await support.add_reply(self.web, await self.ticket_id("bobs"), "ai", "Bob's.", now=1)
+        client = await self.client()
+        other = await client.get(f"/support/mine/{self.now - 5}")
+        missing = await client.get(f"/support/mine/{self.now - 6}")
+        self.assertEqual((other.status_code, missing.status_code), (404, 404))
+        self.assertEqual(other.json(), missing.json())
+        self.assertNotIn("Bob", other.text)
+        # Bob does see his own.
+        bobs = await (await self.client(BOB)).get(f"/support/mine/{self.now - 5}")
+        self.assertEqual([m["text"] for m in bobs.json()["messages"]], ["Words", "Bob's."])
+
+    async def test_a_time_too_big_for_the_database_is_a_404_not_a_crash(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        client = await self.client()
+        for sent in ("99999999999999999999", str(2**63), str(2**63 - 1), "0"):
+            answer = await client.get(f"/support/mine/{sent}")
+            self.assertEqual(
+                (answer.status_code, answer.json()), (404, {"error": "not_found"}), sent
+            )
+
+    async def test_signed_out_gets_401_for_a_conversation(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        anonymous = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(anonymous.aclose)
+        self.assertEqual((await anonymous.get(f"/support/mine/{self.now}")).status_code, 401)
+
+    async def test_the_conversation_door_answers_nothing_to_anyone_but_the_owner(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        sql = "SELECT * FROM dmbot_support_mine_thread(%s)"
+        async with self.web.anonymous() as conn:
+            self.assertEqual(await (await conn.execute(sql, (self.now,))).fetchall(), [])
+        async with self.web.user(BOB) as conn:
+            self.assertEqual(await (await conn.execute(sql, (self.now,))).fetchall(), [])
+        # The role still has no right on the words, and the admin door is not opened by this one.
+        async with self.web.user(ALICE.id) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT message FROM support_tickets")
+
+    async def test_reading_a_conversation_logs_no_words(self) -> None:
+        await self.add_row(ALICE.id, self.now, "q")
+        await support.add_reply(
+            self.web, await self.ticket_id("q"), "ai", "Secret-ish answer.", now=self.now
+        )
+        client = await self.client()
+        with self.assertLogs(level=logging.DEBUG) as seen:
+            await client.get(f"/support/mine/{self.now}")
+            logging.getLogger("dmbot.test").debug("keep the capture open")
+        logged = "\n".join(r.getMessage() for r in seen.records)
+        self.assertNotIn("Secret-ish", logged)
+        self.assertNotIn("Words", logged)
+
     async def test_the_list_is_at_most_twenty_and_empty_for_a_person_who_never_wrote(self) -> None:
         client = await self.client()
         self.assertEqual(
@@ -738,6 +841,80 @@ class SupportKeptPrivately(SupportBase):
         self.assertEqual([r["subject"] for r in await self.tickets()], ["bob's"])
 
 
+class TicketTimes(SupportBase):
+    """No two of a person's tickets share a sent time (#2214)."""
+
+    async def test_sends_in_the_same_instant_each_get_their_own_second(self) -> None:
+        ids = await asyncio.gather(
+            *(
+                support.add(
+                    self.web, ALICE.id, "table", support.Ticket(f"s{n}", "Words"), now=self.now
+                )
+                for n in range(6)
+            )
+        )
+        self.assertEqual(len(set(ids)), 6)
+        times = sorted(t["created_at"] for t in await self.tickets())
+        self.assertEqual(times, [self.now + n for n in range(6)])
+
+    async def test_another_persons_tickets_are_not_affected(self) -> None:
+        await sessions.sign_in(self.web, _bob(), [THURSDAY], now=self.now, days=30)
+        await support.add(self.web, ALICE.id, "table", support.Ticket("a", "Words"), now=self.now)
+        await support.add(self.web, BOB, "table", support.Ticket("b", "Words"), now=self.now)
+        self.assertEqual({t["created_at"] for t in await self.tickets()}, {self.now})
+
+    async def test_the_database_refuses_a_shared_time_even_without_the_stamp(self) -> None:
+        await self.add_row(ALICE.id, self.now, "one")
+        with self.assertRaises(psycopg.errors.UniqueViolation):
+            await self.add_row(ALICE.id, self.now, "two")
+
+
+class TicketTimesMigration(DatabaseTest):
+    """The migration moves tickets that already share a time apart, then adds the index."""
+
+    async def test_planted_duplicates_are_moved_apart_by_the_later_id(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0155"]
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        planted = [  # (subject, user, created_at): three at one second, one already at the next
+            ("a", 701, 1000),
+            ("b", 701, 1000),
+            ("c", 701, 1000),
+            ("d", 701, 1001),
+            ("e", 702, 1000),  # another person at the same second: untouched
+        ]
+        for subject, user, at in planted:
+            async with self.db.user(user) as conn:
+                await conn.execute(
+                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                    " VALUES (%s, %s, 'table', %s, 'Words')",
+                    (at, user, subject),
+                )
+        await self.db.migrate()
+        async with self.db.support_admin() as conn:
+            cur = await conn.execute(
+                "SELECT subject, user_id, created_at FROM support_tickets ORDER BY id"
+            )
+            got = {r["subject"]: r["created_at"] for r in await cur.fetchall()}
+        # a keeps 1000; b and c step up, run into d at 1001 and push it too (d was not a
+        # duplicate, but the ones below it ran into it): the order by id is kept, all four apart.
+        self.assertEqual([got[k] for k in "abcd"], [1000, 1001, 1002, 1003])
+        self.assertEqual(got["e"], 1000)  # another person at the same second: untouched
+        async with self.db.unscoped() as conn:  # the opening is gone again
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+                " AND tablename = 'support_tickets'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+        with self.assertRaises(psycopg.errors.UniqueViolation):
+            async with self.db.user(701) as conn:
+                await conn.execute(
+                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+                    " VALUES (1000, 701, 'table', 'again', 'Words')"
+                )
+
+
 class SupportAdmin(SupportBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -927,7 +1104,9 @@ class SupportAdmin(SupportBase):
 
     async def test_tickets_sent_at_the_same_second_keep_one_order_across_a_page_edge(self) -> None:
         for n in range(25):
-            await self.add_row(ALICE.id, self.now, f"same {n:03d}")  # one second, 25 tickets
+            # One second, 25 tickets from 25 people: one person can't send two in the same second
+            # (#2214), so it is different people who share a time.
+            await self.add_row(9000 + n, self.now, f"same {n:03d}")
         await self.sign_in()
         one = (await self.client.get("/admin/support")).json()["tickets"]
         two = (await self.client.get("/admin/support", params={"page": 2})).json()["tickets"]

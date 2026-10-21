@@ -174,6 +174,14 @@ export interface MySupport {
   reply: boolean;
 }
 
+/** One part of a question's whole conversation (#2193): who wrote it, the words, and when (Unix
+ * seconds). "you" is the person's own first message and emailed replies. */
+export interface SupportMessage {
+  who: "you" | "helper" | "team";
+  text: string;
+  at: number;
+}
+
 /** What the Support form sends (#1340). */
 export interface SupportTicket {
   subject: string;
@@ -496,12 +504,31 @@ export interface ImportStarted {
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
   estimate: { sessions: number; fastCalls: number };
 }
+/** Where one imported session has got to (#2230); an older API sends none and the page falls back
+ * to the plain `state`. */
+export type ImportStage =
+  | "cleaning"
+  | "checking_names"
+  | "finding_names"
+  | "waiting_for_names"
+  | "starting_recap"
+  | "writing_recap"
+  | "recap_ready"
+  | "recap_failed"
+  | "recap_not_written"
+  | "done"
+  | "failed";
 export interface ImportProgress {
   sessions: {
     file: string;
     date: string;
     state: ImportState;
     reason: string | null;
+    stage?: ImportStage;
+    /** The name questions its recap waits on. */
+    namesToAnswer?: number;
+    /** True when the name check for this session was given up. */
+    namesUnchecked?: boolean;
   }[];
 }
 
@@ -844,6 +871,9 @@ export interface AccountApi {
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
   mySupport?(): Promise<MySupport>;
+  /** The whole conversation of one of the person's own questions, oldest first, named by the time
+   * it was sent as the list gives it (#2193). Missing from an API older than that. */
+  supportThread?(at: number): Promise<SupportMessage[]>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -1058,10 +1088,25 @@ export function httpApi(
             typeof t.subject === "string" &&
             (t.status === "new" ||
               t.status === "answered" ||
+              t.status === "escalated" ||
               t.status === "closed"),
         ),
         reply: answer?.reply !== false,
       };
+    },
+    supportThread: async (at) => {
+      const answer = (await call("GET", `/support/mine/${encodeURIComponent(String(at))}`)) as {
+        messages?: unknown;
+      } | null;
+      const parts = Array.isArray(answer?.messages) ? answer.messages : [];
+      return parts.filter(
+        (m): m is SupportMessage =>
+          typeof m === "object" &&
+          m !== null &&
+          (m.who === "you" || m.who === "helper" || m.who === "team") &&
+          typeof m.text === "string" &&
+          typeof m.at === "number",
+      );
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");
