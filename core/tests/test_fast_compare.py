@@ -186,6 +186,12 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
         text = "\n".join(fast_compare.render(tables))
         self.assertIn(f"{NEW}: ", text)
         self.assertIn("tokens", text)
+        # each call's time, with the median and the slowest, for every model of every tool (#2263)
+        for table in tables:
+            for row in table.rows:
+                self.assertTrue(row.seconds, table.tool)
+        self.assertEqual(text.count("time per call: median "), 6)
+        self.assertEqual(text.count("each (s): "), 6)
 
     async def test_the_cap_stops_new_runs(self) -> None:
         async def make_client(model: str) -> tuple[Any, Any]:
@@ -256,6 +262,78 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
         metered = asyncio.run(go())
         self.assertEqual((metered.calls, metered.input_tokens, metered.output_tokens), (2, 200, 40))
         self.assertEqual(metered.model, "m")
+
+
+class TheTimes(unittest.IsolatedAsyncioTestCase):
+    def test_the_line_gives_the_median_and_the_slowest(self) -> None:
+        from dmbot.devtools.common import timing_line
+
+        self.assertEqual(timing_line([1.0, 3.0, 2.0]), "median 2.0 s, slowest 3.0 s over 3 calls")
+        self.assertEqual(timing_line([0.44]), "median 0.4 s, slowest 0.4 s over 1 call")
+        self.assertEqual(timing_line([]), "")
+
+    async def test_the_wrapper_times_a_call_that_fails_too(self) -> None:
+        class Failing:
+            async def complete(self, *a: Any, **k: Any) -> Reply:
+                raise RuntimeError("down")
+
+        metered = Metered(Failing())
+        with self.assertRaises(RuntimeError):
+            await metered.complete("s", "t")
+        self.assertEqual(len(metered.seconds), 1)
+
+    async def test_sidebar_check_prints_each_answers_time_and_the_median_and_slowest(self) -> None:
+        import contextlib
+        import io
+
+        result = await sidebar_check.check_cases(
+            sidebar_check.new_sidebar(FakeClient("m")), sidebar_check.load_cases(
+                sidebar_check.DEFAULT_CASES
+            ).CASES[:3], quiet=True
+        )  # fmt: skip
+        self.assertEqual(len(result.seconds), 3)
+        self.assertTrue(
+            all(" s, " in line for line in result.lines if "→" not in line and " s," in line)
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            await sidebar_check.check_cases(
+                sidebar_check.new_sidebar(FakeClient("m")),
+                sidebar_check.load_cases(sidebar_check.DEFAULT_CASES).CASES[:2],
+            )
+        self.assertEqual(out.getvalue().count(" s, "), 2)  # one time line for each answer
+
+    def test_the_cases_and_the_golden_sets_are_found_from_another_folder(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from dmbot.devtools.recap_measure.golden import load_golden as recap_golden
+        from dmbot.devtools.story_measure.golden import load_golden as story_golden
+
+        here = Path.cwd()
+        with tempfile.TemporaryDirectory() as elsewhere:
+            os.chdir(elsewhere)
+            try:
+                self.assertTrue(sidebar_check.DEFAULT_CASES.is_file())
+                self.assertTrue(sidebar_check.load_cases(sidebar_check.DEFAULT_CASES).CASES)
+                self.assertTrue(story_golden())
+                self.assertTrue(recap_golden())
+            finally:
+                os.chdir(here)
+
+    def test_a_missing_golden_folder_is_named_plainly(self) -> None:
+        from pathlib import Path
+
+        from dmbot.devtools.recap_measure.golden import GoldenError as RecapError
+        from dmbot.devtools.recap_measure.golden import load_golden as recap_golden
+        from dmbot.devtools.story_measure.golden import GoldenError as StoryError
+        from dmbot.devtools.story_measure.golden import load_golden as story_golden
+
+        nowhere = Path("/nonexistent-golden")
+        with self.assertRaisesRegex(StoryError, "golden data folder isn't there: /nonexistent"):
+            story_golden(nowhere)
+        with self.assertRaisesRegex(RecapError, "golden data folder isn't there: /nonexistent"):
+            recap_golden(nowhere)
 
 
 if __name__ == "__main__":
