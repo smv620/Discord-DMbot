@@ -885,7 +885,7 @@ def suggestion_text(
         if match is not None
         else "Is this a name in your game?"
     )
-    read = f"\nDMbot read it as a **{kind_label(kind)}**." if kind else ""
+    read = f"\nDMbot's guess: a **{kind_label(kind)}**." if kind else ""
     return f"📝 **{_md(entity.name)}**{_heard(entity)}{others}{read}\n{question}{more}"
 
 

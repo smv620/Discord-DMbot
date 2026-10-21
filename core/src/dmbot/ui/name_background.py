@@ -69,9 +69,9 @@ MAX_BULK_BUTTONS = 4
 def rights_text() -> str:
     return (
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
-        "switch.)\n**Pressing 🤖 Find names tells DMbot this is your own writing.** The text is "
-        "sent once to Anthropic, an AI company, to be read. DMbot does not keep it, only a "
-        "short line beside each name until you answer it."
+        "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
+        "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
+        "keep it, only a short line beside each name until you answer it."
     )
 
 
@@ -193,10 +193,10 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
     cents = bg.estimate_cents(len(upload.text))
     await _send(
         interaction,
-        f"📜 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and suggests names "
-        "(people, places, groups, gods…). You check each one in 📝 Check new names. Nothing is "
-        "added until you say yes.\n"
-        f"Cost: {bg.cost_text(cents)} of your AI allowance.\n"
+        f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
+        "allowance. Nothing is added until you say yes.\n"
+        "DMbot's AI reads it and suggests names (people, places, groups, gods…). You check each "
+        "one in 📝 Check new names.\n"
         f"{rights_text()}",
         BackgroundOffer(campaign.id, upload),
     )
@@ -369,7 +369,7 @@ async def summary(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
             f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
-            "Nothing is added until you say yes, and **All** adds every name of that "
+            "Nothing is added until you say yes, and **Add all** adds every name of that "
             "group. DMbot can miss names or put one in the wrong group, so look them over."
         ),
         view=view,
@@ -398,7 +398,7 @@ class BulkConfirm(_Menu):
             self.add_item(
                 _Button(
                     partial(self._all, kind),
-                    label=logic.shorten(f"✅ All {_plural(kind, len(ids))}", REVIEW_LABEL_MAX),
+                    label=logic.shorten(f"✅ Add all {_plural(kind, len(ids))}", REVIEW_LABEL_MAX),
                     style=discord.ButtonStyle.success,
                 )
             )
@@ -479,7 +479,7 @@ class BulkConfirm(_Menu):
             await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
-                f"↩️ Took back {_plural(kind, len(ids))}. They wait in 📝 Check new names again.",
+                f"↩️ Took back {_plural(kind, len(ids))}. They're back in 📝 Check new names.",
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )

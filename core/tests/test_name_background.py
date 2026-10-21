@@ -299,13 +299,13 @@ class ThePath(NamesTest):
         )
         self.assertIn("5 names to check", text)
         labels = [getattr(b, "label", "") for b in view.children]
-        self.assertIn("✅ All 2 places", labels)
+        self.assertIn("✅ Add all 2 places", labels)
         self.assertIn("📝 Check them one by one", labels)
 
     async def test_yes_to_all_places_confirms_only_the_places(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ All 2 places"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
         await button.callback(self.it())
         confirmed = {e.name for e in await self.entities(CONFIRMED)}
         self.assertEqual(confirmed, {"Vale Keep", "Oakmere"})
@@ -314,7 +314,7 @@ class ThePath(NamesTest):
     async def test_only_a_dm_may_say_yes_to_all(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ All 2 places"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
         await button.callback(self.it(MANAGER))
         self.assertEqual(await self.entities(CONFIRMED), [])
 
@@ -324,7 +324,7 @@ class ThePath(NamesTest):
         await ui.start_review(it, self.campaign.id)
         text, kw = it.response.sent[0]
         self.assertIn("from your background:", text)
-        self.assertRegex(text, r"DMbot read it as a \*\*[a-z]+\*\*")  # the kind, said plainly
+        self.assertRegex(text, r"DMbot's guess: a \*\*[a-z]+\*\*")  # the kind, said plainly
         view = kw["view"]
         labels = [b.label for b in view.children]
         self.assertTrue(labels[0].startswith("✅ Yes, a "))
@@ -381,7 +381,7 @@ class ThePath(NamesTest):
     async def test_deciding_a_suggestion_clears_the_quote_of_the_dms_text(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        yes = "✅ All 2 places"
+        yes = "✅ Add all 2 places"
         (button,) = [b for b in view.children if getattr(b, "label", "") == yes]
         await button.callback(self.it())
         for entity in await self.entities(CONFIRMED):
@@ -463,7 +463,7 @@ class ThePath(NamesTest):
         )  # fmt: skip
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ All 2 places"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
         await button.callback(self.it())
         elsewhere = await self.memory.entity(GUILD, self.campaign.id, earlier.value.id)
         assert elsewhere is not None
