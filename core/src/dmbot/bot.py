@@ -8502,8 +8502,14 @@ class DMBot(commands.AutoShardedBot):
         players = await service.recall(
             gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET
         )
-        known = {i.id for i in players.items}
-        return [Memory(i.id, i.text, i.id in known) for i in everything.items]
+        # What the writer's side may be told about an item the players know is the players' own
+        # text for it (no DM note, no condition); the DM-screen text is only for items they do
+        # not know, which are never explained.
+        theirs = {i.id: i.text for i in players.items}
+        return [
+            Memory(i.id, theirs[i.id], True) if i.id in theirs else Memory(i.id, i.text, False)
+            for i in everything.items
+        ]
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""

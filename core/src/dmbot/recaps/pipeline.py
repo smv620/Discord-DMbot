@@ -114,6 +114,7 @@ GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
 SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
+SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
 SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
 SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 
@@ -605,6 +606,10 @@ class RecapWorker:
         are. Returns the beats to store, or the job when the step must stop (waiting, restarted)."""
         if self._story is None or job.errors >= SIG_ERRORS_MAX:
             return kept
+        if (
+            job.calls >= self._ceiling(job) - SIG_RESERVE
+        ):  # optional: never spend what the rest needs
+            return kept
         said = self._said(inputs, set(job.speakers))
         play, retold, _ = self._parts(job, said)
         seeds = sorted({n for b in kept for n in (*b.who, b.where) if n})[:40]
@@ -631,7 +636,11 @@ class RecapWorker:
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
-        if not {s.user_id for s in play} <= set(await consenting()):  # again, after the answer
+        sent = {
+            s.user_id
+            for s in sp.pick(said, sp.from_json(job.split) or sp.all_play(said), sp.PLAY, sp.RECAP)
+        }
+        if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
         parsed = None if unusable(raw) else sg.parse(raw.text)
         if parsed is None:
@@ -650,7 +659,6 @@ class RecapWorker:
             known_words=vocabulary,
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
-            transcript_words={w for s in said for w in words(s.text)},
         )
         self._annotate(gid, cid, job, "significance", checks=lambda: cl.kinds(cut))
         log.info("Recap: %d note(s), %d detail(s), %d cut", len(notes), len(details), len(cut))

@@ -525,9 +525,9 @@ def prose_message(
     day: int | None,
     retold: str = "",
 ) -> str:
-    parts = [f"<beats>\n{sheet(beats)}\n</beats>"]
+    parts = [f"<beats>\n{sheet(beats, notes=True)}\n</beats>"]
     if beats:  # where the session stopped, said apart so the last section is set exactly there
-        parts.append(f"<ending>\n{sheet(beats[-2:])}\n</ending>")
+        parts.append(f"<ending>\n{sheet(beats[-2:], notes=True)}\n</ending>")
     names = {*names, *(w for b in beats for w in b.who)}  # the beats' own names are allowed too
     if previous.strip():
         parts.append(

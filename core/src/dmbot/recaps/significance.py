@@ -16,6 +16,10 @@ transcripts are shared, the DM screen is not pushed to players). So, in code and
   why never reach the writer;
 - even an explainable note is dropped to "keep" if its words are not all words the table or the
   players' view already has (a smuggled DM-only fact), or it names a secret;
+- the players' view is the gate for "known to the players" (confirmed, not secret, not DM-only);
+  that is a decision, recorded in the PR: the DM's own notes on an entry are never in it. What is
+  still open is a reason built only of common table words that hints at a DM-only meaning; the
+  prompt forbids it and the word check narrows it, nothing more can be proved in code;
 - every cited line must be a play line, every cited memory id must be one it was given (confirmed,
   this campaign only), a detail's names must be said in its own line, and the number of notes and
   details is capped.
@@ -249,7 +253,6 @@ def check(
     known_words: Collection[str],
     allowed_names: Collection[str],
     secret_names: Collection[str],
-    transcript_words: Collection[str] | None = None,
 ) -> tuple[list[Note], list[Detail], list[str]]:
     """The notes and details that pass, and what was cut (counts, in plain words). Anything that
     cites what it was not given is cut; what may not be explained is kept as 'keep'.
@@ -270,7 +273,7 @@ def check(
             cut["unknown beat"] += 1
             continue
         ties = _ties(raw.get("ties", []), allowed)
-        if ties is None:
+        if ties is None or not ties:  # a note rests on the story so far, or on nothing
             cut["unknown id"] += 1
             continue
         why = _why(raw.get("why"), ties, allowed, vocabulary, secret_names, allowed_names)
@@ -294,8 +297,10 @@ def check(
             cut["unknown id"] += 1
             continue
         said = set(words(play_lines[line]))
-        if unsaid_names(
-            proper_nouns(what, sentence_starts=True), said, allowed_names, transcript_words
+        # A detail says only what its own line says: its names and every long word of it are in
+        # that line (a model's "the assassins' guild mark" on "he wears an amulet" is not).
+        if unsaid_names(proper_nouns(what, sentence_starts=True), said, allowed_names, None) or (
+            content_words(what) - content_words(play_lines[line])
         ):
             cut["name"] += 1
             continue
@@ -333,17 +338,17 @@ def known_words(
 
 
 def apply(beats: Sequence[Beat], notes: Sequence[Note], details: Sequence[Detail]) -> list[Beat]:
-    """The beats with their notes, and each kept detail as a beat of its own (a state: a small
-    thing that matters later) in the place its line comes in, renumbered. A detail is grounded like
-    any beat: it cites its one real line."""
+    """The beats with their notes, in the order they came, and each kept detail as a beat of its
+    own (a state: a small thing that matters later) placed before the first beat that cites a
+    later line, renumbered. The first and last beats stay where they were unless a detail comes
+    before or after every line. A detail is grounded like any beat: it cites its one real line."""
     by_number = {n.beat: n for n in notes}
     out: list[Beat] = []
     for b in beats:
         note = by_number.get(b.number)
         out.append(replace(b, note=note.why, keep=note.keep) if note is not None else b)
-    for d in details:
-        out.append(
-            Beat(0, d.what, tuple(proper_nouns(d.what)), (d.line,), "state", "", d.why, d.keep)
-        )
-    out.sort(key=lambda b: (min(b.lines) if b.lines else 10**9, b.number == 0))
+    for d in sorted(details, key=lambda x: x.line):
+        new = Beat(0, d.what, tuple(proper_nouns(d.what)), (d.line,), "state", "", d.why, d.keep)
+        at = next((i for i, b in enumerate(out) if b.lines and min(b.lines) > d.line), len(out))
+        out.insert(at, new)
     return [replace(b, number=i) for i, b in enumerate(out, start=1)]

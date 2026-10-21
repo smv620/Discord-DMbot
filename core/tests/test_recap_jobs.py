@@ -8,6 +8,7 @@ import json
 from collections.abc import Awaitable, Callable, Collection
 from itertools import pairwise
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
@@ -1172,7 +1173,8 @@ class Working(Base):
     # --- PlotBot marks what matters (#2254) --------------------------------------------------
 
     def amulet_lines(self) -> list[Line]:
-        extra = Line(8000, fx.DM, "Oskar wears an amulet with a shard of obsidian.", "x")
+        said = "Oskar wears an amulet with a shard of obsidian."
+        extra = Line(8000, fx.DM, said, said)
         return [*fx.lines(), extra]
 
     def sig_answer(self, why: str, ties: list[str]) -> str:
@@ -1208,6 +1210,10 @@ class Working(Base):
         self.assertEqual(detail.kind, "state")
         self.assertIn("obsidian faction", detail.note)
         writer = fast.sent[1]
+        # the note is for the writer alone: the fact check, grader and title step never see it
+        others = [*fast.sent[2:], *fast.fact_sent]
+        self.assertTrue(others)
+        self.assertFalse(any("Matters:" in m for m in others))
         self.assertIn("amulet with a shard of obsidian", writer)
         self.assertIn("Matters: The obsidian faction hunts the patron.", writer)
         self.assertIn("Mira", self.seeds)  # the memory was asked about the beats' names
@@ -1301,3 +1307,46 @@ class Working(Base):
         )
         job = await self.go()
         self.assertEqual(job.restarts, 1)
+
+    async def test_a_speaker_of_the_spoken_recap_who_leaves_during_the_notes_restarts_it(
+        self,
+    ) -> None:
+        agreed = {fx.DM, fx.ALICE, fx.BOB}
+
+        async def consenting() -> Any:
+            return set(agreed)
+
+        class Leaving(fx.Canned):
+            async def complete(self, *a: Any, **k: Any) -> Any:
+                agreed.discard(fx.ALICE)
+                return await super().complete(*a, **k)
+
+        # Alice speaks only in the spoken recap (lines 1-2), never in play
+        said = st.READ_ALOUD[:2]
+        recap = [Line(n * 1000, fx.ALICE, t, t) for n, t in enumerate(said, start=1)]
+        play = [Line(n * 1000, user, t, t) for n, (user, t) in enumerate(fx.LINES, start=3)]
+        lines = [*recap, *play]
+        fast = fx.Canned(
+            json.dumps({"parts": [{"label": "recap", "last": 2}]}),
+            st.beats_after(2),
+            fx.PROSE_ANSWER,
+            fx.GRADE_ANSWER,
+            fx.FINISH_ANSWER,
+        )
+        await self.setUpWorker(
+            fast,
+            Leaving(self.sig_answer("x", [st_sig.KNOWN.id])),
+            lines=lines,
+            earlier=st.EARLIER,
+            story=self.story_of(st_sig.KNOWN),
+            consenting=consenting,
+        )
+        job = await self.go()
+        self.assertEqual(job.restarts, 1)
+
+    async def test_the_notes_are_skipped_when_the_calls_are_nearly_used(self) -> None:
+        careful = fx.Canned()
+        await self.setUpWorker(self.happy(), careful, story=self.story_of(st_sig.KNOWN))
+        with patch.object(pl, "SIG_RESERVE", 1000):
+            job = await self.go()
+        self.assertEqual((job.state, careful.sent), ("ready", []))

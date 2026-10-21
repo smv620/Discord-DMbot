@@ -343,13 +343,15 @@ def from_json(data: object) -> list[Beat]:
     return out
 
 
-def sheet(beats: Sequence[Beat]) -> str:
-    """The beat sheet as the next stages read it: numbered, with who."""
+def sheet(beats: Sequence[Beat], *, notes: bool = False) -> str:
+    """The beat sheet as the next stages read it: numbered, with who. PlotBot's notes are for the
+    writer alone (`notes=True`): the fact check and the housekeeping read the beats as facts, and
+    a note is a pointer to what matters, not a fact."""
     return "\n".join(
         f"[{b.number}] ({b.kind}) {b.what}"
         + (f" Who: {', '.join(b.who)}." if b.who else "")
         + (f" Where: {b.where}." if b.where else "")
-        + (f" Matters: {b.note}" if b.note else "")
-        + (" Matters: keep this detail; do not explain it." if b.keep else "")
+        + (f" Matters: {b.note}" if notes and b.note else "")
+        + (" Matters: keep this detail; do not explain it." if notes and b.keep else "")
         for b in beats
     )

@@ -92,6 +92,22 @@ class TheChecks(unittest.TestCase):
                 self.assertEqual(details, [])
                 self.assertEqual(cut, ["1 cut: no line"])
 
+    def test_a_detail_says_only_what_its_line_says(self) -> None:
+        # "assassins" is no proper noun, but the line never says it: DM-only meaning or invention
+        extra = {**DETAIL, "what": "Oskar wears an amulet bearing the assassins' guild mark"}
+        _, details, cut = check([], [extra])
+        self.assertEqual((details, cut), ([], ["1 cut: name"]))
+
+    def test_the_sheet_keeps_its_order_and_a_detail_goes_by_its_line(self) -> None:
+        flash = bt.Beat(1, "A flashback", ("Mira",), (3, 90), "moment")
+        sheet = [flash, bt.Beat(2, "Later", ("Oskar",), (6,), "event")]
+        same = sg.apply(sheet, [], [])
+        self.assertEqual([b.what for b in same], ["A flashback", "Later"])
+        placed = sg.apply(sheet, [], [sg.Detail(5, "Mira sees a lock", "", True)])
+        self.assertEqual([b.what for b in placed], ["A flashback", "Mira sees a lock", "Later"])
+        end = sg.apply(sheet, [], [sg.Detail(99, "Oskar waits", "", True)])
+        self.assertEqual(end[-1].what, "Oskar waits")
+
     def test_a_line_a_beat_holds_is_no_left_out_detail(self) -> None:
         _, details, _ = check([], [{**DETAIL, "line": 5}])
         self.assertEqual(details, [])
@@ -117,9 +133,9 @@ class TheChecks(unittest.TestCase):
             check(note, [], memory=[], previous="Mira searched the keep.")[0][0].beat, 1
         )
 
-    def test_a_note_with_no_tie_is_kept_but_not_explained(self) -> None:
-        out, _, _ = check([{"beat": 2, "why": "Oskar picked the lock.", "ties": []}], [])
-        self.assertEqual([(n.beat, n.keep, n.why) for n in out], [(2, True, "")])
+    def test_a_note_with_no_tie_is_cut(self) -> None:
+        out, _, cut = check([{"beat": 2, "why": "Oskar picked the lock.", "ties": []}], [])
+        self.assertEqual((out, cut), ([], ["1 cut: unknown id"]))  # a note rests on the story
 
     def test_applying_notes_and_details_numbers_the_sheet_again(self) -> None:
         notes, details, _ = check([{"beat": 2, "why": "x", "ties": [SECRET.id]}], [DETAIL])
@@ -131,7 +147,8 @@ class TheChecks(unittest.TestCase):
         # the notes survive storage and reach the sheet the writer reads
         again = bt.from_json(bt.as_json(out))
         self.assertEqual(again, out)
-        sheet = bt.sheet(out)
+        sheet = bt.sheet(out, notes=True)
+        self.assertNotIn("Matters", bt.sheet(out))  # the fact check and housekeeping never see it
         self.assertIn("Matters: keep this detail; do not explain it.", sheet)
         self.assertIn("Matters: The obsidian faction hunts the patron.", sheet)
 
@@ -165,8 +182,13 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
         def item(i: str, text: str) -> Item:
             return Item("fact", i, text, 1.0, 0)
 
-        everything = Recall("dm_screen", AsOf(), (item("a" * 32, "open"), item("b" * 32, "secret")))
-        players = Recall("players", AsOf(), (item("a" * 32, "open"),))
+        # the DM-screen text of a known entry carries the DM's own note; the players' does not
+        everything = Recall(
+            "dm_screen",
+            AsOf(),
+            (item("a" * 32, "Mira, is the duke's spy"), item("b" * 32, "secret")),
+        )
+        players = Recall("players", AsOf(), (item("a" * 32, "Mira"),))
 
         class Service:
             last: ClassVar[list[dict[str, Any]]] = []
@@ -182,6 +204,8 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
         with patch("dmbot.bot.RecallService", Service):
             got = await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira"])  # type: ignore[arg-type]
         self.assertEqual([(m.id[:1], m.known) for m in got], [("a", True), ("b", False)])
+        self.assertEqual(got[0].text, "Mira")  # never the DM's note on a known entry
+        self.assertNotIn("spy", " ".join(m.text for m in got if m.known))
         # the DM-screen read leaves out what the DM has not confirmed
         self.assertTrue(any(k.get("confirmed_only") for k in Service.last))
         self.assertEqual(
