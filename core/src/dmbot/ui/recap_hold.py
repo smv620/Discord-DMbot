@@ -25,27 +25,32 @@ OFF_EVERYWHERE = "Recaps are switched off for all of DMbot right now. No recap w
 WRITING = LINE_WRITING  # (one wording, the same under every line)
 ALREADY = WRITING  # (one wording for both: it is being written)
 
-_TEMPLATE = r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
+# An import's button also names its group, so a press reaches the whole import even after the
+# session it was posted for has been answered (#2174). Buttons posted before that have no group.
+_TEMPLATE = (
+    r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})(?::(?P<group>[0-9a-f]{32}))?"
+)
 
 
 class WriteNowButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE
 ):
-    def __init__(self, campaign_id: str, session_at: int) -> None:
+    def __init__(self, campaign_id: str, session_at: int, group_id: str = "") -> None:
+        suffix = f":{group_id}" if group_id else ""
         super().__init__(
             discord.ui.Button(
                 label="Write the recap now",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:rhold:go:{campaign_id}:{session_at}",
+                custom_id=f"dmbot:rhold:go:{campaign_id}:{session_at}{suffix}",
             )
         )
-        self.campaign_id, self.session_at = campaign_id, session_at
+        self.campaign_id, self.session_at, self.group_id = campaign_id, session_at, group_id
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> WriteNowButton:
-        return cls(match["campaign"], int(match["at"]))
+        return cls(match["campaign"], int(match["at"]), match["group"] or "")
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
@@ -61,15 +66,11 @@ class WriteNowButton(
             return
         await interaction.response.defer()  # the checks below make several calls and a post
         # The line pressed is kept too, so the other copy (the reminder) comes off with it.
-        holds = bot.recap_holds
-        held = await holds.get(guild.id, campaign.id, self.session_at) if holds else None
-        key = hold_line_key(
-            guild.id, campaign.id, self.session_at, held.group_id if held is not None else ""
-        )
+        key = hold_line_key(guild.id, campaign.id, self.session_at, self.group_id)
         bot.decision_lines.remember_pressed(key, interaction)
         pressed = interaction.message.id if interaction.message is not None else None
         result = await bot.recap_hold_write_now(
-            guild.id, campaign.id, self.session_at, pressed_id=pressed
+            guild.id, campaign.id, self.session_at, group_id=self.group_id, pressed_id=pressed
         )
         if result == "off":
             await _tell(interaction, OFF_EVERYWHERE)
@@ -100,8 +101,8 @@ def hold_line_key(
     return ("hold", guild_id, campaign_id, session_at)
 
 
-def hold_view(campaign_id: str, session_at: int) -> discord.ui.View:
+def hold_view(campaign_id: str, session_at: int, group_id: str = "") -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ReviewButton(campaign_id))
-    view.add_item(WriteNowButton(campaign_id, session_at))
+    view.add_item(WriteNowButton(campaign_id, session_at, group_id))
     return view

@@ -887,8 +887,8 @@ class TheStepOrder(IsolatedAsyncioTestCase):
         self.assertEqual(called, list(wanted))
 
 
-def press(bot: Any, user: int = DM) -> tuple[Any, Any]:
-    button = screen.WriteNowButton("c" * 32, AT)
+def press(bot: Any, user: int = DM, group: str = "", at: int = AT) -> tuple[Any, Any]:
+    button = screen.WriteNowButton("c" * 32, at, group)
     interaction = SimpleNamespace(
         client=bot,
         guild=SimpleNamespace(id=GUILD),
@@ -1133,13 +1133,78 @@ class TheOldLines(IsolatedAsyncioTestCase):
         await bot.release_recap_holds(GUILD)
         self.assertIn(hold.LINE_EXPIRED, self.edited(line))
 
-    async def test_a_hold_still_waiting_keeps_its_buttons(self) -> None:
+    async def test_write_it_now_on_the_shared_line_reaches_the_import_after_its_poster_is_answered(
+        self,
+    ) -> None:
         bot = fake_bot(proposed=2)
-        (line,) = self.keep_lines(bot, AT).values()
-        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - 100)
-        bot.recap_holds.held = AsyncMock(return_value=[held])
-        await bot.release_recap_holds(GUILD)
-        line.edit.assert_not_awaited()
+        poster, other = (
+            hold.Hold("c" * 32, AT + n, f"s{n}", DM, 66, int(time.time()) - 100, group_id="imp")
+            for n in (0, 1)
+        )
+        remaining = [poster, other]
+        released: list[int] = []
+
+        async def release(gid: int, cid: str, at: int, **kw: Any) -> str:
+            released.append(at)
+            remaining[:] = [m for m in remaining if m.session_at != at]
+            return hold.QUEUED
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = AsyncMock(side_effect=lambda gid: list(remaining))
+        bot.recap_holds.get = AsyncMock(
+            side_effect=lambda g, c, at: next((m for m in remaining if m.session_at == at), None)
+        )
+        await bot.recap_holds.release(GUILD, "c" * 32, poster.session_at)  # answered earlier
+        released.clear()
+        button, i = press(bot, group="imp")  # the button the shared line was posted with
+        await button.callback(i)
+        self.assertEqual(released, [other.session_at])  # the rest of the import was written
+        self.assertEqual(remaining, [])
+        self.assertIn(hold.LINE_WRITING, i.edit_original_response.await_args.kwargs["content"])
+        self.assertIn("Writing", bot.post.await_args.args[1])  # and the DM is told
+
+    async def test_a_press_on_a_line_of_an_import_that_is_over_says_it_is_being_written(
+        self,
+    ) -> None:
+        bot = fake_bot()
+        bot.recap_holds.get = AsyncMock(return_value=None)
+        bot.recap_holds.held = AsyncMock(return_value=[])  # nothing of the import is held
+        button, i = press(bot, group="imp")
+        await button.callback(i)
+        bot.post.assert_not_awaited()
+        self.assertIn(hold.LINE_WRITING, i.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_button_names_its_group_and_a_plain_one_does_not(self) -> None:
+        plain = screen.WriteNowButton("c" * 32, AT)
+        shared = screen.WriteNowButton("c" * 32, AT, "a" * 32)
+        self.assertEqual(plain.item.custom_id, f"dmbot:rhold:go:{'c' * 32}:{AT}")
+        self.assertEqual(shared.item.custom_id, f"dmbot:rhold:go:{'c' * 32}:{AT}:{'a' * 32}")
+        for button, group in ((plain, ""), (shared, "a" * 32)):
+            match = re.fullmatch(screen._TEMPLATE, button.item.custom_id)
+            assert match is not None
+            self.assertEqual(match["group"] or "", group)
+        self.assertLess(len(shared.item.custom_id), 100)  # Discord's limit
+
+    async def test_an_imports_question_and_reminder_are_posted_under_the_groups_key(self) -> None:
+        bot = fake_bot(proposed=2)
+        posted: list[tuple[Any, Any]] = []
+
+        async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
+            posted.append((kw.get("remember"), view.children[1].custom_id))
+            return True
+
+        bot.post = post
+        group = hold.Hold(
+            "c" * 32, AT, "s1", DM, 66, int(time.time()) - hold.HOLD_REMIND_S - 60, group_id="imp"
+        )
+        key = hold_line_key(GUILD, "c" * 32, AT, "imp")
+        await bot._hold_or_queue(campaign(), "s2", AT, 66, DM, group_id="imp")  # at the end
+        bot.recap_holds.held = AsyncMock(return_value=[dataclasses.replace(group, asked=False)])
+        await bot.release_recap_holds(GUILD)  # the round's question
+        bot.recap_holds.held = AsyncMock(return_value=[group])
+        await bot.release_recap_holds(GUILD)  # the reminder
+        self.assertEqual([k for k, _ in posted], [key, key, key])
+        self.assertTrue(all(c.endswith(":imp") or ":imp" in c for _, c in posted))
 
     async def test_the_questions_and_the_reminder_are_posted_to_be_closed_later(self) -> None:
         bot = fake_bot(proposed=2)

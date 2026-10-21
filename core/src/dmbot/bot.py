@@ -7867,7 +7867,7 @@ class DMBot(commands.AutoShardedBot):
                     sent = quiet or await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
-                        view=hold_view(cid, session_at),
+                        view=hold_view(cid, session_at, group_id),
                         remember=hold_line_key(gid, cid, session_at, group_id),
                     )
                     if sent:
@@ -8019,7 +8019,7 @@ class DMBot(commands.AutoShardedBot):
                 if await self.post(
                     held.channel_id,
                     recap_hold.question_text(waiting),
-                    view=hold_view(held.campaign_id, held.session_at),
+                    view=hold_view(held.campaign_id, held.session_at, held.group_id),
                     remember=hold_line_key(gid, held.campaign_id, held.session_at, held.group_id),
                 ):
                     log.info("Recap: held for %d name question(s)", waiting)  # a count
@@ -8059,9 +8059,15 @@ class DMBot(commands.AutoShardedBot):
         the release. An import posts one line for all its sessions (under the group's key), so it
         comes off only when none of its sessions is still held. A failed edit is logged inside and
         goes no further."""
-        remaining = await self.recap_holds.held(gid) if self.recap_holds is not None else []
+        remaining: list[recap_hold.Hold] | None = []
+        if self.recap_holds is not None and any(h.group_id for h in holds):
+            try:
+                remaining = await self.recap_holds.held(gid)
+            except Exception:
+                log.exception("Recap: couldn't tell whether an import still waits")
+                remaining = None  # its line stays (it comes off at a restart); a lone hold's goes
         for h in holds:
-            if h.group_id and recap_hold.group_of(remaining, h):
+            if h.group_id and (remaining is None or recap_hold.group_of(remaining, h)):
                 continue  # the import still waits on other sessions: its line stays true
             await self.decision_lines.close(
                 hold_line_key(gid, h.campaign_id, h.session_at, h.group_id),
@@ -8093,7 +8099,7 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     held.channel_id,
                     recap_hold.reminder_text(waiting, recap_hold.HOLD_MAX_S - age),
-                    view=hold_view(held.campaign_id, held.session_at),
+                    view=hold_view(held.campaign_id, held.session_at, held.group_id),
                     remember=hold_line_key(gid, held.campaign_id, held.session_at, held.group_id),
                 )
             )
@@ -8103,7 +8109,13 @@ class DMBot(commands.AutoShardedBot):
                     await store.unmark_reminded(gid, m.campaign_id, m.session_at)
 
     async def recap_hold_write_now(
-        self, gid: int, cid: str, session_at: int, *, pressed_id: int | None = None
+        self,
+        gid: int,
+        cid: str,
+        session_at: int,
+        *,
+        group_id: str = "",
+        pressed_id: int | None = None,
     ) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
         any session. "queued", "already" (no hold: written or decided before) or "refused". The
@@ -8118,10 +8130,22 @@ class DMBot(commands.AutoShardedBot):
             return "refused"
         held = await self.recap_holds.get(gid, cid, session_at)
         if held is None:
-            return "already"
-        group = [held]
-        if held.group_id:  # one press writes all of an import's held recaps (#2106)
-            group = recap_hold.group_of(await self.recap_holds.held(gid), held)
+            if not group_id:
+                return "already"
+            # The session this button was posted for is answered, but the import still waits:
+            # the press reaches the whole import all the same (its button names the group).
+            group = [
+                h
+                for h in await self.recap_holds.held(gid)
+                if h.campaign_id == cid and h.group_id == group_id
+            ]
+            if not group:
+                return "already"
+            held = group[0]
+        else:
+            group = [held]
+            if held.group_id:  # one press writes all of an import's held recaps (#2106)
+                group = recap_hold.group_of(await self.recap_holds.held(gid), held)
         ended: list[recap_hold.Hold] = []
         made = []
         for h in group:
