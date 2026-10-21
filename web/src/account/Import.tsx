@@ -119,6 +119,8 @@ export default function Import({
   const [linkText, setLinkText] = useState("");
   const [linkProblem, setLinkProblem] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  // A file the DM chose again was left off the list: said on the screen until the list changes.
+  const [skippedNote, setSkippedNote] = useState(false);
   const linkBox = useRef<HTMLInputElement>(null);
   const fileBox = useRef<HTMLInputElement>(null);
   // The links that opened, in the order they are sent from here on, and what each one is called
@@ -330,8 +332,13 @@ export default function Import({
     setPicked(list);
     forgetPreview();
     checkPicked(list, links);
-    if (more.length > fresh.length) setAnnounce(words.alreadyChosen);
-    else if (fresh.length > 0) setAnnounce(words.addedFiles(fresh.length, list.length + links.length));
+    // The skipped ones are said on the screen too, not only to a screen reader (#2299).
+    const skipped = more.length - fresh.length;
+    setSkippedNote(skipped > 0);
+    const total = list.length + links.length;
+    if (fresh.length > 0 && skipped > 0) setAnnounce(`${words.addedFiles(fresh.length, total)} ${words.alreadyChosen}`);
+    else if (skipped > 0) setAnnounce(words.alreadyChosen);
+    else if (fresh.length > 0) setAnnounce(words.addedFiles(fresh.length, total));
     // So the same file can be chosen again after it was removed.
     try {
       input.value = "";
@@ -342,6 +349,7 @@ export default function Import({
 
   const removeFile = (at: number): void => {
     if (busy) return;
+    setSkippedNote(false);
     const gone = picked[at];
     const next = picked.filter((_, i) => i !== at);
     setPicked(next);
@@ -358,6 +366,7 @@ export default function Import({
 
   const removeAll = (): void => {
     if (busy) return;
+    setSkippedNote(false);
     setPicked([]);
     setLinks([]);
     setLinkProblem(null);
@@ -715,6 +724,7 @@ export default function Import({
         <p class="sr-only" role="status">
           {announce}
         </p>
+        {skippedNote && <p class="small muted">{words.alreadyChosen}</p>}
         {picked.length > 0 && (
           <ul class="campaigns" aria-label={words.filesListLabel}>
             {picked.map((file, i) => (
