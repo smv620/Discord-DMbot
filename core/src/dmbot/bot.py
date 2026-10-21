@@ -8016,7 +8016,7 @@ class DMBot(commands.AutoShardedBot):
                                 )
                         await self._remind(store, gid, held, waiting, age, members)
                     if lead and age >= recap_hold.HOLD_REMIND_S:
-                        await self._email_hold(campaign, gid, held, waiting, age)
+                        await self._email_hold(campaign, gid, held, members, age)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -8114,12 +8114,27 @@ class DMBot(commands.AutoShardedBot):
                     await store.unmark_reminded(gid, m.campaign_id, m.session_at)
 
     async def _email_hold(
-        self, campaign: Campaign, gid: int, held: recap_hold.Hold, waiting: int, age: float
+        self,
+        campaign: Campaign,
+        gid: int,
+        held: recap_hold.Hold,
+        members: list[recap_hold.Hold],
+        age: float,
     ) -> None:
         """A held recap also emails the DM, at most once a day, when the campaign's recap emails
         are on (#2174). The mailer's once-per-kind record is the daily limit, so rounds and
-        restarts never double it; a failure is logged and the next round tries again."""
+        restarts never double it; a failure is logged and the next round tries again. The count
+        is the whole import's open questions, the same on every day."""
         if not campaign.recaps_email or self.mailer is None or self.recaps is None:
+            return
+        try:
+            waiting = 0
+            for m in members:
+                waiting += await self._open_name_questions(
+                    gid, m.campaign_id, m.session_id, m.session_at
+                )
+        except Exception:
+            log.exception("Recap: couldn't count the questions for the email")
             return
         for user_id in sorted(campaign.dm_user_ids):
             try:
@@ -8133,6 +8148,7 @@ class DMBot(commands.AutoShardedBot):
                     held.session_at,
                     waiting,
                     int(age // 86400),
+                    held.group_id,
                 )
             except Exception:
                 log.exception("Recap: couldn't email the reminder")

@@ -387,7 +387,26 @@ class TheCap(IsolatedAsyncioTestCase):
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
         email.assert_awaited_once()
         args = email.await_args.args
-        self.assertEqual(args[3:], (GUILD, "c" * 32, DM, AT, 2, 1))  # a count and the day number
+        self.assertEqual(args[3:], (GUILD, "c" * 32, DM, AT, 2, 1, ""))
+
+    async def test_the_email_still_goes_on_later_days_after_the_reminder(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.mailer = object()
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            await self.round_with(bot, self.aged(hold.HOLD_REMIND_S * 2 + 60, reminded=True))
+        email.assert_awaited_once()
+        self.assertEqual(email.await_args.args[-3:], (2, 2, ""))  # still counted, day 2
+
+    async def test_one_failing_email_does_not_stop_the_next_dm(self) -> None:
+        bot = fake_bot(proposed=1)
+        bot.mailer = object()
+        bot._email_hold = DMBot._email_hold.__get__(bot)
+        bot.campaigns.get.return_value.dm_user_ids = frozenset({DM, DM + 1})
+        send = AsyncMock(side_effect=[RuntimeError("boom"), "sent"])
+        with patch("dmbot.bot.remind_the_dm", new=send):
+            await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
+        self.assertEqual(send.await_count, 2)
 
     async def test_no_email_in_the_first_day_when_off_or_without_a_mailer(self) -> None:
         for age, emails_on, mailer in (
