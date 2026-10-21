@@ -331,7 +331,7 @@ class TheSuggestions(WithImports):
     async def guess(self, label: str) -> dict[str, Any]:
         got = await self.preview(("a.txt", f"{label}: We go in.\n"))
         (one,) = [s for s in got["files"][0]["speakers"] if s["label"] == label]
-        return one
+        return cast(dict[str, Any], one)
 
     async def test_the_username_part_comes_first(self) -> None:
         await self.directory(MIRA, "Mira the Bold", "mira_v")
