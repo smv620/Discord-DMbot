@@ -45,7 +45,7 @@ TODAY = {
         ["campaign names", "the scene"],
     ],
 }
-TODAYS_SYSTEM = "e195cf4f91c9e5321dc91422a04aba1b396109e54c62b40e8b102d70c42decf0"
+TODAYS_SYSTEM = "bbdbf24cc110ad18369c633c93b97108683299101624dcb0deaba8f60564cfaf"
 
 
 def fact(label: str, text: str, id_: str | None = None) -> recall.Item:

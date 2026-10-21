@@ -42,7 +42,9 @@ import Base from "../layouts/Base.astro";
     font-weight: 600;
   }
 
-  .admin :global(input),
+  /* Text, date and select boxes fill the row. Radios and checkboxes are left out (#2198): this
+     rule would stretch them to the full width and put each label on a line of its own. */
+  .admin :global(input:not([type="radio"]):not([type="checkbox"])),
   .admin :global(select) {
     width: 100%;
     box-sizing: border-box;
@@ -53,6 +55,23 @@ import Base from "../layouts/Base.astro";
     background: var(--bg);
     color: var(--text);
     font: inherit;
+  }
+
+  /* A radio or checkbox sits beside its label, left-aligned, and the whole row is the tap
+     target (the account page's .choice, but for this page). */
+  .admin :global(.choice) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--tap);
+  }
+
+  .admin :global(.choice input) {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    accent-color: var(--accent);
   }
 
   .admin :global(.button) {
@@ -98,6 +117,75 @@ import Base from "../layouts/Base.astro";
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  /* Recent changes (#2199): a window of fixed height, so the box never grows or shrinks as the
+     pages change; a long page scrolls inside it. */
+  .admin :global(.history-window) {
+    height: 24rem;
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+  }
+
+  /* Wide: one row, Newest Newer [Page n of N Go] Older Oldest. Narrow: the jump box on a row of
+     its own, then the four buttons in a grid, so Newer and Older never end up apart. */
+  .admin :global(.page-bar) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+
+  @media (max-width: 40rem) {
+    .admin :global(.page-bar) {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .admin :global(.page-jump) {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
+  }
+
+  .admin :global(.page-bar .button) {
+    align-self: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4em;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    padding-inline: var(--space-3);
+  }
+
+  /* Read by a screen reader (the page number is announced) but not shown: the bar's own
+     "Page n of N" says it already. */
+  .admin :global(.visually-hidden) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .admin :global(.page-jump) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin :global(.page-jump input[type="text"]) {
+    width: 4rem;
+    padding-inline: var(--space-2);
+    text-align: center;
   }
 
   .admin :global(.grants li),

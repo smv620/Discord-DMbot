@@ -95,6 +95,7 @@ from dmbot.dm_screen import (
     pack_update,
     peek_view,
     rules_cards,
+    secret_posts,
     set_suggestion,
     set_update,
     update_notes,
@@ -268,6 +269,7 @@ from dmbot.recaps import cues, short
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
+from dmbot.recaps import requests as recap_requests
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
@@ -276,6 +278,8 @@ from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs
 from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.requests import Request as RecapRequest
+from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret, strip_cues
@@ -390,7 +394,13 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
-from dmbot.ui.name_card import UndoButton, UndoConnectionButton
+from dmbot.ui.name_card import (
+    FinishPastButton,
+    UndoButton,
+    UndoConnectionButton,
+    UndoRunButton,
+    UndoSpellingButton,
+)
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
     SPELLED_OUT,
@@ -488,6 +498,11 @@ RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
+RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+SECRET_QUESTION_WAITING = (
+    "🤫 DMbot has a question for you about a secret name. Open your private messages."
+)
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
@@ -945,6 +960,7 @@ class DMBot(commands.AutoShardedBot):
         self.house_file_links = house_file_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
+        self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
@@ -1369,7 +1385,14 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
-        self.add_dynamic_items(UndoButton, UndoConnectionButton, UndoListButton)
+        self.add_dynamic_items(
+            UndoButton,
+            UndoConnectionButton,
+            UndoListButton,
+            UndoSpellingButton,
+            FinishPastButton,
+            UndoRunButton,
+        )
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(
@@ -1421,6 +1444,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_audio_loop(), "recap-audio")]
                 if self.audio_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._recap_request_loop(), "recap-requests")]
+                if self.recap_requests is not None
                 else []
             ),
             *(
@@ -3839,9 +3867,20 @@ class DMBot(commands.AutoShardedBot):
         view: discord.ui.View | None = None,
         *,
         remember: Hashable | None = None,
+        secret_of: tuple[int, str] | None = None,
     ) -> bool:
-        """Send a message; returns False (and logs) if it could not be posted."""
-        return await self.post_message(channel_id, text, view, remember=remember) is not None
+        """Send a message; returns False (and logs) if it could not be posted. `secret_of`: the
+        (server, campaign) of a question that shows a secret name, remembered so it can be
+        pulled back if the DM screen opens up (#2097)."""
+        sent = await self.post_message(channel_id, text, view, remember=remember)
+        if sent is not None and secret_of is not None:
+            # Asked again after the send: if the screen opened up meanwhile, pull it back at once.
+            campaign = await self.campaigns.get(*secret_of)
+            if campaign is None or campaign.dm_screen_visibility != "private":
+                await secret_posts.hide_one(sent)
+            else:
+                secret_posts.remember(*secret_of, sent)
+        return sent is not None
 
     async def post_message(
         self,
@@ -4570,11 +4609,20 @@ class DMBot(commands.AutoShardedBot):
                     if alone:  # players may peek at the screen: the DM's own messages, not there
                         sent = await self.sidebar_send_dm(speaker, text, view)
                         posted = sent == "sent"
+                        if not posted:  # no way to ask privately: say so on the screen, no name
+                            await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
                         # Their private messages are closed: the key stays claimed, so each later
                         # line naming it doesn't fetch, send and log again for the whole session.
                         closed = sent == "forbidden"
                     else:
-                        posted = bool(await self.post(table.screen_channel_id, text, view=view))
+                        posted = bool(
+                            await self.post(
+                                table.screen_channel_id,
+                                text,
+                                view=view,
+                                secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
+                            )
+                        )
                 finally:
                     if not posted and not closed:
                         reveal.asked.discard(found.key)  # nothing was said: it may ask again
@@ -5546,6 +5594,20 @@ class DMBot(commands.AutoShardedBot):
                 self._track(  # game talk by a DM: now it may be offered a time suggestion (#1758)
                     self._suggest_after_label(table, waiting.speaker, said), "time-suggest"
                 )
+            try:
+                if (
+                    topic != OFF_TOPIC
+                    and said is not None
+                    and self.settings.secret_reveal_ask
+                    and table.is_dm(waiting.speaker)
+                ):
+                    # A held DM line that turned out to be game talk is asked about like any
+                    # other (#2101); `_reveal_ask` checks consent and the table again itself.
+                    # A line labelled after the session has ended is not asked, on purpose: the
+                    # after-session question covers it, and `_reveal_ask` finds no table then.
+                    self._track(self._reveal_ask(table, waiting.speaker, said), "secret-reveal-ask")
+            except Exception:  # never costs the rest of the window its labels
+                log.exception("Secret reveal: couldn't look at a held line")
             if topic != OFF_TOPIC and said is not None:
                 # Game talk: its words count now. A window the filter couldn't judge (a slow
                 # or failed call, a resting filter) arrives here as game talk, as everywhere.
@@ -8560,12 +8622,33 @@ class DMBot(commands.AutoShardedBot):
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
             every = spoken(secrets, players_lines(lines, players=players))
             found = every[:MAX_ASKED]
+            alone = campaign.dm_screen_visibility != "private"
+            reached = 0  # DMs who got the question privately
             for said in found:
+                if alone:  # players may look at the screen: the name goes to the DMs only
+                    for dm_id in sorted(campaign.dm_user_ids):
+                        sent = await self.sidebar_send_dm(
+                            dm_id,
+                            question_text(
+                                said.text,
+                                said.entries,
+                                private=True,
+                                campaign_name=campaign.name,
+                            ),
+                            secret_aloud_view(cid, said.alias_id, gid),
+                        )
+                        reached += sent == "sent"
+                    continue
                 await self.post(
                     table.screen_channel_id,
                     question_text(said.text, said.entries),
-                    view=secret_aloud_view(cid, said.alias_id),
+                    view=secret_aloud_view(cid, said.alias_id, gid),
+                    secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
                 )
+            if alone and found:
+                log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
+                if not reached:  # no one can be asked privately: say so, with no name
+                    await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
             if len(every) > len(found):  # the DM should know the rest exist
                 await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
             if found:
@@ -9083,6 +9166,64 @@ class DMBot(commands.AutoShardedBot):
                 except Exception:
                     log.exception("Removing old recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
+
+    async def _recap_request_loop(self) -> None:
+        """Every few seconds: what DMs typed on the recap page (#2113), sorted and written back
+        for the page to poll. A short poll instead of a wake-up for now; the worker (#2128) can
+        take it over unchanged."""
+        sweeps = 0
+        while True:
+            try:
+                await self.run_recap_requests()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The recap requests failed: %s", type(exc).__name__)
+            sweeps += 1  # counted whatever happened, so the sweep below can't be starved
+            if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
+                for guild in list(self.guilds):
+                    try:
+                        await self.recap_requests.sweep(guild.id)
+                    except Exception as exc:
+                        log.warning("The recap request sweep failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_recap_requests(self) -> None:
+        store = self.recap_requests
+        ai = self.recap_feedback_ai
+        if store is None or self.recaps is None or not self.settings.recaps_on:
+            return
+        for guild in list(self.guilds):
+            for _ in range(RECAP_REQUESTS_PER_ROUND):
+                request = await store.claim_next(guild.id)
+                if request is None:
+                    break
+
+                async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
+                    campaign = await self.campaigns.get(gid, req.campaign_id)
+                    job = await self.recaps.get(gid, req.campaign_id, req.session_at)  # type: ignore[union-attr]
+
+                    async def feedback_gate() -> str | None:
+                        why = await self.recap_feedback_gate(campaign, job)  # type: ignore[arg-type]
+                        if why is None:
+                            return None
+                        return (
+                            recap_requests.TOO_SOON
+                            if why == recap_feedback.TOO_OFTEN
+                            else recap_requests.NOT_ALLOWED
+                        )
+
+                    return await recap_requests.stop_reason(
+                        req, campaign, job, has_ai=ai is not None, feedback_gate=feedback_gate
+                    )
+
+                async def sort(text: str) -> Any:
+                    assert ai is not None
+                    return await recap_feedback.sort_feedback(ai, text)
+
+                with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
+                    outcome = await recap_requests.run_one(
+                        store, guild.id, request, gate=gate, sort=sort
+                    )
+                    log.info("Recap request: %s", outcome)  # the word only, never the text
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
