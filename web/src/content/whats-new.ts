@@ -255,6 +255,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "Every page says who you are",
+    what: "Every page now starts with a line saying who you're signed in as, with a Sign out button if that's not you. If you're not signed in, it says so and shows a Sign in with Discord button. After you sign in, you land back on the page you were on.",
+    reason: "In review (#2301); held until dev1 deploys the web API, which makes 'back to the page you were on' work.",
+  },
+  {
+    date: "2026-10-21",
     title: "Settings has two small menus",
     what: "Settings is now in the DM Bot channel, under DMbot Main Menu. The choices you use least are grouped: Who can see the DM screen, and Campaign management (hand over, pause, how long transcripts are kept, game masters and delete). Each has a Back button.",
     reason: "In review (#2281); held until dev1 deploys it.",

@@ -5,6 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import { namesPage as words } from "../content/names-words";
 import { httpApi, type AccountApi } from "./api";
 import Names from "./Names";
+import SignedInLine from "./SignedInLine";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
 
@@ -25,5 +26,10 @@ export default function NamesIsland() {
         {words.loading}
       </p>
     );
-  return <Names api={api} path={window.location.pathname} />;
+  return (
+    <>
+      <SignedInLine api={api} />
+      <Names api={api} path={window.location.pathname} />
+    </>
+  );
 }

@@ -141,9 +141,6 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     return (
       <div class="panel" role="status">
         <p>{words.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {words.signIn}
-        </a>
       </div>
     );
   if (view === "none") return <p role="status">{words.notYours}</p>;
