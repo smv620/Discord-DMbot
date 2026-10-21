@@ -28,6 +28,7 @@ import type {
   TranscriptVersion,
 } from "./api";
 import { ApiError } from "./api";
+import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
  * build that contains it. */
@@ -663,7 +664,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         case "spell": {
           const next = change.name.trim();
           if (next === "") throw new ApiError("bad-name");
-          if (next.length > 80) throw new ApiError("ticket-too-long");
+          if (next.length > NAME_LIMIT) throw new ApiError("ticket-too-long");
           if (taken(next)) throw new ApiError("name-exists");
           row.name = next;
           break;

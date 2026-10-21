@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names, { namesRefFromPath } from "../src/account/Names";
-import { namesPage as w } from "../src/content/names-words";
+import { NAME_LIMIT, namesPage as w } from "../src/content/names-words";
 
 afterEach(cleanup);
 
@@ -136,6 +136,29 @@ describe("what a DM can do", () => {
     expect(screen.getAllByRole("button", { name: /^Change / })).toHaveLength(20);
   });
 
+  it("fixes a name of exactly the limit", async () => {
+    const api = open();
+    await ready();
+    const row = await edit("Gorrak");
+    const exactly = "G".repeat(NAME_LIMIT);
+    fireEvent.input(row.getByLabelText(w.spellLabel), { target: { value: exactly } });
+    fireEvent.click(row.getByRole("button", { name: w.saveSpelling }));
+    await waitFor(() => expect(calls(api, "changeName").pop()).toBe(`changeName:100.cmp1:n7:{"action":"spell","name":"${exactly}"}`));
+    expect(row.getByLabelText<HTMLInputElement>(w.spellLabel).maxLength).toBe(NAME_LIMIT);
+  });
+
+  it("says a name the API finds too long is too long, with the limit", async () => {
+    const api = open();
+    api.changeName = async () => {
+      throw new ApiError("ticket-too-long");
+    };
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.input(row.getByLabelText(w.spellLabel), { target: { value: "Gorrak the Tall" } });
+    fireEvent.click(row.getByRole("button", { name: w.saveSpelling }));
+    expect(await row.findByText(`That name is too long. Use ${NAME_LIMIT} letters or fewer.`)).toBeTruthy();
+  });
+
   it("fixes the spelling", async () => {
     const api = open();
     await ready();
@@ -250,6 +273,7 @@ describe("someone who can't change names", () => {
     expect(screen.getByText(w.readOnly)).toBeTruthy();
     expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
     expect(screen.queryByText(w.secretWords)).toBeNull();
+    expect(screen.queryByText(w.secretMark)).toBeNull();
     expect(screen.queryByText(w.undoNote)).toBeNull();
     // The counts leave the secret names out too.
     const total = Number(/^(\d+) names$/.exec(screen.getByText(/^\d+ names$/).textContent ?? "")?.[1]);

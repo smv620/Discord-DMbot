@@ -4516,7 +4516,7 @@ confirmed and the claims they came from, recaps already built, and the session r
 line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
 form (nothing writes them yet).
 
-*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 📜 Transcripts: Forever
+*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention (#2281): Forever
 (the default) / 1 year / 90 days / 30 days, DMs only; a shorter choice shows one warning ("Sessions older
 than 90 days will be deleted every night, with their downloads on the website. Recaps and what you
 confirmed into story memory stay. Players can't get the deleted transcripts back.") and saves only on its
@@ -4674,3 +4674,5 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - Story memory: models and the per-session cost cap for the AI roles, after measuring
   tokens per call and the "how it was said" accuracy (the rest was decided 2026-10-06,
   #227)
+
+*Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.

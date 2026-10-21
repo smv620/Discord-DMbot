@@ -3,6 +3,10 @@
 // name's "kind" is what it is (a person, a place, a group, an item, an event), and nothing here
 // says DMbot decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
 // The kinds' own words come from the API, so a new kind needs no change here.
+// The longest a name may be: core's `NAME_MAX` (memory/models.py) and the Discord card's
+// `NAME_LIMIT` (ui/name_card.py). Keep the three equal, or a DM can't fix a long name here.
+export const NAME_LIMIT = 100;
+
 export const namesPage = {
   heading: "Names",
   lead: "Everything DMbot remembers by name in this campaign: people, places, groups and more. Search them, filter by kind, and (if you are the DM) fix them here.",
@@ -48,7 +52,7 @@ export const namesPage = {
   removeShort: "Remove",
   removeOther: (other: string): string => `Remove the other name ${other}`,
   secretCheck: "Secret: only the DM sees this name",
-  mergeHeading: "Merge with another name",
+  mergeHeading: "Same as another name",
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
   mergeSearch: "Find the other name",
   mergeNone: "No other name matches.",
@@ -70,7 +74,7 @@ export const namesPage = {
     "bad-kind": "Pick a kind from the list.",
     "name-exists": "A name like that already exists. Pick another spelling, or merge the two.",
     // The API's "too_long" is shared with the support form's: for a name it means this.
-    "ticket-too-long": "That name is too long. Use 80 letters or fewer.",
+    "ticket-too-long": `That name is too long. Use ${NAME_LIMIT} letters or fewer.`,
     "needs-confirm": "Press the Yes button to do that.",
     "not-allowed": "Only this campaign's DM can change names.",
     "not-found": "That name is gone. The list is up to date now.",

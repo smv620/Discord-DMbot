@@ -453,5 +453,5 @@ export const text = {
     "Last check: your account is deleted for good and this can't be undone. Your campaigns are kept 120 days, then deleted unless another DM takes them on.",
   deleteConfirm: "Yes, delete it all now",
   deleted:
-    "Done. Your account is deleted. Your campaigns stay for 120 days. To save one, one of its DMs presses 🤝 Take it on in ⚙️ Settings, in that Discord server. You can close this page.",
+    "Done. Your account is deleted. Your campaigns stay for 120 days. To save one, one of its DMs presses 🤝 Take it on in ⚙️ Settings → 🗂️ Campaign management, in that Discord server. You can close this page.",
 };

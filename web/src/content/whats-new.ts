@@ -116,7 +116,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep transcripts for a set time",
-    what: "A DM can choose how long a campaign keeps its transcripts: forever, 1 year, 90 days or 30 days (Settings, then Transcripts). Anything older is deleted every night, and recaps stay.",
+    what: "A DM can choose how long a campaign keeps its transcripts: forever, 1 year, 90 days or 30 days (Settings, then Campaign management, then Transcript retention). Anything older is deleted every night, and recaps stay.",
   },
   {
     date: "2026-10-16",
@@ -231,9 +231,15 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Settings has two small menus",
+    what: "Settings is now in the DM Bot channel, under DMbot Main Menu. The choices you use least are grouped: Who can see the DM screen, and Campaign management (hand over, pause, how long transcripts are kept, game masters and delete). Each has a Back button.",
+    reason: "In review (#2281); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "See and fix every name online",
     what: "From Discord you can open a page with every name DMbot remembers in your campaign. Search them, filter by kind, and if you are the DM, fix a spelling, change what a name is, add other names, make one secret, merge two names or remove one. ↩️ Undo on the name's card in Discord still works.",
-    reason: "In review (#2295); held until its API (#2294) is deployed and dev1 has seen it on the test server.",
+    reason: "In review (#2295); held until its API (#2294) is deployed and dev1 has seen it on the test server; the NPC link on each name needs the NPC pages (#2266).",
   },
   {
     date: "2026-10-21",
@@ -562,7 +568,7 @@ export const held: Held[] = [
   {
     date: "2026-10-17",
     title: "A DMbot channel for buttons",
-    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 My buttons there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
+    what: "Each campaign now has a channel called dmb-dm-bot. Press 👤 DMbot Main Menu there to see the buttons for your part; only you can see them. Anyone can press 📖 Look up a rule or 📜 Transcripts. Your DM screen now holds only notes, alerts and Stop listening.",
     reason:
       "Held until it has been seen working on the test server (#1666).",
   },

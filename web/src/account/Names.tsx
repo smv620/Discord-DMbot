@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { namesPage as words } from "../content/names-words";
+import { NAME_LIMIT, namesPage as words } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -165,6 +165,9 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       </p>
     );
 
+  // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
+  // it ever did (the rule is the API's, this is only a backstop).
+  const shown = data.names.filter((n) => data.canEdit || !n.secret);
   const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
@@ -230,11 +233,11 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
-      {data.names.length === 0 ? (
+      {shown.length === 0 ? (
         <p class="muted">{q.trim() !== "" || kind !== "" ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
-          {data.names.map((row) => (
+          {shown.map((row) => (
             <NameItem
               key={row.id}
               row={row}
@@ -394,12 +397,12 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
         class="name-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (spelling.trim() !== row.name) void run({ action: "spell", name: spelling }, words.saved);
+          if (spelling.trim() !== row.name) void run({ action: "spell", name: spelling.trim() }, words.saved);
         }}
       >
         <label class="field">
           {words.spellLabel}
-          <input type="text" value={spelling} maxLength={80} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
+          <input type="text" value={spelling} maxLength={NAME_LIMIT} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
         </label>
         <button type="submit" class="button secondary" disabled={working || spelling.trim() === "" || spelling.trim() === row.name}>
           {words.saveSpelling}
@@ -465,12 +468,12 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           onSubmit={(e) => {
             e.preventDefault();
             if (other.trim() === "") return;
-            void run({ action: "add-other", other }, words.saved).then((worked) => worked && setOther(""));
+            void run({ action: "add-other", other: other.trim() }, words.saved).then((worked) => worked && setOther(""));
           }}
         >
           <label class="field">
             {words.addOtherLabel}
-            <input type="text" value={other} maxLength={80} onInput={(e) => setOther((e.target as HTMLInputElement).value)} />
+            <input type="text" value={other} maxLength={NAME_LIMIT} onInput={(e) => setOther((e.target as HTMLInputElement).value)} />
           </label>
           <button type="submit" class="button secondary" disabled={working || other.trim() === ""}>
             {words.addOther}

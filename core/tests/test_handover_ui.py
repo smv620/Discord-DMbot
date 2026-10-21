@@ -140,11 +140,11 @@ class Words(unittest.TestCase):
             self.assertNotIn("Ask your DM", text)
 
     def test_the_card_with_an_offer_waiting(self) -> None:
-        text = settings.settings_text(campaign(), offer())
+        text = settings.management_text(campaign(), offer())
         self.assertIn("Offered to **Mirelle**; waiting for an answer until", text)
         labels = [
             getattr(item, "label", None) or getattr(getattr(item, "item", None), "label", None)
-            for item in settings.settings_view(campaign(), offer(), OWNER).children
+            for item in settings.management_view(campaign(), offer(), OWNER).children
         ]
         self.assertIn(handover.WITHDRAW_LABEL, labels)
         self.assertNotIn(handover.HANDOVER_LABEL, labels)
