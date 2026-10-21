@@ -162,6 +162,77 @@ class TheSplit(unittest.TestCase):
         lines = said(OWN_WORDS, PLAY[:1])
         self.assertTrue(sp.build(lines, [("recap", 4)], EARLIER).unsure)
 
+    def test_a_claim_past_the_opening_or_of_most_of_the_session_drops_nothing(self) -> None:
+        lines = said(TALK, READ_ALOUD, PLAY * 4)
+        for labelled in (
+            [("talk", 500)],  # an end that is not in the session
+            [("talk", len(lines) - 1)],  # "talk" is nearly all of it
+            [("talk", 2), ("catchup", 60)],
+        ):
+            with self.subTest(labelled=labelled):
+                split = sp.build(lines, labelled, EARLIER)
+                self.assertEqual([p.label for p in split.parts], ["play"])
+        long_chat = said(["Chat about the weather and food and films."] * 45, PLAY * 30)
+        self.assertEqual(
+            [p.label for p in sp.build(long_chat, [("talk", 45)], EARLIER).parts], ["play"]
+        )
+
+    def test_a_big_earlier_vocabulary_does_not_back_up_play_that_sounds_alike(self) -> None:
+        # A long earlier session has thousands of words, everyday D&D ones among them. Opening
+        # play made of those words is not a retelling when the beats and recap do not say it.
+        everyday = [
+            "attack",
+            "sword",
+            "dragon",
+            "castle",
+            "potion",
+            "wizard",
+            "goblin",
+            "tavern",
+            "torch",
+            "dungeon",
+            "arrow",
+            "shield",
+            "ranger",
+            "bandit",
+            "cavern",
+            "forest",
+            "bridge",
+            "market",
+            "temple",
+            "spell",
+            "dagger",
+            "armor",
+            "rogue",
+            "paladin",
+        ]
+        big = sp.Earlier(
+            sp.vocabulary_of(everyday) | sp.vocabulary_of(PREVIOUS_PLAY), PREVIOUS_BEATS
+        )
+        alike = [
+            "Then the wizard cast a spell at the dragon near the castle temple market.",
+            "The ranger drew an arrow and the rogue took the dagger and shield and armor.",
+            "The paladin lit a torch in the dungeon cavern while the bandit hid in the forest.",
+            "The goblin sold a potion at the tavern and the sword attack missed the dragon.",
+        ]
+        _, split = self.split([alike, PLAY * 3], [("recap", 4)], big)
+        self.assertTrue(split.unsure)
+
+    def test_without_an_answer_a_late_or_unbacked_pair_of_lines_is_not_a_recap(self) -> None:
+        late = said([f"Chat line number {n} here for padding." for n in range(15)], READ_ALOUD)
+        late += said([CLOSING], PLAY * 3)
+        self.assertEqual([p.label for p in sp.without_ai(late, EARLIER).parts], ["play"])
+        # a recap that runs to the very end leaves nothing to play: not believed
+        end = said(TALK, READ_ALOUD, [CLOSING])
+        self.assertEqual([p.label for p in sp.without_ai(end, EARLIER).parts], ["play"])
+        # one line holding both fixed lines is found
+        one = said(
+            TALK,
+            ["Previously, on The Ember Road… " + " ".join(PREVIOUS_PLAY) + " And so we continue,"],
+            PLAY * 3,
+        )
+        self.assertEqual(sp.without_ai(one, EARLIER).label_of(3), sp.RECAP)
+
     def test_the_answer_is_read_strictly(self) -> None:
         self.assertEqual(sp.parse('{"parts":[{"label":"talk","last":2}]}'), [("talk", 2)])
         self.assertEqual(sp.parse('```json\n{"parts":[]}\n```'), [])
@@ -228,7 +299,7 @@ OPENING = [*TALK, *READ_ALOUD[:-1], READ_ALOUD[-1]]  # 2 talk lines, 5 read alou
 class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
     """What the loader gathers about the previous session."""
 
-    async def gather(self, stored: object) -> sp.Earlier | None:
+    async def gather(self, stored: object, session_at: int = 200) -> sp.Earlier | None:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
@@ -238,7 +309,9 @@ class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(started_at=200, id="b"),
             SimpleNamespace(started_at=100, id="a"),
         ]
-        job = SimpleNamespace(split=stored, beats=[{"what": "The wagon burned"}, {"x": 1}])
+        job = SimpleNamespace(
+            session_at=session_at, split=stored, beats=[{"what": "The wagon burned"}, {"x": 1}]
+        )
         lines = reading([OWN_WORDS, PLAY * 2])
         store = SimpleNamespace(earlier_job=AsyncMock(return_value=job))
         return await _earlier(
@@ -263,6 +336,16 @@ class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
         got = await self.gather(None)
         assert got is not None
         self.assertIn("goblins", got.vocabulary)
+
+    async def test_a_job_of_an_older_session_is_never_applied_to_the_previous_ones_lines(
+        self,
+    ) -> None:
+        # Session 200 was never recapped; the latest job is session 100's, with its own split.
+        stored = {"parts": [["recap", 1, 4], ["play", 5, 10]], "unsure": False, "method": "ai"}
+        got = await self.gather(stored, session_at=100)
+        assert got is not None
+        self.assertIn("goblins", got.vocabulary)  # taken whole: the split is not applied
+        self.assertEqual(got.beats, ())  # and the older session's beats are not mixed in
 
     async def test_no_earlier_session_means_none(self) -> None:
         from types import SimpleNamespace

@@ -41,7 +41,8 @@ log = logging.getLogger(__name__)
 
 # AI calls for one recap: three stages, a retry each (two for the prose), the checks, and since
 # #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4,
-# and since #2253 the one call that splits the opening (talk, catch-up, last time's recap, play).
+# and since #2253 the one call that splits the opening (talk, catch-up, last time's recap, play):
+# 18 for a run with no restarts; each restart (at most two) makes that call again.
 MAX_CALLS = 18
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
 # AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is six
@@ -109,6 +110,7 @@ SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and 
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
+SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
 SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 
 
@@ -497,7 +499,11 @@ class RecapWorker:
         line is never dropped on a guess."""
         split = sp.all_play(said)
         earlier = inputs.earlier
-        if earlier is not None:
+        if earlier is not None and job.errors >= SPLIT_ERRORS_MAX:
+            # The labelling is optional: after repeated service errors the recap goes on with
+            # what code alone can tell, rather than fail for it.
+            split = sp.without_ai(said, earlier, inputs.previous)
+        elif earlier is not None:
             region = sp.opening_of(said)
             rows = [
                 (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text)

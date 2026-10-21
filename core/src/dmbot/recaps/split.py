@@ -44,6 +44,11 @@ BEATS_SHOWN = 12  # the previous session's beats the AI is told of, a sentence e
 BEAT_CHARS = 160
 MAX_RECAP_SHARE = 0.5  # a "recap" longer than half the session is doubted
 MAX_RECAP_LINES = 60
+MAX_PRELUDE_LINES = 40  # talk and catching up together: a retelling comes after little else
+MAX_PRELUDE_SHARE = 0.5
+STORY_SURE = 0.3  # of a retelling's words that the earlier beats and recap also have
+SURE_ALONE = 0.6  # the bar when there are no beats or recap to compare with
+MAX_EARLY_START = 10  # lines before a read-aloud recap that code alone will call talk
 MIN_WORDS = 15  # fewer content words than this in a recap cannot be compared
 SHORT_WORD = 5  # words shorter than this are too common to say what a session was about
 
@@ -337,7 +342,7 @@ def build(
     order = {TALK: 0, CATCHUP: 1, RECAP: 2}
     ranks = [order[label] for label, _ in labelled]
     ends = [last for _, last in labelled]
-    if ranks != sorted(set(ranks)) or ends != sorted(set(ends)):
+    if ranks != sorted(set(ranks)) or ends != sorted(set(ends)) or ends[-1] > numbers[-1]:
         return all_play(said, "fallback")
     start = 0  # index into `said`
     parts: list[Part] = []
@@ -353,6 +358,15 @@ def build(
     if start >= len(said):  # nothing left to play: it was not a recap, whatever was said
         return all_play(said, "fallback")
     parts.append(Part(PLAY, said[start].number, said[-1].number))
+    # Talk and catching up are left out or set apart, so a claim that they are most of the session
+    # (or very long) is not believed: nothing is dropped on it.
+    prelude = sum(
+        1
+        for s in said
+        if any(p.first <= s.number <= p.last for p in parts[:-1] if p.label in (TALK, CATCHUP))
+    )
+    if prelude > MAX_PRELUDE_LINES or prelude > len(said) * MAX_PRELUDE_SHARE:
+        return all_play(said, "fallback")
     unsure = False
     recap = next((p for p in parts if p.label == RECAP), None)
     if recap is not None:
@@ -370,12 +384,21 @@ def backed_up(
     if len(lines) > MAX_RECAP_LINES or len(lines) > len(said) * MAX_RECAP_SHARE:
         return False
     texts = [s.text for s in lines]
-    refs = [earlier.vocabulary, vocabulary_of(earlier.beats), vocabulary_of([previous_recap])]
-    score = overlap(texts, *[r for r in refs if r])
+    # The earlier session's whole vocabulary is big, and everyday D&D words are in it: alone it
+    # would back up an opening that merely sounds alike. A retelling also says what the beats and
+    # the recap say, so when those exist the lines must share their (smaller, specific) words too.
+    story = [vocabulary_of(earlier.beats), vocabulary_of([previous_recap])]
+    story = [r for r in story if r]
+    if story:
+        shared = overlap(texts, *story)
+        if shared is None or shared < STORY_SURE:
+            return False
+    score = overlap(texts, earlier.vocabulary, *story)
     if score is None:
         return False
     opening, closing = heard_fixed_lines(texts)
-    return score + (FIXED_BONUS if opening else 0) + (FIXED_BONUS / 2 if closing else 0) >= SURE
+    bonus = (FIXED_BONUS if opening else 0) + (FIXED_BONUS / 2 if closing else 0)
+    return score + bonus >= (SURE if story else SURE_ALONE)
 
 
 def without_ai(said: Sequence[Said], earlier: Earlier, previous_recap: str = "") -> Split:
@@ -384,21 +407,21 @@ def without_ai(said: Sequence[Said], earlier: Earlier, previous_recap: str = "")
     else is all play, because a wrong guess here would drop what happened."""
     region = opening_of(said)
     for i, line in enumerate(region):
+        if i > MAX_EARLY_START:  # a recap read aloud comes first; later is not code's call
+            break
         opening, _ = heard_fixed_lines([line.text])
         if not opening:
             continue
-        for j in range(i + 1, len(region)):
-            if heard_fixed_lines([region[j].text])[1]:
-                parts = [Part(RECAP, region[i].number, region[j].number)]
-                if i:
-                    parts.insert(0, Part(TALK, region[0].number, region[i - 1].number))
-                if j + 1 < len(said):
-                    parts.append(Part(PLAY, said[j + 1].number, said[-1].number))
-                split = Split(tuple(parts), False, "code")
-                inner = Part(RECAP, region[i].number, region[j].number)
-                if backed_up(said, inner, earlier, previous_recap):
-                    return split
-                return all_play(said, "fallback")
+        for j in range(i, len(region)):  # (a one-line recap can hold both lines)
+            if not heard_fixed_lines([region[j].text])[1]:
+                continue
+            inner = Part(RECAP, region[i].number, region[j].number)
+            if j + 1 >= len(said) or not backed_up(said, inner, earlier, previous_recap):
+                break
+            parts = [inner, Part(PLAY, said[j + 1].number, said[-1].number)]
+            if i:
+                parts.insert(0, Part(TALK, region[0].number, region[i - 1].number))
+            return Split(tuple(parts), False, "code")
         break
     return all_play(said, "fallback")
 

@@ -639,14 +639,15 @@ class RecapStore:
         return None if row is None else _job(row)
 
     async def earlier_job(self, guild_id: int, campaign_id: str, before: int) -> Job | None:
-        """The latest earlier recap job of this campaign that got as far as a beat sheet, whether
-        or not it was posted: what the next session is compared with to find a retelling (#2253).
-        Never another campaign's: the query names the campaign."""
+        """The latest earlier recap job of this campaign with a finished, checked beat sheet,
+        whether or not it was posted: what the next session is compared with to find a retelling
+        (#2253). Never another campaign's: the query names the campaign."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {COLUMNS} FROM recap_jobs"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at < %s"
-                " AND status <> 'dropped' AND jsonb_array_length(beats) > 0"
+                " AND status <> 'dropped'"
+                " AND state IN ('checked', 'prose', 'housekeeping', 'ready')"
                 " ORDER BY session_at DESC LIMIT 1",
                 (guild_id, campaign_id, before),
             )

@@ -4,6 +4,7 @@ counted as story, said by the narration, never a secret name, and added once. In
 from __future__ import annotations
 
 import unittest
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -100,27 +101,30 @@ class TheTenEndings(unittest.TestCase):
         self.assertEqual(fl.ENDINGS[0], "epic adventure")
         self.assertEqual(fl.ENDINGS[-1], "epic quest")
 
-    def test_each_variant_is_found_and_two_recaps_in_a_row_end_differently(self) -> None:
-        last: int | None = None
+    def test_each_variant_is_found_and_neighbouring_sessions_end_differently(self) -> None:
         seen = []
-        for _ in range(12):  # past ten, so the rotation wraps
-            index = fl.next_ending(last)
+        for earlier in range(12):  # past ten, so the rotation wraps
+            index = fl.ending_for(earlier)
             wrapped = fl.wrap(fx.SUMMARY, NAME, (), index)
             self.assertEqual(fl.without(wrapped), fx.SUMMARY)  # the finder finds this variant
-            self.assertEqual(fl.ending_of(wrapped), index)
-            self.assertNotEqual(index, last)
+            self.assertIn(fl.ENDINGS[index], wrapped.split("\n\n")[-1])
             seen.append(index)
-            last = fl.ending_of(wrapped)
         self.assertEqual(seen[:10], list(range(10)))
-        self.assertEqual(seen[10], 0)
+        self.assertEqual(seen[10:], [0, 1])
+        self.assertTrue(all(a != b for a, b in pairwise(seen)))
 
-    def test_a_garbled_or_missing_ending_starts_the_rotation_again(self) -> None:
+    def test_a_garbled_ending_is_still_found(self) -> None:
         garbled = "Story.\n\nAnd so we continue the gret advnture of Ember Road!"
-        self.assertEqual(fl.without(garbled), "Story.")  # still found, loosely
-        self.assertIsNone(fl.ending_of(garbled))
-        self.assertIsNone(fl.ending_of("Story only."))
-        self.assertEqual(fl.next_ending(None), 0)
-        self.assertEqual(fl.next_ending(9), 0)
+        self.assertEqual(fl.without(garbled), "Story.")
+
+    def test_a_campaign_named_like_an_ending_is_no_trouble(self) -> None:
+        wrapped = fl.wrap("Story.", "The Epic Quest", (), 3)
+        self.assertTrue(wrapped.endswith("the grand adventure of The Epic Quest."))
+        self.assertEqual(fl.without(wrapped), "Story.")
+
+    def test_the_first_drafts_wording_is_not_the_closing_line(self) -> None:
+        old = "Story.\n\nAnd so the party continues the adventure of Somewhere."
+        self.assertEqual(fl.without(old), old)
 
     def test_no_name_still_ends_with_the_chosen_variant(self) -> None:
         self.assertEqual(fl.lines("", (), 5)[1], "And so we continue, the epic tale.")
@@ -132,15 +136,19 @@ class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
 
         bridge = SimpleNamespace(summary=fl.wrap("《Calm》 The keep fell quiet.", NAME))
         session = SimpleNamespace(started_at=200, id="s")
+        before = [SimpleNamespace(started_at=t, id=f"e{t}") for t in (50, 120)]
         got = await load_inputs(
             campaigns=SimpleNamespace(
                 get=AsyncMock(return_value=SimpleNamespace(name=NAME, dm_user_ids={7}))
             ),
             lookup=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(names=[]))),
             transcripts=SimpleNamespace(
-                sessions=AsyncMock(return_value=[session]), lines=AsyncMock(return_value=[])
+                sessions=AsyncMock(return_value=[session, *before]),
+                lines=AsyncMock(return_value=[]),
             ),
-            recaps=SimpleNamespace(bridge=AsyncMock(return_value=bridge)),
+            recaps=SimpleNamespace(
+                bridge=AsyncMock(return_value=bridge), earlier_job=AsyncMock(return_value=None)
+            ),
             clocks=None,
             guild_id=1,
             campaign_id="c" * 32,
@@ -148,4 +156,5 @@ class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
         )
         assert got is not None
         self.assertEqual(got.previous, "The keep fell quiet.")
+        self.assertEqual(got.ending, 2)  # two sessions came before this one
         self.assertEqual(got.campaign_name, NAME)  # and this recap's lines will carry the name
