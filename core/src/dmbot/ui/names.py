@@ -829,6 +829,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
+BACKGROUND = "From your background"  # a suggestion read from the DM's own story (#2167)
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 
@@ -836,6 +837,16 @@ def _heard(entity: Entity) -> str:
     """ " · heard 3 times", from what the scan saved (only a count, never a name)."""
     text = " ".join(entity.description.split())
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
+
+
+def background_kind(entity: Entity) -> str:
+    """The kind a suggestion read from the DM's background was given (npc, place…), or "" when
+    it has none to confirm as (an idea, or not from a background)."""
+    if not entity.description.startswith(BACKGROUND):
+        return ""
+    if entity.type == "character":
+        return {"god": "deity", "npc": "npc"}.get(entity.role or "", "")
+    return entity.type if entity.type in ("place", "faction", "item", "event") else ""
 
 
 def suggestion_text(
@@ -910,6 +921,7 @@ class SuggestionReview(_Menu):
         self.queue = entity_ids
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
+        self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
         self.also: list[str] = []  # names heard with the current one
         self._buttons()
 
@@ -927,6 +939,8 @@ class SuggestionReview(_Menu):
     ) -> str:
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
+        # A name read from the DM's background already has its kind; "Yes" confirms it as that.
+        self.known_kind = background_kind(entity)
         own = name_key(entity.name)
         self.also = [
             a.text
@@ -1019,7 +1033,18 @@ class SuggestionReview(_Menu):
         current = await self._current(interaction)
         if current is None:
             return
-        _, _, entity = current
+        campaign, memory, entity = current
+        if self.known_kind:  # it was read with its kind: one press (#2167)
+            try:
+                await memory.confirm_entity(
+                    campaign.guild_id, campaign.id, entity.id, self.known_kind, source=DM
+                )
+            except MemoryRuleError:
+                await _tell(interaction, GONE)
+                return
+            changed(interaction, campaign)
+            await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
+            return
         self.clear_items()
         self.kind = _Select(
             self._kind_picked,

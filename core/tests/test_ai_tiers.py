@@ -145,6 +145,7 @@ class Tiers(unittest.TestCase):
             FEATURE_TIERS,
             {
                 Feature.NAMES: AIModelTier.CAREFUL,
+                Feature.NAMES_BACKGROUND: AIModelTier.FAST,  # a DM's background (#2167)
                 Feature.TOPIC: AIModelTier.FAST,
                 Feature.AUDIO_CHECK: AIModelTier.FAST,
                 Feature.SIDEBAR: AIModelTier.FAST,
@@ -182,6 +183,7 @@ class Tiers(unittest.TestCase):
         bot = DMBot(settings, SimpleNamespace(), MagicMock(), MagicMock())  # type: ignore[arg-type]
         for client, job in (
             (bot.ai, Feature.NAMES),
+            (bot.background_ai, Feature.NAMES_BACKGROUND),
             (bot.topic_ai, Feature.TOPIC),
             (bot.audio_ai, Feature.AUDIO_CHECK),
             (bot.sheet_ai, Feature.SHEET),

@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "Names from your campaign story",
+    what: "In ⚙️ Settings, Names, then Add many, choose 📜 From a story or background. Paste your campaign's background, upload it, or send a link, and DMbot suggests the names in it for you to check, each with the line it came from. It keeps only the names you say yes to, never your text. You can say yes to every place, or every person, at once. This is for your own notes, not a published book.",
+    reason: "In review (#2167); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
     reason: "Waiting for review (#2132) and for dev1 to deploy it.",

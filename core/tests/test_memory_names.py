@@ -2158,7 +2158,13 @@ class Lists(NamesTest):
         labels = [getattr(c, "label", "") for c in menu.children]
         self.assertEqual(
             labels,
-            ["📋 Paste a list", "🔗 Paste a link", "📎 Upload a file", "📄 Get the template"],
+            [
+                "📋 Paste a list",
+                "🔗 Paste a link",
+                "📎 Upload a file",
+                "📄 Get the template",
+                "📜 From a story or background",
+            ],
         )
         it = self.it()
         await menu._link(it)
