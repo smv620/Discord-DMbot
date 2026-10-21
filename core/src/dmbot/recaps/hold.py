@@ -42,6 +42,7 @@ QUEUED, ALREADY, GONE = "queued", "already", "gone"
 QUIET_WAIT_S = 3 * 60 * 60  # a silent hold the extractor never reopened is let go after this
 HOLD_REMIND_S = 24 * 60 * 60  # the DM is reminded once, this long after the hold was made
 HOLD_MAX_S = 3 * 24 * 60 * 60  # then the recap is written with the names as they are
+LATE_REMINDER_S = 20 * 60 * 60  # with less than this left the reminder says "within a day"
 
 
 def question_text(count: int) -> str:
@@ -55,11 +56,14 @@ def reminder_text(count: int, left_s: float = HOLD_MAX_S - HOLD_REMIND_S) -> str
     done, with the time left worked out from the hold's age (a late reminder says less)."""
     noun = "name question" if count == 1 else "name questions"
     verb = "is" if count == 1 else "are"
-    days = max(1, round(left_s / 86400))
-    when = "about a day" if days <= 1 else f"about {days} days"
+    if left_s < LATE_REMINDER_S:  # under about 20 hours left
+        when = "within a day"
+    else:
+        days = max(1, round(left_s / 86400))
+        when = "in about a day" if days == 1 else f"in about {days} days"
     return (
         f"📝 {count} {noun} from your last session {verb} still open. Press 📝 Check new names to "
-        f"answer, or Write the recap now. If you do nothing, DMbot writes the recap in {when} "
+        f"answer, or Write the recap now. If you do nothing, DMbot writes the recap {when} "
         "with the names as it heard them."
     )
 
