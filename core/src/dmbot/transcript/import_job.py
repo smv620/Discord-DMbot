@@ -43,6 +43,16 @@ Consenting = Callable[[int], Awaitable[frozenset[int]]]  # who is recorded now, 
 
 
 @dataclass(frozen=True, slots=True)
+class Ready:
+    """A cleaned import whose name scan is next (#2106)."""
+
+    campaign_id: str
+    session_id: str
+    started_at: int
+    write_recap: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Row:
     id: int
     user_id: int
@@ -100,6 +110,62 @@ class ImportStore:
                 (session_id,),
             )
             return [Row(int(r["id"]), int(r["user_id"]), r["heard"]) for r in await cur.fetchall()]
+
+    async def ready_for_scan(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
+        """For each campaign, its earliest cleaned import not yet scanned, when no earlier import of
+        that campaign is still waiting, being cleaned or unscanned: the name scans and recaps of a
+        batch go in date order (#2106), one session per campaign at a time."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.state = 'done' AND NOT i.scanned AND NOT EXISTS ("
+                " SELECT 1 FROM session_imports j JOIN transcript_sessions u"
+                " ON u.id = j.session_id AND u.guild_id = j.guild_id"
+                " WHERE j.campaign_id = i.campaign_id AND u.started_at < t.started_at"
+                " AND (j.state IN ('waiting', 'working') OR (j.state = 'done' AND NOT j.scanned)))"
+                " ORDER BY t.started_at, i.session_id LIMIT %s",
+                (limit,),
+            )
+            return [
+                Ready(
+                    r["campaign_id"], r["session_id"], int(r["started_at"]), bool(r["write_recap"])
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def mark_scanned(self, guild_id: int, session_id: str, began: int, ended: int) -> bool:
+        """The name scan of this import is done, and ran from `began` to `ended` (seconds). False
+        when it was marked already (a second round, or another process)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scanned = TRUE, scan_from = %s, scan_to = %s"
+                " WHERE session_id = %s AND NOT scanned",
+                (began, ended, session_id),
+            )
+            return bool(cur.rowcount)
+
+    async def window(self, guild_id: int, session_id: str) -> tuple[int, int] | None:
+        """When this import's name scan ran, or None for a session that was not imported (or
+        whose scan has not run)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT scan_from, scan_to FROM session_imports WHERE session_id = %s AND scanned",
+                (session_id,),
+            )
+            r = await cur.fetchone()
+        return (int(r["scan_from"]), int(r["scan_to"])) if r else None
+
+    async def scan_lines(self, guild_id: int, session_id: str) -> list[tuple[int, str]]:
+        """(speaker, words) of the session's game talk, cleaned where the cleaner changed them."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, COALESCE(text, heard) AS words FROM transcript_lines"
+                " WHERE session_id = %s AND sidebar IS NULL AND topic = %s ORDER BY started_ms, id",
+                (session_id, GAME),
+            )
+            return [(int(r["user_id"]), r["words"]) for r in await cur.fetchall()]
 
     async def back_to_waiting(self, guild_id: int, session_id: str) -> None:
         async with self._db.guild(guild_id) as conn:

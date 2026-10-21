@@ -18,7 +18,7 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Coroutine, Hashable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -7744,12 +7744,18 @@ class DMBot(commands.AutoShardedBot):
         questions. Counts only; nothing is read aloud or logged."""
         total = 0
         if self.memory is not None:
-            until = await self._next_session_start(gid, cid, began)
+            # A live session owns the names proposed from its start to the next session's start;
+            # an imported one (old words, scanned now) owns those its own scan proposed (#2106).
+            scan = await self.import_job.store.window(gid, session_id) if self.import_job else None
+            if scan is not None:
+                since, until = scan[0], scan[1] + 1  # (the scan's own seconds, both ends)
+            else:
+                since, until = began, await self._next_session_start(gid, cid, began)
             proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
             total += sum(
                 1
                 for e in proposed
-                if e.created_at >= began and (until is None or e.created_at < until)
+                if e.created_at >= since and (until is None or e.created_at < until)
             )
         if self.heard_questions is not None:
             total += await self.heard_questions.count_for_session(gid, session_id)
@@ -8893,6 +8899,55 @@ class DMBot(commands.AutoShardedBot):
                 added += 1
             log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
 
+    async def _propose_new_names(
+        self, gid: int, cid: str, lines: Sequence[str], users: Collection[int]
+    ) -> list[str]:
+        """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
+        scan of a live session's end and of an imported one, #2106). `users`: the people whose
+        names are not story names. Returns the names proposed; nothing is confirmed."""
+        assert self.memory is not None
+        # People at the table aren't story names: skip their whole display names and
+        # each word of them ("Mia Stone" → "Mia", "Stone").
+        skip = set(await self.memory.known_keys(gid, cid))
+        for uid in users:
+            name = self.name_of(gid, uid)
+            if not name.startswith("<@"):
+                skip.add(name_key(name))
+                skip.update(name_key(word) for word in name.split())
+        # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
+        # (#394). Which known name each sounds like is worked out when the DM looks,
+        # never saved: names can change, or be made secret, before then.
+        found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        added: list[str] = []
+        for suggestion in found:
+            try:
+                written = await self.memory.add_entity(
+                    gid,
+                    cid,
+                    type="concept",
+                    name=suggestion.name,
+                    source="scan",
+                    description=f"Heard {suggestion.times} times",
+                )
+            except MemoryRuleError as exc:
+                log.info("Skipped a suggested name: %s", exc)
+                continue
+            added.append(suggestion.name)
+            for other in suggestion.also:  # suggested with it, confirmed with it
+                part = name_key(other) in name_key(suggestion.name)
+                try:
+                    await self.memory.add_alias(
+                        gid,
+                        cid,
+                        written.value.id,
+                        other,
+                        kind="short" if part else "misheard",
+                        source="scan",
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a name heard with a suggestion: %s", exc)
+        return added
+
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
         check. Only lines from people who still agree; never anything DMbot already has
@@ -8907,48 +8962,9 @@ class DMBot(commands.AutoShardedBot):
             table.heard = []  # the session is over; free it
             if not lines:
                 return
-            # People at the table aren't story names: skip their whole display names and
-            # each word of them ("Mia Stone" → "Mia", "Stone").
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
-            skip = set(await self.memory.known_keys(gid, cid))
-            for uid in users:
-                name = self.name_of(gid, uid)
-                if not name.startswith("<@"):
-                    skip.add(name_key(name))
-                    skip.update(name_key(word) for word in name.split())
-            # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
-            # (#394). Which known name each sounds like is worked out when the DM looks,
-            # never saved: names can change, or be made secret, before then.
-            found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
-            added: list[str] = []
-            for suggestion in found:
-                try:
-                    written = await self.memory.add_entity(
-                        gid,
-                        cid,
-                        type="concept",
-                        name=suggestion.name,
-                        source="scan",
-                        description=f"Heard {suggestion.times} times",
-                    )
-                except MemoryRuleError as exc:
-                    log.info("Skipped a suggested name: %s", exc)
-                    continue
-                added.append(suggestion.name)
-                for other in suggestion.also:  # suggested with it, confirmed with it
-                    part = name_key(other) in name_key(suggestion.name)
-                    try:
-                        await self.memory.add_alias(
-                            gid,
-                            cid,
-                            written.value.id,
-                            other,
-                            kind="short" if part else "misheard",
-                            source="scan",
-                        )
-                    except MemoryRuleError as exc:
-                        log.info("Skipped a name heard with a suggestion: %s", exc)
+            added = await self._propose_new_names(gid, cid, lines, users)
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
@@ -9036,9 +9052,72 @@ class DMBot(commands.AutoShardedBot):
             for guild in list(self.guilds):
                 try:
                     await self.import_job.run_round(guild.id)
+                    await self.run_import_followups(guild.id)
                 except Exception:
                     log.exception("Import: cleaning failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
+
+    async def run_import_followups(self, gid: int) -> int:
+        """After an imported session is cleaned (#2106): in date order, one per campaign, its name
+        scan (once; the DM is asked about the new names the usual way) and, if the DM chose Write
+        recaps for it, the recap through the same hold as a live session, so it waits for the
+        name answers. Returns how many sessions were taken. A session that cannot be scanned is
+        left for the next round; counts only in the log."""
+        assert self.import_job is not None
+        store = self.import_job.store
+        done = 0
+        for ready in await store.ready_for_scan(gid):
+            campaign = await self.campaigns.get(gid, ready.campaign_id)
+            with log_context(guild_id=gid, campaign_id=ready.campaign_id):
+                try:
+                    began = int(time.time())
+                    if self.memory is not None and campaign is not None:
+                        agreed = await self.consent.consenting(gid)
+                        lines = [
+                            (uid, text)
+                            for uid, text in await store.scan_lines(gid, ready.session_id)
+                            if uid in agreed
+                        ]
+                        if lines:
+                            users = {uid for uid, _ in lines} | set(agreed) | campaign.dm_user_ids
+                            added = await self._propose_new_names(
+                                gid, ready.campaign_id, [t for _, t in lines], users
+                            )
+                            log.info(
+                                "Import scan: %d line(s), %d new name(s)", len(lines), len(added)
+                            )
+                    if not await store.mark_scanned(gid, ready.session_id, began, int(time.time())):
+                        continue  # another round has it
+                    done += 1
+                    if ready.write_recap and campaign is not None:
+                        await self._import_recap(campaign, ready)
+                except Exception:
+                    log.exception("Import: a session's name scan or recap failed")
+        return done
+
+    async def _import_recap(self, campaign: Campaign, ready: Any) -> None:
+        """The recap of one scanned import the DM asked for: through the same gates as after a live
+        session (the switch, the DM's own choice, the plan) and the same hold for the DM's name
+        answers (#2174). Without a DM-screen channel to ask in, it is queued without a hold."""
+        gid = campaign.guild_id
+        if (
+            self.recaps is None
+            or not self.settings.recaps_on
+            or not campaign.recaps_text
+            or not await self.plan_allows("recap", gid, campaign, fail_open=False)
+        ):
+            log.info("Import: no recap written (off, or not in the plan)")
+            return
+        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        if dm <= 0:
+            return
+        channel = campaign.dm_screen_channel_id
+        if channel is None:
+            await self.recaps.enqueue(gid, campaign.id, ready.started_at, dm_user_id=dm)
+            return
+        await self._hold_or_queue(
+            campaign, ready.session_id, ready.started_at, channel, dm, extractor_to_come=False
+        )
 
     async def _recap_audio_loop(self) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
