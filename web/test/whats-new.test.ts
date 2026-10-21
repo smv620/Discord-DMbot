@@ -62,6 +62,7 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
+      "Names spelled out at the table", // until dev1 deploys it (#2168)
       "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
       "Your recap waits for your name answers", // until dev1 deploys it (#2169)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
