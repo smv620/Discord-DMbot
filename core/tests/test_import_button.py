@@ -20,7 +20,7 @@ SITE = "https://dmbot.example"
 
 
 def press(user: int, *, site: str = SITE, found: Any = "yes", dms: tuple[int, ...] = (DM,)) -> Any:
-    here = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, dm_user_ids=set(dms))
+    here = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids=set(dms))
     store = SimpleNamespace(
         get=AsyncMock(return_value=here if found == "yes" else None),
         list_campaigns=AsyncMock(return_value=[here]),
@@ -58,7 +58,7 @@ class TheReply(WithTheSwitch):
         (text_a, view_a), (text_b, view_b) = told(a), told(b)
         self.assertEqual(text_a, ib.LINE)
         self.assertEqual((text_a, link_of(view_a)), (text_b, link_of(view_b)))
-        self.assertEqual(link_of(view_a)[0], f"{SITE}/account/import")
+        self.assertEqual(link_of(view_a)[0], f"{SITE}/account/import/{GUILD}.{CAMPAIGN}")
         self.assertTrue(a.response.send_message.await_args.kwargs["ephemeral"])
         self.assertTrue(b.response.send_message.await_args.kwargs["ephemeral"])
 
@@ -95,6 +95,37 @@ class TheReply(WithTheSwitch):
         await ib.ImportButton(CAMPAIGN).callback(it)
         self.assertEqual(told(it)[0], ib.GONE)
 
+    async def test_a_dm_of_several_campaigns_gets_one_link_for_each(self) -> None:
+        it = press(DM)
+        other = SimpleNamespace(id="d" * 32, guild_id=GUILD, name="Embers", dm_user_ids={DM})
+        mine = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids={DM})
+        theirs = SimpleNamespace(id="e" * 32, guild_id=GUILD, name="Not mine", dm_user_ids={PLAYER})
+        it.client.campaigns.list_campaigns = AsyncMock(return_value=[mine, other, theirs])
+        await import_command.dmbot_import.callback(it)
+        text, view = told(it)
+        self.assertEqual(text, ib.MANY)
+        self.assertEqual(
+            [(str(b.label), str(b.url)) for b in view.children],
+            [
+                ("Frost", f"{SITE}/account/import/{GUILD}.{CAMPAIGN}"),
+                ("Embers", f"{SITE}/account/import/{GUILD}.{'d' * 32}"),
+            ],
+        )
+
+    async def test_a_dm_who_lost_the_role_since_the_card_was_drawn_gets_the_dm_line(self) -> None:
+        it = press(DM, dms=(PLAYER,))  # the store no longer lists them
+        await ib.ImportButton(CAMPAIGN).callback(it)
+        self.assertEqual(told(it), (ib.ONLY_DM, None))
+
+    async def test_a_store_that_fails_is_said_plainly_by_both(self) -> None:
+        it = press(DM)
+        it.client.campaigns.list_campaigns = AsyncMock(side_effect=RuntimeError("x"))
+        it.client.campaigns.get = AsyncMock(side_effect=RuntimeError("x"))
+        await import_command.dmbot_import.callback(it)
+        await ib.ImportButton(CAMPAIGN).callback(it)
+        sent = [c.args[0] for c in it.response.send_message.await_args_list]
+        self.assertEqual(sent, [ib.FAILED, ib.FAILED])
+
     async def test_the_command_takes_no_options_and_no_file(self) -> None:
         self.assertEqual(list(import_command.dmbot_import.parameters), [])
 
@@ -118,9 +149,10 @@ class TheCard(WithTheSwitch):
         self.assertIsNotNone(template.fullmatch(str(item.item.custom_id)))
 
     def test_the_page_address_comes_from_the_site_setting_alone(self) -> None:
-        self.assertEqual(ib.page_url(" https://dmbot.example/some/path "), SITE + "/account/import")
-        self.assertEqual(ib.page_url(""), "")
-        self.assertEqual(ib.page_url("http://x.example"), "")
+        got = ib.page_url(" https://dmbot.example/some/path ", 5, CAMPAIGN)
+        self.assertEqual(got, f"{SITE}/account/import/5.{CAMPAIGN}")
+        self.assertEqual(ib.page_url("", 5, CAMPAIGN), "")
+        self.assertEqual(ib.page_url("http://x.example", 5, CAMPAIGN), "")
 
 
 if __name__ == "__main__":

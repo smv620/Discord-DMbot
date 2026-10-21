@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,9 +31,12 @@ LINK_LABEL = "Open Import sessions"
 ONLY_DM = "That's for the DM."
 NOT_ON = "Importing isn't switched on yet."
 NO_SITE = "The website isn't set up on this server."
+NOT_IN_SERVER = "Use this in a server where DMbot is."
 GONE = "That campaign isn't here any more."
 FAILED = "Couldn't load the campaign. Try again in a minute."
 PAGE = "/account/import"
+MANY = LINE + " Pick the campaign:"
+LABEL_MAX = 60  # a button label holds 80 characters; the 📥 and a margin
 
 
 # Whether importing is on for a server; the bot sets it at start (`DMBot.__init__`) so the card
@@ -54,19 +57,24 @@ def enabled(guild_id: int) -> bool:
     return _enabled_for(guild_id)
 
 
-def page_url(site_url: str) -> str:
-    """The import page on the configured website, or "" when there is none that Discord would
-    take (a link button needs an https address)."""
+def page_url(site_url: str, guild_id: int, campaign_id: str) -> str:
+    """This campaign's import page on the configured website, or "" when there is none that
+    Discord would take (a link button needs an https address). The page reads the campaign from
+    its address, so a bare page would open blank."""
     parts = urlsplit(site_url.strip())
     if parts.scheme.lower() != "https" or not parts.netloc:
         return ""
-    return f"https://{parts.netloc}{PAGE}"
+    return f"https://{parts.netloc}{PAGE}/{guild_id}.{campaign_id}"
 
 
-async def reply(interaction: discord.Interaction, *, is_dm: bool) -> None:
+MAX_LINKS = 5  # a message holds five buttons in a row
+
+
+async def reply(interaction: discord.Interaction, mine: Sequence[Campaign]) -> None:
     """The one private answer of the button and the command, in the order that tells a player
-    nothing: not a DM, then not switched on, then no website."""
-    if not is_dm:
+    nothing: not a DM (`mine` empty), then not switched on, then no website. One link button for
+    each campaign the person is a DM of (the command may find several)."""
+    if not mine:
         await interaction.response.send_message(ONLY_DM, ephemeral=True)
         return
     guild = interaction.guild
@@ -74,14 +82,18 @@ async def reply(interaction: discord.Interaction, *, is_dm: bool) -> None:
         await interaction.response.send_message(NOT_ON, ephemeral=True)
         return
     settings = getattr(interaction.client, "settings", None)
-    url = page_url(str(getattr(settings, "site_url", "") or ""))
-    if not url:
-        await interaction.response.send_message(NO_SITE, ephemeral=True)
-        return
+    site = str(getattr(settings, "site_url", "") or "")
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label=LINK_LABEL, emoji="📥", url=url))
+    for campaign in mine[:MAX_LINKS]:
+        url = page_url(site, guild.id, campaign.id)
+        if not url:
+            await interaction.response.send_message(NO_SITE, ephemeral=True)
+            return
+        label = LINK_LABEL if len(mine) == 1 else campaign.name[:LABEL_MAX]
+        view.add_item(discord.ui.Button(label=label, emoji="📥", url=url))
+    text = LINE if len(mine) == 1 else MANY
     await interaction.response.send_message(
-        LINE, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
     )
 
 
@@ -114,7 +126,10 @@ class ImportButton(
         set_log_context(guild_id=interaction.guild_id)
         store = getattr(interaction.client, "campaigns", None)
         campaign: Campaign | None = None
-        if interaction.guild is not None and store is not None:
+        if interaction.guild is None:
+            await interaction.response.send_message(NOT_IN_SERVER, ephemeral=True)
+            return
+        if store is not None:
             try:
                 campaign = await store.get(interaction.guild.id, self.campaign_id)
             except Exception:
@@ -124,4 +139,4 @@ class ImportButton(
         if campaign is None:
             await interaction.response.send_message(GONE, ephemeral=True)
             return
-        await reply(interaction, is_dm=interaction.user.id in campaign.dm_user_ids)
+        await reply(interaction, [campaign] if interaction.user.id in campaign.dm_user_ids else [])

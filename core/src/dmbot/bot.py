@@ -1452,9 +1452,7 @@ class DMBot(commands.AutoShardedBot):
         # how long transcripts are kept (#1533); named one by one so the registration test sees them
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
         self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
-        import_button.use_switch(
-            self.settings.imports_enabled_for
-        )  # (hidden where off)
+        import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
