@@ -3,7 +3,7 @@ import LegalPage from "../../components/LegalPage.astro";
 import { SUPPORT_AI_LIVE, anthropicAddition, privacyParagraph } from "../../content/support-words";
 import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
-import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
+import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
 import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
 import {
@@ -288,7 +288,7 @@ import {
   </p>
 
   <QabotPrivacy live={QABOT_LIVE} />
-  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} />
+  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} share={RECAP_SHARE_LIVE} />
 
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>

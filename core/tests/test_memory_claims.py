@@ -515,7 +515,7 @@ class Stored(ConfirmedMemoryTest):
         await self.propose(said("Bram", "knows", "Chapel"))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         await self.memory.set_entity_type(GUILD_A, self.c, self.chapel, "place", source="dm")
-        await self.memory.rename_entity(GUILD_A, self.c, self.chapel, "Old chapel", source="dm")
+        await self.add("Chapel", type="place")  # a second one: the name is now ambiguous
         with self.assertRaises(MemoryRuleError):
             await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         (still,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)

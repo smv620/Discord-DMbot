@@ -34,6 +34,8 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/account/homebrew", "account/homebrew.astro", "Homebrew · DMbot", true],
   ["/account/house-rules", "account/house-rules.astro", "House rules · DMbot", true],
   ["/account/transcripts", "account/transcripts.astro", "Session transcripts · DMbot", true],
+  ["/account/import", "account/import.astro", "Import sessions · DMbot", true],
+  ["/r", "r.astro", "A shared recap · DMbot", true],
   ["/legal/terms", "legal/terms.astro", "Terms of use · DMbot", false],
   ["/legal/privacy", "legal/privacy.astro", "Privacy · DMbot", false],
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],

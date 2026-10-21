@@ -163,6 +163,21 @@ class WaitingQuestionStore:
     async def count(self, guild_id: int, campaign_id: str) -> int:
         return len(await self.waiting(guild_id, campaign_id))
 
+    async def count_for_session(self, guild_id: int, session_id: str) -> int:
+        """How many of this session's questions are still open (the recap waits for them, #2169).
+        Counted in the database, not read line by line: a count is all that is asked. A question
+        left a week expires quietly (EXPIRE_S) and stops counting, so it may release a held
+        recap: the DM is never kept waiting on a question the bot itself has dropped (owner
+        ruling via Supervisor, #2173)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM waiting_name_questions"
+                " WHERE session_id = %s AND state = %s AND created_at > %s",
+                (session_id, OPEN, int(self._now()) - EXPIRE_S),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def get(self, guild_id: int, question_id: int) -> Waiting | None:
         """One open question with its line as it reads now, or None (answered, expired, gone)."""
         async with self._db.guild(guild_id) as conn:

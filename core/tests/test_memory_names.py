@@ -344,9 +344,12 @@ class NameCards(NamesTest):
         text = it.response.edited[0][0]  # the card, redrawn in place, read fresh
         self.assertIn("Now spelled **Bellaros**", text)
         self.assertIn("🪪 **Bellaros**", text)
+        self.assertIn("Belleros (old spelling)", text)  # the card says what it is
         keys = {a.key for a in await self.memory.aliases(GUILD, self.campaign.id)}
         self.assertIn("bellaros", keys)
-        self.assertNotIn("belleros", keys)
+        self.assertIn("belleros", keys)  # kept as an "old spelling" (#2170)
+        old = [a for a in await self.memory.aliases(GUILD, self.campaign.id) if a.key == "belleros"]
+        self.assertEqual([a.kind for a in old], ["old"])
 
     async def test_the_narrators_spelling_is_asked_only_when_spoken_recaps_are_on(self) -> None:
         from dmbot.ui import name_card
@@ -2402,6 +2405,109 @@ class Review(NamesTest):
         self.assertIn("**Bellaros** is now a name for **Belleros**", it.response.edited[-1][0])
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
+
+    async def spelled(self, name: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name=name, source="scan",
+            description=ui.SPELLED_OUT,
+        )  # fmt: skip
+        return written.value.id
+
+    async def test_a_spelled_out_name_says_so_and_offers_to_fix_the_known_spelling(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("· spelled out at the table", text)
+        self.assertIn("Same name, spelled **Rothgar**? Or a new name?", text)
+        labels = [b.label for b in kw["view"].children]
+        self.assertIn("✏️ Fix spelling", labels)
+        self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
+
+    async def test_fixing_the_spelling_makes_the_spelled_name_the_main_name(self) -> None:
+        hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it0 = self.it()
+        await ui.start_review(it0, self.campaign.id)
+        view = it0.response.sent[0][1]["view"]
+        await view._fix_spelling(self.it())
+        entity = await self.memory.entity(GUILD, self.campaign.id, hrothgar.id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Rothgar")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
+        self.assertIn("hrothgar", {a.key for a in aliases})  # the old spelling is still a name
+
+    async def test_a_pending_suggestion_someone_spelled_out_offers_to_fix_its_spelling(
+        self,
+    ) -> None:
+        brenoch = await self.suggest("Brenoch")
+        await self.memory.set_note(
+            GUILD, self.campaign.id, brenoch, f"{ui.SPELLED_OUT}: Brannoch", source="scan"
+        )
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Someone spelled it out: **Brannoch**", text)
+        labels = [b.label for b in kw["view"].children]
+        self.assertEqual(labels[0], "✏️ Fix spelling")
+        await kw["view"]._fix_pending(self.it())
+        entity = await self.memory.entity(GUILD, self.campaign.id, brenoch)
+        assert entity is not None
+        self.assertEqual((entity.name, entity.status), ("Brannoch", PROPOSED))  # still the DM's
+
+    async def test_a_spelling_said_at_the_table_reaches_the_pending_suggestion(self) -> None:
+        from dmbot.transcript.spelled import SpellingWatcher
+
+        brenoch = await self.suggest("Brenoch")
+        speller = 7
+        bot: Any = SimpleNamespace(
+            memory=self.memory,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+        )
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+            setattr(bot, name, getattr(DMBot, name).__get__(bot))
+        table = SimpleNamespace(
+            spelling=SpellingWatcher(),
+            spelled=[],
+            spelled_hints=(),
+            held_spelled={},
+            hint_parts=None,
+            guild_id=GUILD,
+            campaign_id=self.campaign.id,
+        )
+        for who, line in (
+            (1, "ask Brenoch"),
+            (1, "how do you spell that"),
+            (speller, "B R A N N O C H"),
+        ):
+            bot._note_spelling(table, who, line)
+        await bot.suggest_spelled(table)
+        waiting = await self.memory.entities(GUILD, self.campaign.id, statuses=[PROPOSED])
+        names = [e.name for e in waiting]
+        self.assertEqual(names, ["Brenoch"])  # no second entry
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Someone spelled it out: **Brannoch**", text)
+        self.assertEqual(text.count("Brannoch"), 1)  # shown once, not also as a "heard" note
+        self.assertEqual(kw["view"].children[0].label, "✏️ Fix spelling")
+        self.assertEqual(brenoch, waiting[0].id)
+
+    async def test_a_note_cannot_be_set_on_a_confirmed_name(self) -> None:
+        saved = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        entity_id = saved.id
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_note(
+                GUILD, self.campaign.id, entity_id, "Spelled out at the table: X", source="scan"
+            )
+
+    async def test_a_spelled_out_name_that_sounds_like_nothing_has_no_fix_button(self) -> None:
+        await self.spelled("Zorgul")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = [b.label for b in it.response.sent[0][1]["view"].children]
+        self.assertFalse(any("Fix spelling" in label for label in labels))
 
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:
         # #394: "Rothgar" sounds like the known Hrothgar
