@@ -409,7 +409,12 @@ class SessionStart(AtTheTable):
         sent: list[tuple[str, Any]] = []
 
         async def post(
-            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
         ) -> bool:
             sent.append((text, view))
             return True
