@@ -160,6 +160,58 @@ class TheReader(unittest.TestCase):
         )
         self.assertEqual(again[0].secret, ("Brother Aldric", "Aldric"))
 
+    def test_the_fold_reaches_the_top_of_a_chain_and_keeps_to_the_rules(self) -> None:
+        def entry(name: str, *also: str, secret: tuple[str, ...] = ()) -> bg.Found:
+            return bg.Found(name, "npc", also, secret, "")
+
+        # a chain: Brother Aldric is Vecnor's disguise, Vecnor is Mira's; the spellings go up
+        chain = bg.merge(
+            [
+                [
+                    entry("Brother Aldric", "Aldric", secret=("The Lich",)),
+                    entry("Vecnor", "Vec", secret=("Brother Aldric",)),
+                    entry("Mira", secret=("Vecnor",)),
+                ]
+            ],
+            (),
+        )
+        self.assertEqual([f.name for f in chain], ["Brother Aldric", "Mira"])
+        self.assertEqual(chain[1].secret, ("Vecnor", "Vec"))
+        # a spelling DMbot already has is left out, and another entry's own name is not taken
+        cut = bg.merge(
+            [
+                [
+                    entry("Vecnor", secret=("Brother Aldric",)),
+                    entry("Brother Aldric", "Aldric", "Mira", "Known"),
+                    entry("Mira"),
+                ]
+            ],
+            ("Known",),
+        )
+        self.assertEqual([f.name for f in cut], ["Vecnor", "Mira"])
+        self.assertEqual(cut[0].secret, ("Brother Aldric", "Aldric"))
+        # the secrets stay within the limit, the existing ones first
+        many = bg.merge(
+            [
+                [
+                    entry("Vecnor", secret=("Brother Aldric",)),
+                    entry("Brother Aldric", *(f"Alias{n}" for n in range(30))),
+                ]
+            ],
+            (),
+        )
+        self.assertEqual(len(many[0].secret), bg.MAX_ALSO)
+        self.assertEqual(many[0].secret[0], "Brother Aldric")
+
+    def test_a_holder_cut_by_the_cap_takes_its_folded_spellings_with_it(self) -> None:
+        found = [
+            bg.Found("Zed", "npc", (), (), ""),
+            bg.Found("Vecnor", "npc", (), ("Brother Aldric",), ""),
+            bg.Found("Brother Aldric", "npc", ("Aldric",), (), ""),
+        ]
+        merged = bg.merge([found], (), cap=1)
+        self.assertEqual([(f.name, f.secret) for f in merged], [("Zed", ())])
+
     def test_a_folded_disguise_takes_no_slot_so_the_cap_never_drops_its_holder(self) -> None:
         def entry(name: str, *secret: str) -> bg.Found:
             return bg.Found(name, "npc", (), secret, "")

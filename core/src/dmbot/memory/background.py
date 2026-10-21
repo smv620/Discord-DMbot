@@ -239,7 +239,9 @@ def merge(
     rules: tuple[str, str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
-    leaving out names DMbot already has, ordinary words and game terms, at most `cap`. `rules`
+    leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
+    that is a disguise of another entry folds into it, and its other spellings become that
+    entry's secret spellings. `rules`
     (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
@@ -313,19 +315,20 @@ def merge(
     # cost its holder one. A holder that is cut takes its folded disguise's spellings with it.
     folded = [f for f in out if not kept_keys[name_key(f.name)]]
     out = [f for f in out if kept_keys[name_key(f.name)]][:cap]
-    # A folded entry's other spellings name the same disguise, so they join its holder as
-    # secret spellings (never public ones): "Brother Aldric also [Aldric]" folded into Vecnor
-    # leaves Vecnor holding "Aldric" in secret. A loop is allowed to leave a kept entry as
-    # another kept entry's secret too (Vecnor is an entry and Mira's secret): every name is
-    # then somewhere, and nothing is lost to the fold.
+    # A folded entry's other spellings (its secret ones too) name the same disguise, so they join
+    # its holder as secret spellings, never public ones and never another entry's own name:
+    # "Brother Aldric also [Aldric]" folded into Vecnor leaves Vecnor holding "Aldric" in secret.
+    # A loop is allowed to leave a kept entry as another kept entry's secret too (Vecnor is an
+    # entry and Mira's secret): every name is then somewhere, and nothing is lost to the fold.
     extra: dict[str, list[str]] = {}
     for f in folded:
         above = holder.get(name_key(f.name))
         if above is not None:
-            extra.setdefault(above, []).extend(f.also)
+            extra.setdefault(above, []).extend((*f.also, *f.secret))
     joined: list[Found] = []
+    entry_names = {name_key(f.name) for f in out}  # another entry's own name stays that entry's
     for f in out:
-        have = {name_key(x) for x in (f.name, *f.also, *f.secret)}
+        have = {name_key(x) for x in (f.name, *f.also, *f.secret)} | entry_names
         more: list[str] = []
         for a in extra.get(name_key(f.name), ()):
             if name_key(a) not in have and name_key(a) not in skip:
