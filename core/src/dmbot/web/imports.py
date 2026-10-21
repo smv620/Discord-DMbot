@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import math
 import re
 import uuid
@@ -34,8 +35,11 @@ from dmbot.transcript import import_link, importer
 from dmbot.transcript import import_plan as ip
 from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
+from dmbot.web import recap_choices
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+
+log = logging.getLogger(__name__)
 
 MAX_FILES = 20
 MAX_BYTES = 2 * 1024 * 1024
@@ -249,6 +253,61 @@ async def _plan_allows(db: Database, owner: int | None, now: int, *, enforce_pla
     )
 
 
+async def recap_facts(
+    db: Database,
+    session: Session,
+    ref: str,
+    c: Campaign,
+    *,
+    site_recaps_on: bool,
+    now: int,
+    enforce_plans: bool,
+) -> dict[str, Any]:
+    """Whether a recap can be written for this campaign, for the import page's tick (#2225): the
+    same gates the bot runs for an imported session (`_import_recap`), in the same order, read
+    without spending anything. `recapsPossible`; when it is false, `recapsWhy` is one of `off`
+    (switched off for the server), `campaign_off` (the DM turned recaps off), `plan` (the owner's
+    plan has none). The bot's fourth reason, a campaign with no DM, cannot happen here: the
+    person asking is a DM of the campaign, and the door checked it. The page only learns whether to
+    offer the tick: a check that cannot be made (a database hiccup) hides it, with no reason,
+    rather than failing the import page; and the bot's own engine being absent is not known here,
+    so a tick may still be offered that the bot does not honour (it says so on the DM screen).
+    `recapsWhy` is absent when a recap is possible."""
+    try:
+        return await _recap_facts(
+            db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
+        )
+    except Exception:
+        log.exception("Import: couldn't tell whether a recap can be written")
+        return {"recapsPossible": False}
+
+
+async def _recap_facts(
+    db: Database,
+    session: Session,
+    ref: str,
+    c: Campaign,
+    *,
+    site_recaps_on: bool,
+    now: int,
+    enforce_plans: bool,
+) -> dict[str, Any]:
+    if not site_recaps_on:
+        return {"recapsPossible": False, "recapsWhy": "off"}
+    choices = await recap_choices.read_choices(
+        db, session, ref, now=now, enforce_plans=enforce_plans
+    )
+    if not choices["text"]:
+        return {"recapsPossible": False, "recapsWhy": "campaign_off"}
+    if enforce_plans:
+        access = None
+        if c.owner is not None:  # (a campaign with no owner has no plan, as for the bot)
+            _plan, _grant, access = await plan_grant_access(db, c.owner, now)
+        if not plan_rules.allowed(plan_rules.RULE_OF["recap"], access):
+            return {"recapsPossible": False, "recapsWhy": "plan"}
+    return {"recapsPossible": True}
+
+
 def estimate(files: Sequence[File], kept: Mapping[str, int] | None = None) -> dict[str, int]:
     """Roughly how many fast-tier calls the off-topic labelling will make: one for each window of
     lines (`topics.WINDOW_LINES`). The cleaning of names makes no call."""
@@ -338,9 +397,10 @@ async def preview(
     outside: str | None,
     now: int,
     enforce_plans: bool,
+    site_recaps_on: bool = False,  # (false hides the tick: the app always passes the real switch)
 ) -> dict[str, Any]:
     """What is in the files: format, date, speakers with their line counts and a suggested member
-    for each. Stores nothing."""
+    for each, and whether a recap can be written for the campaign. Stores nothing."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
@@ -361,7 +421,10 @@ async def preview(
                         {"label": s.label, "lines": s.lines, "suggested": seen[s.label]}
                     )
             out.append(view)
-    return {"files": out, "estimate": estimate(files)}
+    facts = await recap_facts(
+        db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
+    )
+    return {"files": out, "estimate": estimate(files), **facts}
 
 
 async def _suggest(
@@ -480,6 +543,7 @@ async def confirm(
     outside: str | None,
     now: int,
     enforce_plans: bool,
+    site_recaps_on: bool = False,
 ) -> dict[str, Any]:
     """Store the sessions. Everything is checked before anything is stored, and all the files are
     stored in one transaction: all of them, or none."""
@@ -492,12 +556,17 @@ async def confirm(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    # Asked before anything is stored: an answer that cannot be had never fails a stored import.
+    facts = await recap_facts(
+        db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
+    )
     files = await read_files_off_loop(raw_files, links)
     if len(entries) > len(files):
         raise RecapError("bad_files")  # one session for each file, no more
     by_name = {f.name: f for f in files}
     plans = _plans(files, mapping, c)
     chosen: list[tuple[File, ip.Plan, int]] = []
+    recaps_on: dict[str, bool] = {}  # the DM's "Write recaps" choice for each file (#2106)
     named: set[str] = set()
     for entry in entries:
         name = entry.get("file") if isinstance(entry, dict) else None
@@ -509,8 +578,9 @@ async def confirm(
         if plan.kept == 0:
             raise RecapError("no_lines_kept")
         chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
+        recaps_on[found.name] = entry.get("writeRecap") is True  # only a plain true counts
     batch = uuid.uuid4().hex
-    stored: list[dict[str, str]] = []
+    stored: list[dict[str, str | bool]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         for f, plan, started in chosen:
@@ -541,7 +611,16 @@ async def confirm(
                 raise RecapError("not_a_dm")
             if not done["session"]:
                 raise RecapError("no_lines_kept")
-            stored.append({"file": f.name, "state": "waiting"})
+            if recaps_on.get(f.name):
+                cur = await conn.execute(
+                    "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                    (c.guild_id, c.campaign_id, done["session"]),
+                )
+                if not (await cur.fetchone() or {}).get("r"):
+                    raise RecapError("not_a_dm")
+            stored.append(
+                {"file": f.name, "state": "waiting", "writeRecap": recaps_on.get(f.name, False)}
+            )
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered, outside)
@@ -549,6 +628,7 @@ async def confirm(
         "importId": batch,
         "sessions": stored,
         "estimate": estimate([f for f, _, _ in chosen], {f.name: p.kept for f, p, _ in chosen}),
+        **facts,
     }
 
 
@@ -577,6 +657,13 @@ async def progress(
                 "date": dt.datetime.fromtimestamp(int(s["date"]), dt.UTC).date().isoformat(),
                 "state": s["state"],
                 "reason": s["reason"] or None,
+                # Where it has got to, for the page's progress: cleaning, checking_names,
+                # finding_names (held while names are found, nothing to answer yet),
+                # waiting_for_names, starting_recap, writing_recap, recap_ready, recap_failed,
+                # recap_not_written, done or failed.
+                "stage": s["stage"],
+                "namesToAnswer": int(s["namesToAnswer"]),
+                "namesUnchecked": bool(s["namesUnchecked"]),
                 "recap": None,
             }
             for s in found

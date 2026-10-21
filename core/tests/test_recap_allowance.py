@@ -90,6 +90,10 @@ class TheWebSettings(unittest.TestCase):
         }
         got = load_web_settings({**needed, "DMBOT_RECAPS_PER_MONTH": "4"})
         self.assertEqual((got.recaps_per_month, got.recap_audio_per_month), (4, 8))
+        self.assertFalse(got.recaps_on)  # off unless the bot's switch is on (#2225)
+        for on in ("1", "true", "ON"):
+            self.assertTrue(load_web_settings({**needed, "DMBOT_RECAPS": on}).recaps_on)
+        self.assertFalse(load_web_settings({**needed, "DMBOT_RECAPS": "0"}).recaps_on)
         for bad in ("0", "1001", "x"):
             with self.assertRaises(ConfigError):
                 load_web_settings({**needed, "DMBOT_RECAP_AUDIO_PER_MONTH": bad})
