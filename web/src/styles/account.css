@@ -501,3 +501,25 @@
   padding: 0.6rem 0;
   display: list-item;
 }
+
+/* A shared recap (#2119), in the look of the recap test review page the owner liked: a serif
+   reading text on quiet cards. */
+.public-recap {
+  max-width: 42rem;
+  margin: 0 auto;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+.public-recap h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+}
+.public-recap .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-block: var(--space-4);
+  overflow-wrap: anywhere;
+}

@@ -80,7 +80,8 @@ describe("structure", () => {
     levels.forEach((level, i) => {
       if (i > 0) expect(level, `heading ${i} after ${levels[i - 1]}`).toBeLessThanOrEqual(levels[i - 1]! + 1);
     });
-    for (const landmark of ["header", "nav", "main", "footer"]) {
+    // A shared recap (/r) is a bare page for someone who was only sent a link: no menu, no footer.
+    for (const landmark of path === "/r" ? ["main"] : ["header", "nav", "main", "footer"]) {
       expect(doc.querySelector(landmark), landmark).not.toBeNull();
     }
     // The first thing a keyboard user reaches skips to the page.

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -704,12 +705,25 @@ class RecapStore:
             )
             return bool(cur.rowcount)
 
-    async def decide(self, guild_id: int, campaign_id: str, session_at: int, action: str) -> bool:
+    async def decide(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        action: str,
+        *,
+        require_approved: bool = False,
+    ) -> bool:
         """The DM's choice made on the DM screen (#1455), the same two moves the website's page
         makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
         checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
         if action == "post":
             sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            if require_approved:  # the text as it is now is the text the DM approved, in SQL
+                sql += (
+                    " AND approved_hash = encode(sha256(convert_to("
+                    "title || E'\\n' || summary, 'UTF8')), 'hex')"
+                )
         elif action == "drop":
             sql = "status = 'dropped' WHERE status = 'draft'"
         else:
@@ -721,6 +735,38 @@ class RecapStore:
                 (guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
+
+    async def recent(
+        self, guild_id: int, campaign_id: str, limit: int = 25
+    ) -> list[tuple[int, str, str]]:
+        """(session_at, title, status) of the campaign's ready recaps, newest first: the list
+        "Share a recap" picks from (#2118). Dropped ones are left out; drafts are listed because
+        sharing one counts as posting it."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, title, status FROM recap_jobs WHERE guild_id = %s"
+                " AND campaign_id = %s AND state = 'ready' AND status IN ('draft', 'posted')"
+                " ORDER BY session_at DESC LIMIT %s",
+                (guild_id, campaign_id, max(1, min(limit, 25))),
+            )
+            return [(int(r["session_at"]), r["title"], r["status"]) for r in await cur.fetchall()]
+
+    async def share_token(
+        self, guild_id: int, campaign_id: str, session_at: int, *, new: bool = False
+    ) -> str | None:
+        """The public link's token for a POSTED recap, made on first use (or replaced with
+        `new`), the same column the website's share door writes. None: it isn't posted. The token
+        is a secret link: it is returned, never logged."""
+        fresh = secrets.token_urlsafe(32)  # 43 URL-safe characters, 256 bits
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET share_token = CASE WHEN %s OR share_token IS NULL"
+                " THEN %s ELSE share_token END WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND status = 'posted' RETURNING share_token",
+                (new, fresh, guild_id, campaign_id, session_at),
+            )
+            row = await cur.fetchone()
+        return None if row is None else str(row["share_token"])
 
     async def latest_draft(self, guild_id: int, campaign_id: str) -> Job | None:
         """The newest recap that is ready and not yet posted or skipped: the one a DM's spoken
