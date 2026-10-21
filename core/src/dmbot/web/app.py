@@ -100,6 +100,7 @@ from dmbot.web.recaps import (
     read_recap,
     share_recap,
 )
+from dmbot.web.return_path import safe_return_path
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 from dmbot.web.support_ai import SupportHelper
@@ -197,6 +198,8 @@ def create_app(
     session_cookie = f"{prefix}dmbot_session"
     state_cookie = f"{prefix}dmbot_signin"
     install_cookie = f"{prefix}dmbot_install"
+    # The page a signed-out person asked for (#2301), kept just long enough to come back to it.
+    return_cookie = f"{prefix}dmbot_signin_next"
     account_page = f"{settings.site_url}/account"
 
     def limit_key(address: str) -> str:
@@ -303,7 +306,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/auth/discord/start")
-    async def sign_in_start() -> Response:
+    async def sign_in_start(request: Request) -> Response:
         state = sessions.new_state(settings.secret_key, clock())
         response = RedirectResponse(
             discord.authorize_url(state, settings.oauth_redirect_uri), status_code=302
@@ -317,6 +320,19 @@ def create_app(
             httponly=True,
             samesite="lax",
         )
+        back = safe_return_path(request.query_params.get("next"))
+        if back is not None:
+            response.set_cookie(
+                return_cookie,
+                back,
+                max_age=sessions.STATE_SECONDS,
+                path="/",
+                secure=settings.secure_cookies,
+                httponly=True,
+                samesite="lax",
+            )
+        else:
+            response.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         return response
 
     @app.get("/auth/discord/callback")
@@ -326,6 +342,7 @@ def create_app(
         code = request.query_params.get("code", "")
         failed = RedirectResponse(f"{account_page}?signin=failed", status_code=302)
         failed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+        failed.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         cookie = request.cookies.get(state_cookie)
         if not code or not sessions.state_ok(settings.secret_key, state, cookie, clock()):
             return failed
@@ -344,6 +361,7 @@ def create_app(
             # This Discord account's plan moved to another one (#1230): say so plainly.
             moved = RedirectResponse(f"{account_page}?signin=moved", status_code=302)
             moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            moved.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
             return moved
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
@@ -357,8 +375,14 @@ def create_app(
                 except DiscordError as exc:
                     log.warning("Couldn't revoke a Discord sign-in token: %s", exc)
         log.info("Signed in: user %s", user.id)
-        response = RedirectResponse(account_page, status_code=302)
+        # Back to the page they asked for, checked again here: the cookie is only ever a hint, and
+        # the address is always built on the site's own.
+        back = safe_return_path(request.cookies.get(return_cookie))
+        response = RedirectResponse(
+            f"{settings.site_url}{back}" if back is not None else account_page, status_code=302
+        )
         response.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+        response.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         set_session_cookie(response, session_token)
         return response
 

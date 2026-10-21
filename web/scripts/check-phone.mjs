@@ -146,6 +146,7 @@ const pages = [
   ["recap list", "/account/recaps?demo=table"],
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
   ["transcripts", "/account/transcripts?demo=table"],
+  ["transcripts, signed out (the line at the top)", "/account/transcripts?demo=signed-out"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
   ["import: the chosen files, each with Remove", "/account/import/100.cmp1?demo=table", async (page) => {
     await page.setInputFiles('input[type="file"]', [

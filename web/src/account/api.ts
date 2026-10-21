@@ -1080,7 +1080,12 @@ export function httpApi(
         throw error;
       }
     },
-    signInUrl: () => `${root}/auth/discord/start`,
+    // Back to the page the person is on after Discord (#2301). Only an /account page is sent: the
+    // API checks the same rule again, so this is a courtesy, not the guard.
+    signInUrl: () => {
+      const here = typeof window === "undefined" ? "" : window.location.pathname;
+      return `${root}/auth/discord/start${here.startsWith("/account") ? `?next=${encodeURIComponent(here)}` : ""}`;
+    },
     signOut: async () => {
       await call("POST", "/auth/logout");
     },
