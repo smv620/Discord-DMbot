@@ -41,11 +41,8 @@ async def load_inputs(
     except Exception:
         log.exception("Recap: couldn't load the campaign's names")
         return None
-    found = [
-        s
-        for s in await transcripts.sessions(guild_id, campaign_id, limit=1000)
-        if s.started_at == session_at
-    ]
+    sessions = await transcripts.sessions(guild_id, campaign_id, limit=1000)
+    found = [s for s in sessions if s.started_at == session_at]
     if not found:
         return None
     lines = await transcripts.lines(guild_id, found[0].id)
@@ -61,10 +58,8 @@ async def load_inputs(
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,
-        # The next of the ten closing lines after last time's recap's (#2253).
-        ending=fixed_lines.next_ending(
-            fixed_lines.ending_of(bridge.summary) if bridge is not None else None
-        ),
+        # Which of the ten closing lines: by this session's place in the campaign (#2253).
+        ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
         # The campaign's example recaps, or the defaults: for the writer's tone only (#2075).
         style=await styles.examples_for(guild_id, campaign_id) if styles is not None else (),

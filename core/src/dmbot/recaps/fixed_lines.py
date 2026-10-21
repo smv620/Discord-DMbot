@@ -1,15 +1,14 @@
 """The fixed opening and closing lines of every recap DMbot writes (#2253).
 
 A recap opens with "Previously, on <campaign>…" and closes with "And so we continue, the <epic
-adventure> of <campaign>." (one of ten endings, rotating per campaign: each recap takes the next
-after the previous recap's, so two in a row end differently) so that next session, when the DM or
-a player reads it aloud, DMbot can find it in the transcript and not retell it as news. The lines
-are added by code after the writer and every check are done, so they are never a beat, never a
-claim, and never counted in the length target or the word count; the narration says them because
-they are part of the text. Only the
-campaign's display name is used, and never a secret one: a name that is (or contains) a secret name
-is left out, and the lines go without it. A recap already written is not changed (nothing here runs
-on one), and wrapping twice changes nothing.
+adventure> of <campaign>." (one of ten endings; a recap takes the one that fits its place in the
+campaign, so two in a row end differently) so that next session, when the DM or a player reads it
+aloud, DMbot can find it in the transcript and not retell it as news. The lines are added by code
+after the writer and every check are done, so they are never a beat, never a claim, and never
+counted in the length target or the word count; the narration says them because they are part of
+the text. Only the campaign's display name is used, and never a secret one: a name that is (or
+contains) a secret name is left out, and the lines go without it. A recap already written is not
+changed (nothing here runs on one), and wrapping twice changes nothing.
 """
 
 from __future__ import annotations
@@ -46,10 +45,10 @@ _DOTS = re.compile(r"…|\.{2,}")
 # ellipsis (three dots too, since a DM may retype it), and the closing the last paragraph.
 _OPENS = re.compile(r"\A\s*Previously(?:,\s+on [^\n]{1,200}?)?(?:…|\.{3})[ \t]*(?:\n\s*\n|\Z)")
 # The closing is found by its shape, loosely ("and so we continue … of <name>."), so any of the ten
-# endings, a garbled one and the first draft's wording are all taken for it. It must be the last
+# endings and a garbled one are all taken for it. It must be the last
 # paragraph and stay on one line.
 _CLOSES = re.compile(
-    r"(?:\A|\n\s*\n)[ \t]*And so (?:we|the party) continues?\b[^\n]{0,300}?[.!…][ \t]*\Z",
+    r"(?:\A|\n\s*\n)[ \t]*And so we continue\b[^\n]{0,300}?[.!…][ \t]*\Z",
     re.IGNORECASE,
 )
 
@@ -65,23 +64,12 @@ def usable_name(name: str, secret_names: Collection[str]) -> str:
     return clean
 
 
-def ending_of(summary: str) -> int | None:
-    """Which of the ten endings a recap closes with (its place in ENDINGS), or None when it has no
-    closing line or a garbled one: the next recap then starts the rotation again."""
-    found = _CLOSES.search(summary.strip())
-    if found is None:
-        return None
-    text = found.group().lower()
-    # (Longest first so "epic adventure" is not read as a shorter variant's tail.)
-    for index in sorted(range(len(ENDINGS)), key=lambda i: -len(ENDINGS[i])):
-        if f"the {ENDINGS[index]}" in text:
-            return index
-    return None
-
-
-def next_ending(last: int | None) -> int:
-    """The ending after the previous recap's; the first for a campaign's first recap."""
-    return 0 if last is None else (last + 1) % len(ENDINGS)
+def ending_for(earlier_sessions: int) -> int:
+    """Which ending a recap takes: the number of earlier sessions in the campaign, round the ten.
+    Worked out from the campaign's own sessions and not from the last posted recap, so an imported
+    session or a draft never repeats an ending, a rewrite keeps its own, and two recaps made at
+    once cannot clash."""
+    return max(0, earlier_sessions) % len(ENDINGS)
 
 
 def lines(name: str, secret_names: Collection[str] = (), ending: int = 0) -> tuple[str, str]:
