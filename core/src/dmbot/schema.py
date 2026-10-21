@@ -7991,6 +7991,25 @@ IMPORT_SUGGEST = r"""
     REVOKE ALL ON FUNCTION dmbot_import_suggest(BIGINT, TEXT, JSONB, INT, TEXT) FROM PUBLIC;
 """
 
+HOUSE_RULE_WINS = f"""
+    -- Which of two house rules that disagree wins (#2284), decided by the DM. A side is a rule
+    -- of the campaign's own (`*_set` empty) or a rule of a set it follows (the set's name and
+    -- the rule's number in it). The pair is stored once, the smaller side first, and `winner`
+    -- says which side wins. Per campaign, deleted with it, carried in backups.
+    CREATE TABLE house_rule_wins (
+        {_memory_scope()}
+        a_set       TEXT NOT NULL DEFAULT '',
+        a_number    INTEGER NOT NULL CHECK (a_number > 0),
+        b_set       TEXT NOT NULL DEFAULT '',
+        b_number    INTEGER NOT NULL CHECK (b_number > 0),
+        winner      TEXT NOT NULL CHECK (winner IN ('a', 'b')),
+        decided_by  BIGINT NOT NULL,
+        decided_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_set, a_number, b_set, b_number),
+        CHECK (a_set < b_set OR (a_set = b_set AND a_number < b_number))
+    );
+    """ + _isolate("house_rule_wins")
+
 RECAP_HOLDS = f"""
     -- A session's recap held until the DM has answered DMbot's name questions (#2169). A hold is
     -- a row here, not a job state: the recap job is made when the hold is released (the last
@@ -9114,6 +9133,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0158_recap_split", RECAP_SPLIT),  # a session's opening split into parts (#2253)
     ("0160_installs_left_except", INSTALLS_LEFT_EXCEPT),  # servers left while offline (#2166)
     ("0161_import_suggest", IMPORT_SUGGEST),  # who a name is, and who they play (#2135)
+    ("0164_house_rule_wins", HOUSE_RULE_WINS),  # which of two disagreeing rules wins (#2284)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -9131,6 +9151,7 @@ ISOLATED_TABLES = (
     "transcript_lines",
     "session_imports",
     "import_speakers",
+    "house_rule_wins",
     "member_directory",
     "transcript_suggestions",
     "waiting_name_questions",

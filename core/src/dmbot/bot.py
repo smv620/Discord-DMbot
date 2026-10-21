@@ -308,6 +308,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
+from dmbot.rules.wins import WinsSection
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -11482,6 +11483,7 @@ async def run(settings: Settings) -> None:
         homebrew_store, sources = HomebrewStore(db), SourceStore(db)
         campaigns.register_section(MemorySection())  # campaign memory goes in backups
         campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+        campaigns.register_section(WinsSection())  # and which disagreeing rule wins (#2284)
         campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
         campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
         campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
