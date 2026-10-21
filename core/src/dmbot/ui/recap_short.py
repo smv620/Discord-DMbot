@@ -24,6 +24,7 @@ EXPIRED_TELL = "This question has expired: a newer session has started. Nothing 
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
 WRITING = "Writing the recap."
 ALREADY = "Already being written."
+HELD = "Waiting for your answers about names."
 NONE_WRITTEN = "No recap written."
 
 _TEMPLATE = r"dmbot:recapask:(?P<act>go|skip):(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
@@ -94,7 +95,7 @@ class ShortRecapButton(
             if result == "refused":
                 await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
                 return
-            outcome = WRITING if result == "queued" else ALREADY
+            outcome = {"queued": WRITING, "held": HELD}.get(result, ALREADY)
         else:
             outcome = NONE_WRITTEN  # nothing is written and nothing is counted
         await self._close(interaction, outcome)

@@ -33,9 +33,7 @@ log = logging.getLogger(__name__)
 
 MAX_SUBJECT = 120
 MAX_MESSAGE = 4000
-# How many tickets the admin page lists at once, newest first. Kept short because the page looks
-# up each person's name with one query per person.
-LIST_LIMIT = 100
+PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -142,28 +140,49 @@ class Row:
     email: str | None
 
 
-async def newest(
-    db: Database, *, status: Status | None = None, limit: int = LIST_LIMIT
-) -> list[Row]:
-    """The tickets, newest first, for the admin page; only those with this status when one is
-    given (#1375). `status` is one of STATUSES (the route checks it); it goes in as a parameter."""
-    where, args = ("", (limit,)) if status is None else (" WHERE status = %s", (status, limit))
+async def page(
+    db: Database, *, status: Status | None, number: int, size: int = PAGE_SIZE
+) -> tuple[list[Row], int]:
+    """Page `number` (from 1) of the tickets with an optional status filter, and
+    the number of pages in that filtered list (at least one). Newest first, except "escalated":
+    that list is read longest-waiting first (since it was handed to a person, #1485), so the page
+    that matters is page 1. The count and the rows come from one statement, so they share a
+    snapshot; the count is joined to the page, so it comes back even for a page past the end
+    (#2211)."""
+    where = "" if status is None else " WHERE status = %s"
+    # The status goes in twice when there is one: for the count and for the page.
+    filter_args: tuple[object, ...] = () if status is None else (status,)
+    params = (*filter_args, *filter_args, size, (number - 1) * size)
+    if status == "escalated":
+        order = "COALESCE(handed_over_at, created_at), id"
+        outer = "COALESCE(t.handed_over_at, t.created_at) NULLS LAST, t.id NULLS LAST"
+    else:
+        order = "created_at DESC, id DESC"
+        outer = "t.created_at DESC NULLS LAST, t.id DESC NULLS LAST"
     async with db.support_admin() as conn:
         cur = await conn.execute(
+            "SELECT c.n, t.id, t.created_at, t.user_id, t.plan, t.subject, t.message, t.source,"
+            " t.status, t.reason, t.handed_over_at, t.email"
+            f" FROM (SELECT count(*) AS n FROM support_tickets{where}) c"
+            " LEFT JOIN LATERAL (SELECT id, created_at, user_id, plan, subject,"
             # The words come through a door function: the website's role has no right to the column.
-            # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
-            "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
             " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
-            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
-            args,
+            f" FROM support_tickets{where} ORDER BY {order}"
+            " LIMIT %s OFFSET %s) t ON true"
+            f" ORDER BY {outer}",
+            params,
         )
-        return [Row(**r) for r in await cur.fetchall()]
+        found = await cur.fetchall()
+    pages = max(1, -(-(int(found[0]["n"]) if found else 0) // size))
+    return [
+        Row(**{k: v for k, v in r.items() if k != "n"}) for r in found if r["id"] is not None
+    ], pages
 
 
 async def counts(db: Database) -> dict[Status, int]:
     """How many tickets have each status, for the filter buttons (#1375). Every status is there,
-    with 0 for none, and the counts cover all tickets, not just the newest LIST_LIMIT."""
+    with 0 for none, and the counts cover all tickets, not just the page shown."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
             "SELECT status, count(*) AS n FROM support_tickets GROUP BY status"

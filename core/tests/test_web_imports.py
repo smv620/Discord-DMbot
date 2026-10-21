@@ -104,7 +104,10 @@ class TheLinks(WithImports):
                 },
                 links=[self.DOC], **self.kw,
             )  # fmt: skip
-        self.assertEqual(done["sessions"], [{"file": "Google Doc 1.txt", "state": "waiting"}])
+        self.assertEqual(
+            done["sessions"],
+            [{"file": "Google Doc 1.txt", "state": "waiting", "writeRecap": False}],
+        )
         self.assertEqual(await self.sessions(), 1)
 
     async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
@@ -288,12 +291,71 @@ class TheStore(WithImports):
             {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 1}]},
             ("a.txt", CRAIG),
         )
-        self.assertEqual(done["sessions"], [{"file": "a.txt", "state": "waiting"}])
+        self.assertEqual(
+            done["sessions"], [{"file": "a.txt", "state": "waiting", "writeRecap": False}]
+        )
         (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
         lines = await self.transcripts.lines(THURSDAY.id, stored.id)
         self.assertEqual({line.user_id for line in lines}, {MIRA})
         self.assertEqual(len(lines), 2)
         self.assertEqual(stored.speakers, (MIRA,))
+
+    async def write_recap_of(self) -> dict[str, bool]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT file_name, write_recap FROM session_imports")
+            return {r["file_name"]: r["write_recap"] for r in await cur.fetchall()}
+
+    async def test_write_recaps_is_kept_for_the_sessions_the_dm_chose_only(self) -> None:
+        plan = {
+            "mapping": MAPPING,
+            "sessions": [
+                {"file": "a.txt", "date": "2026-09-14", "order": 1, "writeRecap": True},
+                {"file": "b.txt", "date": "2026-09-15", "order": 1},
+                {"file": "c.txt", "date": "2026-09-16", "order": 1, "writeRecap": "yes"},
+            ],
+        }
+        done = await self.confirm(plan, ("a.txt", CRAIG), ("b.txt", CRAIG), ("c.txt", CRAIG))
+        self.assertEqual(
+            {s["file"]: s["writeRecap"] for s in done["sessions"]},
+            {"a.txt": True, "b.txt": False, "c.txt": False},
+        )
+        self.assertEqual(
+            await self.write_recap_of(), {"a.txt": True, "b.txt": False, "c.txt": False}
+        )  # (only a plain true counts)
+
+    async def test_the_choice_door_is_for_a_dm_of_the_campaign_while_it_waits(self) -> None:
+        done = await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            ("a.txt", CRAIG),
+        )
+        (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        async with self.web.user(BOB.id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                (THURSDAY.id, self.one.id, stored.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertFalse(row["r"])  # not a DM of this campaign
+        self.assertEqual(await self.write_recap_of(), {"a.txt": False})
+        self.assertEqual(done["sessions"][0]["writeRecap"], False)
+        async with self.db.guild(THURSDAY.id) as conn:  # once it is being cleaned it is too late
+            await conn.execute("UPDATE session_imports SET state = 'working'")
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                (THURSDAY.id, self.one.id, stored.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertFalse(row["r"])
 
     async def test_the_door_drops_a_line_of_anyone_not_recorded_whatever_it_is_sent(self) -> None:
         sent = [

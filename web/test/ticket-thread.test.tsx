@@ -198,7 +198,7 @@ describe("the filter and the API call", () => {
       "All (7)",
     ]);
     fireEvent.click(screen.getByRole("button", { name: /^Needs the team/ }));
-    await waitFor(() => expect(api.tickets).toHaveBeenCalledWith("escalated"));
+    await waitFor(() => expect(api.tickets).toHaveBeenCalledWith("escalated", 1));
     expect(await screen.findByText(text.ticketsNoneFor.escalated!)).toBeTruthy();
   });
 
