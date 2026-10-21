@@ -2406,6 +2406,44 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
+    async def spelled(self, name: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name=name, source="scan",
+            description=ui.SPELLED_OUT,
+        )  # fmt: skip
+        return written.value.id
+
+    async def test_a_spelled_out_name_says_so_and_offers_to_fix_the_known_spelling(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("· spelled out at the table", text)
+        labels = [b.label for b in kw["view"].children]
+        self.assertIn("✏️ Spell it Rothgar", labels)
+        self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
+
+    async def test_fixing_the_spelling_makes_the_spelled_name_the_main_name(self) -> None:
+        hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.spelled("Rothgar")
+        it0 = self.it()
+        await ui.start_review(it0, self.campaign.id)
+        view = it0.response.sent[0][1]["view"]
+        await view._fix_spelling(self.it())
+        entity = await self.memory.entity(GUILD, self.campaign.id, hrothgar.id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Rothgar")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
+        self.assertIn("hrothgar", {a.key for a in aliases})  # the old spelling is still a name
+
+    async def test_a_spelled_out_name_that_sounds_like_nothing_has_no_fix_button(self) -> None:
+        await self.spelled("Zorgul")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = [b.label for b in it.response.sent[0][1]["view"].children]
+        self.assertFalse(any("Spell it" in label for label in labels))
+
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:
         # #394: "Rothgar" sounds like the known Hrothgar
         hrothgar = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])

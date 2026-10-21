@@ -829,6 +829,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
+SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 
@@ -910,6 +911,7 @@ class SuggestionReview(_Menu):
         self.queue = entity_ids
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
+        self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.also: list[str] = []  # names heard with the current one
         self._buttons()
 
@@ -927,6 +929,7 @@ class SuggestionReview(_Menu):
     ) -> str:
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
+        self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         own = name_key(entity.name)
         self.also = [
             a.text
@@ -944,6 +947,15 @@ class SuggestionReview(_Menu):
                 (self._yes, "➕ New name", discord.ButtonStyle.primary),
                 (self._same, "🔗 Another known name…", discord.ButtonStyle.secondary),
             ]
+            if self.spelled:  # someone spelled it out: offer to fix the known name's spelling
+                buttons.insert(
+                    1,
+                    (
+                        self._fix_spelling,
+                        logic.shorten(f"✏️ Spell it {self.spelled}", REVIEW_LABEL_MAX),
+                        discord.ButtonStyle.primary,
+                    ),
+                )
         else:
             buttons = [
                 (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
@@ -1114,6 +1126,29 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         await self._same_as(interaction, self.match.entity_id)
+
+    async def _fix_spelling(self, interaction: discord.Interaction) -> None:
+        """Someone spelled the name out at the table (#2168) and it sounds like a known name with
+        another spelling: the known name takes this spelling as its main name and keeps the old
+        spelling as another name (never listened for as a hint is #2170's rule for a fix; here it
+        stays an ordinary other name, as ⭐ does). Merging keeps its guards and can be undone."""
+        current = await self._current(interaction)
+        if current is None or self.match is None:
+            return
+        campaign, memory, entity = current
+        keep_id = self.match.entity_id
+        spelling = entity.name
+        await self._same_as(interaction, keep_id)
+        try:  # the merged-in spelling becomes the main name
+            for alias in await memory.aliases(campaign.guild_id, campaign.id, entity_id=keep_id):
+                if alias.key == name_key(spelling) and alias.status == CONFIRMED:
+                    await memory.set_main_name(
+                        campaign.guild_id, campaign.id, keep_id, alias.id, source=DM
+                    )
+                    changed(interaction, campaign)
+                    break
+        except MemoryRuleError:
+            log.info("Couldn't make a spelled-out name the main name")
 
     async def _same_as(self, interaction: discord.Interaction, keep_id: str) -> None:
         """The DM said the suggestion is the same as a known entry: its names (and any

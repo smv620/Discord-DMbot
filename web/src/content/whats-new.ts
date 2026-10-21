@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "Names spelled out at the table",
+    what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot listens for that spelling for the rest of the session and suggests it in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can fix that name's spelling in one press. Nothing changes until you say so, and secret names are never suggested to players.",
+    reason: "In review (#2168); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
     reason: "Waiting for review (#2132) and for dev1 to deploy it.",

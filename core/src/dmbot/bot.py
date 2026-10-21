@@ -247,6 +247,7 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
+from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
@@ -303,6 +304,7 @@ from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
+from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
@@ -378,6 +380,7 @@ from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import UndoButton, UndoConnectionButton
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
+    SPELLED_OUT,
     RecapNamesButton,
     ReviewButton,
     after_session_text,
@@ -424,6 +427,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
+SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
@@ -578,6 +582,12 @@ class Table:
     steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
+    # Names someone spelled out at the table this session (#2168): watched for in every cleaned
+    # line, kept as (spelling, whom it was said by, a word nearby that sounds like it) for the
+    # after-session suggestions, and as speech hints at once. Words only, never a line.
+    spelling: spelled_out.SpellingWatcher = field(default_factory=spelled_out.SpellingWatcher)
+    spelled: list[tuple[str, int, str]] = field(default_factory=list)
+    spelled_hints: tuple[str, ...] = ()
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
     # last read, the schedule, and the loop that runs it (cancelled at the end).
@@ -2514,6 +2524,7 @@ class DMBot(commands.AutoShardedBot):
             ("final transcript", channel),
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
+            ("spelled names", lambda: self.suggest_spelled(table)),
             ("name scan", lambda: self.suggest_names(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
@@ -4279,6 +4290,8 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
+        if text and self.tables.get(table.guild_id) is table:
+            self._note_spelling(table, utterance.user_id, str(cleaned or text))
         if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
@@ -7074,6 +7087,7 @@ class DMBot(commands.AutoShardedBot):
             people=people,
             absent=absent,
             sheet=table.sheet_hints,
+            spelled=table.spelled_hints,
         )
 
     async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople:
@@ -8382,6 +8396,63 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=cid):
             dms = {table.dm_user_id, *table.dm_user_ids}
             await self.memory.check_people(gid, cid, dms)
+
+    def _note_spelling(self, table: Table, user_id: int, line: str) -> None:
+        """A name spelled out at the table (#2168): the word becomes a speech hint at once (a hint
+        only, nothing says it is a name) and is kept for the end-of-session suggestion. The line is
+        from someone who agreed (the pipeline has just re-checked) and is not kept: only the word,
+        who said it and a nearby word that sounds like it. A secret name is neither hinted nor
+        suggested. The log gets counts only."""
+        found = table.spelling.note(user_id, line, time.monotonic())
+        if not found:
+            return
+        secret = table.hint_parts.secret if table.hint_parts is not None else frozenset()
+        for hit in found:
+            key = name_key(hit.word)
+            if key in secret or any(name_key(w) == key for w, _, _ in table.spelled):
+                continue
+            if len(table.spelled) >= SPELLED_MAX:
+                break
+            like = set(sound_codes(hit.word))
+            near = next(
+                (w for w in hit.near if name_key(w) != key and like & set(sound_codes(w))), ""
+            )
+            table.spelled.append((hit.word, user_id, near))
+            table.spelled_hints = (*table.spelled_hints, hit.word)[-SPELLED_MAX:]
+            log.info("Spelled out at the table: a name of %d letters", len(hit.word))
+
+    async def suggest_spelled(self, table: Table) -> None:
+        """After a session: the names spelled out at the table become suggestions for the DM to
+        check (#2168), marked "spelled out at the table". Only from people who still agree
+        (checked now, after the session), only a spelling DMbot does not already have, and
+        nothing changes without the DM. A spelling that sounds like a known name with a different
+        spelling is suggested all the same: the review shows which known name it sounds like."""
+        spelled = table.spelled
+        table.spelled = []
+        if self.memory is None or table.campaign_id is None or not spelled:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            known = set(await self.memory.known_keys(gid, cid))
+            added = 0
+            for word, user_id, _near in spelled:
+                if user_id not in agreed or name_key(word) in known:
+                    continue
+                try:
+                    await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=word,
+                        source="scan",
+                        description=SPELLED_OUT,
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a spelled-out name: %s", exc)
+                    continue
+                added += 1
+            log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
