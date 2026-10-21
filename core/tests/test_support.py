@@ -895,6 +895,35 @@ class SupportAdmin(SupportBase):
             self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
         self.assertEqual((await self.client.get("/admin/support?page=002")).json()["page"], 2)
 
+    async def test_needs_the_team_pages_longest_waiting_first(self) -> None:
+        """#1485 with pages: the ticket handed over longest ago is first, on page 1, not last."""
+        await self.many(25)
+        by_subject = {t["subject"]: t["id"] for t in await self.tickets()}
+        # Handed over in the reverse of the order they were sent: ticket 024 first (waited longest).
+        for n in range(25):
+            await support.escalate(self.web, by_subject[f"ticket {n:03d}"], "asked", self.now - n)
+        await self.sign_in()
+        first = (await self.client.get("/admin/support", params={"status": "escalated"})).json()
+        self.assertEqual((len(first["tickets"]), first["pages"]), (20, 2))
+        self.assertEqual(first["tickets"][0]["subject"], "ticket 024")
+        self.assertEqual(first["tickets"][-1]["subject"], "ticket 005")
+        second = (
+            await self.client.get("/admin/support", params={"status": "escalated", "page": 2})
+        ).json()
+        self.assertEqual(
+            [t["subject"] for t in second["tickets"]], [f"ticket {n:03d}" for n in range(4, -1, -1)]
+        )
+
+    async def test_tickets_sent_at_the_same_second_keep_one_order_across_a_page_edge(self) -> None:
+        for n in range(25):
+            await self.add_row(ALICE.id, self.now, f"same {n:03d}")  # one second, 25 tickets
+        await self.sign_in()
+        one = (await self.client.get("/admin/support")).json()["tickets"]
+        two = (await self.client.get("/admin/support", params={"page": 2})).json()["tickets"]
+        subjects = [t["subject"] for t in one + two]
+        self.assertEqual(len(set(subjects)), 25)  # none repeated or lost across the edge
+        self.assertEqual(subjects, sorted(subjects, reverse=True))  # newest id first
+
     async def test_exactly_twenty_tickets_is_one_page(self) -> None:
         await self.many(20)
         await self.sign_in()

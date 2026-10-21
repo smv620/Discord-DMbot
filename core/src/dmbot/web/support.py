@@ -33,8 +33,8 @@ log = logging.getLogger(__name__)
 
 MAX_SUBJECT = 120
 MAX_MESSAGE = 4000
-# How many tickets the admin page lists at once, newest first. Kept short because the page looks
-# up each person's name with one query per person.
+# How many tickets `newest` returns (tests and the older callers). The admin page reads them by
+# `page` instead, PAGE_SIZE at a time, and looks up each person's name with one query per person.
 LIST_LIMIT = 100
 PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
 
@@ -165,18 +165,22 @@ async def newest(
 async def page(
     db: Database, *, status: Status | None, number: int, size: int = PAGE_SIZE
 ) -> tuple[list[Row], int]:
-    """Page `number` (from 1) of the tickets, newest first, with the same optional status filter
-    as `newest`, and the number of pages in that filtered list (at least one). The count and the
-    rows come from one statement, so they share a snapshot; the count is joined to the page, so
-    it comes back even for a page past the end (#2211)."""
-    where, args = (
-        ("", (size, (number - 1) * size))
-        if status is None
-        else (
-            " WHERE status = %s",
-            (status, size, (number - 1) * size),
-        )
-    )
+    """Page `number` (from 1) of the tickets with the same optional status filter as `newest`, and
+    the number of pages in that filtered list (at least one). Newest first, except "escalated":
+    that list is read longest-waiting first (since it was handed to a person, #1485), so the page
+    that matters is page 1. The count and the rows come from one statement, so they share a
+    snapshot; the count is joined to the page, so it comes back even for a page past the end
+    (#2211)."""
+    where = "" if status is None else " WHERE status = %s"
+    # The status goes in twice when there is one: for the count and for the page.
+    filter_args: tuple[object, ...] = () if status is None else (status,)
+    params = (*filter_args, *filter_args, size, (number - 1) * size)
+    if status == "escalated":
+        order = "COALESCE(handed_over_at, created_at), id"
+        outer = "COALESCE(t.handed_over_at, t.created_at) NULLS LAST, t.id NULLS LAST"
+    else:
+        order = "created_at DESC, id DESC"
+        outer = "t.created_at DESC NULLS LAST, t.id DESC NULLS LAST"
     async with db.support_admin() as conn:
         cur = await conn.execute(
             "SELECT c.n, t.id, t.created_at, t.user_id, t.plan, t.subject, t.message, t.source,"
@@ -186,10 +190,10 @@ async def page(
             # The words come through a door function: the website's role has no right to the column.
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
             " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
-            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC"
+            f" FROM support_tickets{where} ORDER BY {order}"
             " LIMIT %s OFFSET %s) t ON true"
-            " ORDER BY t.created_at DESC NULLS LAST, t.id DESC NULLS LAST",
-            (*args[:-2], *args) if status is not None else args,
+            f" ORDER BY {outer}",
+            params,
         )
         found = await cur.fetchall()
     pages = max(1, -(-(int(found[0]["n"]) if found else 0) // size))

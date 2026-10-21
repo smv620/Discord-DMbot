@@ -445,7 +445,7 @@ def router(
             raise HTTPException(status_code=400, detail="bad_page")
         counts = await support.counts(db)
         this_week = await support.week(db, clock())
-        # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
+        # One lookup per distinct person, so a page is kept short (support.PAGE_SIZE).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
         threads = {
             r.id: await support.thread(db, r.id) for r in rows
