@@ -973,6 +973,52 @@ class NameCards(NamesTest):
         manager_view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [])
         self.assertFalse([c for c in manager_view.children if "secret" in getattr(c, "label", "")])
 
+    async def test_a_dm_flips_a_connection_between_secret_and_public_on_the_card(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(rel.secret)
+        view = name_card.Connect(
+            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
+        )
+        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        it = self.it()
+        await view._flip_picked(it)
+        self.assertIn("Now secret, players can't see it", it.response.edited[0][0])
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(now.secret)
+        view = name_card.Connect(
+            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
+        )
+        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        again = self.it()
+        await view._flip_picked(again)
+        self.assertIn("Players can see this again", again.response.edited[0][0])
+        (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(shown.secret)
+
+    async def test_only_a_dm_is_offered_the_flip_and_a_manager_pressing_it_changes_nothing(
+        self,
+    ) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        plain = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")])
+        self.assertFalse(hasattr(plain, "flip"))
+        view = name_card.Connect(
+            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
+        )
+        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        await view._flip_picked(self.it(MANAGER))  # (a press from someone who is not a DM)
+        (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertFalse(same.secret)
+
     async def test_connect_to_offers_the_toggle_only_to_a_dm(self) -> None:
         from dmbot.ui import name_card
 
@@ -1051,7 +1097,7 @@ class NameCards(NamesTest):
         from dmbot.ui import name_card
 
         view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
-        row = [getattr(c, "label", "") for c in view.children if c.row == 2]
+        row = [getattr(c, "label", "") for c in view.children if c.row == 3]
         self.assertEqual(row, ["Back", name_card.SECRET_OFF])
 
     async def test_a_name_found_through_a_secret_name_makes_it_secret_by_itself(self) -> None:
@@ -1079,7 +1125,31 @@ class NameCards(NamesTest):
         view.how = SimpleNamespace(values=["kin_of"])  # type: ignore[assignment]
         it = self.it()
         await view._how_picked(it)
-        self.assertTrue(it.response.modal.secret)
+        dropdown = it.response.edited[0][1]  # the name dropdown, not the typing form (#2321)
+        self.assertTrue(dropdown.secret)
+
+    async def test_picking_from_the_dropdown_connects_and_the_order_switch_works(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, vessa = await self.two_names()
+        view = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [], secrets=True)
+        view.how = SimpleNamespace(values=["kin_of"])  # type: ignore[assignment]
+        it = self.it()
+        await view._how_picked(it)
+        dropdown = it.response.edited[0][1]
+        shown = {o.value for o in dropdown.pick.options}
+        self.assertEqual(shown, {corin.id, vessa.id})  # every other name; not Belleros
+        self.assertEqual(dropdown.mode, "closest")
+        again = self.it()
+        await dropdown._switch(again)
+        self.assertEqual(again.response.edited[0][1].mode, "az")
+        picked = SimpleNamespace(values=[corin.id])
+        dropdown.pick = picked  # type: ignore[assignment]
+        done = self.it()
+        await dropdown._picked(done)
+        self.assertIn("🧭 Saved:", done.response.edited[0][0])
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        self.assertEqual({rel.subject_id, rel.object_id}, {self.bell.id, corin.id})
 
     async def test_only_a_dm_sees_secret_connections_to_remove_and_nothing_else_reads_them(
         self,
