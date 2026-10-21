@@ -222,6 +222,7 @@ from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
+from dmbot.members import MemberDirectory
 from dmbot.memory import definitions, document_reader, extractor, plan_reader
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -967,6 +968,7 @@ class DMBot(commands.AutoShardedBot):
         # When each person's Discord name was last kept on their account (#1242): at most
         # once a day, in this process only (a restart simply checks again).
         self._names_noted: dict[int, float] = {}
+        self.members = MemberDirectory(meter.db) if meter is not None else None  # #2141
         self._name_tasks: set[asyncio.Task[None]] = set()
         if meter is not None:
             self.account_moves = AccountMoves(meter.db)
@@ -1499,6 +1501,8 @@ class DMBot(commands.AutoShardedBot):
         member = guild.get_member(user_id) if guild is not None else None
         if member is not None:
             self.note_display_name(user_id, member.global_name or member.name)
+            if user_id in recorded:  # and the import search can offer them (#2141)
+                self.note_member(guild_id, member)
         # Only a yes that really counts (it names this server's speech-to-text, and no
         # stop arrived meanwhile) is shown as recording.
         if user_id in recorded and not already:
@@ -1533,6 +1537,28 @@ class DMBot(commands.AutoShardedBot):
         task = asyncio.create_task(self._keep_display_name(self.meter.db, user_id, name))
         self._name_tasks.add(task)
         task.add_done_callback(self._name_tasks.discard)
+
+    def note_member(self, guild_id: int, member: discord.abc.User) -> None:
+        """Keep a recorded member's names in the server's directory for the website's import
+        search (#2141). Only call it for someone whose consent is current. In the background and
+        never raising: a failure is retried the next time they are seen."""
+        directory = self.members
+        if directory is None:
+            return
+        task = asyncio.create_task(self._keep_member(directory, guild_id, member))
+        self._name_tasks.add(task)
+        task.add_done_callback(self._name_tasks.discard)
+
+    async def _keep_member(
+        self, directory: MemberDirectory, guild_id: int, member: discord.abc.User
+    ) -> None:
+        try:
+            async with asyncio.timeout(DISPLAY_NAME_TIMEOUT_S):
+                await directory.remember(
+                    guild_id, member.id, getattr(member, "global_name", None), member.name
+                )
+        except Exception as exc:  # the type only: a database error's text can quote a name
+            log.warning("Could not keep a member in the directory: %s", type(exc).__name__)
 
     async def _keep_display_name(self, db: Database, user_id: int, name: str) -> None:
         """The background part: one short UPDATE. Never raises; on a failure the person is
@@ -1842,6 +1868,15 @@ class DMBot(commands.AutoShardedBot):
         try:
             return await self.consent.revoke(guild_id, user_id)
         finally:
+            if self.members is not None:  # no longer offered by name in the import search (#2141)
+                try:
+                    async with asyncio.timeout(FORGET_TIMEOUT_S):
+                        await self.members.forget(guild_id, user_id)
+                except Exception as exc:  # the type only: a database error can quote a row
+                    log.warning(
+                        "Could not remove a stopped speaker from the member directory: %s",
+                        type(exc).__name__,
+                    )
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
@@ -1995,6 +2030,7 @@ class DMBot(commands.AutoShardedBot):
                 granted = times.get(member.id)
                 server = member.guild.name
                 if granted is not None and self.consent.has_consent(gid, member.id):
+                    self.note_member(gid, member)  # refreshed at each session start (#2141)
                     text = reminder_text(
                         server,
                         voice_name,
