@@ -166,17 +166,39 @@ def message(
         parts.append("<memory>\n" + "\n".join(shown) + "\n</memory>")
     if previous.strip():
         parts.append(f"<previous>\n{quoted(previous)[:RECAP_CHARS]}\n</previous>")
-    rows: list[tuple[str, str, str]] = []
-    used = 0
-    for number, who, text in play:
-        used += len(text[:LINE_CHARS]) + 12
-        if used > PLAY_CHARS:
-            break
-        rows.append((number, who, text[:LINE_CHARS]))
+    rows = _play_rows(play, beats, memory, previous)
     parts.append(transcript_of(rows).replace("transcript>", "play>"))
     if retold.strip():
         parts.append(f"<last_time_recap>\n{quoted(retold)[:RECAP_CHARS]}\n</last_time_recap>")
     return "\n".join(parts)
+
+
+def _play_rows(
+    play: Sequence[tuple[str, str, str]],
+    beats: Sequence[Beat],
+    memory: Sequence[Memory],
+    previous: str,
+) -> list[tuple[str, str, str]]:
+    """The play lines PlotBot reads, within `PLAY_CHARS`, in the order they came. A left-out detail
+    can be anywhere in a long session, so a line no beat cites that shares a long word with the
+    story memory or the last recap is chosen first, then the other uncited lines by their place;
+    a line a beat holds is never offered (it cannot be a left-out detail)."""
+    cited = {n for b in beats for n in b.lines}
+    story = vocabulary_of([*(m.text for m in memory), previous])
+    first: list[int] = []
+    rest: list[int] = []
+    for at, (number, _who, text) in enumerate(play):
+        if number.isdigit() and int(number) in cited:
+            continue
+        (first if content_words(text) & story else rest).append(at)
+    chosen: set[int] = set()
+    used = 0
+    for at in [*first, *rest]:
+        used += len(play[at][2][:LINE_CHARS]) + 12
+        if used > PLAY_CHARS:
+            break
+        chosen.add(at)
+    return [(n, w, t[:LINE_CHARS]) for at, (n, w, t) in enumerate(play) if at in chosen]
 
 
 def worth_asking(memory: Sequence[Memory], previous: str) -> bool:
@@ -347,8 +369,12 @@ def apply(beats: Sequence[Beat], notes: Sequence[Note], details: Sequence[Detail
     for b in beats:
         note = by_number.get(b.number)
         out.append(replace(b, note=note.why, keep=note.keep) if note is not None else b)
+    originals = len(out)
     for d in sorted(details, key=lambda x: x.line):
         new = Beat(0, d.what, tuple(proper_nouns(d.what)), (d.line,), "state", "", d.why, d.keep)
         at = next((i for i, b in enumerate(out) if b.lines and min(b.lines) > d.line), len(out))
+        # Never first and never last: the first beat is the recap's opening and the last is where
+        # it must end, and a small detail is neither.
+        at = max(1, min(at, originals - 1 + sum(1 for b in out if b.number == 0)))
         out.insert(at, new)
     return [replace(b, number=i) for i, b in enumerate(out, start=1)]

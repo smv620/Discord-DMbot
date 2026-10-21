@@ -49,8 +49,8 @@ MAX_CALLS = 19
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
 # AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is eight
 # calls now (split, beats, notes, write, format, facts, grade, title; the first only for a session
-# with an earlier one), so 52 keeps the seven a day that 40 gave five-call recaps (#2074).
-DAILY_CALLS = 52
+# with an earlier one), so 56 keeps the seven a day that 40 gave five-call recaps (#2074).
+DAILY_CALLS = 56
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
@@ -640,10 +640,9 @@ class RecapWorker:
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
-        sent = {
-            s.user_id
-            for s in sp.pick(said, sp.from_json(job.split) or sp.all_play(said), sp.PLAY, sp.RECAP)
-        }
+        # (the people whose words were in the call: the play lines sent, and the retelling shown)
+        split = sp.from_json(job.split) or sp.all_play(said)
+        sent = {s.user_id for s in play} | {s.user_id for s in sp.pick(said, split, sp.RECAP)}
         if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
         parsed = None if unusable(raw) else sg.parse(raw.text)

@@ -351,7 +351,7 @@ def sheet(beats: Sequence[Beat], *, notes: bool = False) -> str:
         f"[{b.number}] ({b.kind}) {b.what}"
         + (f" Who: {', '.join(b.who)}." if b.who else "")
         + (f" Where: {b.where}." if b.where else "")
-        + (f" Matters: {b.note}" if notes and b.note else "")
+        + (f" Matters: {quoted(b.note)}" if notes and b.note else "")
         + (" Matters: keep this detail; do not explain it." if notes and b.keep else "")
         for b in beats
     )
