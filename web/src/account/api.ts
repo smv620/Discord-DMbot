@@ -355,6 +355,9 @@ export interface RecapAudioState {
   error: string;
   current: boolean;
   canAskAgain: boolean;
+  /** The recap is already posted: a new narration is for this page, and the Discord message keeps
+   * its old audio (#2183). Missing from an older API. */
+  postedNote?: boolean;
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
@@ -642,6 +645,7 @@ export type ApiErrorKind =
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
+  | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
@@ -867,6 +871,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_subscribed: "already-subscribed",
   not_found: "not-found",
   not_in_plan: "not-in-plan",
+  audio_off: "audio-off",
   bad_choice: "bad-choice",
   too_big: "too-big",
   not_editable: "not-editable",
