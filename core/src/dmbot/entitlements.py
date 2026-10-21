@@ -71,6 +71,10 @@ class Entitlement:
     minutes_taken: int = 0
     # The recap audio add-on (#1389): paid for until this moment, or never bought.
     recap_audio_until: int | None = None
+    # A plan change the payment company has scheduled for the end of the period (#2165): the plan
+    # that starts and when. None when nothing is scheduled.
+    next_plan: str | None = None
+    next_plan_on: int | None = None
 
     @property
     def hours_this_period(self) -> int:
@@ -378,6 +382,8 @@ async def _read_plan(conn: Conn, user_id: int) -> Entitlement | None:
         ends_at=row.get("ends_at"),  # older schemas (tests of a backfill) have none
         has_customer=row.get("provider_customer_id") is not None,
         recap_audio_until=row.get("recap_audio_until"),  # older schemas have none
+        next_plan=row.get("next_plan"),
+        next_plan_on=row.get("next_plan_on"),
     )
 
 

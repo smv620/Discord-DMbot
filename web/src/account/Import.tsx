@@ -42,7 +42,7 @@ type Session = ImportProgress["sessions"][number];
  * the DM's answers move it on. Without a stage (an older API) the plain state decides. */
 function isFinal(s: Session): boolean {
   // A stage this page doesn't know (a newer API) is read by the plain state, never polled forever.
-  if (!s.stage || !(s.stage in words.stage || s.stage === "waiting_for_names"))
+  if (!s.stage || !(Object.hasOwn(words.stage, s.stage) || s.stage === "waiting_for_names"))
     return s.state === "done" || s.state === "failed";
   return (
     s.stage === "recap_ready" ||

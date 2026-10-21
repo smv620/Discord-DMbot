@@ -7334,6 +7334,22 @@ RECAP_SHARE = (
     """
 )
 
+PLAN_PENDING = """
+    -- A plan change the payment company has scheduled for the end of the paid period (a downgrade
+    -- or upgrade picked on its billing page, #2165): the plan that starts, and when. Filled from
+    -- the company's schedule events and cleared when the change begins, is undone, or the plan
+    -- ends. Two nullable columns: no rows change, so no row-level-security policy is needed.
+    ALTER TABLE entitlements ADD COLUMN next_plan TEXT;
+    ALTER TABLE entitlements ADD COLUMN next_plan_on BIGINT;
+    -- Schedule events are ordered by their own clock, never by `last_event_at`: at a downgrade's
+    -- start the schedule's "released" and the plan change arrive in the same moment, and a later
+    -- schedule event must not make the real plan change look stale.
+    ALTER TABLE entitlements ADD COLUMN next_plan_event_at BIGINT NOT NULL DEFAULT 0;
+    -- When the person pressed Renew (our clock). Only a "cancelled" event older than this is
+    -- ignored; it does not touch `last_event_at`, which is the payment company's clock alone.
+    ALTER TABLE entitlements ADD COLUMN renewed_at BIGINT;
+"""
+
 # Consent given under older wording never counts for an import: the store door refuses a caller
 # that passes less (the SQL says 6; a test checks the two agree and are not above TERMS_VERSION).
 IMPORT_TERMS_FLOOR = 6
@@ -8529,6 +8545,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0139_recap_requests", RECAP_REQUESTS),  # the recap page's notes to DMbot (#2113)
     ("0140_recap_voice", RECAP_VOICE),  # ... and a short clip it may speak instead (#2113)
     ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
+    ("0142_plan_pending", PLAN_PENDING),  # a plan change set for the period's end (#2165)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)

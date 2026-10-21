@@ -905,6 +905,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("portal");
       return "#demo-billing";
     },
+    async renewPlan() {
+      calls.push("renew");
+      if (me?.plan?.state !== "ending") throw new ApiError("not-ending");
+      const { endsOn: _ended, ...rest } = me.plan;
+      me = { ...me, plan: { ...rest, state: "active" } };
+    },
     async recapAudioUrl() {
       calls.push("recap-audio");
       return "#demo-recap-audio";
@@ -1100,7 +1106,7 @@ function mockHomebrew() {
 }
 
 /** One imported session in each stage the API can report (#2230), for the page's tests and demos:
- * (the old shape, with no stage, is covered in the tests). */
+ * the old shape, with no stage, is covered in the tests. */
 export const everyImportStage: ImportProgress = {
   sessions: [
     ...(

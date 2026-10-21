@@ -75,6 +75,7 @@ describe("What's new", () => {
       "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
       "Link a server you added with a plain link", // until dev1 deploys it (#2163)
+      "See what your plan is doing", // until the web API change deploys and the owner checks it in test mode (#2165)
       "Names spelled out at the table", // until dev1 deploys it (#2168)
       "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
       "A fixed spelling reaches past transcripts", // until dev1 deploys it (#2170)
