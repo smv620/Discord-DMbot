@@ -1561,7 +1561,7 @@ class SaveAndResume(SessionTests):
         """Every line is looked at for a name said with its pronunciation; the calls are kept."""
         calls: list[Any] = []
         self.fixing(table)
-        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign,assignment]
+        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign]
             (user, kw.get("held_key"))
         )
         return calls

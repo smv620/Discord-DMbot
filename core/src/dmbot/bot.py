@@ -8965,8 +8965,8 @@ class DMBot(commands.AutoShardedBot):
             if resolved:
                 table.held_pronounced[held_key] = resolved
             return
-        found = table.pronouncing.attach(user_id, sounds, names, now)
-        self._count_pronounced(table, user_id, found)
+        attached = table.pronouncing.attach(user_id, sounds, names, now)
+        self._count_pronounced(table, user_id, attached)
 
     def _count_pronounced(
         self,
