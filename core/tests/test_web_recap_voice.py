@@ -527,6 +527,7 @@ class TheLoop(WithClips):
             guilds=guilds if guilds is not None else [SimpleNamespace(id=THURSDAY.id)],
             _clip_sweep_rounds=0,
             _voice_tasks={},
+            _voice_next=0,
             _voice_gate=MagicMock(),
             recap_voice_text=MagicMock(),
             _meter_voice=MagicMock(),
@@ -608,6 +609,30 @@ class TheLoop(WithClips):
             await asyncio.sleep(0.05)
             self.assertEqual(bot._voice_tasks, {})
         sorted_.assert_not_awaited()  # never the AI sort
+
+    async def test_servers_take_turns_and_a_failing_clip_frees_its_slot(self) -> None:
+        import asyncio
+        from unittest import mock
+
+        guilds = [SimpleNamespace(id=2000 + n) for n in range(5)]
+        order: list[int] = []
+
+        async def claim(gid: int, *, voice: bool | None = None) -> Any:
+            order.append(gid)
+            return rq.Request(f"{gid:032x}", "c" * 32, 100, 7, "", 1, "voice", CLIP, "audio/webm")
+
+        bot = self.bot(SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock()), guilds)
+
+        async def boom(*a: Any, **k: Any) -> str:
+            raise RuntimeError("decoder fell over")
+
+        with mock.patch("dmbot.bot.recap_requests.run_voice", boom):
+            await DMBot.run_recap_voice(cast(Any, bot))
+            await asyncio.sleep(0.05)
+            self.assertEqual(bot._voice_tasks, {})  # the failure freed every slot
+            await DMBot.run_recap_voice(cast(Any, bot))  # the next round goes on from the next one
+        self.assertEqual(order[:3], [2000, 2001, 2002])
+        self.assertEqual(order[3:6], [2003, 2004, 2000])
 
     async def test_only_a_few_clips_are_written_down_at_once_across_servers(self) -> None:
         import asyncio

@@ -989,6 +989,7 @@ class DMBot(commands.AutoShardedBot):
         self._voice_tasks: dict[
             int, asyncio.Task[None]
         ] = {}  # a spoken note being written down, by server (#2161)
+        self._voice_next = 0  # where the next voice round starts looking, so servers take turns
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
@@ -1566,11 +1567,17 @@ class DMBot(commands.AutoShardedBot):
                 FINAL_FLUSH_TIMEOUT_S,
             )
         lookups = list(self._lookups.values())  # so the database can close at once
+        clips = list(self._voice_tasks.values())  # a clip being written down stops with the bot
         await self.sidebar.close()
-        for task in [*self._background, *self._asking, *self._loops, *lookups]:
+        for task in [*self._background, *self._asking, *self._loops, *lookups, *clips]:
             task.cancel()
         await asyncio.gather(
-            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+            *self._background,
+            *self._asking,
+            *self._loops,
+            *lookups,
+            *clips,
+            return_exceptions=True,
         )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
@@ -9960,7 +9967,10 @@ class DMBot(commands.AutoShardedBot):
         store = self.recap_requests
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
-        for guild in list(self.guilds):
+        guilds = list(self.guilds)
+        # Start after the server served last, so a busy server cannot keep the later ones waiting.
+        start = self._voice_next % len(guilds) if guilds else 0
+        for guild in guilds[start:] + guilds[:start]:
             if len(self._voice_tasks) >= RECAP_VOICE_AT_ONCE:
                 return
             if guild.id in self._voice_tasks:
@@ -9972,6 +9982,7 @@ class DMBot(commands.AutoShardedBot):
                 self._run_voice_request(guild.id, request), name=f"recap-voice-{guild.id}"
             )
             self._voice_tasks[guild.id] = task
+            self._voice_next = guilds.index(guild) + 1
             task.add_done_callback(lambda _t, gid=guild.id: self._voice_tasks.pop(gid, None))
 
     async def _run_voice_request(self, guild_id: int, request: RecapRequest) -> None:
