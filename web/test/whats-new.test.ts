@@ -135,6 +135,7 @@ describe("What's new", () => {
       "FightBot follows your turn order", // until dev1 has live-checked it (#1771)
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
+      "See how your names are connected", // until #2323 merges and dev1 deploys it
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);

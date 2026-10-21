@@ -674,6 +674,60 @@ export type RecapAudioLinks = Partial<
 
 export type RecapAction = "post" | "again" | "drop";
 
+/** One name on the relationship web (#2324). `secret` is sent to the campaign's DMs only. */
+export interface WebNode {
+  id: string;
+  name: string;
+  /** The kind's key ("npc", "place", ...). */
+  kind: string;
+  secret?: boolean;
+}
+
+/** One connection between two names, for the edge panel. `direction` says who does it to whom, from
+ * the edge's `a` and `b`: "ab" (a does it to b), "ba", or "both". */
+export interface WebLink {
+  id: string;
+  words: string;
+  secret: boolean;
+  direction: "ab" | "ba" | "both";
+}
+
+/** The line between two names: the most relevant connection's words, "(+more)" for the others. */
+export interface WebEdge {
+  a: string;
+  b: string;
+  label: string;
+  more: number;
+  links: WebLink[];
+}
+
+/** The web around one name, within some number of hops (#2324, API #2323). */
+export interface WebGraph {
+  /** The name in the middle (the API's pick when the page asked for none). */
+  center: string;
+  nodes: WebNode[];
+  edges: WebEdge[];
+  /** The API stopped at its cap of names. */
+  truncated: boolean;
+  /** The largest number of hops that is useful for this campaign. */
+  maxHops: number;
+  /** Only the campaign's DMs can change anything. */
+  canEdit: boolean;
+}
+
+export interface WebQuery {
+  /** null: the API picks the most connected name. */
+  center: string | null;
+  hops: number;
+}
+
+/** One change to the connections between names (DM only). */
+export type WebLinkChange =
+  | { action: "add"; a: string; b: string; words: string; secret: boolean }
+  | { action: "words"; id: string; words: string }
+  | { action: "secret"; id: string; secret: boolean }
+  | { action: "remove"; id: string; confirm: true };
+
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow {
   id: string;
@@ -871,6 +925,13 @@ export interface AccountApi {
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** The relationship web around a name (#2324, API #2323). Missing from an older API. */
+  webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
+  /** How many names that web would draw, asked before drawing so a big one can be warned about. */
+  webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
+  /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
+   * `{ removed: true }` when the last connection between two names went. */
+  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
@@ -1439,6 +1500,31 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/all-names/${encodeURIComponent(id)}`,
         change,
       )) as NameChanged,
+    webGraph: async (ref, q) => {
+      const params = new URLSearchParams({ hops: String(q.hops) });
+      if (q.center) params.set("center", q.center);
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
+      )) as WebGraph;
+    },
+    webSize: async (ref, q) => {
+      const params = new URLSearchParams({ hops: String(q.hops) });
+      if (q.center) params.set("center", q.center);
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
+      )) as { names: number };
+    },
+    changeWebLink: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;
+      if (change.action === "add") {
+        const { action: _action, ...body } = change;
+        return (await call("POST", base, body)) as WebEdge;
+      }
+      const { id, ...body } = change;
+      return (await call("POST", `${base}/${encodeURIComponent(id)}`, body)) as WebEdge | { removed: true };
+    },
     importProgress: async (ref, importId) =>
       (await call(
         "GET",

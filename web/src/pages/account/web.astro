@@ -1,0 +1,20 @@
+---
+import WebIsland from "../../account/WebIsland";
+import { webPage } from "../../content/web-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Relationship web"
+  description="How the names in a campaign are connected, as a map you can move around."
+  noindex
+>
+  <div class="account">
+    <h1>{webPage.heading}</h1>
+    <WebIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the web. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>
