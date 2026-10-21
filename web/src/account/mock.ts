@@ -63,6 +63,8 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-10-02T19:30:00Z",
     status: "active",
     role: "owner",
+    // A test server: importing is on here though the site's own switch is off (#2260).
+    importsOn: true,
   },
   {
     id: "cmp-ashen",

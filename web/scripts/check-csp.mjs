@@ -11,6 +11,8 @@ import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_O
 // account/house-rules.html: the house-rules pages (#1521).
 // account/homebrew.html: the homebrew pages (#1525).
 // account/transcripts.html: the session transcript pages (#1501).
+// account/import.html: the Import sessions page; it always loads its island and decides in the page
+//   whether it is open, for the site or for a test server's campaign (#2260).
 // account/names.html: the Names page, every name in a campaign, searched and fixed by its DMs (#2295).
 // unsubscribe.html: an offer email's unsubscribe link (#1229).
 // help.html: the search box that filters the steps in the page (#1939); it sends nothing anywhere.
@@ -20,6 +22,7 @@ const SCRIPTED = new Set([
   "account/house-rules.html",
   "account/homebrew.html",
   "account/transcripts.html",
+  "account/import.html", // the importer (#2107); open for the site or a test server (#2260)
   "account/names.html", // the Names page (#2295)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
@@ -66,4 +69,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /account/names, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /account/import, /account/names, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
