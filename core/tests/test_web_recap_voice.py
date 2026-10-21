@@ -505,6 +505,9 @@ class TheBackups(WithClips):
 
 
 class TheLoop(WithClips):
+    """A voice request goes to the voice path and never to the AI sort; clips are swept every
+    round."""
+
     async def test_each_loop_claims_only_its_own_kind(self) -> None:
         await self.send_clip()
         self.assertIsNone(await self.requests.claim_next(THURSDAY.id, voice=False))
@@ -515,11 +518,8 @@ class TheLoop(WithClips):
         typed = await self.requests.claim_next(THURSDAY.id, voice=False)
         assert typed is not None and typed.kind == "instructions"
 
-    """A voice request goes to the voice path and never to the AI sort; clips are swept every
-    round."""
-
     def bot(self, store: Any, guilds: Any = None) -> Any:
-        bot = SimpleNamespace(
+        bot: Any = SimpleNamespace(
             recap_requests=store,
             recap_feedback_ai=object(),
             recaps=object(),
@@ -532,8 +532,53 @@ class TheLoop(WithClips):
             recap_voice_text=MagicMock(),
             _meter_voice=MagicMock(),
         )
-        bot._run_voice_request = lambda gid, req: DMBot._run_voice_request(bot, gid, req)
+        bot._run_voice_request = lambda gid, req: DMBot._run_voice_request(cast(Any, bot), gid, req)
+        bot._voice_done = lambda gid, task: DMBot._voice_done(cast(Any, bot), gid, task)
         return bot
+
+    async def test_a_stale_working_voice_row_is_retaken_only_by_the_voice_loop(self) -> None:
+        await self.send_clip()
+        first = await self.requests.claim_next(THURSDAY.id, voice=True)
+        assert first is not None
+        self.assertIsNone(await self.requests.claim_next(THURSDAY.id, voice=True))  # held
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_requests SET claimed_at = 1")  # long ago
+        self.assertIsNone(await self.requests.claim_next(THURSDAY.id, voice=False))
+        again = await self.requests.claim_next(THURSDAY.id, voice=True)
+        assert again is not None and again.id == first.id
+
+    async def test_closing_the_bot_cancels_a_clip_being_written_down(self) -> None:
+        import asyncio
+        from unittest import mock
+
+        from discord.ext import commands
+
+        bot = object.__new__(DMBot)
+        stub: Any = bot
+        for name, value in {
+            "_closing": False,
+            "ai_watch": SimpleNamespace(wait=AsyncMock()),
+            "plan_reads": {},
+            "_eleven_http": None,
+            "pipeline": SimpleNamespace(
+                stop_waiting=MagicMock(), transcriber=SimpleNamespace(close=AsyncMock())
+            ),
+            "tables": {},
+            "_finishing": [],
+            "_lookups": {},
+            "sidebar": SimpleNamespace(close=AsyncMock()),
+            "_background": [],
+            "_asking": [],
+            "_loops": [],
+            "ai_client": None,
+            "ears": SimpleNamespace(send=AsyncMock(), stop=AsyncMock()),
+        }.items():
+            setattr(stub, name, value)
+        clip = asyncio.create_task(asyncio.sleep(60))
+        stub._voice_tasks = {THURSDAY.id: clip}
+        with mock.patch.object(commands.AutoShardedBot, "close", AsyncMock()):
+            await asyncio.wait_for(DMBot.close(bot), 5)
+        self.assertTrue(clip.cancelled())
 
     async def test_the_typed_loop_claims_only_typed_notes_and_never_runs_a_clip(self) -> None:
         from unittest import mock
@@ -584,7 +629,7 @@ class TheLoop(WithClips):
             mock.patch("dmbot.bot.recap_requests.run_voice", slow),
             mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
         ):
-            await DMBot.run_recap_voice(cast(Any, bot))
+            await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(seen, [True])  # voice only
             self.assertEqual(list(bot._voice_tasks), [THURSDAY.id])
             # a slow clip does not hold up the round: a typed note is worked while it runs
@@ -603,7 +648,7 @@ class TheLoop(WithClips):
             # and the same server gets no second clip while one runs
             claims.append(voice_request)
             store.claim_next = claim
-            await DMBot.run_recap_voice(cast(Any, bot))
+            await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(len(claims), 1)  # not claimed
             release.set()
             await asyncio.sleep(0.05)
@@ -627,7 +672,7 @@ class TheLoop(WithClips):
             raise RuntimeError("decoder fell over")
 
         with mock.patch("dmbot.bot.recap_requests.run_voice", boom):
-            await DMBot.run_recap_voice(cast(Any, bot))
+            await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             await asyncio.sleep(0.05)
             self.assertEqual(bot._voice_tasks, {})  # the failure freed every slot
             await DMBot.run_recap_voice(cast(Any, bot))  # the next round goes on from the next one
@@ -655,7 +700,7 @@ class TheLoop(WithClips):
             return "done"
 
         with mock.patch("dmbot.bot.recap_requests.run_voice", slow):
-            await DMBot.run_recap_voice(cast(Any, bot))
+            await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(len(bot._voice_tasks), RECAP_VOICE_AT_ONCE)
             self.assertEqual(len(made), RECAP_VOICE_AT_ONCE)  # the rest were not even claimed
             release.set()

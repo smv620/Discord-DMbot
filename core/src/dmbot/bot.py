@@ -1567,9 +1567,12 @@ class DMBot(commands.AutoShardedBot):
                 FINAL_FLUSH_TIMEOUT_S,
             )
         lookups = list(self._lookups.values())  # so the database can close at once
-        clips = list(self._voice_tasks.values())  # a clip being written down stops with the bot
         await self.sidebar.close()
-        for task in [*self._background, *self._asking, *self._loops, *lookups, *clips]:
+        for task in [*self._background, *self._asking, *self._loops, *lookups]:
+            task.cancel()
+        # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
+        clips = list(self._voice_tasks.values())
+        for task in clips:
             task.cancel()
         await asyncio.gather(
             *self._background,
@@ -9983,7 +9986,10 @@ class DMBot(commands.AutoShardedBot):
             )
             self._voice_tasks[guild.id] = task
             self._voice_next = guilds.index(guild) + 1
-            task.add_done_callback(lambda _t, gid=guild.id: self._voice_tasks.pop(gid, None))
+            task.add_done_callback(partial(self._voice_done, guild.id))
+
+    def _voice_done(self, guild_id: int, _task: asyncio.Task[None]) -> None:
+        self._voice_tasks.pop(guild_id, None)  # the slot is free again, however it ended
 
     async def _run_voice_request(self, guild_id: int, request: RecapRequest) -> None:
         store = self.recap_requests
@@ -9994,9 +10000,9 @@ class DMBot(commands.AutoShardedBot):
                     store,
                     guild_id,
                     request,
-                    gate=lambda req: self._voice_gate(guild_id, req),  # type: ignore[misc]
-                    write=lambda req: self.recap_voice_text(guild_id, req),  # type: ignore[misc]
-                    meter=lambda req, secs: self._meter_voice(guild_id, req, secs),  # type: ignore[misc]
+                    gate=lambda req: self._voice_gate(guild_id, req),
+                    write=lambda req: self.recap_voice_text(guild_id, req),
+                    meter=lambda req, secs: self._meter_voice(guild_id, req, secs),
                 )
                 log.info("Recap voice request: %s", outcome)  # the word only
         except Exception as exc:  # the type only; the claim is taken back after a while
