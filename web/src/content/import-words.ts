@@ -49,6 +49,9 @@ export const importPage = {
   fileNotTxt: (name: string): string => `${name} isn't a .txt file.`,
   fileError: {
     unreadable: "DMbot couldn't read this file.",
+    unknown_format:
+      "DMbot can't read this kind of transcript yet. It reads lines like 'Name: words', DMbot's own download, and caption files (.vtt or .srt) with names in them.",
+    no_speaker_names: "This caption file has no names in it, so DMbot can't tell who spoke.",
     too_big: `This file is over ${IMPORT_MAX_MB} MB.`,
     not_txt: "This isn't a .txt file.",
     not_a_google_doc:
@@ -87,6 +90,13 @@ export const importPage = {
   },
   addLink: "Add link",
   remove: "Remove",
+  filesListLabel: "Chosen files",
+  removeFile: (name: string): string => `Remove ${name}`,
+  removeAll: "Remove all",
+  removedAll: "Cleared. No files or links are chosen.",
+  alreadyChosen: "Already on the list, so it wasn't added again.",
+  addedFiles: (n: number, total: number): string =>
+    `Added ${n} ${n === 1 ? "file" : "files"}. ${total} chosen in all.`,
   removeLink: (n: number): string => `Remove Google Doc ${n}`,
   linkName: (n: number): string => `Google Doc ${n}`,
   chosenItems: (files: number, links: number): string =>

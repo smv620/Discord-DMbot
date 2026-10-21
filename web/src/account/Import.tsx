@@ -120,6 +120,7 @@ export default function Import({
   const [linkProblem, setLinkProblem] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const linkBox = useRef<HTMLInputElement>(null);
+  const fileBox = useRef<HTMLInputElement>(null);
   // The links that opened, in the order they are sent from here on, and what each one is called
   // there: the API names a link by its place in the list it is sent, so dropping a bad link renames the rest.
   const [sentLinks, setSentLinks] = useState<string[]>([]);
@@ -320,10 +321,50 @@ export default function Import({
 
   const choose = (event: Event): void => {
     if (busy) return;
-    const list = Array.from((event.target as HTMLInputElement).files ?? []);
+    const input = event.target as HTMLInputElement;
+    const more = Array.from(input.files ?? []);
+    // Choosing again adds to the list (#2303). A file already on it is skipped: the API tells
+    // results apart by file name, so two with one name would be answered as one.
+    const fresh = more.filter((f) => !picked.some((p) => p.name === f.name));
+    const list = [...picked, ...fresh];
     setPicked(list);
     forgetPreview();
     checkPicked(list, links);
+    if (more.length > fresh.length) setAnnounce(words.alreadyChosen);
+    else if (fresh.length > 0) setAnnounce(words.addedFiles(fresh.length, list.length + links.length));
+    // So the same file can be chosen again after it was removed.
+    try {
+      input.value = "";
+    } catch {
+      /* some browsers refuse; the list is already kept in state */
+    }
+  };
+
+  const removeFile = (at: number): void => {
+    if (busy) return;
+    const gone = picked[at];
+    const next = picked.filter((_, i) => i !== at);
+    setPicked(next);
+    // Everything after Preview was made from the old list, so it goes with the file (as for a link).
+    forgetPreview();
+    checkPicked(next, links);
+    setAnnounce(words.removed(gone?.name ?? "", next.length + links.length));
+    // The pressed button is gone: focus goes to the next Remove, or to the picker.
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>("[data-remove-file]");
+      (buttons[Math.min(at, buttons.length - 1)] ?? fileBox.current)?.focus();
+    });
+  };
+
+  const removeAll = (): void => {
+    if (busy) return;
+    setPicked([]);
+    setLinks([]);
+    setLinkProblem(null);
+    forgetPreview();
+    setPickProblem(null);
+    setAnnounce(words.removedAll);
+    fileBox.current?.focus();
   };
 
   const addLink = (): void => {
@@ -623,6 +664,7 @@ export default function Import({
       <section class="panel" aria-labelledby="import-pick">
         <h2 id="import-pick">{words.pickLabel}</h2>
         <input
+          ref={fileBox}
           type="file"
           accept=".txt,text/plain"
           multiple
@@ -676,6 +718,25 @@ export default function Import({
         <p class="sr-only" role="status">
           {announce}
         </p>
+        {picked.length > 0 && (
+          <ul class="campaigns" aria-label={words.filesListLabel}>
+            {picked.map((file, i) => (
+              <li key={`${i}-${file.name}`}>
+                <span class="campaign-name">{words.shownName(file.name)}</span>
+                <button
+                  type="button"
+                  data-remove-file
+                  disabled={busy}
+                  class="button secondary"
+                  aria-label={words.removeFile(file.name)}
+                  onClick={() => removeFile(i)}
+                >
+                  {words.remove}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {links.length > 0 && (
           <ul class="campaigns">
             {links.map((link, i) => (
@@ -702,6 +763,11 @@ export default function Import({
               ? words.chosenItems(picked.length, links.length)
               : words.chosen(picked.length)}
           </p>
+        )}
+        {picked.length + links.length > 1 && (
+          <button type="button" class="button secondary" disabled={busy} onClick={removeAll}>
+            {words.removeAll}
+          </button>
         )}
         <button
           type="button"
