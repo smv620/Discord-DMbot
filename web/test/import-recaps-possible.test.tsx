@@ -143,25 +143,34 @@ describe("the setting changed between Preview and the start", () => {
     await screen.findByText(w.progressHeading);
   };
 
-  it("says why on the progress view after ticks were sent", async () => {
+  it("says none will be written, then why, for a reason the DM can change", async () => {
     await run("campaign_off");
-    expect(screen.getByText(w.recapsWhy.campaign_off ?? "")).toBeTruthy();
+    const note = screen.getByText(new RegExp(w.recapsNotWritten));
+    expect(note.textContent).toBe(`${w.recapsNotWritten} ${w.recapsWhy.campaign_off}`);
   });
 
   it("links the plans for a plan reason", async () => {
     await run("plan");
+    const note = screen.getByText(new RegExp(w.recapsNotWritten));
+    expect(note.textContent).toContain(w.recapsWhy.plan ?? "");
     expect(screen.getByRole("link", { name: w.recapsPlans }).getAttribute("href")).toBe("/pricing");
   });
 
-  it("says that none will be written when the reason is not the DM's to change", async () => {
+  it("says only that none will be written when the reason is not the DM's to change", async () => {
     await run("off");
-    expect(screen.getByText(w.recapsNotWritten)).toBeTruthy();
+    expect(screen.getByText(w.recapsNotWritten).textContent?.trim()).toBe(w.recapsNotWritten);
+    expect(screen.queryByText(/settings/)).toBeNull();
+  });
+
+  it("says only that when the start reply gives no reason", async () => {
+    await run(undefined);
+    expect(screen.getByText(w.recapsNotWritten).textContent?.trim()).toBe(w.recapsNotWritten);
+    expect(screen.queryByText(/settings/)).toBeNull();
   });
 
   it("says nothing when no tick was sent", async () => {
     await run("campaign_off", false);
-    expect(screen.queryByText(w.recapsWhy.campaign_off ?? "")).toBeNull();
-    expect(screen.queryByText(w.recapsNotWritten)).toBeNull();
+    expect(screen.queryByText(new RegExp(w.recapsNotWritten))).toBeNull();
   });
 });
 
@@ -187,7 +196,7 @@ describe("odd replies and stale ticks", () => {
     fireEvent.input(screen.getByLabelText(w.dateLabel("session-1-2026-09-14.txt")), { target: { value: "2026-09-14" } });
     fireEvent.click(screen.getByRole("button", { name: w.importButton }));
     await screen.findByText(w.progressHeading);
-    expect(screen.queryByText(w.recapsNotWritten)).toBeNull();
+    expect(screen.queryByText(new RegExp(w.recapsNotWritten))).toBeNull();
   });
 
   it("starts unticked again after new files are chosen", async () => {

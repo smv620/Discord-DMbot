@@ -57,6 +57,24 @@ function isFailed(s: Session): boolean {
   return s.stage ? s.stage === "failed" : s.state === "failed";
 }
 
+/** Why recaps can't be written for this campaign, when it is something the DM can change: the
+ * reason's own line, with the plans link for a plan. Nothing for any other reason (#2229). */
+function RecapsWhyLine({ why }: { why: string }) {
+  const line = words.recapsWhy[why];
+  if (!line) return null;
+  return (
+    <>
+      {line}
+      {why === "plan" && (
+        <>
+          {" "}
+          <a href="/pricing">{words.recapsPlans}</a>
+        </>
+      )}
+    </>
+  );
+}
+
 /** The words for where one session has got to; the plain state's words when there is no stage. */
 function stageLine(s: Session): string {
   if (!s.stage) return words.state[s.state] ?? s.state;
@@ -492,13 +510,8 @@ export default function Import({
         )}
         {startedWithoutRecaps && (
           <p class="small" role="status">
-            {words.recapsWhy[startedWithoutRecaps] ?? words.recapsNotWritten}
-            {startedWithoutRecaps === "plan" && (
-              <>
-                {" "}
-                <a href="/pricing">{words.recapsPlans}</a>
-              </>
-            )}
+            {words.recapsNotWritten}{" "}
+            <RecapsWhyLine why={startedWithoutRecaps} />
           </p>
         )}
         <p role="status" aria-live="polite">
@@ -888,13 +901,7 @@ export default function Import({
                 </p>
                 {recapsWhy && words.recapsWhy[recapsWhy] && order.length > 0 && (
                   <p class="small" role="note">
-                    {words.recapsWhy[recapsWhy]}
-                    {recapsWhy === "plan" && (
-                      <>
-                        {" "}
-                        <a href="/pricing">{words.recapsPlans}</a>
-                      </>
-                    )}
+                    <RecapsWhyLine why={recapsWhy} />
                   </p>
                 )}
                 {offerRecaps && order.length > 0 && (

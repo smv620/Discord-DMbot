@@ -7,6 +7,8 @@
 // HOW IT TURNS ON: when the importer and #2143 (Google Doc links; an older API ignores `links`) are
 // deployed and dev1 has seen a real import, the What's new entry "Bring in older sessions" moves out of `held` (whats-new.ts) and IMPORT_LIVE becomes true
 // in the same change. A test ties the two together and fails until both are done.
+import type { RecapsWhy } from "../account/api";
+
 export const IMPORT_LIVE = false;
 
 /** How many files one import takes, and how big each may be (PLAN: "up to 20 files at once, each
@@ -129,9 +131,10 @@ export const importPage = {
   recapsWhy: {
     campaign_off: "Recaps are off for this campaign. Turn them on in the campaign's settings to get recaps of imported sessions.",
     plan: "Recaps aren't part of this campaign's plan.",
-  } as Record<string, string>,
-  // Only after the DM ticked recaps and the setting changed before the start: say it, don't stay silent.
-  recapsNotWritten: "The recap setting changed before the start, so no recaps will be written for these sessions. Check the campaign's settings.",
+  } satisfies Partial<Record<RecapsWhy, string>> as Partial<Record<string, string>>,
+  // On the progress view, after the DM ticked recaps and the setting changed before the start: the
+  // reason's own line follows when it is one the DM can change; otherwise this is all it says.
+  recapsNotWritten: "No recaps will be written for these sessions.",
   recapsPlans: "See the plans",
   recapsNote:
     "Nothing is written for a session you leave unticked. Recaps wait until you've answered DMbot's questions about names, like after a live session. You'll get one message in Discord when they start. Recaps are not in the estimate above.",
