@@ -250,7 +250,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
-from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
+from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -283,6 +283,7 @@ from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
+from dmbot.recaps.significance import Memory
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret, strip_cues
@@ -524,6 +525,7 @@ IDLE_CHECK_S = 60  # how often a running session is checked for being empty or q
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+RECAP_RECALL_BUDGET = 3500  # characters of story memory PlotBot reads for one recap (#2254)
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
@@ -1220,6 +1222,7 @@ class DMBot(commands.AutoShardedBot):
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
+                story=self.recap_story,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -8483,6 +8486,24 @@ class DMBot(commands.AutoShardedBot):
         )
         # What the DM corrected in this one recap, for this try only (#2076).
         return None if found is None else dataclasses.replace(found, corrections=job.corrections)
+
+    async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
+        """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
+        reads of one campaign: everything the DM confirmed (the DM screen's view), and what the
+        players' view of it holds; an item is `known` only if it is in both. That is the gate
+        between "keep this" and "this may be explained"; it is made here, in code."""
+        if self.memory is None or not seeds:
+            return []
+        service = RecallService(self.memory)
+        everything = await service.recall(
+            gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
+            confirmed_only=True,
+        )  # fmt: skip
+        players = await service.recall(
+            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET
+        )
+        known = {i.id for i in players.items}
+        return [Memory(i.id, i.text, i.id in known) for i in everything.items]
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""

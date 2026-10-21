@@ -12,13 +12,16 @@ from typing import Any
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
+from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
+from tests import test_recap_significance as st_sig
 from tests import test_recap_split as st
 from tests.pg import DatabaseTest
 
@@ -215,6 +218,7 @@ class Working(Base):
         lines: Any = None,
         earlier: Any = None,
         previous: str = "",
+        story: Any = None,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -252,6 +256,7 @@ class Working(Base):
             allowed=ok,
             notify=self.told,
             clock=self.clock,
+            story=story,
         )
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
 
@@ -1163,3 +1168,136 @@ class Working(Base):
         self.assertEqual((job.state, job.restarts), ("queued", 1))
         self.assertIsNone(job.split)  # begun again, without them
         self.assertIsInstance(job, Job)
+
+    # --- PlotBot marks what matters (#2254) --------------------------------------------------
+
+    def amulet_lines(self) -> list[Line]:
+        extra = Line(8000, fx.DM, "Oskar wears an amulet with a shard of obsidian.", "x")
+        return [*fx.lines(), extra]
+
+    def sig_answer(self, why: str, ties: list[str]) -> str:
+        detail = {
+            "line": 8,
+            "what": "Oskar wears an amulet with a shard of obsidian",
+            "why": why,
+            "ties": ties,
+        }
+        return json.dumps({"notes": [], "details": [detail]})
+
+    def story_of(self, *memory: sg.Memory) -> Any:
+        async def story(gid: int, cid: str, job: Job, seeds: Any) -> list[sg.Memory]:
+            self.seeds = list(seeds)
+            return list(memory)
+
+        return story
+
+    async def test_a_left_out_detail_that_ties_to_a_confirmed_thread_reaches_the_writer(
+        self,
+    ) -> None:
+        fast = self.happy()
+        careful = fx.Canned(
+            self.sig_answer("The obsidian faction hunts the patron.", [st_sig.KNOWN.id])
+        )
+        await self.setUpWorker(
+            fast, careful, lines=self.amulet_lines(), story=self.story_of(st_sig.KNOWN)
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        beats = bt.from_json(job.beats)
+        detail = next(b for b in beats if 8 in b.lines)
+        self.assertEqual(detail.kind, "state")
+        self.assertIn("obsidian faction", detail.note)
+        writer = fast.sent[1]
+        self.assertIn("amulet with a shard of obsidian", writer)
+        self.assertIn("Matters: The obsidian faction hunts the patron.", writer)
+        self.assertIn("Mira", self.seeds)  # the memory was asked about the beats' names
+        # PlotBot's own call read the memory with each item marked for who may hear it
+        self.assertIn("[players know this]", careful.sent[0])
+
+    async def test_a_secrets_meaning_is_kept_but_never_explained_or_named(self) -> None:
+        fast = self.happy()
+        careful = fx.Canned(
+            self.sig_answer("It marks the Obsidian Hand, who serve Vecnor.", [st_sig.SECRET.id])
+        )
+        await self.setUpWorker(
+            fast,
+            careful,
+            lines=self.amulet_lines(),
+            story=self.story_of(st_sig.SECRET),
+            secret=["Vecnor", "Obsidian Hand"],
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        detail = next(b for b in bt.from_json(job.beats) if 8 in b.lines)
+        self.assertTrue(detail.keep)
+        self.assertEqual(detail.note, "")
+        writer = fast.sent[1]
+        self.assertIn("keep this detail; do not explain it", writer)
+        # nothing of the secret reached the writer, the grader, the title step or the recap
+        everything = "\n".join([*fast.sent, *fast.fact_sent, job.summary, *job.housekeeping])
+        for word in ("Vecnor", "Hand", "serve"):
+            self.assertNotIn(word, everything)
+        self.assertIn("[DM only]", careful.sent[0])  # PlotBot itself may read it
+
+    async def test_no_memory_and_no_recap_means_no_call(self) -> None:
+        fast, careful = self.happy(), fx.Canned()
+        await self.setUpWorker(fast, careful, story=self.story_of())
+        job = await self.go()
+        self.assertEqual((job.state, careful.sent), ("ready", []))
+
+    async def test_with_no_memory_it_leans_on_the_accepted_recap(self) -> None:
+        fast = self.happy()
+        note = {"beat": 4, "why": "Mira searched the keep.", "ties": ["recap"]}
+        careful = fx.Canned(json.dumps({"notes": [note], "details": []}))
+        await self.setUpWorker(
+            fast, careful, previous="Mira searched the keep.", story=self.story_of()
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("<previous>", careful.sent[0])
+        self.assertTrue(any(b.matters for b in bt.from_json(job.beats)))
+
+    async def test_a_cited_line_outside_play_is_cut_and_the_recap_goes_on(self) -> None:
+        fast = self.happy()
+        careful = fx.Canned(self.sig_answer("Matters.", [st_sig.KNOWN.id]).replace("8", "99"))
+        await self.setUpWorker(
+            fast, careful, lines=self.amulet_lines(), story=self.story_of(st_sig.KNOWN)
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertFalse(any(8 in b.lines for b in bt.from_json(job.beats)))
+
+    async def test_an_unreadable_answer_goes_on_without_notes(self) -> None:
+        fast = self.happy()
+        await self.setUpWorker(fast, fx.Canned("not json"), story=self.story_of(st_sig.KNOWN))
+        self.assertEqual((await self.go()).state, "ready")
+
+    async def test_a_memory_that_cannot_be_read_goes_on_without_notes(self) -> None:
+        async def broken(*a: Any) -> Any:
+            raise RuntimeError("memory down")
+
+        fast2 = self.happy()
+        await self.setUpWorker(fast2, fx.Canned(), story=broken)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertFalse(any(b.matters for b in bt.from_json(job.beats)))
+
+    async def test_a_player_who_stops_being_recorded_during_the_notes_starts_again(self) -> None:
+        agreed = {fx.DM, fx.ALICE, fx.BOB}
+
+        async def consenting() -> Any:
+            return set(agreed)
+
+        class Leaving(fx.Canned):
+            async def complete(self, *a: Any, **k: Any) -> Any:
+                agreed.discard(fx.BOB)
+                return await super().complete(*a, **k)
+
+        await self.setUpWorker(
+            self.happy(),
+            Leaving(self.sig_answer("x", [st_sig.KNOWN.id])),
+            story=self.story_of(st_sig.KNOWN),
+            consenting=consenting,
+        )
+        job = await self.go()
+        self.assertEqual(job.restarts, 1)

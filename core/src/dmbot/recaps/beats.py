@@ -66,6 +66,14 @@ class Beat:
     lines: tuple[int, ...]
     kind: str
     where: str = ""  # the place it happens in, from its own lines; "" when they do not say (#2064)
+    # PlotBot's note (#2254): why it matters, when the writer may be told; `keep` alone means
+    # "keep this, do not explain it" (the meaning is not known to the players).
+    note: str = ""
+    keep: bool = False
+
+    @property
+    def matters(self) -> bool:
+        return bool(self.note) or self.keep
 
 
 WHERE_MAX = 80  # characters of a place
@@ -301,6 +309,8 @@ def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
             "lines": list(b.lines),
             "kind": b.kind,
             "where": b.where,
+            **({"note": b.note} if b.note else {}),
+            **({"keep": True} if b.keep else {}),
         }
         for b in beats
     ]
@@ -324,6 +334,8 @@ def from_json(data: object) -> list[Beat]:
                     tuple(int(n) for n in item["lines"]),
                     str(item["kind"]),
                     str(item.get("where") or ""),
+                    str(item.get("note") or ""),
+                    item.get("keep") is True,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -337,5 +349,7 @@ def sheet(beats: Sequence[Beat]) -> str:
         f"[{b.number}] ({b.kind}) {b.what}"
         + (f" Who: {', '.join(b.who)}." if b.who else "")
         + (f" Where: {b.where}." if b.where else "")
+        + (f" Matters: {b.note}" if b.note else "")
+        + (" Matters: keep this detail; do not explain it." if b.keep else "")
         for b in beats
     )

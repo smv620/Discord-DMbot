@@ -87,6 +87,12 @@ to review and read at the start of the next session. {setting_line}
 
 You are given a numbered BEAT SHEET. Write only from it. Use nothing else about this session.
 
+Your three jobs, in this order of importance: (1) plot development: what moved the story; \
+(2) character development, including a backstory or a flashback told at the table; (3) where the \
+characters came from, where they are now and where they are going next. Say where they are going \
+or why only when a beat says it was said; never guess a plan, a goal or a reason for a player's \
+character: if nobody said why, say what they did.
+
 {answer_form}
 
 The narration: this session ran about {hours} hours, so write about {aim} words in all (between \
@@ -110,7 +116,11 @@ no rules, no player names. Use character names.
 Use only the names in the <names> list, spelled as there: any other name makes the recap fail.
 6. The beats are facts, not wording. Never repeat 6 words in a row from a beat: say it in your \
 own words.
-7. Each beat has a place ("Where"). Never move an event to another place. Never add a direction, \
+7. Some beats say "Matters:". Keep those beats and stress them. When it gives a reason, you may \
+let that reason colour how you tell the beat, but add nothing to it. When it says to keep the \
+detail and not explain it, tell the detail plainly and never say what it means, why it matters or \
+who it belongs to.
+8. Each beat has a place ("Where"). Never move an event to another place. Never add a direction, \
 a distance, a time or any detail the beats do not state ("they travelled north", "the gate \
 groaned"). Never say "all", "every" or "each" of the party unless a beat does.
 
@@ -611,14 +621,15 @@ def housekeeping_message(beats: Sequence[Beat], summary: str, catchup: str = "")
 def pick_beats(beats: Sequence[Beat], limit: int = 10) -> list[Beat]:
     """At most `limit` beats for the writer, in the order they happened: the first (the opening)
     and the last (where the session stopped, which the recap must end on) always, and of the rest
-    those with the most characters in them and the most lines behind them. A long session's sheet
+    those PlotBot marked as mattering (#2254), then those with the most characters in them and the
+    most lines behind them. A long session's sheet
     has up to 120 beats; the recap is one page, so it can't tell them all (#2013). Beats keep their
     numbers, which housekeeping cites. A shorter sheet is returned whole."""
     if len(beats) <= limit:
         return list(beats)
     middle = sorted(
         beats[1:-1],
-        key=lambda b: (len(b.who), len(b.lines), -b.number),
+        key=lambda b: (b.matters, len(b.who), len(b.lines), -b.number),
         reverse=True,
     )
     keep = {beats[0].number, beats[-1].number, *(b.number for b in middle[: limit - 2])}
