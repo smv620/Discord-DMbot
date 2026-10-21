@@ -564,6 +564,42 @@ class TheSpokenWay(SaidAsTest):
         table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))  # shaped like a sound
         self.assertEqual(table.pronounced, self.sound("sehrick", "Seh-rick"))
 
+    async def test_a_short_name_that_sits_inside_a_title_or_word_is_not_a_pronunciation(
+        self,
+    ) -> None:
+        from dmbot.ui import names as ui
+
+        for name, word in (
+            ("Aron", "Baron"),
+            ("Bran", "Baron"),
+            ("Tor", "Traitor"),
+            ("Fin", "Final"),
+            ("Kount", "Count"),
+            ("Duka", "Duke"),
+            ("Champa", "Champion"),
+            ("Viktor", "Victor"),
+        ):
+            await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+            table = await self.said((SPEAKER, f"{name} was pronounced {word}"))
+            self.assertEqual(table.pronounced, {}, f"{name} / {word}")
+
+    async def test_the_names_that_are_said_the_way_they_sound_are_still_found(self) -> None:
+        from dmbot.ui import names as ui
+
+        await ui.save_name(self.memory, self.campaign, "Kael", "npc", [], [])
+        await ui.save_name(self.memory, self.campaign, "Kelli", "npc", [], [])
+        for line, writing in (
+            ("Kael is pronounced KAY-el", "Kay-el"),
+            ("Kael is pronounced Kay el", "Kay el"),
+            ("Cerric is pronounced SEH-rick", "Seh-rick"),
+            ("Cerric is pronounced Kerrick", "Kerrick"),
+            ("Kelli is pronounced Kelly", "Kelly"),
+        ):
+            table = await self.said((SPEAKER, line))
+            self.assertEqual(
+                [w for counts in table.pronounced.values() for w in counts], [writing], line
+            )
+
     async def label(self, table: Any, topic: str, *, during: Any = None) -> None:
         from unittest.mock import patch
 

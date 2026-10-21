@@ -1582,6 +1582,41 @@ class SaveAndResume(SessionTests):
         self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
         self.assertTrue(all(key is not None for _, key in calls))  # both are held
 
+    async def test_a_held_pronunciation_is_counted_for_the_name_it_followed_through_labelling(
+        self,
+    ) -> None:
+        """#2231, the whole way: a named line, then a held "pronounced" line, then a line naming
+        someone else before the label arrives. The sound goes to the first name."""
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        table = await self.filtered("1 game\n2 game")
+        cerric, kael = "c" * 32, "d" * 32
+        names = ((cerric, "Cerric"), (kael, "Kael"))
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                tuple(Entity(e, "npc", n, "", CONFIRMED, None, "dm", 0) for e, n in names),
+                tuple(
+                    Alias(
+                        e[:16] + "0" * 16, e, n, n.lower(), "full", None, False, CONFIRMED,
+                        (), "dm", 0,
+                    )
+                    for e, n in names
+                ),
+                (),
+                (),
+            )
+        )  # fmt: skip
+        self.said(table, "we ask Cerric")
+        self.said(
+            table, "it's pronounced Seh-rick", at_ms=5_000
+        )  # held, with the window's call out
+        self.said(table, "and Kael is there too", at_ms=10_000)  # a second name before the label
+        self.said(table, "Kerr called about the spreadsheet", at_ms=15_000)  # fills the window
+        await self.settle()
+        self.assertEqual(list(table.pronounced), [(cerric, "sehrick", PLAYER)])
+
     async def test_a_table_that_is_only_finishing_is_not_looked_at(self) -> None:
         table = await self.filtered("1 game\n2 game")
         calls = self.pronounced_calls(table)
