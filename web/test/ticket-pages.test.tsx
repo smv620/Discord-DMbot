@@ -74,7 +74,9 @@ const many = (n: number, status: SupportTicketRow["status"] = "new"): SupportTic
   Array.from({ length: n }, (_, i) => row(i + 1, status));
 
 const nav = () => screen.findByRole("navigation", { name: text.ticketPagesNav });
-const button = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
+/** A page-bar button, by its move: a screen reader hears "<move>, page <n>" (#2249); the Go button has no page. */
+const button = (move: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${move}(, page \\d+)?$`) }) as HTMLButtonElement;
 const shown = () => screen.queryAllByRole("heading", { level: 3 }).map((h) => h.textContent);
 /** What a screen reader would hear last from the tickets' bar: a refusal if there is one, else the
  * page number. Found by role inside the bar's own notes, not by where they sit. */

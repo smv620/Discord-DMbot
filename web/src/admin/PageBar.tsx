@@ -85,6 +85,7 @@ export default function PageBar({ id, label, moves, page, pages, busy, notice, o
             type="button"
             class="button secondary"
             disabled={page <= 1}
+            aria-label={text.pageTo(moves.first, 1)}
             onClick={() => void go(1)}
           >
             <span aria-hidden="true">«</span>
@@ -94,6 +95,7 @@ export default function PageBar({ id, label, moves, page, pages, busy, notice, o
             type="button"
             class="button secondary"
             disabled={page <= 1}
+            aria-label={text.pageTo(moves.previous, Math.max(1, page - 1))}
             onClick={() => void go(page - 1)}
           >
             <span aria-hidden="true">‹</span>
@@ -107,6 +109,7 @@ export default function PageBar({ id, label, moves, page, pages, busy, notice, o
               type="text"
               inputMode="numeric"
               autocomplete="off"
+              aria-current="page"
               value={typed}
               aria-describedby={noteId}
               onInput={(e) => {
@@ -124,6 +127,7 @@ export default function PageBar({ id, label, moves, page, pages, busy, notice, o
             type="button"
             class="button secondary"
             disabled={page >= pages}
+            aria-label={text.pageTo(moves.next, Math.min(pages, page + 1))}
             onClick={() => void go(page + 1)}
           >
             {moves.next}
@@ -133,6 +137,7 @@ export default function PageBar({ id, label, moves, page, pages, busy, notice, o
             type="button"
             class="button secondary"
             disabled={page >= pages}
+            aria-label={text.pageTo(moves.last, pages)}
             onClick={() => void go(pages)}
           >
             {moves.last}
