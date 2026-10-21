@@ -34,6 +34,8 @@ export const importPage = {
   back: "Back to the sessions",
   lead: `Bring in sessions DMbot didn't record, from text files or Google Docs. DMbot keeps only the lines of players who have agreed to be recorded. Imported sessions can be read by everyone in your server, like any transcript.`,
   loading: "Loading…",
+  // Shown instead of the page while neither the site switch nor this campaign's server has imports on.
+  notOpen: "This page isn't open yet.",
   signedOut: "Sign in to import sessions. You will need to choose your files again.",
   signIn: "Sign in with Discord",
   pickLabel: `Choose up to ${IMPORT_MAX_FILES} text files (.txt), each up to ${IMPORT_MAX_MB} MB, or paste Google Doc links below`,
@@ -47,6 +49,9 @@ export const importPage = {
   fileNotTxt: (name: string): string => `${name} isn't a .txt file.`,
   fileError: {
     unreadable: "DMbot couldn't read this file.",
+    unknown_format:
+      "DMbot can't read this kind of transcript yet. It reads lines like 'Name: words', DMbot's own download, and caption files (.vtt or .srt) with names in them.",
+    no_speaker_names: "This caption file has no names in it, so DMbot can't tell who spoke.",
     too_big: `This file is over ${IMPORT_MAX_MB} MB.`,
     not_txt: "This isn't a .txt file.",
     not_a_google_doc:
@@ -85,6 +90,13 @@ export const importPage = {
   },
   addLink: "Add link",
   remove: "Remove",
+  filesListLabel: "Chosen files",
+  removeFile: (name: string): string => `Remove ${name}`,
+  removeAll: "Remove all",
+  removedAll: "Cleared. No files or links are chosen.",
+  alreadyChosen: "Already on the list, so it wasn't added again.",
+  addedFiles: (n: number, total: number): string =>
+    `Added ${n} ${n === 1 ? "file" : "files"}. ${total} chosen in all.`,
   removeLink: (n: number): string => `Remove Google Doc ${n}`,
   linkName: (n: number): string => `Google Doc ${n}`,
   chosenItems: (files: number, links: number): string =>

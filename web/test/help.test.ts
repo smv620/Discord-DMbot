@@ -233,7 +233,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("On your DM screen, press ⚙️ Settings")).toBe(!DM_BOT_CHANNEL_LIVE);
     // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
     const words = dmBotChannelSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("👤 My buttons");
+    expect(words).toContain("👤 DMbot Main Menu");
     expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
     expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
     expect(words).toContain("you get 🗂️ Menu, where you can stop being recorded.");
@@ -246,7 +246,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     if (DM_BOT_CHANNEL_LIVE) {
       expect(shown).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Settings|⚙️ Settings[^.]*on (?:your|the) DM screen|pinned card/);
     } else {
-      for (const phrase of ["dmb-dm-bot", "DMbot channel", "My buttons"]) expect(shown).not.toContain(phrase);
+      for (const phrase of ["dmb-dm-bot", "DMbot channel", "DMbot Main Menu"]) expect(shown).not.toContain(phrase);
     }
   });
 

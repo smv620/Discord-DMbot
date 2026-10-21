@@ -69,7 +69,8 @@ class SettingsCardTest(unittest.TestCase):
         self.assertIn("• **How much DMbot says:** Normal (recommended). Asks about", text)
         self.assertIn("Warnings always show", text)
         self.assertIn("• **Who can see the DM screen:** The DM. Players can choose", text)
-        self.assertIn("`/transcript`", text)
+        self.assertIn("Change it with 👁️ Who can see the DM screen.", text)
+        self.assertNotIn("`/transcript`", text)  # the transcripts line moved to Campaign management
         quiet = settings_text(campaign("quiet"))
         self.assertIn(
             "Quiet. Only what you ask for, warnings, and lines it left out as off-topic; "
@@ -83,39 +84,16 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items],
-            [0, 0, 1, 1, 1, 2, 3, 3, 3, 3, 3, 4, 4, 0, 4, 4, 2, 4, 1, 2, 2, 0],
-        )  # Take it on, Look up, Rules cards, Clock, House file, Invite, chat, Names (#1986) ...
-        # ... shared rules, Recaps, Homebrew, and Transcripts, What's switched on, Game masters
-        # and Delete by Take it on
+            [0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 4, 0, 4, 4, 4, 1, 0],
+        )  # the two menus (Who can see, Campaign management) sit by the levels (#2281) ...
+        # ... then Look up, Rules cards, Clock, House file, Invite, chat, Recaps, Stop when quiet,
+        # Shared rules, Homebrew, Names, What's switched on and Shared story
         labels = [i.item.label for i in items]
         self.assertEqual(labels[:2], ["✓ Quiet", "Normal"])  # no Chatty
-        self.assertEqual(labels[2], "✓ Only the DM")  # the current one, the same way
+        self.assertEqual(labels[2:4], ["Who can see the DM screen", "Campaign management"])
         self.assertEqual(
             [i.item.disabled for i in items],
-            [
-                True,
-                False,
-                True,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-                False,
-            ],
+            [True] + [False] * (len(items) - 1),
         )
         for item in items:
             self.assertLessEqual(len(item.item.label), 25)
@@ -238,9 +216,11 @@ class SettingsButtonsTest(unittest.IsolatedAsyncioTestCase):
         save.assert_awaited_once_with(it, *allowed, "private", quiet=True)
         it.response.defer.assert_awaited_once()
         kwargs = it.edit_original_response.await_args.kwargs
-        self.assertIn("**Who can see the DM screen:** Only the DM.", kwargs["content"])
+        self.assertIn("Only the DM.", kwargs["content"])
+        self.assertIn("Who can see the DM screen", kwargs["content"])  # the visibility card
         labels = [i.item.label for i in kwargs["view"].children]
         self.assertIn("✓ Only the DM", labels)  # the card shows what's saved now
+        self.assertIn("Back to Settings", labels)
 
     async def test_a_refused_visibility_tap_leaves_the_card(self) -> None:
         it = press(PLAYER)
@@ -255,7 +235,7 @@ class SettingsWordsTest(unittest.IsolatedAsyncioTestCase):
 
     def test_the_card_says_what_cant_be_changed_and_what_follows(self) -> None:
         text = settings_text(campaign())
-        self.assertIn("`/transcript`. Kept until the campaign is deleted.", text)
+        self.assertNotIn("Kept until the campaign is deleted", text)  # moved to its own card
         self.assertIn("If DMbot is listening now, it follows the change from now on.", text)
         self.assertNotIn("next line", text)
         self.assertEqual(LOAD_FAILED, "Sorry, something went wrong. Please try again.")

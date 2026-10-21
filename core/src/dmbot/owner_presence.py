@@ -32,7 +32,8 @@ HERE, GONE_FROM_SERVER, ACCOUNT_DELETED, DONT_KNOW = "here", "gone", "deleted", 
 NOTHING, MARK, CLEAR, ORPHAN = "nothing", "mark", "clear", "orphan"
 
 TELL_DMS = (
-    "This campaign's owner isn't in the server any more. Press Take it on in ⚙️ Settings to "
+    "This campaign's owner isn't in the server any more. Press Take it on in ⚙️ Settings → "
+    "🗂️ Campaign management to "
     "keep it running."
 )
 

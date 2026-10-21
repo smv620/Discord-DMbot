@@ -57,6 +57,8 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-10-02T19:30:00Z",
     status: "active",
     role: "owner",
+    // A test server: importing is on here though the site's own switch is off (#2260).
+    importsOn: true,
   },
   {
     id: "cmp-ashen",
@@ -449,6 +451,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           const bad = docs.find((d) => d.name === f.name)?.error;
           if (bad)
             return { name: f.name, format: null, error: bad, suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
+          // Files named with "unknown" or "nonames" stand in for the reader's two new refusals (#2302).
+          const refusal = f.name.includes("unknown") ? "unknown_format" : f.name.includes("nonames") ? "no_speaker_names" : null;
+          if (refusal)
+            return { name: f.name, format: null, error: refusal, suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           if (!f.name.toLowerCase().endsWith(".txt"))
             return { name: f.name, format: null, error: "not_txt", suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           const counts = new Map<string, number>();
