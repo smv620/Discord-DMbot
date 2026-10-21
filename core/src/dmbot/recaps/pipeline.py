@@ -1496,8 +1496,10 @@ class RecapWorker:
         never shipped: those sentences are cut in code, and if what is left no longer passes the
         checks, or the change was not about one sentence, the job fails as any unfixable check
         does. A draft the critics never got to read (the service failed twice before the motive
-        check ran, or the ceiling was already near) goes on as it is: the loop is optional, like
-        the grader, and a recap already written is never failed for it."""
+        check ran, or the ceiling was already near) has the sentences the narrow word list flags
+        cut in code (when in doubt nobody said it); the rest goes on as it is. That is the one
+        path where the loop can fail a written recap: when what is left no longer passes the
+        checks. Otherwise the loop is optional, like the grader."""
         self._written.pop((gid, cid, job.session_at), None)  # (a writer's text is not kept on)
         best = loop.best
         sheet = bt.from_json(job.beats)

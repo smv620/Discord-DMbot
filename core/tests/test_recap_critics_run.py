@@ -307,6 +307,17 @@ class Criticising(WorkerHarness):
         self.assertNotIn("avenge", job.summary)
         self.assertEqual(len(fast.motive_sent), cr.MAX_ROUNDS)
 
+    async def test_the_style_note_is_left_when_the_critics_stop_without_agreeing_too(self) -> None:
+        down = AIError("down")  # the grader fails on the draft and on each revision
+        fast = Smart(fx.BEATS_ANSWER, fx.prose_answer(WITH_MOTIVE), down, down, down, down)
+        fast.answers.append(fx.FINISH_ANSWER)
+        careful = fx.Canned(*([fx.prose_answer(WITH_MOTIVE)] * 3))
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.settle(await self.go())
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((job.state, loop.round), ("ready", cr.MAX_ROUNDS))  # no agreement
+        self.assertIn(cr.STYLE_UNCHECKED, loop.notes)
+
     async def test_a_service_that_keeps_failing_never_fails_a_recap_that_is_written(self) -> None:
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(AIError("down"), AIError("down"), AIError("down"))

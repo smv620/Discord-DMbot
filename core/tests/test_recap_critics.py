@@ -61,6 +61,17 @@ PLAIN = [
     "Grak took the key from the table.",
     "They went out of the room and down the stairs.",
     "The goal post stood at the end of the yard.",
+    "To their surprise, the door swung open.",
+    "To the north, a tower rose over the trees.",
+    "The sun set on the ruined keep.",
+    "The party set out to the hills at dawn.",
+    "Mira reached out to the frightened child.",
+    "They were surprised to find the door unlocked.",
+    "They were shocked to discover the body.",
+    "There was no way to escape the flooded room.",
+    "The villagers lived in fear of the dragon.",
+    "All hope seemed lost.",
+    "Thinking quickly, Mira threw the torch.",
 ]
 
 

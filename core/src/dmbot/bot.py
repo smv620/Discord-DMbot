@@ -270,7 +270,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, short, voice
+from dmbot.recaps import cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -514,6 +514,7 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
@@ -871,6 +872,12 @@ def consent_timing_line(
     )
 
 
+def _joined_at(guild: discord.Guild) -> int | None:
+    """When the bot joined this server, as Discord says (None while the server is still loading)."""
+    me = cast(discord.Member | None, getattr(guild, "me", None))
+    return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
+
+
 class DMBotTree(app_commands.CommandTree["DMBot"]):
     """Tags every slash-command log line with the server it came from."""
 
@@ -989,6 +996,8 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
+        # The DM's answers to a recap's names to check, from its page (#2113).
+        self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
@@ -3622,8 +3631,13 @@ class DMBot(commands.AutoShardedBot):
         return "Stopped. DMbot won't rejoin. See you next session! 👋"
 
     async def on_ready(self) -> None:
+        # A reconnect after a long outage can skip join events: every connect makes sure each
+        # server has its row, with the real join date (#2166).
+        first = not self._resume_started
+        if self.installs is not None:
+            self._track(self._note_present(first), "installs")
         # on_ready fires again after Discord reconnects; start resuming only once.
-        if self._resume_started:
+        if not first:
             return
         self._resume_started = True
         # A count, never names: answers "who has DMbot?" from the log (#426).
@@ -3638,13 +3652,28 @@ class DMBot(commands.AutoShardedBot):
                 gaps = install.missing(me.guild_permissions)
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
-        if self.installs is not None:  # servers joined before this was recorded (#2163)
-            self._track(self.installs.present([g.id for g in self.guilds]), "installs")
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
         self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
+
+    async def _note_present(self, first: bool) -> None:
+        """Write a row for every server the bot is in; at start-up also mark the ones it was
+        removed from while it was down (only then: a reconnect's list may still be filling)."""
+        assert self.installs is not None
+        servers = [(g.id, _joined_at(g)) for g in self.guilds]
+        await self.installs.present(servers, gone=lambda gid: self.get_guild(gid) is None)
+        if first:
+            try:
+                # The servers are read again here, after the writes above, so one added meanwhile
+                # is not marked left; an empty list marks nothing.
+                marked = await self.installs.left_except([g.id for g in self.guilds])
+            except Exception as exc:  # the type only
+                log.warning("Couldn't mark servers left while offline: %s", type(exc).__name__)
+            else:
+                if marked:
+                    log.info("Servers left while offline: %d", marked)  # a count
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -3762,8 +3791,17 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
-        if self.installs is not None:  # first: "Link this server" needs the row (#2163), and the
-            self._track(self.installs.joined(guild.id), "install-joined")  # welcome may fail
+        if self.installs is not None:
+            # First: "Link this server" needs the row (#2163), and the welcome may fail. A kick
+            # that follows at once wins: the write is skipped if the bot is gone by its turn.
+            self._track(
+                self.installs.joined(
+                    guild.id,
+                    _joined_at(guild),
+                    gone=lambda: self.get_guild(guild.id) is None,
+                ),
+                "install-joined",
+            )
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
@@ -3782,7 +3820,8 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id):
             if self.get_guild(guild_id) is not None:
                 return
-            await self.installs.left(guild_id)
+            # And again once this server's turn comes: a join queued behind may have come back.
+            await self.installs.left(guild_id, back=lambda: self.get_guild(guild_id) is not None)
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
@@ -8789,6 +8828,7 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Skipped a name from the recap: %s", exc)
                     continue
                 added += 1
+            await self._link_recap_names(gid, cid, job)
             if added and campaign.dm_screen_channel_id is not None:
                 await self.post(
                     campaign.dm_screen_channel_id, recap_names_text(added), view=review_view(cid)
@@ -8801,6 +8841,22 @@ class DMBot(commands.AutoShardedBot):
                 self.lookup.drop([cid])
         except Exception:
             log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _link_recap_names(self, gid: int, cid: str, job: Job) -> None:
+        """Remember which waiting suggestions are this recap's names to check (ids only), so its
+        page can list them and answer them (#2113). A name the list already had as a suggestion
+        counts too. A failure costs the page its list, never the recap."""
+        if self.memory is None or self.name_answers is None:
+            return
+        try:
+            # (A waiting suggestion an earlier recap also kept is listed under both recaps: it is
+            # one name, answered once.)
+            wanted = {name_key(n) for n in job.to_confirm}
+            waiting = await self.memory.entities(gid, cid, statuses=(PROPOSED,))
+            ids = [e.id for e in waiting if name_key(e.name) in wanted]
+            await self.name_answers.link(gid, cid, job.session_at, ids)
+        except Exception as exc:
+            log.warning("Couldn't link a recap's names to check: %s", type(exc).__name__)
 
     async def _private_names_note(self, gid: int, cid: str, dm_user_id: int, added: int) -> None:
         """The same note as a private message to the DM, with the same check (#2027): it waits
@@ -9912,14 +9968,51 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_recap_requests()
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("The recap requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_name_answers()
+            except Exception as exc:
+                log.warning("The name answers failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
                     try:
                         await self.recap_requests.sweep(guild.id)
+                        if self.name_answers is not None:
+                            await self.name_answers.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_name_answers(self) -> None:
+        """What DMs answered on the recap page about its names to check (#2113), applied through
+        the same memory paths as Discord's name check, so an answer on either answers both. The
+        sender must still be a DM of the campaign. Only the outcome word is logged, never the
+        spelling or the note."""
+        store = self.name_answers
+        if store is None or self.memory is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(NAME_ANSWERS_PER_ROUND):
+                answer = await store.claim_next(guild.id)
+                if answer is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=answer.campaign_id):
+                    try:
+                        campaign = await self.campaigns.get(guild.id, answer.campaign_id)
+                        why = (
+                            name_answers.NOT_ALLOWED
+                            if campaign is None
+                            else await name_answers.apply(
+                                self.memory, guild.id, campaign.dm_user_ids, answer
+                            )
+                        )
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A name answer failed: %s", type(exc).__name__)
+                        why = name_answers.FAILED
+                    await store.finish(guild.id, answer, error=why)
+                    log.info("Name answer: %s", why or "done")  # the word only
+                    if not why and self.lookup is not None:
+                        self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
 
     async def run_recap_requests(self) -> None:
         store = self.recap_requests

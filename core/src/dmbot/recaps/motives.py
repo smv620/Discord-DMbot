@@ -45,16 +45,19 @@ def answer_tokens(asked: int) -> int:
 # when the call could not be made at all (the sentence is then cut in code) and for a sentence the
 # call left out of its answer.
 _INTENT = re.compile(
-    r"\b(?:want|wants|wanted|wanting|wish|wishes|wished|hope|hopes|hoped|hoping|plan|plans|"
-    r"planned|planning|intend|intends|intended|intent on|seek|seeks|sought|seeking|vow|vows|"
-    r"vowed|determined to|decided to|decides to|because|so that|so [^.!?]{0,40}\bcould|"
-    r"in order to|in hopes|eager to|desperate to|desire|desires|desired|fear|fears|feared|"
-    r"afraid|worry|worries|worried|means to|mean to|meant to|set on|bent on|out to|"
+    r"\b(?:want|wants|wanted|wanting|wish|wishes|wished|hop(?:e|es|ed|ing) (?:to|that|for)|"
+    r"plan|plans|planned|planning|intend|intends|intended|intent on|seek|seeks|sought|seeking|"
+    r"vow|vows|vowed|determined to|decided to|decides to|because|so that|"
+    r"so [^.!?]{0,40}\bcould|in order to|in hopes|eager to|desperate to|desire|desires|desired|"
+    r"fear(?:s|ed)? (?:that|for|to)|afraid (?:to|that|of)|worr(?:y|ies|ied) (?:that|about|for)|"
+    r"means to|mean to|meant to|bent on|"
+    r"out to (?:avenge|find|kill|stop|save|rescue|steal|prove|destroy|capture|punish|reclaim|"
+    r"recover|protect)|"
     r"out of (?:loyalty|fear|spite|pity|duty|greed|love|anger|habit|respect|guilt|hatred|"
     r"jealousy|curiosity|revenge|kindness|desperation)|looking for|looks for|look for|"
     r"searching for|tried to|tries to|try to|trying to|attempt to|attempts to|attempted to|"
-    r"thinking|(?:he|she|they|we) will|going to|ready to|prepared to|willing to|"
-    r"needs to|needed to|(?:have|has|had) to (?!roll|make|save|pass|fail)|"
+    r"thinking (?:that|the|it|he|she|they|of)|(?:he|she|they|we) will|going to|ready to|"
+    r"prepared to|willing to|needs to|needed to|(?:have|has|had) to (?!roll|make|save|pass|fail)|"
     r"for the sake of|in case|lest)\b",
     re.IGNORECASE,
 )
@@ -66,6 +69,13 @@ _TO_PURPOSE = re.compile(
     r"confront|uncover|discover|destroy)\b",
     re.IGNORECASE,
 )
+# What comes before such a "to <verb>" when it is a surprise or a lack, not an aim: "They were
+# shocked to discover the body", "There was no way to escape".
+_NOT_AN_AIM = re.compile(
+    r"\b(?:surprised|shocked|amazed|astonished|startled|horrified|relieved|dismayed|"
+    r"no way|no chance|not able)\b[^.!?]{0,30}$",
+    re.IGNORECASE,
+)
 # "they head north to find the king": a way of going followed by "to <verb>".
 _GOING_TO = re.compile(
     r"\b(?:head|heads|headed|heading|travel|travels|travelled|traveled|set out|sets out|ride|"
@@ -73,20 +83,28 @@ _GOING_TO = re.compile(
     r"[^.!?]{0,60}?\bto\s+(?:find|reach|see|warn|stop|get|save|meet|seek|learn|ask)\b",
     re.IGNORECASE,
 )
-# A sentence that opens with a reason: "Wanting answers, ...", "Thinking the vault empty, ..."
+# A sentence that opens with a reason: "Wanting answers, ...", "Thinking the vault empty, ...",
+# "To save the village, ..." (but never "To the north, ..." or "To their surprise, ...").
 _OPENING_REASON = re.compile(
-    r"^\s*(?:(?:Wanting|Hoping|Fearing|Wishing|Seeking|Hunting|Thinking|Believing|Suspecting|"
-    r"Intending|Planning|Hoping|Determined|Desperate|Eager)\b[^,]{0,60},|"
-    r"To\s+[a-z]+\b[^,]{0,60},)",
+    r"^\s*(?:(?:Wanting|Hoping|Fearing|Wishing|Seeking|Hunting|Believing|Suspecting|Intending|"
+    r"Planning|Determined|Desperate|Eager)\b[^,]{0,60},|"
+    r"Thinking\s+(?:that|the|it|he|she|they)\b[^,]{0,60},|"
+    r"To\s+(?!(?:the|a|an|his|her|their|our|my|its|your|them|him|me|us|each|all|one|every)\b)"
+    r"[a-z]+\b[^,]{0,60},)",
     re.IGNORECASE,
 )
+
+
+def _aims(text: str) -> bool:
+    """Whether a "to <verb>" in the text names an aim (not a surprise or a lack)."""
+    return any(not _NOT_AN_AIM.search(text[: m.start()]) for m in _TO_PURPOSE.finditer(text))
 
 
 def states_purpose(text: str) -> bool:
     """Whether the word list says this sentence puts forward a reason, an aim or a plan."""
     return bool(
         _INTENT.search(text)
-        or _TO_PURPOSE.search(text)
+        or _aims(text)
         or _GOING_TO.search(text)
         or _OPENING_REASON.search(text)
     )
