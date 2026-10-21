@@ -359,7 +359,12 @@ class AtTheTableTyped(AtTheTable):
         posts: list[tuple[int, str]] = []
 
         async def post(
-            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
         ) -> bool:
             posts.append((channel_id, text))
             return True
@@ -377,7 +382,12 @@ class AtTheTableTyped(AtTheTable):
         posts: list[tuple[int, str]] = []
 
         async def post(
-            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
         ) -> bool:
             posts.append((channel_id, text))
             return True

@@ -20,6 +20,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dmbot.recaps.store import RecapRespelled
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,3 +140,30 @@ def undone_note(old: str, lines: int, sessions: int) -> str:
         f"{_count(lines, 'line', 'lines')} of {_count(sessions, 'past session', 'past sessions')}"
     )
     return f"Put {old} back in {where}."
+
+
+def recaps_note(
+    old: str, new: str, done: RecapRespelled, *, after_transcripts: bool = False
+) -> str:
+    """What the DM is told about recaps after a fixed spelling (#2170): counts and what stays.
+    `after_transcripts`: a sentence about the past transcripts came first, so this one says
+    "Also"."""
+    parts = []
+    if done.waiting:
+        parts.append(_count(done.waiting, "recap that is waiting", "recaps that are waiting"))
+    if done.posted:
+        parts.append(_count(done.posted, "posted recap", "posted recaps"))
+    note = ""
+    if parts:
+        lead = "Also changed" if after_transcripts else "Changed"
+        note = f"{lead} {old} to {new} in {' and '.join(parts)}."
+    if done.approvals_kept:
+        note += " An approval stays: a spelling fix is not a change of story."
+    if done.posted:
+        note += " Posts already in Discord are not changed."
+    if done.skipped:
+        many = _count(done.skipped, "recap", "recaps")
+        note += f" {many} would get too long, so left as written."
+    if done.audio_old:
+        note += f" Audio already made still says {old}; make it again on the website."
+    return note.strip()

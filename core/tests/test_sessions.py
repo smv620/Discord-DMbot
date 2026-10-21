@@ -316,7 +316,12 @@ class SaveAndResume(SessionTests):
         self.posts: list[tuple[int, str]] = []
 
         async def fake_post(
-            channel_id: int, text: str, view: object = None, *, remember: object = None
+            channel_id: int,
+            text: str,
+            view: object = None,
+            *,
+            remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.posts.append((channel_id, text))
             return True

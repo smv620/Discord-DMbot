@@ -156,15 +156,18 @@ class AIModels:
 
 
 DEFAULT_MODELS = AIModels(
-    fast="claude-haiku-4-5-20251001",
+    fast="claude-haiku-5-5",  # the owner moved the fast tier off Haiku 4.5 (#2152)
     careful="claude-sonnet-5-5",
     deep="claude-opus-5-5",
     creative="claude-opus-5-5",  # writes the recap as plain text (#2074)
     formatting="claude-haiku-5-5",  # shapes the text into sections; no word of it changes (#2074)
 )
-# The model the fast tier is measured against, for the comparison tool only (#2055): never a
-# default, and not used by the bot. A job names a tier, so this is the one place the id is written.
+# The model the comparison tool tries (#2055); it is now also the fast tier's default (#2152). A job
+# names a tier, so this and DEFAULT_MODELS are the only places the id is written.
 FAST_CANDIDATE = "claude-haiku-5-5"
+# The fast tier's model before #2152, the baseline the comparison tool measures against, and the
+# id to set `AI_MODEL_FAST` back to if Haiku 5.5 does worse on the sidebar.
+PREVIOUS_FAST = "claude-haiku-4-5-20251001"
 CONNECT_TIMEOUT_S = 15
 
 # List prices in dollars per million tokens, (input, output), base tokens, from
@@ -176,7 +179,7 @@ CONNECT_TIMEOUT_S = 15
 PRICE_PER_MILLION: dict[str, tuple[float, float]] = {
     "claude-sonnet-5-5": (2, 10),
     "claude-haiku-4-5-20251001": (1, 5),
-    "claude-haiku-5-5": (0.10, 0.50),  # measured against the fast tier's model (#2055), not live
+    "claude-haiku-5-5": (0.10, 0.50),  # the fast tier since #2152 (measured in #2055)
     "claude-opus-5-5": (4, 20),  # the recap's creative model (#2074)
 }
 DEFAULT_PRICE = (15, 75)

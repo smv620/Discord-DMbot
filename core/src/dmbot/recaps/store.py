@@ -15,6 +15,7 @@ prompts, not the decision (a restored campaign's recaps are drafts again, never 
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 import time
 from collections.abc import Callable, Sequence
@@ -25,8 +26,10 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.memory.models import name_key
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
+from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -47,6 +50,20 @@ COLUMNS = (
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
     " approved_by, approved_at, approved_hash, audio_choice"
 )
+
+
+_LIMITS = {"title": 120, "summary": 6000, "original": 6000}  # the table's own limits
+
+
+@dataclass(frozen=True, slots=True)
+class RecapRespelled:
+    """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
+
+    waiting: int = 0  # drafts and approved ones not yet posted
+    posted: int = 0
+    approvals_kept: int = 0
+    audio_old: int = 0  # recaps whose finished audio still says the old spelling
+    skipped: int = 0  # recaps the new spelling would make too long: left as they were
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +204,10 @@ class RecapStore:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    @property
+    def db(self) -> Database:
+        return self._db
 
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
         async with self._db.guild(guild_id) as conn:
@@ -463,6 +484,103 @@ class RecapStore:
                 (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
             return bool(cur.rowcount)
+
+    async def respell(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        old: str,
+        new: str,
+        longer: Sequence[str],
+        hidden: Sequence[str] = (),
+    ) -> RecapRespelled:
+        """A fixed spelling reaches this campaign's recaps (#2170): the written ones that are not
+        dropped get `new` where they say `old` as a whole name
+        (never inside a longer name in `longer`, and never completing a name in `hidden`), in title,
+        text and the kept original. A waiting
+        recap the DM already approved stays approved: a spelling fix is not a change of story, so
+        its approval follows the new text. Finished audio is left as it is; it no longer matches
+        the text, which is how the page already knows to offer making it again. A posted recap's
+        Discord message is not touched; its stored text is, and `respelled_at` lets the page say
+        so. One transaction. Counts only."""
+        waiting = posted = kept = audio = skipped = 0
+        # The longest run of letters and digits: the name may be written with a look-alike
+        # apostrophe or dash, which a prefilter on a whole word would miss.
+        word = max(re.findall(r"\w+", old), key=len, default="")
+        like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, status, title, summary, original, to_confirm, approved_hash,"
+                " audio, audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND state = 'ready' AND status IN ('draft', 'posted')"
+                " AND (title ILIKE %s ESCAPE '\\' OR summary ILIKE %s ESCAPE '\\'"
+                " OR original ILIKE %s ESCAPE '\\') FOR UPDATE",
+                (guild_id, campaign_id, like, like, like),
+            )
+            for row in await cur.fetchall():
+                title, summary, original = row["title"], row["summary"], row["original"]
+                changed: dict[str, str] = {}
+                blocked = False
+                for name, text in (("title", title), ("summary", summary), ("original", original)):
+                    found = respell(text, old, new, longer, hidden)
+                    if found is not None:
+                        changed[name] = found.text
+                    elif hidden and respell(text, old, new, longer) is not None:
+                        blocked = True  # the new spelling would complete a hidden name here
+                if blocked:
+                    skipped += 1  # the recap is left whole, never half respelled
+                    continue
+                # The names the recap asks the DM to check: the same name, spelled right.
+                confirm = list(
+                    dict.fromkeys(
+                        new if name_key(c) == name_key(old) else c for c in row["to_confirm"]
+                    )
+                )
+                confirm_changed = confirm != list(row["to_confirm"])
+                if not changed and not confirm_changed:
+                    continue
+                if any(len(text) > _LIMITS[name] for name, text in changed.items()):
+                    skipped += 1  # the new spelling is longer and would not fit: left as it was
+                    continue
+                if not ({"title", "summary"} & changed.keys()):
+                    # Only the kept original or the names to check had it: written, but nothing
+                    # the DM reads in the text changed.
+                    quiet = [f"{name} = %s" for name in changed]
+                    quiet_values: list[Any] = list(changed.values())
+                    if confirm_changed:
+                        quiet.append("to_confirm = %s")
+                        quiet_values.append(confirm)
+                    await conn.execute(
+                        f"UPDATE recap_jobs SET {', '.join(quiet)} WHERE guild_id = %s"
+                        " AND campaign_id = %s AND session_at = %s",
+                        (*quiet_values, guild_id, campaign_id, row["session_at"]),
+                    )
+                    continue
+                before = text_hash(title, summary)
+                after = text_hash(changed.get("title", title), changed.get("summary", summary))
+                sets = [f"{name} = %s" for name in changed]
+                values: list[Any] = list(changed.values())
+                if row["approved_hash"] and row["approved_hash"] == before:
+                    sets.append("approved_hash = %s")
+                    values.append(after)
+                    kept += 1
+                if confirm_changed:
+                    sets.append("to_confirm = %s")
+                    values.append(confirm)
+                sets.append("respelled_at = %s")
+                values.append(int(self._now()))
+                await conn.execute(
+                    f"UPDATE recap_jobs SET {', '.join(sets)} WHERE guild_id = %s"
+                    " AND campaign_id = %s AND session_at = %s",
+                    (*values, guild_id, campaign_id, row["session_at"]),
+                )
+                if row["status"] == "posted":
+                    posted += 1
+                else:
+                    waiting += 1
+                if row["audio"] == "ready" and row["audio_text_hash"] == before:
+                    audio += 1
+        return RecapRespelled(waiting, posted, kept, audio, skipped)
 
     async def reset_audio(self, guild_id: int, campaign_id: str, session_at: int) -> None:
         """A new recap is being written (Try again): the old audio is no longer its audio."""

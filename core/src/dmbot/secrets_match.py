@@ -13,7 +13,10 @@ or more used to block a text, so a secret like "The White Death" blocked every r
 - a title in its short or long form, with or without the full stop (Mr/Mister ... Prof/Professor);
   a title that ends a name takes the same endings ("the Lost General's");
 - the whole name run together at word edges ("WhiteDeath", "TheWhiteDeath", "MisterWhite"), and
-  several whole secret names glued into one word ("RaeAegis").
+  several whole secret names glued into one word ("RaeAegis"). Run together means the name's own
+  words joined, never an article glued to a short name ("The Ox" is not looked for as "theox":
+  endings make everyday words of such joins, "there's" for "The Re", and blocking a recap for
+  one of them costs more than the join is ever written).
 
 A match inside a longer allowed name does not count ("Arcane Brotherhood" inside the confirmed
 "Arcane Brotherhood Hall" is the hall). A one-word secret under three letters is not looked for
@@ -30,6 +33,7 @@ the database.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import itertools
 from collections.abc import Collection, Sequence
@@ -125,13 +129,49 @@ class _Text:
 
     def __init__(self, seen: list[str]) -> None:
         self.seen = seen
+        # Keyed by the name itself, never id(): a freed name's id is reused by the next one, which
+        # would hand back another secret's spans and miss it.
+        self._spans: dict[_Name, list[tuple[int, int]]] = {}  # per name, once per reading
+        # The cover of the allowed names it was built from (the same list, by identity).
+        self._cover: tuple[Sequence[_Name], list[int], list[int], dict[int, int]] | None = None
         self.index: dict[str, list[int]] = {}
         for i, word in enumerate(seen):
             self.index.setdefault(word, []).append(i)
 
     def spans(self, name: _Name) -> list[tuple[int, int]]:
         """Where the name's words stand, one after the other. Found from the places its first
-        word may stand, so a name that is not in the text costs a few lookups."""
+        word may stand, so a name that is not in the text costs a few lookups. Kept for the next
+        ask: an allowed name is asked about for every secret hit, and a text with many hits would
+        otherwise look for the same name again each time (#2100)."""
+        found = self._spans.get(name)
+        if found is None:
+            found = self._spans[name] = self._find(name)
+        return found
+
+    def inside_longer(self, allowed: Sequence[_Name], start: int, end: int) -> bool:
+        """Whether the words [start, end) stand inside a longer occurrence of any allowed name.
+        All the allowed names' occurrences are sorted once by where they start, with the furthest
+        end reached so far, so a hit costs one bisect however many names are allowed and however
+        many hits the text has (#2100). An occurrence that holds [start, end) and is not exactly
+        it is longer."""
+        if self._cover is None or self._cover[0] is not allowed:
+            spans = sorted((a, b) for name in allowed for a, b in self.spans(name))
+            starts = [a for a, _ in spans]
+            reach: list[int] = []
+            furthest = 0
+            last_end: dict[int, int] = {}
+            for a, b in spans:
+                furthest = max(furthest, b)
+                reach.append(furthest)
+                last_end[a] = max(last_end.get(a, 0), b)
+            self._cover = (allowed, starts, reach, last_end)
+        _, starts, reach, last_end = self._cover
+        i = bisect.bisect_left(starts, start)  # occurrences starting before `start` are [:i]
+        if i and reach[i - 1] >= end:
+            return True
+        return last_end.get(start, 0) > end  # one starting at the same word, running further
+
+    def _find(self, name: _Name) -> list[tuple[int, int]]:
         n = len(name.words)
         starts = sorted(i for form in name.forms[0] for i in self.index.get(form, ()))
         return [
@@ -204,11 +244,7 @@ def secret_rule(text: str, secret_names: Collection[str], allowed_names: Collect
                         allowed_cache = [
                             a for n in allowed_names for t in _variants(n) if (a := _name(t))
                         ]
-                    if not any(
-                        len(a.words) > len(name.words)
-                        and any(s <= start and end <= e for s, e in reading.spans(a))
-                        for a in allowed_cache
-                    ):
+                    if not reading.inside_longer(allowed_cache, start, end):
                         return WHOLE_NAME
             words = tokens[1:] if len(tokens) > 1 and tokens[0] in ARTICLES else tokens
             if len(words) > 1:
