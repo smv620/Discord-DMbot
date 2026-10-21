@@ -1697,6 +1697,23 @@ names panel nor the speech-to-text hints can be a fixed list.
   and secret connections are shown, searched and downloaded only for the campaign's
   DMs:** a server manager who isn't one of its DMs gets the panel, cards, browsing and
   download without them (they may be at the table).
+- **All names on the website** (owner, 2026-10-21). The "✏️ Fix, change or remove a name…" menu shows
+  at most ten names a section (Discord's limits), so its **last choice is "🌐 All names on the website…"**.
+  Discord can't open a link from a menu, so choosing it answers privately with one **🔗 Open all names**
+  link button. The same last choice ends every other name menu that is cut short (Browse by kind, the name
+  card's lists). The page, **Names** at `/account/names/<server>.<campaign>`, is the whole list made for
+  a big screen: search as you type, filter by kind (people, places, factions, items, events…), sort by
+  name or newest, a count per kind, and paging; never a fixed cap.
+  - **Who sees what:** the same rule as the names panel above. The campaign's DMs see every name, secret
+    ones marked 🤫, and can act; a server manager who isn't one of its DMs sees no secret names; anyone
+    else is sent to the NPC pages, which already show the players' view.
+  - **What a DM can do there**, each the same action as the name card in Discord, recorded the same way
+    so **↩️ Undo** on the Discord card still works: fix the spelling, change the kind, add or remove other
+    names and nicknames, mark or unmark secret, merge two names, and remove a name (one confirmation).
+    An NPC's row also links to its NPC page.
+  - **How:** the website's role still has no right on the memory tables. It reads and writes through
+    database doors scoped to one campaign and checked against the signed-in DM on every call, like the
+    "said as" spelling (#1451). Logs hold counts, never names.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
