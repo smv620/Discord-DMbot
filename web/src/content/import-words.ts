@@ -154,7 +154,7 @@ export const importPage = {
     starting_recap: "Writing the recap",
     writing_recap: "Writing the recap",
     recap_ready: "Recap ready",
-    recap_failed: "The recap couldn't be written. You can try again from the recap list.",
+    recap_failed: "The recap couldn't be written. You can try again from the recaps.",
     recap_not_written: "Imported (no recap)",
     done: "Imported",
     failed: "Couldn't import this one",
@@ -163,8 +163,10 @@ export const importPage = {
     n > 0
       ? `Waiting for your answers about ${n} ${n === 1 ? "name" : "names"}`
       : "Waiting for your answers about names",
-  recapLink: "Open the recaps",
-  namesLink: "Answer them",
+  // The file's name goes in the link's label, so ten rows are not ten identical links to a screen reader.
+  recapLink: "Open the recap",
+  namesLink: "Answer the questions about names",
+  linkFor: (link: string, name: string): string => `${link} for ${name}`,
   namesUnchecked:
     "DMbot couldn't check every imported session for new names, so some may be missing. Add any with ➕ Add a name on the names panel.",
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,

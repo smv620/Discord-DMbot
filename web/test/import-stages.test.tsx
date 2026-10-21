@@ -71,7 +71,7 @@ describe("the words for each stage", () => {
       /2026-09-05 · Writing the recap/,
       /2026-09-06 · Writing the recap/,
       /2026-09-07 · Recap ready/,
-      /2026-09-08 · The recap couldn't be written\. You can try again from the recap list\./,
+      /2026-09-08 · The recap couldn't be written\. You can try again from the recaps\./,
       /2026-09-09 · Imported \(no recap\)/,
       /2026-09-10 · Imported/,
       /2026-09-11 · Couldn't import this one/,
@@ -95,12 +95,13 @@ describe("the words for each stage", () => {
 });
 
 describe("the links", () => {
-  it("links 'waiting for names' and 'recap ready' to the recaps, and no other stage", async () => {
+  it("links 'waiting for names', 'recap ready' and 'recap failed' to the recaps, each named for its file", async () => {
     await importing(everyImportStage);
-    const links = screen.getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
-    expect(links).toContainEqual([w.namesLink, "/account/recaps"]);
-    expect(links).toContainEqual([w.recapLink, "/account/recaps"]);
-    expect(links.filter(([t]) => t === w.namesLink || t === w.recapLink)).toHaveLength(2);
+    const links = screen.getAllByRole("link").map((a) => [a.getAttribute("aria-label") ?? a.textContent, a.getAttribute("href")]);
+    expect(links).toContainEqual([w.linkFor(w.namesLink, "waiting_for_names.txt"), "/account/recaps"]);
+    expect(links).toContainEqual([w.linkFor(w.recapLink, "recap_ready.txt"), "/account/recaps"]);
+    expect(links).toContainEqual([w.linkFor(w.recapLink, "recap_failed.txt"), "/account/recaps"]);
+    expect(links.filter(([t]) => String(t).startsWith(w.namesLink) || String(t).startsWith(w.recapLink))).toHaveLength(3);
   });
 });
 

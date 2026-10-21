@@ -497,12 +497,20 @@ export default function Import({
                   : ""}
               </span>
               {s.stage === "waiting_for_names" && (
-                <a class="small" href="/account/recaps">
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.namesLink, shownApi(s.file))}
+                >
                   {words.namesLink}
                 </a>
               )}
-              {s.stage === "recap_ready" && (
-                <a class="small" href="/account/recaps">
+              {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.recapLink, shownApi(s.file))}
+                >
                   {words.recapLink}
                 </a>
               )}
