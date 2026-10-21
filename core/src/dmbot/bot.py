@@ -266,7 +266,7 @@ from dmbot.recaps.notify import page_link, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
-from dmbot.recaps.text import names_a_secret
+from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, retire_channels
 from dmbot.rules import house_voice
@@ -317,6 +317,8 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_job import ImportJob, ImportStore
+from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
 from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
@@ -388,6 +390,7 @@ from dmbot.ui.names import (
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
+from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
@@ -465,6 +468,7 @@ RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_ROUND_S = 60
+IMPORT_ROUND_S = 30
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -1164,6 +1168,14 @@ class DMBot(commands.AutoShardedBot):
         self._clean_failed_at = -HINTS_FAIL_LOG_S
         # Stored session transcripts anyone in the server can download (#41, #125).
         self.transcripts = transcripts
+        # Cleaning the sessions a DM imported from a file (#2105), in the background.
+        self.import_job: ImportJob | None = (
+            ImportJob(
+                ImportStore(transcripts.db), self.lookup.get, self.topic_ai, consent.consenting
+            )
+            if transcripts is not None and self.lookup is not None
+            else None
+        )
         self.tables: dict[int, Table] = {}
         # Channels of any campaign that must never be read as table chat, by server, with when
         # the answer runs out (monotonic seconds) (#1118).
@@ -1297,6 +1309,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(
             ShortRecapButton
         )  # "write a recap anyway?" for a short session (#2104)
@@ -1355,6 +1368,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_loop(), "recaps")]
                 if self.recap_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._import_loop(), "session-imports")]
+                if self.import_job is not None
                 else []
             ),
             *(
@@ -2220,7 +2238,7 @@ class DMBot(commands.AutoShardedBot):
                         table.screen_channel_id,
                         f"📜 Last session's recap is still waiting: **{shown}**. "
                         "Nothing has gone to the players.",
-                        view=ready_view(cid, session_at),
+                        view=ready_view(cid, session_at, self.settings.site_url),
                         remember=("recap", cid, session_at),
                     )
             except Exception:
@@ -7719,6 +7737,74 @@ class DMBot(commands.AutoShardedBot):
         log.info("Recap approval: %d problem(s)", len(problems))
         return problems
 
+    async def recap_share_link(
+        self, campaign: Campaign, session_at: int, *, new: bool = False
+    ) -> tuple[str | None, str]:
+        """The public link of a recap for "Share a recap" (#2118): (token, ""), or (None, why in
+        plain words). A recap not posted yet is posted first, the same move and checks as Post
+        (its approval, the secret names, people still recorded, all read again); a posted one has
+        the secret and people checks read again before its link is handed out. The token is a
+        secret link: it is never logged."""
+        store = self.recaps
+        if store is None:
+            return None, "Recaps aren't available right now. Try again in a minute."
+        gid, cid = campaign.guild_id, campaign.id
+        job = await store.get(gid, cid, session_at)
+        where = (
+            f": {self.settings.site_url.rstrip('/')}/account/recaps"
+            if self.settings.site_url
+            else ""
+        )
+        if job is None or job.state != "ready":
+            return None, "This recap isn't ready yet. Try again in a minute."
+        was_draft = job.status == "draft"
+        if was_draft:
+            if not job.approved:  # a draft that was never approved is never shared
+                return (
+                    None,
+                    f"Read and approve this recap on your recap page first{where}. "
+                    "Nothing was shared.",
+                )
+            # The approval is checked again in SQL, in the same statement that moves it on, so a
+            # text edited since the check above cannot slip through; of two presses, one wins.
+            if await store.decide(gid, cid, session_at, "post", require_approved=True):
+                await self.post_recaps(gid)  # its own checks; a failed one puts it back as a draft
+            job = await store.get(gid, cid, session_at)
+            if job is None or job.status == "posting":
+                return None, "It's being posted right now. Try again in a moment."
+            if job.status == "draft":
+                why = job.last_error or "It couldn't be posted just now."
+                return (
+                    None,
+                    f"Not posted: {why} Nothing was shared. Try again, or check your recap page.",
+                )
+        if job.status == "posting":
+            return None, "It's being posted right now. Try again in a moment."
+        if job.status != "posted":
+            return None, "You skipped this recap, so it can't be shared."
+        if was_draft:  # it is posted now: the old line's Post and Skip buttons would mislead
+            await self.decision_lines.close(("recap", cid, session_at), "Posted.")
+        secrets = await self.recap_secret_names(campaign)
+        if secrets is None:
+            return None, "DMbot couldn't check your secret names just now. Try again."
+        text = "\n".join([job.title, strip_cues(job.summary), *job.housekeeping])
+        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
+            return (
+                None,
+                "This recap names a secret of yours, so it wasn't shared. "
+                "Edit it on your recap page, then try again.",
+            )
+        if not set(job.speakers) <= set(await self.consent.consenting(gid)):
+            return (
+                None,
+                "A player has stopped being recorded, so this recap can't be shared as "
+                "written. Nothing was shared. Write it again from your recap page.",
+            )
+        token = await store.share_token(gid, cid, session_at, new=new)
+        if token is None:
+            return None, "This recap isn't posted, so it can't be shared. Try again."
+        return token, ""
+
     async def recap_audio_wanted(self, gid: int, cid: str, job: Job) -> bool:
         """Whether the audio is to be made for a recap that has just become ready: the switch,
         the key and voice, and a plan that includes spoken recaps (closed when it can't be
@@ -7835,7 +7921,7 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id,
                     ready_text(job.title, link),
-                    view=ready_view(cid, job.session_at),
+                    view=ready_view(cid, job.session_at, self.settings.site_url),
                     remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:
@@ -8425,6 +8511,24 @@ class DMBot(commands.AutoShardedBot):
         except discord.HTTPException:
             return "there"
         return user.display_name
+
+    async def _import_loop(self) -> None:
+        """Every 30 seconds: the sessions a DM imported that wait to be cleaned (#2105). A restart
+        puts one it was in the middle of back in the queue."""
+        assert self.import_job is not None
+        await asyncio.sleep(45)
+        for guild in list(self.guilds):
+            try:
+                await self.import_job.store.resume(guild.id, older_than_s=0)
+            except Exception:
+                log.exception("Import: couldn't put the unfinished ones back")
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    await self.import_job.run_round(guild.id)
+                except Exception:
+                    log.exception("Import: cleaning failed for a server")
+            await asyncio.sleep(IMPORT_ROUND_S)
 
     async def _recap_audio_loop(self) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
@@ -9746,6 +9850,9 @@ async def run(settings: Settings) -> None:
         campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
         campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
         campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
+        campaigns.register_section(
+            ImportSpeakersSection()
+        )  # and who its import labels were (#2105)
         campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
         campaigns.register_section(ClockSection())  # and the game clock (#965)
         campaigns.register_section(EffectsSection())  # and its timed effects (#998)

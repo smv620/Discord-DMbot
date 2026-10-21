@@ -220,6 +220,28 @@ export interface Recap {
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
   approval?: RecapApproval;
+  /** On a list row: a public link is on (#2118). Missing from an older API. */
+  shared?: boolean;
+  /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
+   * its own address. Missing from an older API. */
+  share?: RecapShare;
+}
+
+/** A recap's public link: on or off, and where it is. */
+export interface RecapShare {
+  on: boolean;
+  path: string | null;
+}
+export type ShareAction = "on" | "off" | "new";
+
+/** A shared recap as anyone with the link sees it: the table version only (#2118). */
+export interface PublicRecap {
+  title: string;
+  text: string;
+  /** Unix seconds. */
+  postedAt: number;
+  /** Only the kinds that exist; each is a full address that needs no sign-in. */
+  audio: { voice?: string; music?: string };
 }
 
 /** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
@@ -602,6 +624,8 @@ export type ApiErrorKind =
   | "bad-mapping" // the speaker choices don't fit the files (#2107)
   | "bad-date" // a session's date is not a date (#2107)
   | "no-lines-kept" // every line of a file would be dropped (#2107)
+  | "not-posted" // only a posted recap can have a public link (#2118)
+  | "bad-action" // not one of on, off or new (#2118)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -746,6 +770,10 @@ export interface AccountApi {
     links?: string[],
   ): Promise<ImportStarted>;
   importProgress?(ref: string, importId: string): Promise<ImportProgress>;
+  /** Turn a posted recap's public link on, off, or make a new one (#2118). */
+  shareRecap?(ref: string, action: ShareAction): Promise<RecapShare>;
+  /** A shared recap by its link's secret, for anyone, signed in or not (#2118). */
+  publicRecap?(token: string): Promise<PublicRecap>;
   /** Post to the table (the bot sends it), Try again, or Don't post. */
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
@@ -824,6 +852,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_mapping: "bad-mapping",
   bad_date: "bad-date",
   no_lines_kept: "no-lines-kept",
+  not_posted: "not-posted",
+  bad_action: "bad-action",
 };
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
@@ -846,14 +876,19 @@ export function httpApi(
     path: string,
     body?: unknown,
     asFile = false,
+    anonymous = false,
   ): Promise<unknown> {
     let response: Response;
     try {
-      const init: RequestInit = {
-        method,
-        credentials: "include",
-        headers: { "X-DMbot-Request": "1", Accept: "application/json" },
-      };
+      // A call for someone who is not signed in (a shared recap's link) sends no cookie and no custom
+      // header: it needs neither, and a plain GET stays a simple request.
+      const init: RequestInit = anonymous
+        ? { method, credentials: "omit", headers: { Accept: "application/json" } }
+        : {
+            method,
+            credentials: "include",
+            headers: { "X-DMbot-Request": "1", Accept: "application/json" },
+          };
       if (body !== undefined) {
         init.headers = { ...init.headers, "Content-Type": "application/json" };
         init.body = JSON.stringify(body);
@@ -1125,6 +1160,18 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/${encodeURIComponent(importId)}`,
       )) as ImportProgress,
+    shareRecap: async (ref, action) =>
+      (await call("POST", `/me/recaps/${encodeURIComponent(ref)}/share`, {
+        action,
+      })) as RecapShare,
+    publicRecap: async (token) =>
+      (await call(
+        "GET",
+        `/recaps/${encodeURIComponent(token)}`,
+        undefined,
+        false,
+        true,
+      )) as PublicRecap,
     decideRecap: async (ref, action) =>
       (await call(
         "POST",
