@@ -125,6 +125,7 @@ export const siteButtons = [
   "House rules",
   "Session transcripts",
   "Forgot your password",
+  "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   // The recap page's share controls (#2119), on the website, not in Discord.
   "Make a link",
   "Turn the link off",

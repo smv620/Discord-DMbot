@@ -20,6 +20,11 @@
 export const RECAPS_LIVE = true;
 export const RECAP_AUDIO_LIVE = false;
 export const RECAP_NAMES_LIVE = false;
+// RECAP_FIX_LIVE is "Tell DMbot what to fix" on the recap page (#2113, #2114): a typed note, sorted by
+// the bot and polled by the page, then a rewrite with the points the DM kept. It needs the web API's
+// new routes deployed, so it stays off until dev1 has deployed #2113 and seen it work. It moves with
+// the What's new entry "Tell DMbot what to fix" and can only be true with RECAPS_LIVE.
+export const RECAP_FIX_LIVE = false;
 // RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
 // link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
@@ -92,6 +97,13 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   {
     text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
+  ...(RECAP_FIX_LIVE
+    ? [
+        {
+          text: "To change a recap without editing it yourself, open it on the website, type what you'd like changed under Tell DMbot what to fix, and press Send. DMbot sorts your note into points. Remove any you don't want and keep the style notes you do; a style note you keep is saved for this campaign's later recaps too. DMbot keeps the newest 10. You can remove them in ⚙️ Settings → 📜 Recaps → ✍️ Recap style. Then choose Rewrite with these. That uses one Try again, and you approve the new text again. DMbot only sorts what you wrote and rewrites with what you kept; it never adds story, and you decide what is kept.",
+        },
+      ]
+    : []),
   ...(RECAP_SHARE_LIVE
     ? [
         {
