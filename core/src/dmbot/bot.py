@@ -176,17 +176,20 @@ from dmbot.dm_screen.rules_channel import (
 from dmbot.dm_screen.rules_channel import forget_campaign as rules_forget_campaign
 from dmbot.dm_screen.rules_channel import prune_locks as rules_prune_locks
 from dmbot.dm_screen.settings import (
+    BackToSettingsButton,
     FeaturesButton,
     HomebrewButton,
     HouseFileButton,
     InviteButton,
     LevelButton,
+    ManagementMenuButton,
     QuietStopButton,
     RuleLookupButton,
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
     SharedRulesButton,
+    VisibilityMenuButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -519,7 +522,8 @@ CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
 SECRET_QUESTION_WAITING = (
-    "🤫 DMbot has a question for you about a secret name. Open your private messages."
+    "🤫 DMbot couldn't send you a question about a secret name. Turn on Direct Messages in this "
+    "server's Privacy Settings (tap the server name) and it will ask next session."
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
@@ -870,6 +874,12 @@ def consent_timing_line(
         f"Consent asked: {people} people ({reminders} reminders), status {status_ms}ms, "
         f"sent {sum(send_ms)}ms in total (slowest {slowest}ms), since the session start {since}"
     )
+
+
+def _joined_at(guild: discord.Guild) -> int | None:
+    """When the bot joined this server, as Discord says (None while the server is still loading)."""
+    me = cast(discord.Member | None, getattr(guild, "me", None))
+    return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -1386,6 +1396,9 @@ class DMBot(commands.AutoShardedBot):
             LevelButton,
             QuietStopButton,
             SettingsVisibilityButton,
+            VisibilityMenuButton,
+            ManagementMenuButton,
+            BackToSettingsButton,
             RuleLookupButton,
             RulesCardsButton,
             HouseFileButton,
@@ -3624,8 +3637,13 @@ class DMBot(commands.AutoShardedBot):
         return "Stopped. DMbot won't rejoin. See you next session! 👋"
 
     async def on_ready(self) -> None:
+        # A reconnect after a long outage can skip join events: every connect makes sure each
+        # server has its row, with the real join date (#2166).
+        first = not self._resume_started
+        if self.installs is not None:
+            self._track(self._note_present(first), "installs")
         # on_ready fires again after Discord reconnects; start resuming only once.
-        if self._resume_started:
+        if not first:
             return
         self._resume_started = True
         # A count, never names: answers "who has DMbot?" from the log (#426).
@@ -3640,13 +3658,28 @@ class DMBot(commands.AutoShardedBot):
                 gaps = install.missing(me.guild_permissions)
                 if gaps:
                     log.warning("Missing permissions here: %s", ", ".join(gaps))
-        if self.installs is not None:  # servers joined before this was recorded (#2163)
-            self._track(self.installs.present([g.id for g in self.guilds]), "installs")
         self._background.append(asyncio.create_task(self._resume_with_retries(), name="resume"))
         self._background.append(
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
         self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
+
+    async def _note_present(self, first: bool) -> None:
+        """Write a row for every server the bot is in; at start-up also mark the ones it was
+        removed from while it was down (only then: a reconnect's list may still be filling)."""
+        assert self.installs is not None
+        servers = [(g.id, _joined_at(g)) for g in self.guilds]
+        await self.installs.present(servers, gone=lambda gid: self.get_guild(gid) is None)
+        if first:
+            try:
+                # The servers are read again here, after the writes above, so one added meanwhile
+                # is not marked left; an empty list marks nothing.
+                marked = await self.installs.left_except([g.id for g in self.guilds])
+            except Exception as exc:  # the type only
+                log.warning("Couldn't mark servers left while offline: %s", type(exc).__name__)
+            else:
+                if marked:
+                    log.info("Servers left while offline: %d", marked)  # a count
 
     async def _resume_with_retries(self) -> None:
         """Resume saved sessions, retrying servers that failed (database or Discord not
@@ -3764,8 +3797,17 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """DMbot was just added to a server: say hello, or say what it still needs."""
-        if self.installs is not None:  # first: "Link this server" needs the row (#2163), and the
-            self._track(self.installs.joined(guild.id), "install-joined")  # welcome may fail
+        if self.installs is not None:
+            # First: "Link this server" needs the row (#2163), and the welcome may fail. A kick
+            # that follows at once wins: the write is skipped if the bot is gone by its turn.
+            self._track(
+                self.installs.joined(
+                    guild.id,
+                    _joined_at(guild),
+                    gone=lambda: self.get_guild(guild.id) is None,
+                ),
+                "install-joined",
+            )
         with log_context(guild_id=guild.id):
             log.info("Joined a server; %s", await install.post_welcome(guild))
         # A hand-over offer made on the website may be waiting for this server (#690).
@@ -3784,7 +3826,8 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=guild_id):
             if self.get_guild(guild_id) is not None:
                 return
-            await self.installs.left(guild_id)
+            # And again once this server's turn comes: a join queued behind may have come back.
+            await self.installs.left(guild_id, back=lambda: self.get_guild(guild_id) is not None)
 
     async def on_guild_available(self, guild: discord.Guild) -> None:
         """Discord made a server available again: resume its session if one was waiting."""
@@ -4700,8 +4743,13 @@ class DMBot(commands.AutoShardedBot):
                     if alone:  # players may peek at the screen: the DM's own messages, not there
                         sent = await self.sidebar_send_dm(speaker, text, view)
                         posted = sent == "sent"
-                        if not posted:  # no way to ask privately: say so on the screen, no name
-                            await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
+                        if sent == "forbidden" and not reveal.told_waiting:
+                            # Their private messages are closed (not a send that merely failed,
+                            # which may work next time and needs no setting changed): say so on
+                            # the screen, no name, once.
+                            reveal.told_waiting = await self.post(
+                                table.screen_channel_id, SECRET_QUESTION_WAITING
+                            )
                         # Their private messages are closed: the key stays claimed, so each later
                         # line naming it doesn't fetch, send and log again for the whole session.
                         closed = sent == "forbidden"
@@ -9092,6 +9140,7 @@ class DMBot(commands.AutoShardedBot):
             found = every[:MAX_ASKED]
             alone = campaign.dm_screen_visibility != "private"
             reached = 0  # DMs who got the question privately
+            closed_dms = 0  # DMs whose private messages are closed
             for said in found:
                 if alone:  # players may look at the screen: the name goes to the DMs only
                     for dm_id in sorted(campaign.dm_user_ids):
@@ -9106,6 +9155,7 @@ class DMBot(commands.AutoShardedBot):
                             secret_aloud_view(cid, said.alias_id, gid),
                         )
                         reached += sent == "sent"
+                        closed_dms += sent == "forbidden"
                     continue
                 await self.post(
                     table.screen_channel_id,
@@ -9115,7 +9165,9 @@ class DMBot(commands.AutoShardedBot):
                 )
             if alone and found:
                 log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
-                if not reached:  # no one can be asked privately: say so, with no name
+                if not reached and closed_dms:
+                    # Nobody could be asked because their private messages are closed (a send that
+                    # merely failed is not that): say so, with no name.
                     await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
             if len(every) > len(found):  # the DM should know the rest exist
                 await self.post(table.screen_channel_id, more_text(len(every) - len(found)))

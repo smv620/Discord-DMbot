@@ -216,10 +216,11 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
 
 PAUSE_WAY = (
     "pause one of your other campaigns first "
-    "(open it, then ⚙️ Settings and ⏸️ **Pause this campaign**)"
+    "(open it, then ⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**)"
 )
 PAUSED_OWNER = (
-    "This campaign is paused. Open ⚙️ Settings and press ▶️ **Unpause**. Everything in it is kept."
+    "This campaign is paused. Open ⚙️ Settings → 🗂️ Campaign management and "
+    "press ▶️ **Unpause**. Everything in it is kept."
 )
 
 
@@ -234,7 +235,8 @@ def paused_resume(name: str) -> str:
     paused meanwhile: DMbot doesn't start listening again (#957)."""
     return (
         f"**{md_escape(name)}** is paused, so DMbot did not start listening again after its "
-        "restart. Its owner can open ⚙️ Settings and press ▶️ **Unpause**, then press Start."
+        "restart. Its owner can open ⚙️ Settings → 🗂️ Campaign management and press ▶️ "
+        "**Unpause**, then press Start."
     )
 
 
@@ -276,7 +278,8 @@ def campaigns_refusal(
 PAUSED_TOLD = (
     "DMbot paused {what} because your plan now covers {cap} {noun}. A paused campaign keeps "
     "everything but can't start. To use one again, pause one you play less (open it, then "
-    "⚙️ Settings and ⏸️ **Pause this campaign**), then open the paused one and press "
+    "⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**), then open the "
+    "paused one and press "
     "▶️ **Unpause**.{change}"
 )
 

@@ -1,4 +1,5 @@
-"""📜 Transcripts on ⚙️ Settings (#1533): how long the campaign keeps its transcripts.
+"""🗄️ Transcript retention, in ⚙️ Settings → 🗂️ Campaign management (#1533): how long the
+campaign keeps its transcripts.
 
 The DM picks Forever (the default), 1 year, 90 days or 30 days. The daily retention job
 (`transcript.keep`) deletes the transcript of every session that ended longer ago than that. A
@@ -118,15 +119,16 @@ class TranscriptsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:keep:{_ID}",
 ):
-    """📜 Transcripts, on ⚙️ Settings: opens the private panel above. DMs only."""
+    """🗄️ Transcript retention, in ⚙️ Settings → 🗂️ Campaign management: opens the private panel
+    above. DMs only."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Transcripts",
-                emoji="📜",
+                label="Transcript retention",
+                emoji="🗄️",
                 style=discord.ButtonStyle.secondary,
-                row=2,  # (the rows below it are full; this one holds the owner's buttons)
+                row=None,  # (the card lays it out)
                 custom_id=f"dmbot:keep:{campaign_id}",
             )
         )

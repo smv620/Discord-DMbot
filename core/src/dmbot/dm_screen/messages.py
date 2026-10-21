@@ -164,7 +164,8 @@ def help_card(campaign_name: str, visibility: str, dm_bot_channel_id: int | None
     # Settings and options live in the DM Bot channel (#1666); /dmbot settings still works.
     where = f"in <#{dm_bot_channel_id}>" if dm_bot_channel_id else "with `/dmbot settings`"
     lines.append(
-        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings**, {where}."
+        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings** (under 👤 "
+        f"**DMbot Main Menu**), {where}."
     )
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")

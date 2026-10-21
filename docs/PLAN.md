@@ -535,6 +535,38 @@ happened). Ways in:
 3. **By typing** in the DM screen ("House rule: …"), with the same approval.
 4. **`/dmbot houserules`:** list with Edit and Remove.
 
+**Two house rules that disagree** (owner, 2026-10-21, with the example "drinking a potion is a bonus
+action" against "drinking a potion is an item interaction"; details Supervisor's). The DM decides,
+always; DMbot never picks one.
+- **Today's gap:** a clash is found only when both rules name the same spell, condition or creature
+  (the name matcher). "Drinking a potion" names none, so both would be saved, and an answer could
+  quote either.
+- **When a rule is saved** (by voice, typed, Add or Edit, or accepted from the linked file): one
+  fast-tier call compares it with the campaign's own house rules and the set it follows, on topic and
+  not only by name. If it disagrees with one, the DM sees both and picks **Replace rule N**, **Keep
+  both, this one wins**, **Keep both, rule N wins** or **Cancel**. "Wins" is stored on the pair, so
+  later answers know it. Nothing is saved until the DM picks.
+- **When an answer finds two that disagree** with no "wins" recorded (older rules, or a followed
+  set), the DM's sidebar quotes both with their numbers and asks "Which one applies?", with buttons
+  for each that record the answer. It never chooses. A player's table question gets "That's one for
+  your DM.", and the DM is told privately.
+- **Between sources** the order is unchanged: the campaign's own house rules, then the set it
+  follows, then homebrew, then the book rules. The check above is only for rules at the same level.
+- **Cost:** one fast call per saved rule. A file accept with many rules checks them in one call.
+
+**Seeing where house rules come from** (owner, 2026-10-21). The House rules menu gets **📂 Sources**,
+a private list with one line for each place the campaign's rules came from:
+- the **linked file of record**, with **🔗 Open the file** (its share link) and **📥 Download**;
+- each **uploaded file**, by its name and date, with **📥 Download**;
+- rules **added in Discord** (by voice, typed, from an alert), as one line with **📥 Download**;
+- the **set the campaign follows**, if any, by its name and publisher, with **📥 Download**.
+
+Download gives that source's rules in the plain numbered format. The words come from DMbot's
+copy; an uploaded file itself is not kept. To know which source a rule came from, each rule records
+it (`source`: linked, upload with its file name, voice, typed, alert, or the followed set). Rules
+from before are "added in Discord". The Homebrew menu gets the same **📂 Sources** list for its
+entries: typed, each upload, each site linked, and each followed pack.
+
 Only the DM can declare or change a house rule. A player may suggest one; it becomes a
 proposal when the DM clearly agrees out loud, then goes through the same approval.
 
@@ -1145,7 +1177,19 @@ channel's chat.
 **How much DMbot says (built 2026-10-08, #504).** A campaign setting for the DM screen,
 picked with buttons when creating a campaign (**Quiet / Normal**, sharing the last row
 with Create; Chatty isn't offered until something uses it) and changed any time with
-**⚙️ Settings**, on the DM screen's help card (there between sessions too) and first on
+**⚙️ Settings**. **Where it is** (owner, 2026-10-21): only in the campaign's DM Bot channel
+(`#dmb-dm-bot-<short name>`), under its menu button, now named **👤 DMbot Main Menu** (it was "My
+buttons"). It is no longer on the DM screen's help card or the "Listening" message. Two private ways in
+stay, because only the DM sees them: the ⚙️ Settings button on `/dmbot start`'s channel picker (#1619) and
+`/dmbot settings`, the fallback when the DM Bot channel can't be reached (Supervisor, 2026-10-21, #2289).
+**How it is grouped**
+(owner, 2026-10-21), so the card keeps the often-used buttons and puts the rest a tap away:
+- **👁️ Who can see the DM screen** opens the three choices (Only the DM, Players can peek, Everyone in
+  the server), with the current one ticked.
+- **🗂️ Campaign management** opens 🤝 Hand over, ⏸️ Pause this campaign, 🗄️ Transcript retention (was
+  "Transcripts": how long transcripts are kept), 👑 Game masters and 🗑️ Delete this campaign, each with its
+  own rules as before (Hand over and Delete for the plan holder only).
+Earlier wording, kept for the history: Settings was on the DM screen's help card (there between sessions too) and first on
 the "Listening" message (built 2026-10-08, #515). Settings opens privately, for the
 campaign's DMs or a server manager: how much DMbot says (one tap saves it, and a running
 session follows the change from now on) and who can see the DM screen, each tap redrawing
@@ -4205,8 +4249,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       matters and which thread or fact it ties to. For example, "he wears an amulet with a shard of
       obsidian" ties to the obsidian faction, so it must stay in the recap.
     - **Secrets:** significance decides **what is kept and stressed**, never what is revealed.
-      The recap may say why something matters only when the players have heard it: said at the table
-      in a consented line, or in a posted recap. When only the DM knows (the faction is secret), the
+      The recap may say why something matters only when the players already know it: said at the
+      table in a consented line, in a posted recap, or shown in the **players' view** (what the NPC
+      list itself shows the table: confirmed, never secret, from `RecallService`'s players audience;
+      Supervisor, 2026-10-21, #2270, since the players can already read it there). When only the DM knows (the faction is secret), the
       recap keeps the detail and does not explain it. DM-only knowledge never reaches the text,
       as today's secret checks already ensure.
     - **Early campaigns:** with little confirmed memory, PlotBot leans on the earlier accepted
@@ -4521,7 +4567,7 @@ confirmed and the claims they came from, recaps already built, and the session r
 line by `transcript.models.line_ref(session, started_ms, user)`; anything that writes mentions uses that
 form (nothing writes them yet).
 
-*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 📜 Transcripts: Forever
+*Keep transcripts for, built (2026-10-16, #1533; migration 0101).* ⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention (#2281): Forever
 (the default) / 1 year / 90 days / 30 days, DMs only; a shorter choice shows one warning ("Sessions older
 than 90 days will be deleted every night, with their downloads on the website. Recaps and what you
 confirmed into story memory stay. Players can't get the deleted transcripts back.") and saves only on its
@@ -4679,3 +4725,5 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - Story memory: models and the per-session cost cap for the AI roles, after measuring
   tokens per call and the "how it was said" accuracy (the rest was decided 2026-10-06,
   #227)
+
+*Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.

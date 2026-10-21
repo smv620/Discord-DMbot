@@ -192,7 +192,8 @@ class Job(KeepTest):
                 (
                     self.camp.id,
                     "🗑 Deleted 2 transcripts older than 90 days. "
-                    "Change this under ⚙️ Settings → 📜 Transcripts.",
+                    "Change this under ⚙️ Settings → 🗂️ Campaign management → "
+                    "🗄️ Transcript retention.",
                 )
             ],
         )
@@ -252,12 +253,12 @@ class Words(DatabaseTest):
         self.assertEqual(
             note_text(3, 90),
             "🗑 Deleted 3 transcripts older than 90 days. "
-            "Change this under ⚙️ Settings → 📜 Transcripts.",
+            "Change this under ⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention.",
         )
         self.assertEqual(
             note_text(1, 365),
             "🗑 Deleted 1 transcript older than 1 year. "
-            "Change this under ⚙️ Settings → 📜 Transcripts.",
+            "Change this under ⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention.",
         )
 
 
