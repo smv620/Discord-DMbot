@@ -2,7 +2,7 @@
 // A 404 with no error code reads as "not found", not as an outage (#2306).
 import { describe, expect, it } from "vitest";
 
-import { httpApi, type AccountApi } from "../src/account/api";
+import { httpApi, SIGNED_OUT_EVENT, type AccountApi } from "../src/account/api";
 
 const answering = (status: number, body: string | null, type = "application/json"): AccountApi =>
   httpApi("https://api.example", (async () =>
@@ -26,6 +26,12 @@ describe("a 404 with no code", () => {
     await expect(ask(answering(404, "{}"))).rejects.toMatchObject({ kind: "not-found" });
   });
 
+  it("is 'not found' for FastAPI's own answer to a route it doesn't have", async () => {
+    await expect(ask(answering(404, JSON.stringify({ detail: "Not Found" })))).rejects.toMatchObject({
+      kind: "not-found",
+    });
+  });
+
   it("keeps what a coded 404 says", async () => {
     await expect(ask(answering(404, JSON.stringify({ error: "bad_page" })))).rejects.toMatchObject({
       kind: "bad-page",
@@ -43,6 +49,17 @@ describe("an outage still reads as one", () => {
       throw new TypeError("failed to fetch");
     }) as typeof fetch);
     await expect(ask(api)).rejects.toMatchObject({ kind: "network" });
+  });
+
+  it("signs the page out only on a 401", async () => {
+    let fired = 0;
+    const count = (): void => void (fired += 1);
+    window.addEventListener(SIGNED_OUT_EVENT, count);
+    for (const status of [403, 404, 500]) await ask(answering(status, null)).catch(() => undefined);
+    expect(fired).toBe(0);
+    await ask(answering(401, null)).catch(() => undefined);
+    expect(fired).toBe(1);
+    window.removeEventListener(SIGNED_OUT_EVENT, count);
   });
 
   it("403 stays 'not allowed' and 401 stays 'signed out'", async () => {
