@@ -93,6 +93,7 @@ export const text = {
   // The page bar under Recent changes (#2199).
   historyList: "Recent changes, newest first",
   pagesNav: "Pages of recent changes",
+  ticketPagesNav: "Pages of tickets",
   pageNewest: "Newest",
   pageNewer: "Newer",
   pageOlder: "Older",

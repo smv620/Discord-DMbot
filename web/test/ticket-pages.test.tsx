@@ -73,10 +73,14 @@ function paged(rows: SupportTicketRow[], over: Partial<AdminApi> = {}) {
 const many = (n: number, status: SupportTicketRow["status"] = "new"): SupportTicketRow[] =>
   Array.from({ length: n }, (_, i) => row(i + 1, status));
 
-const nav = () => screen.findByRole("navigation", { name: text.pagesNav });
+const nav = () => screen.findByRole("navigation", { name: text.ticketPagesNav });
 const button = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
 const shown = () => screen.queryAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-const note = () => document.getElementById("tickets-page-note")?.textContent;
+/** What a screen reader would hear last: a refusal if there is one, else the page number. */
+const note = () => {
+  const alerts = screen.getAllByRole("alert").map((a) => a.textContent ?? "").join("");
+  return alerts || document.getElementById("tickets-page-note")?.textContent;
+};
 
 describe("the pages", () => {
   it("shows twenty tickets and the bar, with the page number for a screen reader", async () => {
@@ -121,13 +125,13 @@ describe("the pages", () => {
   it("hides the bar for one page, and for an API without pages", async () => {
     paged(many(7));
     await screen.findByText("Ticket 001");
-    expect(screen.queryByRole("navigation", { name: text.pagesNav })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: text.ticketPagesNav })).toBeNull();
     cleanup();
     paged(many(45), {
       tickets: vi.fn(async () => ({ tickets: many(3), counts: countsOf(many(3)) })),
     } as unknown as Partial<AdminApi>);
     await screen.findByText("Ticket 001");
-    expect(screen.queryByRole("navigation", { name: text.pagesNav })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: text.ticketPagesNav })).toBeNull();
   });
 });
 
@@ -176,7 +180,50 @@ describe("keeping its place", () => {
     // Page 2 is gone (stale), so page 1 is read; it is the only page now.
     expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[1]).slice(-2)).toEqual([2, 1]);
     expect(shown()).toHaveLength(20);
-    expect(screen.queryByRole("navigation", { name: text.pagesNav })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: text.ticketPagesNav })).toBeNull();
+  });
+
+  it("reloads with the filter that is showing, even if it changed while a close was in flight", async () => {
+    const rows = [...many(5, "new"), ...Array.from({ length: 3 }, (_, i) => row(50 + i, "answered"))];
+    let release!: () => void;
+    const api = paged(rows, {
+      setTicketStatus: vi.fn(
+        () =>
+          new Promise<void>((done) => {
+            release = () => {
+              const t = rows.find((r) => r.id === 1);
+              if (t) t.status = "closed";
+              done();
+            };
+          }),
+      ),
+    } as unknown as Partial<AdminApi>);
+    await nav().catch(() => undefined);
+    await screen.findByText("Ticket 001");
+    const ticket = document.querySelector('[data-ticket="1"]') as HTMLElement;
+    fireEvent.click(within(ticket).getByRole("button", { name: text.closeTicket }));
+    // The admin switches to Answered while the close is still being saved.
+    fireEvent.click(screen.getByRole("button", { name: /Answered/ }));
+    await screen.findByText("Ticket 050");
+    release();
+    await waitFor(() => expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(2));
+    // The reload after the close asked for the filter on screen, so Answered is still showing.
+    const last = (api.tickets as ReturnType<typeof vi.fn>).mock.calls.at(-1) as [string, number];
+    expect(last[0]).toBe("answered");
+    expect(shown()).toEqual(["Ticket 050", "Ticket 051", "Ticket 052"]);
+  });
+
+  it("puts the keyboard on the page box when the pressed button disables itself", async () => {
+    paged(many(45));
+    await nav();
+    fireEvent.click(button(text.pageOlder));
+    await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
+    const newer = button(text.pageNewer);
+    newer.focus();
+    fireEvent.click(newer);
+    await waitFor(() => expect(note()).toBe(text.pageNow(1, 3)));
+    // (happy-dom drops focus from a disabled button to the body; the box takes it.)
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(text.pageBox)));
   });
 
   it("says so, and keeps the page, when a page can't be read", async () => {

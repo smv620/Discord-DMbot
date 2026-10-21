@@ -9,8 +9,10 @@ import { useRef, useState } from "preact/hooks";
 import { text } from "../content/admin";
 
 interface Props {
-  /** Makes the box's id unique when more than one bar could be on a page. */
+  /** Makes the box's id unique when more than one bar is on a page. */
   id: string;
+  /** Names this bar for a screen reader, so two bars on one page can be told apart. */
+  label: string;
   page: number;
   pages: number;
   /** Reading a page is under way: the Go button waits. */
@@ -22,7 +24,7 @@ interface Props {
   onGo: (page: number) => Promise<number>;
 }
 
-export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) {
+export default function PageBar({ id, label, page, pages, busy, notice, onGo }: Props) {
   const [typed, setTyped] = useState(String(page));
   const [pick, setPick] = useState<string | null>(null);
   // The box follows the page: a move, a jump, or the owner going back to page 1. Done while
@@ -35,6 +37,7 @@ export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) 
   }
   // Counts what the person typed, so a late settling never overwrites newer typing.
   const typing = useRef(0);
+  const box = useRef<HTMLInputElement>(null);
   const seenRef = useRef(page);
   seenRef.current = page;
 
@@ -42,6 +45,15 @@ export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) 
     setPick(null);
     const edits = typing.current;
     const now = await onGo(wanted);
+    // Landing on the first or last page disables the button that was pressed, which drops the
+    // keyboard to the top of the page: the box takes it instead.
+    // (After the page has drawn, when that button is disabled.)
+    setTimeout(() => {
+      const active = document.activeElement;
+      const lost =
+        !active || active === document.body || (active instanceof HTMLButtonElement && active.disabled);
+      if (lost) box.current?.focus();
+    }, 0);
     // A move that happened is followed by the effect above. One that didn't (a failed read) leaves
     // the typed number behind: the box goes back to the page that is showing, unless the person
     // has typed again meanwhile.
@@ -65,7 +77,7 @@ export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) 
   return (
     <>
       {showBar && (
-        <nav class="page-bar" aria-label={text.pagesNav}>
+        <nav class="page-bar" aria-label={label}>
           <button
             type="button"
             class="button secondary"
@@ -88,6 +100,7 @@ export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) 
             <label for={id}>{text.pageBox}</label>
             <input
               id={id}
+              ref={box}
               type="text"
               inputMode="numeric"
               autocomplete="off"
@@ -124,13 +137,13 @@ export default function PageBar({ id, page, pages, busy, notice, onGo }: Props) 
           </button>
         </nav>
       )}
-      {/* Always on the page, so a screen reader hears the page change and any refusal. */}
-      <p
-        id={noteId}
-        class={problem ? "warn small" : "visually-hidden"}
-        role={problem ? "alert" : "status"}
-      >
-        {problem ?? (showBar ? text.pageNow(page, pages) : "")}
+      {/* Two notes that are always on the page, each with one role for good, so a screen reader
+          hears the page change (status) and any refusal (alert); roles that change are missed. */}
+      <p id={noteId} class="visually-hidden" role="status">
+        {showBar ? text.pageNow(page, pages) : ""}
+      </p>
+      <p class={problem ? "warn small" : "visually-hidden"} role="alert">
+        {problem ?? ""}
       </p>
     </>
   );

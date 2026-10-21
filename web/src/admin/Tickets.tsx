@@ -191,6 +191,9 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   const [paging, setPaging] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const pageNow = useRef(1);
+  // The filter showing, for a read that starts after an await (a close, a reply): the closure of
+  // the render that pressed the button may be an older one.
+  const filterNow = useRef<TicketFilter>("new");
   const [counts, setCounts] = useState<TicketCounts | null>(null);
   const [week, setWeek] = useState<TicketWeek | null>(null);
   // The ticket whose address was just copied (or failed to), so its row can say so.
@@ -210,7 +213,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
 
   /** Reads one page of the list and resolves with the page that is showing afterwards. */
   async function load(
-    show: TicketFilter = filter,
+    show: TicketFilter = filterNow.current,
     wanted: number = pageNow.current,
     notice: string | null = null,
   ): Promise<number> {
@@ -251,6 +254,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   // Another view (or a first look) starts at page 1.
   useEffect(() => {
     pageNow.current = 1;
+    filterNow.current = filter;
     void load(filter, 1);
   }, [api, filter]);
 
@@ -456,11 +460,12 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
       {pages !== null && (
         <PageBar
           id="tickets-page"
+          label={text.ticketPagesNav}
           page={page}
           pages={pages}
           busy={paging}
           notice={pageNotice}
-          onGo={(wanted) => load(filter, wanted)}
+          onGo={(wanted) => load(filterNow.current, wanted)}
         />
       )}
     </section>

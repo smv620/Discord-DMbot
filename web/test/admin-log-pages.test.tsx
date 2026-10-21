@@ -76,7 +76,12 @@ const shown = () =>
   within(screen.getByRole("region", { name: text.historyList }))
     .getAllByRole("listitem")
     .map((li) => li.textContent ?? "");
-const status = () => screen.getByText(/^Page \d+ of \d+$|^Pick a page|^We couldn't load|^That page isn't/);
+/** What a screen reader would hear last: a refusal if there is one, else the page number. */
+const status = () => {
+  const page = document.getElementById("log-page-note");
+  const refusal = page?.nextElementSibling?.textContent ?? "";
+  return { textContent: refusal || (page?.textContent ?? "") };
+};
 
 describe("the window", () => {
   it("shows the newest twenty first, with the page number under it", async () => {
@@ -238,7 +243,7 @@ describe("after a change, and when a page can't be read", () => {
     await nav();
     fireEvent.click(button(text.pageOlder));
     await waitFor(() => expect(grantsLog).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(text.pageGone));
+    await waitFor(() => expect(document.getElementById("log-page-note")?.nextElementSibling?.textContent).toBe(text.pageGone));
   });
 
   it("opens each page at its top, not where the last was scrolled to", async () => {
