@@ -1,8 +1,8 @@
 """The mix plan (#1413): the ffmpeg command that joins the voice, the music and the ambience.
 
 Only strings are built here; nothing is run. Levels (what the owner asked for, #1383): the voice
-at -16 LUFS with a -1 dBTP ceiling, the music at -22 LUFS and pushed down about 6 dB while the
-voice speaks (a side-chain compressor keyed by the voice), the ambience at -28 LUFS. All three are
+at -16 LUFS with a -1 dBTP ceiling, the music at -32 LUFS and pushed down about 6 dB while the
+voice speaks (a side-chain compressor keyed by the voice), the ambience at -38 LUFS. All three are
 cut or padded to the voice's length, so the stems line up when played together. Outputs: the
 voice stem, the bed stem (music plus ambience) and the mix of both.
 
@@ -17,8 +17,10 @@ from dataclasses import dataclass
 
 VOICE_LUFS = -16
 VOICE_PEAK_DB = -1  # true-peak ceiling
-MUSIC_LUFS = -22
-AMBIENCE_LUFS = -28
+# owner, 2026-10-20: music at 30% of the earlier level (-22 and -28 LUFS), a touch of ambience
+# rather than something distracting. The ambience stays 6 dB under the music, as before.
+MUSIC_LUFS = -32
+AMBIENCE_LUFS = -38
 BED_PEAK_DB = -2
 DUCK_DB = 6  # how far the music goes down under speech, about
 DUCK_RATIO = 4
