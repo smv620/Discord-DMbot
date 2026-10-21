@@ -145,6 +145,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.names_button import NamesButton
+from dmbot.dm_screen.npc_pages import NpcRosterStore
 from dmbot.dm_screen.npcs_channel import (
     MessageMap,
     NpcMessageStore,
@@ -928,6 +929,7 @@ class DMBot(commands.AutoShardedBot):
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
         npcs_messages: MessageMap | None = None,
+        npcs_roster: NpcRosterStore | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
         installs: InstallStore | None = None,
@@ -1039,6 +1041,7 @@ class DMBot(commands.AutoShardedBot):
         self._npcs_guilds: dict[str, int] = {}
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
+        self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
         for store in (house_rules, rule_sets):
             if store is not None:
                 store.on_change = self._rules_archive_changed
@@ -2847,6 +2850,13 @@ class DMBot(commands.AutoShardedBot):
                 await self.keep_job.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily keep-transcripts job failed")
+        if self._npcs_roster is not None:  # notes on names unlisted for 30 days (#2265)
+            try:
+                await self._npcs_roster.sweep(
+                    await self.campaigns.guilds_with_campaigns(), int(time.time())
+                )
+            except Exception:
+                log.exception("The daily NPC-notes clean-up failed")
         if self.sources is not None:  # pages nothing uses any more (#1646)
             try:
                 await self.sources.sweep_pages(await self.campaigns.guilds_with_campaigns())
@@ -10714,7 +10724,12 @@ class DMBot(commands.AutoShardedBot):
             if fresh is not None and self.memory is not None and self._npcs_messages is not None:
                 # (a session is starting, so this is the moment to put the list in order)
                 done = await sync_npcs(
-                    guild, fresh, self._npcs_service(), self._npcs_messages, reorder=True
+                    guild,
+                    fresh,
+                    self._npcs_service(),
+                    self._npcs_messages,
+                    reorder=True,
+                    **self._npcs_pages(),
                 )
                 self._npcs_last[campaign.id] = time.monotonic()
                 if done is not None and done.left_for_next_time:
@@ -10768,6 +10783,15 @@ class DMBot(commands.AutoShardedBot):
             if late:
                 self._npcs_changed(campaign_id)  # a change came in during the last pass
 
+    def _npcs_pages(self) -> dict[str, Any]:
+        """What the NPC list needs for the pages its 📖 Open buttons open (#2265): the website's
+        address, where the pages' view is kept, and the time."""
+        return {
+            "site_url": self.settings.site_url,
+            "roster": self._npcs_roster,
+            "now": int(time.time()),
+        }
+
     async def _sync_npcs(self, campaign_id: str) -> NpcsSyncResult | None:
         guild_id = self._npcs_guilds.get(campaign_id)
         guild = self.get_guild(guild_id) if guild_id is not None else None
@@ -10782,7 +10806,12 @@ class DMBot(commands.AutoShardedBot):
         # Finish a rebuild that was cut short, but never while a session runs for the campaign.
         reorder = campaign_id in self._npcs_reorder and not self._session_running(campaign_id)
         done = await sync_npcs(
-            guild, campaign, self._npcs_service(), self._npcs_messages, reorder=reorder
+            guild,
+            campaign,
+            self._npcs_service(),
+            self._npcs_messages,
+            reorder=reorder,
+            **self._npcs_pages(),
         )
         if reorder and (done is None or not done.left_for_next_time):
             self._npcs_reorder.discard(campaign_id)
@@ -10845,6 +10874,7 @@ class DMBot(commands.AutoShardedBot):
                         self._npcs_service(),
                         self._npcs_messages,
                         reorder=not self._session_running(campaign.id),
+                        **self._npcs_pages(),
                     )
                     self._npcs_last[campaign.id] = time.monotonic()
                     if done is not None and done.left_for_next_time:
@@ -11384,6 +11414,7 @@ async def run(settings: Settings) -> None:
             AdventureStore(db),
             PlanStore(db),
             npcs_messages=NpcMessageStore(db),
+            npcs_roster=NpcRosterStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
             installs=InstallStore(db),

@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Every NPC has its own page",
+    what: "Each name in the NPC list gets a 📖 Open button that opens that NPC's page on the website, for anyone in your Discord server. It shows what the list shows and the recaps that mention the name. There is also a My notes box on each page: only you can see your notes, you can download them or delete them, and they never go into a backup.",
+    reason: "In review (#2265); held until dev1 deploys it and the website's NPC page is live (WebDev).",
+  },
+  {
+    date: "2026-10-21",
     title: "Support emails show the whole chat",
     what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
     reason: "In review (#2192); held until dev1 deploys it.",
