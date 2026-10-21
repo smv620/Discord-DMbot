@@ -70,7 +70,7 @@ export const text = {
   waitingForCheck:
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
   checksHeading: "What the checks said",
-  checksNote: "DMbot wasn't sure about these. Only you can see them. Read the recap with them in mind.",
+  checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
