@@ -414,6 +414,13 @@ export interface FixPoints {
   /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
   replies: string[];
 }
+export interface VoiceResult {
+  state: FixState;
+  /** Only when `done`: what was heard. */
+  text?: string;
+  /** Only when `failed`: "bad_clip", "too_long", "no_words", "transcribe_failed" or "no_consent". */
+  error?: string;
+}
 export type FixState = "waiting" | "working" | "done" | "failed";
 export interface FixResult {
   state: FixState;
@@ -646,6 +653,9 @@ export type RecapAction = "post" | "again" | "drop";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "bad-type" // a spoken note in a format the API doesn't read (#2113)
+  | "bad-clip" // a spoken note that can't be heard as audio
+  | "no-consent" // the DM has not agreed to be recorded
   | "signed-out" // the session ended
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
@@ -822,6 +832,10 @@ export interface AccountApi {
    * the DM kept. Missing from an API older than #2113. */
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
   fixResult?(ref: string, requestId: string): Promise<FixResult>;
+  /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
+   * follow the request. The clip is turned into words and deleted at once; only the words come back. */
+  sendVoice?(ref: string, clip: Blob): Promise<{ requestId: string }>;
+  voiceResult?(ref: string, requestId: string): Promise<VoiceResult>;
   rewriteWith?(
     ref: string,
     requestId: string,
@@ -927,6 +941,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
+  bad_type: "bad-type",
+  bad_clip: "bad-clip",
+  no_consent: "no-consent",
   not_a_dm: "not-allowed",
   not_on_a_paid_plan: "no-paid-plan",
   too_many_lines: "too-many-lines",
@@ -961,6 +978,7 @@ export function httpApi(
     path: string,
     body?: unknown,
     asFile = false,
+    raw?: Blob,
     anonymous = false,
   ): Promise<unknown> {
     let response: Response;
@@ -974,7 +992,11 @@ export function httpApi(
             credentials: "include",
             headers: { "X-DMbot-Request": "1", Accept: "application/json" },
           };
-      if (body !== undefined) {
+      if (raw !== undefined) {
+        // A recorded clip goes as it is, with its own type; the API reads webm and ogg only.
+        init.headers = { ...init.headers, "Content-Type": raw.type };
+        init.body = raw;
+      } else if (body !== undefined) {
         init.headers = { ...init.headers, "Content-Type": "application/json" };
         init.body = JSON.stringify(body);
       }
@@ -1240,6 +1262,19 @@ export function httpApi(
         "GET",
         `/me/recaps/${encodeURIComponent(ref)}/instructions/${encodeURIComponent(requestId)}`,
       )) as FixResult,
+    sendVoice: async (ref, clip) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/voice`,
+        undefined,
+        false,
+        clip,
+      )) as { requestId: string },
+    voiceResult: async (ref, requestId) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/voice/${encodeURIComponent(requestId)}`,
+      )) as VoiceResult,
     rewriteWith: async (ref, requestId, corrections, style) => {
       const got = (await call(
         "POST",
@@ -1289,6 +1324,7 @@ export function httpApi(
         `/recaps/${encodeURIComponent(token)}`,
         undefined,
         false,
+        undefined,
         true,
       )) as PublicRecap,
     decideRecap: async (ref, action) =>
