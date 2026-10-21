@@ -37,7 +37,8 @@ INTRO = (
     "Recording agreements don't move. Your new account says yes again at its first table.\n"
     "1. Old account: tap **Get a move code**. We email it to the address you pay with.\n"
     "2. New account: run `/dmbot migrate`, tap **Import my account**, and type the code.\n"
-    "Want to give campaigns to someone else? Use **Hand over** in ⚙️ Settings. It doesn't "
+    "Want to give campaigns to someone else? Use **Hand over** in ⚙️ Settings → 🗂️ "
+    "Campaign management. It doesn't "
     "move your plan."
 )
 EMAILED = (

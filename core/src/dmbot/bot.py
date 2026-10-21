@@ -177,17 +177,20 @@ from dmbot.dm_screen.rules_channel import (
 from dmbot.dm_screen.rules_channel import forget_campaign as rules_forget_campaign
 from dmbot.dm_screen.rules_channel import prune_locks as rules_prune_locks
 from dmbot.dm_screen.settings import (
+    BackToSettingsButton,
     FeaturesButton,
     HomebrewButton,
     HouseFileButton,
     InviteButton,
     LevelButton,
+    ManagementMenuButton,
     QuietStopButton,
     RuleLookupButton,
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
     SharedRulesButton,
+    VisibilityMenuButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -1399,6 +1402,9 @@ class DMBot(commands.AutoShardedBot):
             LevelButton,
             QuietStopButton,
             SettingsVisibilityButton,
+            VisibilityMenuButton,
+            ManagementMenuButton,
+            BackToSettingsButton,
             RuleLookupButton,
             RulesCardsButton,
             HouseFileButton,
@@ -9798,8 +9804,36 @@ class DMBot(commands.AutoShardedBot):
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
+        await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
+        """The DM's "plays which character" choices from the import page become links, through a
+        store call that judges each again (the DM may have changed things since). One that no
+        longer holds, or whose member is no longer recorded, is dropped, never forced; one that
+        fails for another reason stays for the next round. Counts only in the log."""
+        waiting = await store.waiting_plays(gid)
+        if self.memory is None or not waiting:
+            return
+        recorded = await self.consent.consenting(gid)
+        made = dropped = 0
+        for play in waiting:
+            with log_context(guild_id=gid, campaign_id=play.campaign_id):
+                try:
+                    if play.user_id in recorded:
+                        applied = await self.memory.apply_import_plays(
+                            gid, play.campaign_id, play.character_id, play.user_id
+                        )
+                        made += bool(applied.value)
+                        dropped += not applied.value
+                    else:
+                        dropped += 1
+                except Exception:
+                    log.exception("Import: a 'plays' choice could not be applied")
+                    continue
+                await store.done_plays(gid, play)
+        log.info("Import: %d 'plays' choice(s) made, %d dropped", made, dropped)
 
     async def _start_import_recap(self, gid: int, store: ImportStore, ready: Ready) -> None:
         """Start the recap of one scanned import. One that cannot be started is tried again next

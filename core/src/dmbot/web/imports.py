@@ -62,7 +62,9 @@ class File:
 
     name: str
     transcript: importer.Transcript | None
-    error: str | None  # unreadable, too_big, not_txt, empty, too_many_lines or too_many_speakers
+    # unreadable, unknown_format, no_speaker_names, too_big, not_txt (a name that is not
+    # .txt, .vtt or .srt), empty, too_many_lines or too_many_speakers
+    error: str | None
     date: str | None  # a date found in the name or the head of the text, YYYY-MM-DD
 
 
@@ -77,10 +79,13 @@ def _suggested_date(name: str, text: str) -> str | None:
     return None
 
 
+ACCEPTED_NAMES = (".txt", ".vtt", ".srt")  # a caption track is often saved as .vtt or .srt
+
+
 def read_file(name: str, text: object) -> File:
     """A file from the request. The text is held only for this call."""
     name = str(name)[:200]
-    if not name.lower().endswith(".txt"):
+    if not name.lower().endswith(ACCEPTED_NAMES):  # (the format is still told by the content)
         return File(name, None, "not_txt", None)
     if not isinstance(text, str):
         return File(name, None, "unreadable", None)
@@ -90,8 +95,10 @@ def read_file(name: str, text: object) -> File:
         return File(name, None, "empty", None)
     try:
         transcript = importer.parse(text)
-    except importer.TranscriptError:
-        return File(name, None, "unreadable", None)
+    except importer.TranscriptError as why:
+        # the reader's reason, as a code the page puts in plain words (never a word of the file)
+        known = (importer.UNKNOWN_FORMAT, importer.NO_SPEAKER_NAMES)
+        return File(name, None, why.code if why.code in known else "unreadable", None)
     if len(transcript.utterances) > MAX_LINES:
         return File(name, None, "too_many_lines", None)
     if len(transcript.speakers) > MAX_SPEAKERS:
@@ -383,6 +390,38 @@ async def _remembered(
     return dict((await cur.fetchone() or {}).get("r") or {})
 
 
+MAX_PLAYS = 100
+
+
+def plays_of(raw: object, remembered: Mapping[str, int]) -> list[dict[str, str]]:
+    """The DM's "plays which character" choices, {label: character name}, as [{user, name}]:
+    for the labels this import maps to a member only, so a dropped label or one the request
+    never mapped is ignored. The bot makes each a link later (the website cannot write story
+    memory); a name that is not a character nobody plays is dropped by the door."""
+    if not isinstance(raw, dict):
+        return []
+    out: list[dict[str, str]] = []
+    for label, name in raw.items():
+        member = remembered.get(label) if isinstance(label, str) else None
+        if member is None or not isinstance(name, str) or not name.strip() or len(name) > 100:
+            continue
+        out.append({"user": str(member), "name": name.strip()})
+        if len(out) >= MAX_PLAYS:
+            break
+    return out
+
+
+async def _plays_chosen(
+    conn: Conn, c: Campaign, wanted: list[dict[str, str]], outside: str | None
+) -> None:
+    if not wanted:
+        return
+    await conn.execute(
+        "SELECT dmbot_import_plays(%s, %s, %s::jsonb, %s, %s) AS r",
+        (c.guild_id, c.campaign_id, json.dumps(wanted), TERMS_VERSION, outside),
+    )
+
+
 def _file_view(f: File) -> dict[str, Any]:
     return {
         "name": f.name,
@@ -668,6 +707,7 @@ async def confirm(
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered, outside)
+        await _plays_chosen(conn, c, plays_of(raw_plan.get("plays"), remembered), outside)
     return {
         "importId": batch,
         "sessions": stored,
