@@ -63,6 +63,7 @@ describe("What's new", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
       "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
+      "Your recap waits for your name answers", // until dev1 deploys it (#2169)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
       "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)

@@ -59,6 +59,16 @@ export default function Import({
 }) {
   const ref = campaignFromPath(path);
   const [picked, setPicked] = useState<File[]>([]);
+  // Google Doc links (#2140) sit in the same list as the files, 20 items in all.
+  const [links, setLinks] = useState<string[]>([]);
+  const [linkText, setLinkText] = useState("");
+  const [linkProblem, setLinkProblem] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const linkBox = useRef<HTMLInputElement>(null);
+  // The links that opened, in the order they are sent from here on, and what each one is called
+  // there: the API names a link by its place in the list it is sent, so dropping a bad link renames the rest.
+  const [sentLinks, setSentLinks] = useState<string[]>([]);
+  const [sentNames, setSentNames] = useState<Record<string, string>>({});
   const [texts, setTexts] = useState<ImportFileIn[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [known, setKnown] = useState<Record<string, ImportMember>>({});
@@ -87,7 +97,9 @@ export default function Import({
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
     // The message is announced by its role="alert"; moving focus too would read it twice.
-    setProblem(words.problem[kind] ?? words.problem.server ?? "");
+    // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
+    const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
+    setProblem(words.problem[key] ?? words.problem.server ?? "");
   };
 
   /** Runs one request at a time, with the busy state and the problem line every step shares. */
@@ -170,12 +182,15 @@ export default function Import({
       return next;
     });
 
-  const choose = (event: Event): void => {
-    const list = Array.from((event.target as HTMLInputElement).files ?? []);
-    setPicked(list);
+  /** The name the DM saw in the list they built, for a name the API sent back (it renames links by place). */
+  const shownApi = (apiName: string): string => {
+    const seen = Object.entries(sentNames).find(([, sent]) => sent === apiName)?.[0];
+    return words.shownName(seen ?? apiName);
+  };
+
+  /** Everything after Preview comes from one snapshot of the files and links, so a change clears it all. */
+  const forgetPreview = (): void => {
     setProblem(null);
-    setPickProblem(null);
-    // Everything after Preview comes from one snapshot of the files, so new files clear it all.
     setPreview(null);
     setTexts([]);
     setCheck(null);
@@ -184,13 +199,80 @@ export default function Import({
     setDates({});
     setGuessed({});
     setKnown({});
-    if (list.length > IMPORT_MAX_FILES) setPickProblem(words.tooManyFiles);
-    else {
-      const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
-      const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
-      if (big) setPickProblem(words.fileTooBig(big.name));
-      else if (odd) setPickProblem(words.fileNotTxt(odd.name));
+    setSentLinks([]);
+    setSentNames({});
+  };
+
+  /** The problem with the chosen files and links as they stand, if there is one. */
+  const checkPicked = (list: File[], linkList: string[]): void => {
+    if (list.length + linkList.length > IMPORT_MAX_FILES) {
+      setPickProblem(words.tooManyFiles);
+      return;
     }
+    const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
+    // Links are told apart from files by the name "Google Doc N.txt", so a file may not use it.
+    const clash = list.find((f) => /^Google Doc \d+\.txt$/.test(f.name));
+    const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
+    setPickProblem(
+      big
+        ? words.fileTooBig(big.name)
+        : clash
+          ? words.fileNameTaken(clash.name)
+          : odd
+          ? words.fileNotTxt(odd.name)
+          : null,
+    );
+  };
+
+  const choose = (event: Event): void => {
+    if (busy) return;
+    const list = Array.from((event.target as HTMLInputElement).files ?? []);
+    setPicked(list);
+    forgetPreview();
+    checkPicked(list, links);
+  };
+
+  const addLink = (): void => {
+    const link = linkText.trim();
+    if (link === "" || busy) return;
+    // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
+    if (!/^(https?:\/\/)?docs\.google\.com\/document\//i.test(link)) {
+      setLinkProblem(words.notAGoogleDocLink);
+      return;
+    }
+    // The same doc can be pasted with a different ending, so compare the doc's id when there is one.
+    const docId = (l: string): string => /\/d\/([\w-]+)/.exec(l)?.[1] ?? l;
+    if (links.some((l) => docId(l) === docId(link))) {
+      setLinkProblem(words.linkAlreadyAdded);
+      return;
+    }
+    if (picked.length + links.length >= IMPORT_MAX_FILES) {
+      setLinkProblem(words.tooManyToAdd);
+      return;
+    }
+    const next = [...links, link];
+    setLinks(next);
+    setLinkText("");
+    setLinkProblem(null);
+    forgetPreview();
+    checkPicked(picked, next);
+    setAnnounce(words.added(words.linkName(next.length), picked.length + next.length));
+    linkBox.current?.focus();
+  };
+
+  const removeLink = (at: number): void => {
+    if (busy) return;
+    const next = links.filter((_, i) => i !== at);
+    setLinks(next);
+    setLinkProblem(null);
+    forgetPreview();
+    checkPicked(picked, next);
+    setAnnounce(words.removed(words.linkName(at + 1), picked.length + next.length));
+    // The button that was pressed is gone, so focus goes to the next Remove, or to the box.
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>("[data-remove-link]");
+      (buttons[Math.min(at, buttons.length - 1)] ?? linkBox.current)?.focus();
+    });
   };
 
   const lookAtFiles = (): Promise<void> =>
@@ -198,8 +280,25 @@ export default function Import({
       const files: ImportFileIn[] = await Promise.all(
         picked.map(async (f) => ({ name: f.name, text: await f.text() })),
       );
-      const found = await api.importPreview!(ref, files);
+      const found = await api.importPreview!(ref, files, links);
       const good = found.files.filter((f) => f.error === null);
+      // A link that did not open is left out from here on, so the ones that did are renamed by place.
+      const opened: string[] = [];
+      const names: Record<string, string> = {};
+      let unanswered = false;
+      links.forEach((link, i) => {
+        const shown = `${words.linkName(i + 1)}.txt`;
+        const answer = found.files.find((f) => f.name === shown);
+        // An older API ignores `links`; a link it never answered must not just vanish.
+        if (!answer) unanswered = true;
+        if (answer?.error === null) {
+          opened.push(link);
+          names[shown] = `${words.linkName(opened.length)}.txt`;
+        }
+      });
+      if (unanswered) setProblem(words.docNoAnswer);
+      setSentLinks(opened);
+      setSentNames(names);
       setTexts(files);
       setPreview(found);
       setCheck(null);
@@ -255,7 +354,7 @@ export default function Import({
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      setCheck(await api.importCheck(ref, sentFiles(), mapping));
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -265,7 +364,7 @@ export default function Import({
       if (i < 0 || j < 0 || j >= now.length) return now;
       const next = [...now];
       [next[i], next[j]] = [next[j] as string, next[i] as string];
-      setMoved(words.moved(name, j + 1, now.length));
+      setMoved(words.moved(words.shownName(name), j + 1, now.length));
       return next;
     });
 
@@ -274,18 +373,28 @@ export default function Import({
   const start = (): Promise<void> =>
     run(async () => {
       if (!api.importStart) return;
-      const started = await api.importStart(ref, sentFiles(), {
-        mapping,
-        sessions: order.map((file, i) => ({
-          file,
-          date: dates[file] ?? "",
-          order: i + 1,
-        })),
-      });
+      // A Google Doc goes by the name it will have in the list that is sent now.
+      const sentName = (file: string): string => sentNames[file] ?? file;
+      const sentDates = Object.fromEntries(
+        order.map((file) => [sentName(file), dates[file] ?? ""]),
+      );
+      const started = await api.importStart(
+        ref,
+        sentFiles(),
+        {
+          mapping,
+          sessions: order.map((file, i) => ({
+            file: sentName(file),
+            date: dates[file] ?? "",
+            order: i + 1,
+          })),
+        },
+        sentLinks,
+      );
       setProgress({
         sessions: started.sessions.map((s) => ({
           file: s.file,
-          date: dates[s.file] ?? "",
+          date: sentDates[s.file] ?? "",
           state: s.state,
           reason: null,
         })),
@@ -342,7 +451,7 @@ export default function Import({
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
-              <span class="campaign-name">{s.file}</span>
+              <span class="campaign-name">{shownApi(s.file)}</span>
               <span class="small">
                 {s.date} · {words.state[s.state] ?? s.state}
                 {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
@@ -387,18 +496,88 @@ export default function Import({
           accept=".txt,text/plain"
           multiple
           onChange={choose}
+          disabled={busy}
           aria-label={words.pickLabel}
         />
-        {picked.length > 0 && (
-          <p class="small">{words.chosen(picked.length)}</p>
+        <form
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            addLink();
+          }}
+        >
+          <label class="field">
+            {words.linkLabel}
+            <input
+              ref={linkBox}
+              type="url"
+              value={linkText}
+              placeholder={words.linkPlaceholder}
+              autoComplete="off"
+              spellcheck={false}
+              aria-describedby="import-link-help"
+              onInput={(e) => setLinkText((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          <button
+            type="submit"
+            class="button secondary"
+            disabled={linkText.trim() === "" || busy}
+          >
+            {words.addLink}
+          </button>
+        </form>
+        {linkProblem && (
+          <p class="note bad" role="alert">
+            {linkProblem}
+          </p>
+        )}
+        <div class="muted small" id="import-link-help">
+          <p>{words.linkHelp}</p>
+          <ol>
+            {words.linkSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p>{words.linkHelpAfter}</p>
+        </div>
+        <p class="sr-only" role="status">
+          {announce}
+        </p>
+        {links.length > 0 && (
+          <ul class="campaigns">
+            {links.map((link, i) => (
+              <li key={`${i}-${link}`}>
+                <span class="campaign-name">{words.linkName(i + 1)}</span>
+                <span class="small">{words.shortLink(link)}</span>
+                <button
+                  type="button"
+                  data-remove-link
+                  disabled={busy}
+                  class="button secondary"
+                  aria-label={words.removeLink(i + 1)}
+                  onClick={() => removeLink(i)}
+                >
+                  {words.remove}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {picked.length + links.length > 0 && (
+          <p class="small">
+            {links.length > 0
+              ? words.chosenItems(picked.length, links.length)
+              : words.chosen(picked.length)}
+          </p>
         )}
         <button
           type="button"
           class="button"
           disabled={
             busy ||
-            picked.length === 0 ||
-            picked.length > IMPORT_MAX_FILES ||
+            picked.length + links.length === 0 ||
+            picked.length + links.length > IMPORT_MAX_FILES ||
             // Only a problem with the chosen files blocks Preview. An answer from the API (a busy
             // moment, a refusal) must not leave it locked: the DM can press it again.
             pickProblem !== null
@@ -416,7 +595,7 @@ export default function Import({
               .filter((f) => f.error !== null)
               .map((f) => (
                 <li key={f.name}>
-                  <span class="campaign-name">{f.name}</span>
+                  <span class="campaign-name">{words.shownName(f.name)}</span>
                   <span class="small">
                     {words.fileError[f.error ?? ""] ?? words.fileErrorOther}
                   </span>
@@ -523,7 +702,12 @@ export default function Import({
                       <ul class="campaigns">
                         {check.files.map((f) => (
                           <li key={f.name}>
-                            <span class="campaign-name">{f.name}</span>
+                            <span class="campaign-name">{shownApi(f.name)}</span>
+                            {f.error !== null && (
+                              <span class="small" role="alert">
+                                {words.fileError[f.error] ?? words.fileErrorOther}
+                              </span>
+                            )}
                             {f.leftOut > 0 && (
                               <span class="small">
                                 {words.leftOutFile(f.leftOut)}
@@ -571,12 +755,12 @@ export default function Import({
                 <ol class="campaigns">
                   {order.map((name, i) => (
                     <li key={name}>
-                      <span class="campaign-name">{name}</span>
+                      <span class="campaign-name">{words.shownName(name)}</span>
                       <span class="small">
                         {words.position(i + 1, order.length)}
                       </span>
                       <label class="field">
-                        {words.dateLabel(name)}
+                        {words.dateLabel(words.shownName(name))}
                         <input
                           type="date"
                           value={dates[name] ?? ""}
@@ -594,7 +778,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveUp(name)}
+                          aria-label={words.moveUp(words.shownName(name))}
                           aria-disabled={i === 0}
                           onClick={() => move(name, -1)}
                         >
@@ -603,7 +787,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveDown(name)}
+                          aria-label={words.moveDown(words.shownName(name))}
                           aria-disabled={i === order.length - 1}
                           onClick={() => move(name, 1)}
                         >
