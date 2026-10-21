@@ -17,6 +17,7 @@ import {
   type TicketStatus,
   type TicketWeek,
 } from "./api";
+import PageBar from "./PageBar";
 
 /** The filter buttons in the order the team needs them: what still needs a reply first. */
 const FILTERS: TicketFilter[] = ["escalated", "new", "answered", "closed", "all"];
@@ -183,6 +184,13 @@ function ReplyBox({
 export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   const [rows, setRows] = useState<SupportTicketRow[] | "loading" | "down">("loading");
   const [filter, setFilter] = useState<TicketFilter>("new");
+  // Which page of the (filtered) list is showing, and how many there are (#2211). Pages stay the
+  // same after a reply or a close, so the team keeps its place.
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState<number | null>(null);
+  const [paging, setPaging] = useState(false);
+  const [pageNotice, setPageNotice] = useState<string | null>(null);
+  const pageNow = useRef(1);
   const [counts, setCounts] = useState<TicketCounts | null>(null);
   const [week, setWeek] = useState<TicketWeek | null>(null);
   // The ticket whose address was just copied (or failed to), so its row can say so.
@@ -200,29 +208,50 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
   // slower answer must not replace a newer one (or show an error for a view no longer wanted).
   const newest = useRef(0);
 
-  async function load(show: TicketFilter = filter) {
+  /** Reads one page of the list and resolves with the page that is showing afterwards. */
+  async function load(
+    show: TicketFilter = filter,
+    wanted: number = pageNow.current,
+    notice: string | null = null,
+  ): Promise<number> {
     const mine = ++newest.current;
+    setPaging(true);
+    setPageNotice(notice);
     try {
-      const found = await api.tickets(show);
-      if (mine !== newest.current) return;
+      const found = await api.tickets(show, wanted);
+      if (mine !== newest.current) return pageNow.current;
       setRows(found.tickets);
       setCounts(found.counts);
       setWeek(found.week ?? null);
+      pageNow.current = found.page ?? 1;
+      setPage(pageNow.current);
+      setPages(found.pages ?? null);
+      return pageNow.current;
     } catch (error) {
-      if (mine !== newest.current) return;
+      if (mine !== newest.current) return pageNow.current;
       const kind = error instanceof AdminApiError ? error.kind : "down";
       if (kind === "signed-out") onSignedOut();
       else if (kind === "off") onOff();
+      // The page asked for is gone (the list got shorter: the last ticket on the last page was
+      // closed): the page before it, and the first at the latest, is always there.
+      else if (kind === "stale" && wanted > 1) {
+        return load(show, wanted - 1, notice ?? text.pageGone);
+      }
       // A list already on screen stays (the change was saved); only a first load shows the
       // error in its place.
       else if (Array.isArray(rowsNow.current)) {
         setNews({ text: text.ticketsDown, ok: false });
       } else setRows("down");
+      return pageNow.current;
+    } finally {
+      if (mine === newest.current) setPaging(false);
     }
   }
 
+  // Another view (or a first look) starts at page 1.
   useEffect(() => {
-    void load();
+    pageNow.current = 1;
+    void load(filter, 1);
   }, [api, filter]);
 
   // "Address copied." is true for a moment: it goes after a few seconds, so it can't be read as
@@ -305,6 +334,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
               setNews(null);
               setCopied(null);
               setRows("loading");
+              setPages(null);
               setFilter(f);
             }}
           >
@@ -422,6 +452,16 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
             </li>
           ))}
         </ul>
+      )}
+      {pages !== null && (
+        <PageBar
+          id="tickets-page"
+          page={page}
+          pages={pages}
+          busy={paging}
+          notice={pageNotice}
+          onGo={(wanted) => load(filter, wanted)}
+        />
       )}
     </section>
   );
