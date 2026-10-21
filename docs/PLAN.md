@@ -4119,9 +4119,23 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     3. the recap of last time, read by the DM or told by the players;
     4. the new session itself.
   - **Every recap DMbot writes has fixed opening and closing lines**, so it can be found when it is
-    read aloud next time. It opens with "Previously, on <campaign name>…" and closes with "And so the
-    party continues the adventure of <campaign name>." The narration says both. Only the campaign's
-    display name is used, never a secret one.
+    read aloud next time. It opens with "Previously, on <campaign name>…" and closes with one of ten
+    endings (owner, 2026-10-21), all "And so we continue, the <word> <kind> of <campaign name>.":
+    1. And so we continue, the epic adventure of <campaign name>.
+    2. And so we continue, the great adventure of <campaign name>.
+    3. And so we continue, the legendary adventure of <campaign name>.
+    4. And so we continue, the grand adventure of <campaign name>.
+    5. And so we continue, the heroic adventure of <campaign name>.
+    6. And so we continue, the epic tale of <campaign name>.
+    7. And so we continue, the epic saga of <campaign name>.
+    8. And so we continue, the epic journey of <campaign name>.
+    9. And so we continue, the perilous adventure of <campaign name>.
+    10. And so we continue, the epic quest of <campaign name>.
+
+    The ending rotates: each recap takes the next one in the list after the campaign's previous recap,
+    so two sessions in a row never end the same way. The finder looks for the shared shape ("and so we
+    continue … of <campaign name>"), not one exact sentence. The narration says both lines. Only the
+    campaign's display name is used, never a secret one.
   - **Step 1: split the session (before the beats).** DMbot finds where each part begins and ends.
     - **The opening and closing lines,** matched loosely, since speech-to-text garbles names.
       The closing line is often not read, so it is a strong sign, never required.
