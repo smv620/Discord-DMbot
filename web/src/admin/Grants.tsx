@@ -13,6 +13,7 @@ import {
   type GrantLevel,
   type GrantsView,
 } from "./api";
+import RecentChanges from "./RecentChanges";
 
 interface Props {
   api: AdminApi;
@@ -424,17 +425,14 @@ export default function Grants({ api, csrf, onSignedOut, onOff }: Props) {
 
       <section aria-labelledby="history-heading">
         <h2 id="history-heading">{text.historyHeading}</h2>
-        {view.log.length === 0 ? (
-          <p class="muted">{text.noHistory}</p>
-        ) : (
-          <ul class="history">
-            {view.log.map((e, i) => (
-              <li key={`${e.at}-${i}`}>
-                {text.logLine(day(e.at), e.by, e.action, who(e.name, e.discordId))}
-              </li>
-            ))}
-          </ul>
-        )}
+        <RecentChanges
+          api={api}
+          first={view.log}
+          pages={view.logPages}
+          day={day}
+          onSignedOut={onSignedOut}
+          onOff={onOff}
+        />
       </section>
     </div>
   );
