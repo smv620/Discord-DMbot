@@ -29,14 +29,15 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
-_CANDIDATES = (
-    " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
-    " AND l.sidebar IS NULL AND NOT l.typed"
-    " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
-    " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
-    "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
-)
+def _candidates() -> str:
+    return (
+        " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
+        " AND l.sidebar IS NULL AND NOT l.typed"
+        " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
+        " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
+        "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +395,7 @@ class TranscriptStore:
                 cur = await conn.execute(
                     "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
                     " coalesce(l.text, l.heard) AS cleaned"
-                    + _CANDIDATES
+                    + _candidates()
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
                     (guild_id, campaign_id, longest, campaign_id, batch, *after, PAGE),
@@ -432,7 +433,7 @@ class TranscriptStore:
             # never change (inside a longer name), so it is "up to" this many.
             cur = await conn.execute(
                 "SELECT count(*) AS n"
-                + _CANDIDATES
+                + _candidates()
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
                 (guild_id, campaign_id, longest, campaign_id, batch, *after),
             )
