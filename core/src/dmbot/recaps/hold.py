@@ -112,15 +112,17 @@ class HoldStore:
 
     async def set_names_open(
         self, guild_id: int, campaign_id: str, session_at: int, count: int
-    ) -> None:
+    ) -> bool:
         """The latest count of name questions the hold waits on, for the website (#2174). Counts
-        only. Written when it changes, so a round that finds the same number writes nothing."""
+        only. Written when it changes, so a round that finds the same number writes nothing:
+        True when a row was changed."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE recap_holds SET names_open = %s WHERE campaign_id = %s AND session_at = %s"
                 " AND names_open <> %s",
                 (max(0, count), campaign_id, session_at, max(0, count)),
             )
+            return bool(cur.rowcount)
 
     async def mark_asked(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """The DM has now been told. False when it was already (or the hold is gone)."""

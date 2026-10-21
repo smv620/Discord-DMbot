@@ -110,16 +110,9 @@ class TheStore(DatabaseTest):
         await self.holds.hold(
             GUILD, self.campaign.id, AT, session_id="s1", dm_user_id=DM, channel_id=66, names_open=4
         )
-        async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute(
-                "UPDATE recap_holds SET names_open = %s WHERE campaign_id = %s AND session_at = %s"
-                " AND names_open <> %s",
-                (4, self.campaign.id, AT, 4),
-            )
-            self.assertEqual(cur.rowcount, 0)  # the same statement set_names_open sends
-        before = await self.holds.get(GUILD, self.campaign.id, AT)
-        await self.holds.set_names_open(GUILD, self.campaign.id, AT, 4)
-        self.assertEqual(await self.holds.get(GUILD, self.campaign.id, AT), before)
+        self.assertFalse(await self.holds.set_names_open(GUILD, self.campaign.id, AT, 4))
+        self.assertTrue(await self.holds.set_names_open(GUILD, self.campaign.id, AT, 0))
+        self.assertFalse(await self.holds.set_names_open(GUILD, self.campaign.id, AT, 0))
 
     async def test_a_silent_hold_is_told_once(self) -> None:
         self.assertTrue(
@@ -323,11 +316,12 @@ class EachRound(IsolatedAsyncioTestCase):
         # Each round keeps the website's count current.
         bot.recap_holds.set_names_open.assert_awaited_once_with(GUILD, "c" * 32, AT, 1)
 
-    async def test_answered_questions_do_not_write_a_count(self) -> None:
+    async def test_the_count_is_written_when_it_reaches_zero_too(self) -> None:
         bot = fake_bot()
+        bot.recap_allowed = AsyncMock(return_value=False)  # the plan blocks: the hold stays
         bot.recap_holds.held = AsyncMock(return_value=[self.held()])
         await bot.release_recap_holds(GUILD)
-        bot.recap_holds.set_names_open.assert_not_awaited()  # released, not counted again
+        bot.recap_holds.set_names_open.assert_awaited_once_with(GUILD, "c" * 32, AT, 0)
 
     async def test_recaps_the_dm_switched_off_drop_the_hold_and_write_nothing(self) -> None:
         bot = fake_bot()

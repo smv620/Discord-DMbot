@@ -7863,8 +7863,10 @@ class DMBot(commands.AutoShardedBot):
             waiting = await self._open_name_questions(
                 gid, held.campaign_id, held.session_id, held.session_at
             )
+            # The website's count follows every count, 0 included: when the last answer is in but
+            # the plan blocks the recap, "answer N" must not stay on the page (#2174).
+            await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
             if waiting:
-                await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
                 if held.asked:
                     return
                 # Claim first, so the round and the end of the extractor never both ask.

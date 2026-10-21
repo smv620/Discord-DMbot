@@ -254,7 +254,8 @@ async def list_recaps(db: Database, session: Session) -> list[dict[str, Any]]:
             out += [
                 _held_view(int(guild.id), h, guild.name)
                 for h in await _holds(conn, int(guild.id))
-                if (h["campaignId"], int(h["sessionAt"])) not in made  # (released: has its job)
+                if (h["campaignId"], int(h["sessionAt"]))
+                not in made  # (a job and a hold for one session)
             ]
     out.sort(key=lambda v: v["sessionAt"], reverse=True)
     return out[:LIST_LIMIT]

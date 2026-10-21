@@ -7576,7 +7576,7 @@ RECAP_HOLD_NAMES = """
     -- holds the DM was told about and that still wait on an answer (a silent hold is waiting for
     -- the story extractor, and one with nothing left is released by the next round). Counts and
     -- times only; no name or text. The server must be one of the session's, as for the other
-    -- website doors.
+    -- website doors (a second layer: forced row-level security already holds the same line).
     CREATE FUNCTION dmbot_web_recap_holds(g BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
