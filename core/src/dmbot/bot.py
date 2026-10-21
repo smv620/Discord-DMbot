@@ -7798,7 +7798,7 @@ class DMBot(commands.AutoShardedBot):
                 if waiting > 0 or pending:
                     if not await store.hold(
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
-                        channel_id=channel_id, asked=waiting > 0,
+                        channel_id=channel_id, asked=waiting > 0, names_open=waiting,
                     ):  # fmt: skip
                         return  # held already, or a job exists: a repeat of the end of the session
                     held = True
@@ -7888,6 +7888,9 @@ class DMBot(commands.AutoShardedBot):
             waiting = await self._open_name_questions(
                 gid, held.campaign_id, held.session_id, held.session_at
             )
+            # The website's count follows every count, 0 included: when the last answer is in but
+            # the plan blocks the recap, "answer N" must not stay on the page (#2174).
+            await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
             if waiting:
                 if held.asked:
                     return
