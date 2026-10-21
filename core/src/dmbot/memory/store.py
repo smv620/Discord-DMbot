@@ -2144,29 +2144,44 @@ class MemoryStore:
         """The DM's answer to an offer: a spelling (the offered one or one they typed) sets the
         name's "said as" and ends the offer; None is a "no" that is remembered, so the same offer
         never comes back. Only the DM's answer reaches here (the caller checks)."""
+        # The offer is claimed in one statement, so two DMs answering at once cannot both win.
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT 1 FROM said_as_suggestions WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND state = 'waiting'",
-                (guild_id, campaign_id, entity_id),
-            )
-            if await cur.fetchone() is None:
-                raise MemoryRuleError(NOT_FOUND)
-        if spelling is None:
-            async with self._db.guild(guild_id) as conn:
-                await conn.execute(
+            if spelling is None:
+                cur = await conn.execute(
                     "UPDATE said_as_suggestions SET state = 'no' WHERE guild_id = %s"
-                    " AND campaign_id = %s AND entity_id = %s",
+                    " AND campaign_id = %s AND entity_id = %s AND state = 'waiting'"
+                    " RETURNING entity_id",
                     (guild_id, campaign_id, entity_id),
                 )
-            return
-        await self.set_said_as(guild_id, campaign_id, entity_id, spelling, source=DM)
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+                if await cur.fetchone() is None:
+                    raise MemoryRuleError(NOT_FOUND)
+                return
+            cur = await conn.execute(
                 "DELETE FROM said_as_suggestions WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s",
+                " AND entity_id = %s AND state = 'waiting' RETURNING heard, times, created_at",
                 (guild_id, campaign_id, entity_id),
             )
+            claimed = await cur.fetchone()
+        if claimed is None:
+            raise MemoryRuleError(NOT_FOUND)
+        try:
+            await self.set_said_as(guild_id, campaign_id, entity_id, spelling, source=DM)
+        except MemoryRuleError:
+            async with self._db.guild(guild_id) as conn:  # not set: the offer stays waiting
+                await conn.execute(
+                    "INSERT INTO said_as_suggestions"
+                    " (guild_id, campaign_id, entity_id, heard, times, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (
+                        guild_id,
+                        campaign_id,
+                        entity_id,
+                        claimed["heard"],
+                        claimed["times"],
+                        claimed["created_at"],
+                    ),
+                )
+            raise
 
     async def merge(
         self,

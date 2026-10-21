@@ -169,3 +169,76 @@ class TheReview(SaidAsTest):
         self.assertEqual((await ui.waiting_reviews(self.it(), campaign)).said, 1)
         self.assertEqual((await ui.waiting_reviews(self.it(MANAGER), campaign)).said, 0)
         self.assertIn("to say out loud", ui.review_line(ui.Reviews(said=1)) or "")
+
+
+class TheSafetyRules(TheReview):
+    async def make_secret(self) -> None:
+        async with self.db.guild(GUILD) as conn:  # (the store refuses to make a main name secret)
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s",
+                (GUILD, self.campaign.id, self.cerric.id),
+            )
+
+    async def test_a_secret_name_is_never_offered(self) -> None:
+        await self.make_secret()
+        self.assertEqual(await self.offered({(self.cerric.id, "kerrick", SPEAKER): 5}), [])
+
+    async def test_a_name_made_secret_after_the_offer_is_not_shown_or_set(self) -> None:
+        _, view = await self.start()
+        await self.make_secret()
+        self.assertEqual(await self.waiting(), [])
+        press = self.it()
+        await view._yes(press)  # the screen was already open: the store refuses
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id))
+
+    async def test_a_non_dm_cannot_use_the_no_the_form_or_the_type_button(self) -> None:
+        _, view = await self.start()
+        for press in (view._no, view._type):
+            it = self.it(MANAGER)
+            await press(it)
+            self.assertIn("Only a DM", it.response.sent[0][0])
+        form = review.TypeIt(view, view.shown)
+        form.said_as = SimpleNamespace(value="Kair-ick")  # type: ignore[assignment]
+        it = self.it(MANAGER)
+        await form.on_submit(it)
+        self.assertIn("Only a DM", it.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id))
+        self.assertEqual(len(await self.waiting()), 1)  # still waiting
+
+    async def test_an_offer_answered_elsewhere_says_so(self) -> None:
+        _, view = await self.start()
+        await self.memory.answer_said_as(GUILD, self.campaign.id, self.cerric.id, None)
+        press = self.it()
+        await view._yes(press)
+        self.assertIn("already answered", press.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id))
+
+    async def test_a_press_answers_the_offer_it_was_for(self) -> None:
+        _, view = await self.start()
+        stale = view.shown
+        view.shown = None  # the screen moved on
+        form = review.TypeIt(view, stale)
+        form.said_as = SimpleNamespace(value="Kair-ick")  # type: ignore[assignment]
+        await form.on_submit(self.it())
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id), "Kair-ick"
+        )
+
+    async def test_offers_stay_in_their_campaign_and_go_with_it(self) -> None:
+        await self.offered({(self.cerric.id, "kerrick", SPEAKER): 3})
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        self.assertEqual(await self.memory.said_as_suggestions(GUILD, other.id), [])
+        async with self.db.guild(GUILD + 1) as conn:  # another server sees none
+            cur = await conn.execute("SELECT count(*) AS n FROM said_as_suggestions")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (GUILD, self.campaign.id)
+            )
+            cur = await conn.execute("SELECT count(*) AS n FROM said_as_suggestions")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # deleted with the campaign

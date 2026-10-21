@@ -8,6 +8,7 @@ import logging
 
 import discord
 
+from dmbot.memory._changes import NOT_FOUND
 from dmbot.memory.models import MemoryRuleError, SaidAsSuggestion
 from dmbot.memory.store import SAID_AS_MAX
 from dmbot.ui import logic
@@ -102,33 +103,35 @@ class SaidAsReview(_Menu):
             return
         await _replace(interaction, f"{done}\n\n{text}".strip(), self)
 
-    async def _may_answer(
-        self, interaction: discord.Interaction
-    ) -> tuple[discord.Guild, SaidAsSuggestion] | None:
-        """The offer being answered, if this person is a DM of the campaign (checked on every
-        press)."""
+    async def _may_answer(self, interaction: discord.Interaction) -> bool:
+        """Is this person a DM of the campaign (checked on every press and every submit)?"""
         campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None or self.shown is None or interaction.guild is None:
-            return None
+        if campaign is None or interaction.guild is None:
+            return False
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, ONLY_DMS)
-            return None
-        return interaction.guild, self.shown
+            return False
+        return True
 
     async def _save(
-        self, interaction: discord.Interaction, spelling: str | None, done: str
+        self,
+        interaction: discord.Interaction,
+        s: SaidAsSuggestion,
+        spelling: str | None,
+        done: str,
     ) -> None:
-        got = await self._may_answer(interaction)
+        """Answer offer `s` (the one the press or form was for, not whatever is shown now)."""
         memory = _memory(interaction)
-        if got is None or memory is None:
+        if memory is None or interaction.guild is None or not await self._may_answer(interaction):
             return
-        guild, s = got
+        guild_id = interaction.guild.id
         try:
-            await memory.answer_said_as(guild.id, self.campaign_id, s.entity_id, spelling)
+            await memory.answer_said_as(guild_id, self.campaign_id, s.entity_id, spelling)
         except MemoryRuleError as exc:
-            await _tell(
-                interaction, GONE if "found" in str(exc).lower() else f"Couldn't change it. {exc}"
-            )
+            if str(exc) == NOT_FOUND:  # answered on another screen, or the name went meanwhile
+                await _tell(interaction, GONE)
+            else:
+                await _tell(interaction, f"Couldn't change it. {exc}")
             return
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is not None and spelling is not None:
@@ -141,6 +144,7 @@ class SaidAsReview(_Menu):
         s = self.shown
         await self._save(
             interaction,
+            s,
             s.heard,
             f"🔊 The narrator will say **{_md(s.name)}** like **{_md(s.heard)}**.",
         )
@@ -150,17 +154,16 @@ class SaidAsReview(_Menu):
             return
         await self._save(
             interaction,
+            self.shown,
             None,
             f"👍 The narrator will say **{_md(self.shown.name)}** as it's spelled. "
             "DMbot won't ask again.",
         )
 
     async def _type(self, interaction: discord.Interaction) -> None:
-        got = await self._may_answer(interaction)
-        if got is None:
+        if self.shown is None or not await self._may_answer(interaction):
             return
-        _, s = got
-        await interaction.response.send_modal(TypeIt(self, s))
+        await interaction.response.send_modal(TypeIt(self, self.shown))
 
     async def _later(self, interaction: discord.Interaction) -> None:
         if self.shown is not None:
@@ -193,9 +196,9 @@ class TypeIt(discord.ui.Modal, title="How to say it"):
         if not spelling:
             await _tell(interaction, "Type how it should sound, or press ❌ No.")
             return
-        self.review.shown = self.s  # the offer this form was opened for
         await self.review._save(
             interaction,
+            self.s,  # the offer this form was opened for
             spelling,
             f"🔊 The narrator will say **{_md(self.s.name)}** like **{_md(spelling)}**.",
         )
