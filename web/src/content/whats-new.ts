@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "Say a name your way, from its card",
+    what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name. Leave it empty to have it said as written. It matches the field on the website's Names page, and it only shows when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "Names spelled out at the table",
     what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot notes it, using only players who agreed to be recorded. After the session it shows up in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can correct that name's spelling with one button. DMbot only suggests. Nothing changes until you press a button, and the suggestion goes only to you.",
