@@ -128,6 +128,38 @@ class TheHistory(HelperBase):
         await self.inbound(to, again)
         self.assertEqual((await support.thread(self.web, number))[-1].text, "Thanks, that worked.")
 
+    async def test_a_short_stored_answer_proves_nothing_below_the_persons_own_line(self) -> None:
+        reply = "Thanks.\nYes.\nBut now it fails again in another way."
+        self.assertEqual(sm.fresh_words(reply, sent=["Yes."]), reply)
+        hello = "Thanks.\nHello Alice,\nIt fails again."
+        self.assertEqual(sm.fresh_words(hello, sent=["Hello Alice,"]), hello)
+        # A short opening on a later line, with words after it that don't match, stays whole.
+        later = "Thanks.\nHi,\nIt still fails for me."
+        sent = ["Hi,\nWe fixed it on our side. Please try again."]
+        self.assertEqual(sm.fresh_words(later, sent=sent), later)
+
+    async def test_a_long_stored_opening_is_the_persons_own_as_their_first_line(self) -> None:
+        sent = ["Thanks, we got your message.\nWe will look today."]
+        own = "Thanks, we got your message.\nBut the bot still won't join."
+        self.assertEqual(sm.fresh_words(own, sent=sent), own)
+        below = "It works.\nThanks, we got your message.\nWe will look today."
+        self.assertEqual(sm.fresh_words(below, sent=sent), "It works.")
+
+    async def test_a_copy_the_mail_program_re_wrapped_is_still_cut(self) -> None:
+        import textwrap
+
+        number = await self.talk()
+        answer = (
+            "We fixed it on our side, so please open the menu, press the green button, and try again. "
+            * 2
+        )
+        await self.helper.team_reply(number, answer.strip())
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        wrapped = "\n".join(textwrap.wrap(answer.strip(), 72))
+        self.assertIn("\n", wrapped)
+        await self.inbound(to, f"Yes, it works now.\n\n{wrapped}")
+        self.assertEqual((await support.thread(self.web, number))[-1].text, "Yes, it works now.")
+
     async def test_a_long_history_keeps_the_newest_parts_and_says_where_the_rest_is(self) -> None:
         number = await self.ticket("first " * 10)
         first = await support.one(self.web, number)

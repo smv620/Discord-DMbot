@@ -91,20 +91,27 @@ def _squash(text: str) -> str:
     return " ".join(text.split())
 
 
+def _long_enough(text: str) -> bool:
+    """Unlikely to be the same by chance: at least 25 characters and 4 words. A short common
+    opening or answer ("Hi,", "Yes.", "Thanks!") is as likely to be the person's own."""
+    return len(text) >= 25 and len(text.split()) >= 4
+
+
 def _is_sent_back(lines: Sequence[str], sent: Sequence[str]) -> bool:
-    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent. The
-    first line must match the email's first line; then either that line is long enough to be
-    unlikely by chance (25 characters, 4 words) or the lines after it match the email as well. A
-    short common opening ("Hi,", "Thanks!") alone is the person's own."""
-    first = lines[0].strip()
+    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent. Either
+    the line is the email's long opening, or the words from here on start with the email's first 80
+    characters and those are long enough to prove it. Words are compared single-spaced, so a copy
+    the mail program re-wrapped still matches; a short email ("Yes.") proves nothing alone."""
     rest = _squash("\n".join(lines))
+    first = lines[0].strip()
     for email in sent:
         opening = next((line.strip() for line in email.splitlines() if line.strip()), "")
-        if not opening or first != opening:
+        if not opening:
             continue
-        if len(opening) >= 25 and len(opening.split()) >= 4:
+        if first == opening and _long_enough(opening):
             return True
-        if rest.startswith(_squash(email)[:80]):
+        start = _squash(email)[:80]
+        if _long_enough(start) and rest.startswith(start):
             return True
     return False
 
