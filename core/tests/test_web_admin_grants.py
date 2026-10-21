@@ -96,6 +96,7 @@ class AdminGrants(DatabaseTest):
                 "note": "",
                 "grantedBy": ADMIN,
                 "grantedAt": NOW + 60,
+                "alsoFree": False,
             },
         )
         self.now += 60
@@ -173,6 +174,49 @@ class AdminGrants(DatabaseTest):
         missing = await self.revoke(csrf, OTHER)
         self.assertEqual(missing.status_code, 404)
         self.assertEqual((await self.revoke(csrf, "not-an-id")).status_code, 400)
+
+    async def test_a_grant_for_someone_now_on_the_free_list_is_flagged_and_can_be_removed(
+        self,
+    ) -> None:
+        # The grant came first; the owner added the person to the server's free list later (#2196).
+        csrf = await self.sign_in()
+        await self.give(csrf)
+        await self.give(csrf, discordId=OTHER)
+        later = create_app(
+            settings(
+                admin_emails=(ADMIN,),
+                admin_password_hash=HASH,
+                client_ip_header="CF-Connecting-IP",
+                free_users=frozenset({ALWAYS, int(FRIEND)}),
+            ),
+            self.db,
+            FakeDiscord(),
+            admin_sessions=AdminSessions(clock=lambda: 0.0),
+            admin_tries=FailedTries(clock=lambda: 0.0),
+            clock=lambda: self.now,
+        )
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=later), base_url=API, follow_redirects=False
+        )
+        self.addAsyncCleanup(client.aclose)
+        signed = await client.post(
+            "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+        )
+        self.assertEqual(signed.status_code, 204)
+        csrf = (await client.get("/admin/me")).json()["csrf"]
+        listed = (await client.get("/admin/grants")).json()
+        self.assertEqual({f["discordId"] for f in listed["free"]}, {str(ALWAYS), FRIEND})
+        flags = {g["discordId"]: g["alsoFree"] for g in listed["grants"]}
+        self.assertEqual(flags, {FRIEND: True, OTHER: False})
+        # "Remove it" is the ordinary revoke, so it is logged and the other grant stays.
+        gone = await client.post(
+            f"/admin/grants/{FRIEND}/revoke", headers={**HEADERS, "X-Admin-CSRF": csrf}
+        )
+        self.assertEqual(gone.status_code, 204)
+        after = (await client.get("/admin/grants")).json()
+        self.assertEqual([g["discordId"] for g in after["grants"]], [OTHER])
+        self.assertEqual(after["log"][0]["action"], "revoke")
+        self.assertEqual(after["log"][0]["discordId"], FRIEND)
 
     async def fill_log(self, csrf: str, entries: int) -> None:
         """`entries` log lines: a grant for one person, then changes to it."""

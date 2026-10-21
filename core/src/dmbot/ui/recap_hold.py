@@ -13,6 +13,7 @@ from typing import Any
 import discord
 
 from dmbot.mentions import NO_PINGS
+from dmbot.recaps.hold import LINE_WRITING
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.names import ReviewButton
@@ -21,30 +22,35 @@ NOT_YOURS = "Only this campaign's DM can do this. Ask your DM."
 GONE = "I can't find this campaign any more. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
 OFF_EVERYWHERE = "Recaps are switched off for all of DMbot right now. No recap was written."
-WRITING = "Writing the recap."
-ALREADY = "Already being written."
+WRITING = LINE_WRITING  # (one wording, the same under every line)
+ALREADY = WRITING  # (one wording for both: it is being written)
 
-_TEMPLATE = r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
+# An import's button also names its group, so a press reaches the whole import even after the
+# session it was posted for has been answered (#2174). Buttons posted before that have no group.
+_TEMPLATE = (
+    r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})(?::(?P<group>[0-9a-f]{32}))?"
+)
 
 
 class WriteNowButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE
 ):
-    def __init__(self, campaign_id: str, session_at: int) -> None:
+    def __init__(self, campaign_id: str, session_at: int, group_id: str = "") -> None:
+        suffix = f":{group_id}" if group_id else ""
         super().__init__(
             discord.ui.Button(
                 label="Write the recap now",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:rhold:go:{campaign_id}:{session_at}",
+                custom_id=f"dmbot:rhold:go:{campaign_id}:{session_at}{suffix}",
             )
         )
-        self.campaign_id, self.session_at = campaign_id, session_at
+        self.campaign_id, self.session_at, self.group_id = campaign_id, session_at, group_id
 
     @classmethod
     async def from_custom_id(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> WriteNowButton:
-        return cls(match["campaign"], int(match["at"]))
+        return cls(match["campaign"], int(match["at"]), match["group"] or "")
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
@@ -59,7 +65,13 @@ class WriteNowButton(
             await _tell(interaction, NOT_YOURS)
             return
         await interaction.response.defer()  # the checks below make several calls and a post
-        result = await bot.recap_hold_write_now(guild.id, campaign.id, self.session_at)
+        # The line pressed is kept too, so the other copy (the reminder) comes off with it.
+        key = hold_line_key(guild.id, campaign.id, self.session_at, self.group_id)
+        bot.decision_lines.remember_pressed(key, interaction)
+        pressed = interaction.message.id if interaction.message is not None else None
+        result = await bot.recap_hold_write_now(
+            guild.id, campaign.id, self.session_at, group_id=self.group_id, pressed_id=pressed
+        )
         if result == "off":
             await _tell(interaction, OFF_EVERYWHERE)
             return
@@ -67,6 +79,8 @@ class WriteNowButton(
             await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
             return
         outcome = WRITING if result == "queued" else ALREADY
+        if result != "queued":  # no hold to release: the other copies come off here instead
+            await bot.decision_lines.close(key, outcome, pressed_id=pressed)
         message = interaction.message
         await interaction.edit_original_response(
             content=with_outcome(message.content, outcome) if message is not None else outcome,
@@ -75,8 +89,20 @@ class WriteNowButton(
         )
 
 
-def hold_view(campaign_id: str, session_at: int) -> discord.ui.View:
+def hold_line_key(
+    guild_id: int, campaign_id: str, session_at: int, group_id: str = ""
+) -> tuple[object, ...]:
+    """What the bot calls the question and reminder lines of one held recap, so their buttons can
+    come off when the hold is over (`DecisionLines`, #2174). An import asks once for all its
+    sessions, so its lines are one item (its group); the server is part of the key so isolation
+    never rests on campaign ids being unique."""
+    if group_id:
+        return ("hold", guild_id, campaign_id, "group", group_id)
+    return ("hold", guild_id, campaign_id, session_at)
+
+
+def hold_view(campaign_id: str, session_at: int, group_id: str = "") -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ReviewButton(campaign_id))
-    view.add_item(WriteNowButton(campaign_id, session_at))
+    view.add_item(WriteNowButton(campaign_id, session_at, group_id))
     return view
