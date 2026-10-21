@@ -33,6 +33,8 @@ OUTRO = "Pick one below to get its entries as a text file. Only you can see this
 PICK_PLACEHOLDER = "📥 Get entries from…"
 PAGES_SHOWN = 5  # most page addresses listed under a linked site
 LABEL_MAX = 25  # a phone cuts a longer menu label
+BOOK_NOTE = "Some entries come from a book you shared. Their file holds that text: keep it here."
+CUT_NOTE = "Showing the first 25 sources."
 
 
 async def _load(interaction: discord.Interaction, campaign: Campaign) -> list[Group]:
@@ -53,7 +55,12 @@ def _text(groups: list[Group]) -> str:
             lines += [f"   <{page}>" for page in g.pages[:PAGES_SHOWN]]
             if len(g.pages) > PAGES_SHOWN:
                 lines.append(f"   …and {len(g.pages) - PAGES_SHOWN} more pages")
-    return fit_message("\n".join([INTRO, *lines, "", OUTRO]))
+    notes = [OUTRO]
+    if any(e.from_book for g in groups for e in g.entries):
+        notes.append(BOOK_NOTE)
+    if len(groups) >= homebrew_groups.MAX_SOURCES:
+        notes.append(CUT_NOTE)
+    return fit_message("\n".join([INTRO, *lines, "", *notes]))
 
 
 class SourcesView(_Menu):
@@ -77,6 +84,11 @@ class SourcesView(_Menu):
         self.add_item(self.pick)
 
     async def _download(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.homebrew import ONLY_DMS, _is_dm  # (that module imports this one)
+
+        if not await _is_dm(interaction, self.campaign):  # checked on every press, not only at open
+            await _tell(interaction, ONLY_DMS)
+            return
         await _answer_first(interaction)  # a new private message; the list stays as it is
         try:
             groups = await _load(interaction, self.campaign)
@@ -103,7 +115,7 @@ class SourcesView(_Menu):
             )
         except discord.HTTPException:
             log.warning("Couldn't send a homebrew sources file", exc_info=True)
-            await interaction.followup.send(COULDNT, ephemeral=True)
+            await _tell(interaction, COULDNT)
 
 
 async def open_sources(interaction: discord.Interaction, campaign: Campaign) -> None:
@@ -118,4 +130,6 @@ async def open_sources(interaction: discord.Interaction, campaign: Campaign) -> 
     if not groups:
         await _tell(interaction, NONE_YET)
         return
-    await _tell(interaction, _text(groups), view=SourcesView(campaign, groups))
+    view = SourcesView(campaign, groups)
+    view.origin = interaction  # so it says when it timed out
+    await _tell(interaction, _text(groups), view=view)
