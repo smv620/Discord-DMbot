@@ -22,6 +22,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
+from dmbot.ui.name_card import _spoken_recaps
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ NOTHING_WAITING = (
 )
 GONE = "That one was already answered. Press **Check how to say** again to see the next."
 ONLY_DMS = "Only a DM of this campaign can do that."
+NOT_ON = "Spoken recaps aren't switched on for this campaign, so there is nothing to say aloud."
 
 
 def question_text(s: SaidAsSuggestion, count: int) -> str:
@@ -53,6 +55,9 @@ async def start_said_as_review(interaction: discord.Interaction, campaign_id: st
         return
     if not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, ONLY_DMS)
+        return
+    if not await _spoken_recaps(interaction, campaign):  # the plan may have lapsed since the offer
+        await _tell(interaction, NOT_ON)
         return
     view = SaidAsReview(campaign.id)
     text = await view.current_text(interaction)
@@ -111,6 +116,9 @@ class SaidAsReview(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, ONLY_DMS)
             return False
+        if not await _spoken_recaps(interaction, campaign):  # checked again: a plan can lapse
+            await _tell(interaction, NOT_ON)
+            return False
         return True
 
     async def _save(
@@ -166,6 +174,8 @@ class SaidAsReview(_Menu):
         await interaction.response.send_modal(TypeIt(self, self.shown))
 
     async def _later(self, interaction: discord.Interaction) -> None:
+        if not await self._may_answer(interaction):
+            return
         if self.shown is not None:
             self.later.add(self.shown.entity_id)
         await self._next(interaction, "⏳ Left for later.")

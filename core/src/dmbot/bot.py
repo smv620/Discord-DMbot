@@ -234,7 +234,16 @@ from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import DM, FIX, KEEP, PROPOSED, Heard, MemoryRuleError, name_key
+from dmbot.memory.models import (
+    DM,
+    FIX,
+    KEEP,
+    PROPOSED,
+    Heard,
+    MemoryRuleError,
+    lookup_key,
+    name_key,
+)
 from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
@@ -311,7 +320,6 @@ from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
     SOUND,
-    SPELLING,
     Cleaned,
     Fix,
     Vocabulary,
@@ -641,7 +649,7 @@ class Table:
     names_fixed: int = 0
     # How often the cleaner fixed a name from the same other spelling, per person (#2171): the
     # words only, kept for the session. Dropped for anyone who stops being recorded.
-    heard_forms: dict[tuple[str, str, int], int] = field(default_factory=dict)
+    heard_forms: dict[tuple[str, str, str, int], int] = field(default_factory=dict)
     names_asked: int = 0
     # The AI ranking of "Did they mean…?" options (#2048), counts only, for the session's end log:
     # calls, "likely" chosen, "none", errors; and of the questions answered with a likely first
@@ -1650,7 +1658,7 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
-            table.heard_forms = {k: v for k, v in table.heard_forms.items() if k[2] != user_id}
+            table.heard_forms = {k: v for k, v in table.heard_forms.items() if k[3] != user_id}
             table.held_spelled = {k: v for k, v in table.held_spelled.items() if k[0] != user_id}
             table.spelled = [
                 x for x in table.spelled if x[1] != user_id
@@ -8773,15 +8781,18 @@ class DMBot(commands.AutoShardedBot):
 
     def _count_heard_forms(self, table: Table, user_id: int, fixes: Sequence[Fix]) -> None:
         """Count the other spellings the cleaner turned into a confirmed name (#2171): the words
-        only, per person, so a person who stops being recorded can be forgotten. A fix the DM made
-        by hand is not a hearing and is not counted."""
+        only, per person, so a person who stops being recorded can be forgotten. Only a sure fix
+        by sound is a hearing: an unsure one may be undone, a spelling fix is dropped later, and
+        a fix the DM made by hand is no hearing at all. The name written is kept too, because a
+        fix to an alias says nothing about the main name (the store checks it)."""
         for fix in fixes:
-            if fix.how not in (SPELLING, SOUND):
+            if fix.how != SOUND or not fix.sure:
                 continue
             heard = " ".join(fix.heard.split())
             if not heard or len(heard) > SAID_AS_HEARD_MAX:
                 continue
-            key = (fix.entity_id, heard.casefold(), user_id)
+            written = lookup_key(fix.written.removesuffix("'s").removesuffix("’s"))
+            key = (fix.entity_id, heard.casefold(), written, user_id)
             if key not in table.heard_forms and len(table.heard_forms) >= HEARD_FORMS_MAX:
                 continue
             table.heard_forms[key] = table.heard_forms.get(key, 0) + 1
@@ -8809,16 +8820,17 @@ class DMBot(commands.AutoShardedBot):
             ):
                 return
             agreed = await self.consent.consenting(gid)  # after the waits: who still agrees
-            totals: dict[tuple[str, str], int] = {}
-            for (entity_id, heard, speaker), times in counts.items():
+            totals: dict[tuple[str, str, str], int] = {}
+            for (entity_id, heard, written, speaker), times in counts.items():
                 if speaker in agreed:
-                    totals[(entity_id, heard)] = totals.get((entity_id, heard), 0) + times
-            best: dict[str, tuple[str, int]] = {}
-            for (entity_id, heard), times in totals.items():
-                if times >= SAID_AS_MIN_FIXES and times > best.get(entity_id, ("", 0))[1]:
-                    best[entity_id] = (heard, times)
+                    key = (entity_id, heard, written)
+                    totals[key] = totals.get(key, 0) + times
+            best: dict[str, tuple[str, str, int]] = {}
+            for (entity_id, heard, written), times in totals.items():
+                if times >= SAID_AS_MIN_FIXES and times > best.get(entity_id, ("", "", 0))[2]:
+                    best[entity_id] = (heard, written, times)
             kept = await self.memory.add_said_as_suggestions(
-                gid, cid, [(e, h, t) for e, (h, t) in best.items()]
+                gid, cid, [(e, h, w, t) for e, (h, w, t) in best.items()]
             )
             log.info("Say it this way: %d offered", kept)
 

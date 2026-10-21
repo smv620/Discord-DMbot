@@ -2068,39 +2068,49 @@ class MemoryStore:
         if clean is not None and (len(clean) > SAID_AS_MAX or not clean.isprintable()):
             raise MemoryRuleError(f"Use up to {SAID_AS_MAX} letters, with no odd characters.")
         async with self._write(guild_id, campaign_id, source) as w:
-            owner = await w.get(ENTITIES, entity_id)
-            if owner is None:
-                raise MemoryRuleError(NOT_FOUND)
-            rows = await w.select(
-                ALIASES, " AND entity_id = %s AND key = %s", [entity_id, lookup_key(owner["name"])]
+            return await self._change_said_as(w, entity_id, clean)
+
+    @staticmethod
+    async def _change_said_as(w: Changes, entity_id: str, clean: str | None) -> Written[Alias]:
+        """Set (or clear) the main name's "said as" inside a write that is already open."""
+        owner = await w.get(ENTITIES, entity_id)
+        if owner is None:
+            raise MemoryRuleError(NOT_FOUND)
+        rows = await w.select(
+            ALIASES, " AND entity_id = %s AND key = %s", [entity_id, lookup_key(owner["name"])]
+        )
+        if not rows:
+            raise MemoryRuleError(NOT_FOUND)
+        if rows[0]["secret"] and clean is not None:
+            raise MemoryRuleError(
+                "That name is secret, so recaps never say it. "
+                "Make it public first, or leave this empty."
             )
-            if not rows:
-                raise MemoryRuleError(NOT_FOUND)
-            if rows[0]["secret"] and clean is not None:
-                raise MemoryRuleError(
-                    "That name is secret, so recaps never say it. "
-                    "Make it public first, or leave this empty."
-                )
-            row = await w.update(ALIASES, rows[0]["id"], {"said_as": clean})
-            return Written(_alias(row), w.batch)
+        row = await w.update(ALIASES, rows[0]["id"], {"said_as": clean})
+        return Written(_alias(row), w.batch)
 
     async def add_said_as_suggestions(
-        self, guild_id: int, campaign_id: str, found: Sequence[tuple[str, str, int]]
+        self, guild_id: int, campaign_id: str, found: Sequence[tuple[str, str, str, int]]
     ) -> int:
-        """Keep (entity ID, the spelling it is heard as, how often) as "say it this way?" offers.
-        Only for a confirmed name whose main name is public and has no "said as" yet, and not
-        one the DM already turned down or was already asked about. An observation, not an edit:
-        no change log and no reload. Returns how many were kept."""
+        """Keep (entity ID, the spelling it is heard as, the name it was fixed to, how often) as
+        "say it this way?" offers. Only for a confirmed name whose main name is public and has no
+        "said as" yet, only when the fixes were to that main name (a fix to an alias says nothing
+        about the main name), never for a person at the table (how a real person's name was
+        misheard is of no use to the narrator), and not one the DM already turned down or was
+        already asked about. An observation, not an edit: no change log and no reload. Returns how
+        many were kept."""
         async with self._read(guild_id, campaign_id) as scope:
             entities = {
                 str(r["id"]): r for r in await scope.select(ENTITIES, " AND status = 'confirmed'")
             }
             mains = {(str(a["entity_id"]), a["key"]): a for a in await scope.select(ALIASES)}
         rows = []
-        for entity_id, heard, times in found:
+        for entity_id, heard, written, times in found:
             entity = entities.get(entity_id)
             heard = " ".join(heard.split())
-            if entity is None or not heard or len(heard) > 80 or times <= 0:
+            if entity is None or not heard or len(heard) > SAID_AS_MAX or times <= 0:
+                continue
+            if entity["type"] == "person" or lookup_key(written) != lookup_key(entity["name"]):
                 continue
             main = mains.get((entity_id, lookup_key(entity["name"])))
             if main is None or main["secret"] or main["said_as"]:
@@ -2157,9 +2167,11 @@ class MemoryStore:
         """The DM's answer to an offer: a spelling (the offered one or one they typed) sets the
         name's "said as" and ends the offer; None is a "no" that is remembered, so the same offer
         never comes back. Only the DM's answer reaches here (the caller checks)."""
-        # The offer is claimed in one statement, so two DMs answering at once cannot both win.
-        async with self._db.guild(guild_id) as conn:
-            if spelling is None:
+        # One transaction: the offer is claimed and the spelling set together, so a failure (the
+        # name made secret meanwhile) leaves the offer waiting, and two DMs answering at once
+        # cannot both win.
+        if spelling is None:
+            async with self._db.guild(guild_id) as conn:
                 cur = await conn.execute(
                     "UPDATE said_as_suggestions SET state = 'no' WHERE guild_id = %s"
                     " AND campaign_id = %s AND entity_id = %s AND state = 'waiting'"
@@ -2168,33 +2180,19 @@ class MemoryStore:
                 )
                 if await cur.fetchone() is None:
                     raise MemoryRuleError(NOT_FOUND)
-                return
-            cur = await conn.execute(
+            return
+        clean = " ".join(spelling.split()) or None
+        if clean is not None and (len(clean) > SAID_AS_MAX or not clean.isprintable()):
+            raise MemoryRuleError(f"Use up to {SAID_AS_MAX} letters, with no odd characters.")
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
                 "DELETE FROM said_as_suggestions WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND state = 'waiting' RETURNING heard, times, created_at",
+                " AND entity_id = %s AND state = 'waiting' RETURNING entity_id",
                 (guild_id, campaign_id, entity_id),
             )
-            claimed = await cur.fetchone()
-        if claimed is None:
-            raise MemoryRuleError(NOT_FOUND)
-        try:
-            await self.set_said_as(guild_id, campaign_id, entity_id, spelling, source=DM)
-        except MemoryRuleError:
-            async with self._db.guild(guild_id) as conn:  # not set: the offer stays waiting
-                await conn.execute(
-                    "INSERT INTO said_as_suggestions"
-                    " (guild_id, campaign_id, entity_id, heard, times, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                    (
-                        guild_id,
-                        campaign_id,
-                        entity_id,
-                        claimed["heard"],
-                        claimed["times"],
-                        claimed["created_at"],
-                    ),
-                )
-            raise
+            if await cur.fetchone() is None:
+                raise MemoryRuleError(NOT_FOUND)
+            await self._change_said_as(w, entity_id, clean)
 
     async def merge(
         self,
