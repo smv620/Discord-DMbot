@@ -550,6 +550,12 @@ always; DMbot never picks one.
   set), the DM's sidebar quotes both with their numbers and asks "Which one applies?", with buttons
   for each that record the answer. It never chooses. A player's table question gets "That's one for
   your DM.", and the DM is told privately.
+- **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
+  backups first; the answer-time question after. At save, a rule accepted from the linked file that
+  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
+  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  was not checked. Editing or removing a rule forgets what was decided about it, in the same
+  transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
   follows, then homebrew, then the book rules. The check above is only for rules at the same level.
 - **Cost:** one fast call per saved rule. A file accept with many rules checks them in one call.
