@@ -566,9 +566,6 @@ export default function Import({
     return (
       <div class="panel" role="status">
         <p>{words.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {words.signIn}
-        </a>
       </div>
     );
 

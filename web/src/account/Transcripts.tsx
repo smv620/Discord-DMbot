@@ -64,11 +64,9 @@ function useRead<T>(read: (() => Promise<T>) | null, deps: unknown[]): Load<T> {
 }
 
 function Shell<T>({
-  api,
   load,
   children,
 }: {
-  api: AccountApi;
   load: Load<T>;
   children: (value: T) => preact.ComponentChildren;
 }) {
@@ -82,9 +80,6 @@ function Shell<T>({
     return (
       <div class="panel" role="status">
         <p>{text.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {text.signIn}
-        </a>
       </div>
     );
   if (load.kind === "error")
@@ -117,7 +112,7 @@ export default function Transcripts({ api, path }: { api: AccountApi; path: stri
 function Campaigns({ api }: { api: AccountApi }) {
   const load = useRead(api.transcriptCampaigns ? () => api.transcriptCampaigns!() : null, [api]);
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(campaigns: TranscriptCampaign[]) =>
         campaigns.length === 0 ? (
           <p class="panel" role="status">
@@ -156,7 +151,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
     [api, campaignRef],
   );
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(found: { name: string; keepDays?: number | null; sessions: TranscriptSessionItem[] }) => (
         <>
           <p>
@@ -284,7 +279,7 @@ function Reading({
       <p class="small">{text.difference[version]}</p>
       <p class="small">{text.shareLine}</p>
       <p class="small">{text.names}</p>
-      <Shell api={api} load={load}>
+      <Shell load={load}>
         {(view: TranscriptView) => (
           <>
             <Download api={api} campaignRef={campaignRef} view={view} />

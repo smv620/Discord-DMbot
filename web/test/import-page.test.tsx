@@ -680,7 +680,9 @@ describe("a refusal", () => {
 
   it("offers to sign in again when the session ended", async () => {
     await refused(new ApiError("signed-out"));
-    expect(await screen.findByRole("link", { name: w.signIn })).toBeTruthy();
+    expect(await screen.findByText(w.signedOut)).toBeTruthy();
+    // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
+    expect(screen.queryByRole("link", { name: w.signIn })).toBeNull();
   });
 
   it("says what to do when every line in a file would be dropped", async () => {
