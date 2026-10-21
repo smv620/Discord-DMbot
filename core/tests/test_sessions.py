@@ -1526,11 +1526,11 @@ class SaveAndResume(SessionTests):
         from dmbot.transcript.cleaner import SOUND, Cleaned, Fix
 
         counted: list[Any] = []
-        table.name_lookup = object()  # type: ignore[assignment]
+        table.name_lookup = object()
         patcher = patch("dmbot.bot.mentions", return_value=set())
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign,assignment]
+        self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
             text, (Fix(0, 4, "Kerr", "Cerric", "e1", SOUND),)
         )
         self.bot._count_heard_forms = lambda t, user, fixes: counted.append((user, len(fixes)))  # type: ignore[method-assign,assignment]
