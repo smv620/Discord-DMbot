@@ -186,6 +186,7 @@ class NoticePeekButtonTests(DatabaseTest):
             view: discord.ui.View | None = None,
             *,
             remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.views[channel_id] = view
             return True
