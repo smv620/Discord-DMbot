@@ -1,4 +1,5 @@
-"""🗑 Delete this campaign, on ⚙️ Settings (#1608; owner decision 2026-10-16, docs/PLAN.md, "Data,
+"""🗑 Delete this campaign, in ⚙️ Settings → 🗂️ Campaign management (#1608; owner decision
+2026-10-16, docs/PLAN.md, "Data,
 ownership and deletion"). Only the game master whose plan the campaign uses (its owner) may
 delete it; every other game master is told whose it is. One warning, then the campaign's name
 typed back, so a stray tap can never do it. Not while a session of it is running.
