@@ -54,7 +54,7 @@ class TheReply(WithTheSwitch):
     async def test_the_button_and_the_command_give_the_same_link(self) -> None:
         a, b = press(DM), press(DM)
         await ib.ImportButton(CAMPAIGN).callback(a)
-        await import_command.dmbot_import.callback(b)
+        await import_command.dmbot_import.callback(b)  # type: ignore[call-arg]
         (text_a, view_a), (text_b, view_b) = told(a), told(b)
         self.assertEqual(text_a, ib.LINE)
         self.assertEqual((text_a, link_of(view_a)), (text_b, link_of(view_b)))
@@ -65,7 +65,7 @@ class TheReply(WithTheSwitch):
     async def test_a_player_gets_the_dm_line_from_both_and_no_link(self) -> None:
         for call in (
             lambda it: ib.ImportButton(CAMPAIGN).callback(it),
-            lambda it: import_command.dmbot_import.callback(it),
+            lambda it: import_command.dmbot_import.callback(it),  # type: ignore[call-arg]
         ):
             it = press(PLAYER)
             await call(it)
@@ -75,7 +75,7 @@ class TheReply(WithTheSwitch):
         ib.use_switch(lambda guild_id: False)
         for call in (
             lambda it: ib.ImportButton(CAMPAIGN).callback(it),
-            lambda it: import_command.dmbot_import.callback(it),
+            lambda it: import_command.dmbot_import.callback(it),  # type: ignore[call-arg]
         ):
             it = press(DM)
             await call(it)
@@ -101,7 +101,7 @@ class TheReply(WithTheSwitch):
         mine = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids={DM})
         theirs = SimpleNamespace(id="e" * 32, guild_id=GUILD, name="Not mine", dm_user_ids={PLAYER})
         it.client.campaigns.list_campaigns = AsyncMock(return_value=[mine, other, theirs])
-        await import_command.dmbot_import.callback(it)
+        await import_command.dmbot_import.callback(it)  # type: ignore[call-arg]
         text, view = told(it)
         self.assertEqual(text, ib.MANY)
         self.assertEqual(
@@ -112,6 +112,18 @@ class TheReply(WithTheSwitch):
             ],
         )
 
+    async def test_after_five_campaigns_it_says_how_many_more(self) -> None:
+        it = press(DM)
+        many = [
+            SimpleNamespace(id=f"{n:032x}", guild_id=GUILD, name=f"C{n}", dm_user_ids={DM})
+            for n in range(7)
+        ]
+        it.client.campaigns.list_campaigns = AsyncMock(return_value=many)
+        await import_command.dmbot_import.callback(it)  # type: ignore[call-arg]
+        text, view = told(it)
+        self.assertEqual(len(view.children), 5)
+        self.assertTrue(text.endswith("(and 2 more, on the website)"))
+
     async def test_a_dm_who_lost_the_role_since_the_card_was_drawn_gets_the_dm_line(self) -> None:
         it = press(DM, dms=(PLAYER,))  # the store no longer lists them
         await ib.ImportButton(CAMPAIGN).callback(it)
@@ -121,7 +133,7 @@ class TheReply(WithTheSwitch):
         it = press(DM)
         it.client.campaigns.list_campaigns = AsyncMock(side_effect=RuntimeError("x"))
         it.client.campaigns.get = AsyncMock(side_effect=RuntimeError("x"))
-        await import_command.dmbot_import.callback(it)
+        await import_command.dmbot_import.callback(it)  # type: ignore[call-arg]
         await ib.ImportButton(CAMPAIGN).callback(it)
         sent = [c.args[0] for c in it.response.send_message.await_args_list]
         self.assertEqual(sent, [ib.FAILED, ib.FAILED])

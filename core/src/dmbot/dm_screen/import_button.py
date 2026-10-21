@@ -92,6 +92,8 @@ async def reply(interaction: discord.Interaction, mine: Sequence[Campaign]) -> N
         label = LINK_LABEL if len(mine) == 1 else campaign.name[:LABEL_MAX]
         view.add_item(discord.ui.Button(label=label, emoji="📥", url=url))
     text = LINE if len(mine) == 1 else MANY
+    if len(mine) > MAX_LINKS:  # a message holds five buttons: the rest are on the website
+        text += f" (and {len(mine) - MAX_LINKS} more, on the website)"
     await interaction.response.send_message(
         text, view=view, ephemeral=True, allowed_mentions=NO_PINGS
     )
