@@ -35,7 +35,7 @@ describe("the list", () => {
     expect(await screen.findByText(/Closed — you can write again/)).toBeTruthy();
     cleanup();
     render(<MyQuestions api={apiWith(closed)} />);
-    expect(await screen.findByText(/· Closed$/)).toBeTruthy();
+    expect(await screen.findByText(/· Closed/)).toBeTruthy();
   });
 
   it("shows the subject, the date sent and the three status words", async () => {
@@ -54,9 +54,9 @@ describe("the list", () => {
     expect(await screen.findByRole("heading", { name: text.questionsHeading })).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows.map((r) => r.textContent)).toEqual([
-      "InvoiceSent 15 January 2027 · Waiting",
-      "ServerSent 14 January 2027 · Answered — check your email",
-      "OldSent 13 January 2027 · Closed",
+      "InvoiceSent 15 January 2027 · WaitingRead the conversation",
+      "ServerSent 14 January 2027 · Answered — check your emailRead the conversation",
+      "OldSent 13 January 2027 · ClosedRead the conversation",
     ]);
     expect(screen.getByText(text.questionsLead)).toBeTruthy();
     expect(within(rows[1]!).getByText(/Answered/).textContent).toContain("check your email");
@@ -68,7 +68,7 @@ describe("the list", () => {
         api={apiWith({ reply: false, tickets: [{ at: DAY, subject: "Hi", status: "answered" }] })}
       />,
     );
-    expect(await screen.findByText(/Sent 15 January 2027 · Answered$/)).toBeTruthy();
+    expect(await screen.findByText(/Sent 15 January 2027 · Answered/)).toBeTruthy();
     expect(screen.queryByText(/check your email/)).toBeNull();
     // And the lead says why, and what to do, so "Answered" is not a dead end.
     expect(screen.getByText(text.questionsLeadNoEmail)).toBeTruthy();
@@ -208,5 +208,104 @@ describe("who answered, and the latest answer (#1432)", () => {
     render(<MyQuestions api={apiWith(list([{ at: DAY, subject: "Old", status: "answered" }]))} />);
     expect(await screen.findByText(/· Answered — check your email$/)).toBeTruthy();
     expect(screen.queryByText(/Last reply/)).toBeNull();
+  });
+});
+
+describe("the whole conversation (#2193)", () => {
+  const question: MySupport = {
+    reply: true,
+    tickets: [{ at: DAY, subject: "My invoice", status: "answered", answeredBy: "team" }],
+  };
+  const parts = [
+    { who: "you" as const, text: "Why was I charged\ntwice?", at: DAY },
+    { who: "helper" as const, text: "Check the Billing page.", at: DAY + 60 },
+    { who: "you" as const, text: "<b>That</b> did not help.", at: DAY + 86400 },
+    { who: "team" as const, text: "Fixed, sorry.", at: DAY + 2 * 86400 },
+  ];
+  const withThread = (read: AccountApi["supportThread"]): AccountApi =>
+    ({ ...apiWith(question), supportThread: read }) as AccountApi;
+
+  it("stays closed, and reads nothing, until it is asked for", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    const button = await screen.findByRole("button", { name: text.conversationOpen });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByText("Check the Billing page.")).toBeNull();
+  });
+
+  it("shows each part oldest first with who wrote it and its date", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
+    const region = await screen.findByRole("region", { name: text.conversationLabel("My invoice") });
+    await waitFor(() => expect(within(region).getAllByRole("listitem")).toHaveLength(4));
+    expect(read).toHaveBeenCalledWith(DAY);
+    expect(within(region).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+      "You15 January 2027Why was I charged\ntwice?",
+      "DMbot's helper (a program)15 January 2027Check the Billing page.",
+      "You16 January 2027<b>That</b> did not help.",
+      "DMbot team17 January 2027Fixed, sorry.",
+    ]);
+    // Words, never markup.
+    expect(region.querySelector("b")).toBeNull();
+    const button = screen.getByRole("button", { name: text.conversationClose });
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("hides it again, and reads it afresh the next time so a new reply shows", async () => {
+    const read = vi.fn(async () => parts);
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
+    await screen.findByText("Fixed, sorry.");
+    fireEvent.click(screen.getByRole("button", { name: text.conversationClose }));
+    expect(screen.queryByText("Fixed, sorry.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: text.conversationOpen }));
+    await screen.findByText("Fixed, sorry.");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("says plainly when it can't be read, and the list stays", async () => {
+    const read = vi.fn(async (): Promise<never> => Promise.reject(new ApiError("not-found")));
+    render(<MyQuestions api={withThread(read)} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.conversationOpen }));
+    expect(await screen.findByText(text.conversationError)).toBeTruthy();
+    expect(screen.getByText("My invoice")).toBeTruthy();
+  });
+
+  it("has no button on an API older than the conversation", async () => {
+    const { supportThread: _none, ...older } = apiWith(question) as AccountApi & { supportThread?: unknown };
+    render(<MyQuestions api={older as AccountApi} />);
+    await screen.findByText("My invoice");
+    expect(screen.queryByRole("button", { name: text.conversationOpen })).toBeNull();
+  });
+});
+
+describe("the conversation API call (#2193)", () => {
+  const fetchOf = (body: unknown, status = 200) =>
+    vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+
+  it("reads the person's own question by the time it was sent, and keeps only well-formed parts", async () => {
+    const fetcher = fetchOf({
+      messages: [
+        { who: "you", text: "Hi", at: 5 },
+        { who: "someone", text: "odd", at: 6 },
+        { who: "team", text: 3, at: 7 },
+        { who: "helper", text: "Hello", at: 8 },
+      ],
+    });
+    const api = httpApi("https://api.dmbot.example", fetcher as unknown as typeof fetch);
+    expect(await api.supportThread?.(1_800_000_000)).toEqual([
+      { who: "you", text: "Hi", at: 5 },
+      { who: "helper", text: "Hello", at: 8 },
+    ]);
+    const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.dmbot.example/support/mine/1800000000");
+    expect(init.method).toBe("GET");
+  });
+
+  it("is an error for a question that isn't theirs or isn't there", async () => {
+    const api = httpApi("https://api.dmbot.example", fetchOf({ detail: "not_found" }, 404) as unknown as typeof fetch);
+    await expect(api.supportThread?.(1)).rejects.toBeInstanceOf(ApiError);
   });
 });

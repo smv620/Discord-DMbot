@@ -2991,6 +2991,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_thread", "dmbot_support_thread(BIGINT)"),  # ... and a thread's (#1431)
     # A person's own latest answer, on their own ticket only (#1432).
     ("dmbot_support_latest_answer", "dmbot_support_latest_answer(BIGINT)"),
+    # A person's own whole conversation, on their own ticket only (#2193).
+    ("dmbot_support_mine_thread", "dmbot_support_mine_thread(BIGINT)"),
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
     ("dmbot_web_set_recap_choice", "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"),
@@ -5212,6 +5214,57 @@ SUPPORT_MINE_ANSWER = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_support_latest_answer(BIGINT) FROM PUBLIC;
+    """
+
+SUPPORT_MINE_THREAD = """
+    -- A person reads the whole conversation of one of their own tickets (#2193; docs/PLAN.md,
+    -- "Support flow"): their question, the helper's answers, their emailed replies and the team's
+    -- replies, oldest first. Like the latest-answer door, it answers only for a ticket whose
+    -- user_id is the signed-in person (`dmbot_current_user()`, set by Database.user), so another
+    -- account's ticket and a missing one look the same (no rows). The website's role still has no
+    -- column right on any of the words: this door is the only way they come back.
+    -- A ticket is named by its sent time because the list shows no ticket numbers (they would
+    -- show how many other people write); two tickets in one second are refused by the send limit,
+    -- and if it ever happened the newer one would be shown.
+    -- The policy lets the door (not the role's own queries, which have no right on the words) see
+    -- a person's own emailed replies too; the ids, kinds and times of those are the only new thing
+    -- a person's own session could list, and they are their own messages.
+    CREATE POLICY read_own_replies ON support_replies FOR SELECT
+        USING (who = 'customer' AND EXISTS (
+            SELECT 1 FROM support_tickets t
+            WHERE t.id = support_replies.ticket_id AND t.user_id = dmbot_current_user()));
+    CREATE FUNCTION dmbot_support_mine_thread(sent BIGINT)
+        RETURNS TABLE (who TEXT, text TEXT, created_at BIGINT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        mine support_tickets%ROWTYPE;
+    BEGIN
+        IF dmbot_current_user() IS NULL THEN
+            RETURN;
+        END IF;
+        SELECT * INTO mine FROM support_tickets t
+            WHERE t.user_id = dmbot_current_user() AND t.created_at = sent
+            ORDER BY t.id DESC LIMIT 1;
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT 'customer'::TEXT, mine.message, mine.created_at
+            UNION ALL
+            (SELECT r.who, r.text, r.created_at FROM support_replies r
+             WHERE r.ticket_id = mine.id ORDER BY r.id);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_support_mine_thread(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_support_mine_thread(BIGINT) FROM PUBLIC;
     """
 
 WEB_RECAP_CHOICES = """
@@ -7771,6 +7824,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
+    (
+        "0150_support_mine_thread",
+        SUPPORT_MINE_THREAD,
+    ),  # a person reads their own ticket's thread (#2193)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

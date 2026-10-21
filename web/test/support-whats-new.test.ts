@@ -20,3 +20,12 @@ describe("the helper's What's new line and its switch", () => {
     expect(text).toContain("your account page shows who answered");
   });
 });
+
+describe("the whole-conversation What's new line (#2193)", () => {
+  const title = "Your support questions now show the whole conversation";
+
+  it("moves up with the helper's switch: held while it is off, shown once it is on", () => {
+    expect(held.some((h) => h.title === title)).toBe(!SUPPORT_AI_LIVE);
+    expect(entries.some((e) => e.title === title)).toBe(SUPPORT_AI_LIVE);
+  });
+});

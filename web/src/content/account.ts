@@ -332,6 +332,17 @@ export const text = {
   questionSent: (date: string) => `Sent ${date}`,
   // The first line of the last reply from DMbot's AI helper or the team, under the question (#1432).
   questionLatest: (line: string) => `Last reply: ${line}`,
+  // Opening a question shows the whole conversation (#2193): yours, DMbot's helper's and the team's.
+  conversationOpen: "Read the conversation",
+  conversationClose: "Hide the conversation",
+  conversationLoading: "Loading the conversation…",
+  conversationError: "We couldn't load this conversation. Try again in a minute.",
+  conversationLabel: (subject: string) => `Conversation: ${subject}`,
+  conversationWho: {
+    you: "You",
+    helper: "DMbot's helper (a program)",
+    team: "DMbot team",
+  },
   questionStatus: {
     new: "Waiting",
     answered: "Answered — check your email",

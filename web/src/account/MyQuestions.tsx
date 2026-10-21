@@ -1,13 +1,15 @@
 /** @jsxImportSource preact */
 // "Your questions" (#1373): under the Support form, what the person has sent the team and where
 // each stands (Waiting, Answered by DMbot's helper or the team, With the team, Closed) and the first
-// line of the latest answer (#1432). Never the person's own words: those stay with the team. With
-// none, or with an API that has no list yet, it shows nothing at all (no empty box).
+// line of the latest answer (#1432). Each question opens to its whole conversation (#2193): the
+// person's own words, DMbot's helper's answers, their emailed replies and the team's, read only on
+// the person's own question. With none, or with an API that has no list yet, it shows nothing at
+// all (no empty box).
 import { useEffect, useState } from "preact/hooks";
 
 import { text } from "../content/account";
 import { formatDate } from "../content/whats-new";
-import { type AccountApi, type MySupport, type SupportQuestion } from "./api";
+import { type AccountApi, type MySupport, type SupportMessage, type SupportQuestion } from "./api";
 
 /** "15 October 2026": the site's fixed words (as on What's new), in UTC, so it reads the same on
  * every computer. */
@@ -27,6 +29,60 @@ function statusWords(question: SupportQuestion, reply: boolean, canWrite: boolea
     return canWrite ? text.questionStatus.closedWriteAgain : text.questionStatus.closed;
   }
   return text.questionStatus.new;
+}
+
+type Loaded = SupportMessage[] | "loading" | "failed";
+
+/** The conversation under one question: closed until asked for, read only then, and read again
+ * each time it is opened so a new reply shows. The words come back as text, never as markup. */
+function Conversation({ api, question }: { api: AccountApi; question: SupportQuestion }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const read = api.supportThread;
+  if (!read) return null;
+  const id = `conversation-${question.at}`;
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    setLoaded("loading");
+    read
+      .call(api, question.at)
+      .then(setLoaded)
+      .catch(() => setLoaded("failed"));
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        class="link"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={toggle}
+      >
+        {open ? text.conversationClose : text.conversationOpen}
+      </button>
+      <div id={id} role="region" aria-label={text.conversationLabel(question.subject)} hidden={!open}>
+        {open && loaded === "loading" && <p class="small muted">{text.conversationLoading}</p>}
+        {open && loaded === "failed" && <p class="small">{text.conversationError}</p>}
+        {open && Array.isArray(loaded) && (
+          <ol class="conversation">
+            {loaded.map((part, i) => (
+              <li key={`${part.at}-${i}`} data-who={part.who}>
+                <strong>{text.conversationWho[part.who]}</strong>
+                <span class="small muted">{day(part.at)}</span>
+                <span class="conversation-text">{part.text}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </>
+  );
 }
 
 interface Props {
@@ -68,6 +124,7 @@ export function MyQuestions({ api, version = 0, canWrite = false }: Props) {
             {question.latest && (
               <span class="small">{text.questionLatest(question.latest)}</span>
             )}
+            <Conversation api={api} question={question} />
           </li>
         ))}
       </ul>
