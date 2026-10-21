@@ -1,0 +1,20 @@
+---
+import NamesIsland from "../../account/NamesIsland";
+import { namesPage } from "../../content/names-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Names"
+  description="Every name DMbot remembers in a campaign: search, filter and fix them."
+  noindex
+>
+  <div class="account">
+    <h1>{namesPage.heading}</h1>
+    <NamesIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the names. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

@@ -39,6 +39,7 @@ from dmbot.web import (
     entitlements_writer,
     feedback,
     imports,
+    npc_pages,
     offers,
     sessions,
     shared_recaps,
@@ -70,6 +71,8 @@ from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
+from dmbot.web.name_checks import answer as answer_name_check
+from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import (
     NotResumable,
@@ -542,6 +545,7 @@ def create_app(
             session,
             now=clock(),
             recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
+            imports_for=settings.imports_enabled_for,
         )
 
     @app.get("/me/improvement")
@@ -598,6 +602,7 @@ def create_app(
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
+        "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -654,6 +659,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
     voice_types = voice.TYPES
     voice_max = voice.MAX_CLIP_BYTES
@@ -743,6 +749,31 @@ def create_app(
         body = await bounded_json(request)
         try:
             return await rewrite(db, session, ref, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The recap's names to check, answered on its page (#2113): the list, and one answer at a time,
+    # queued for the bot to apply like Discord's name check. The DM's words are never logged.
+    @app.get("/me/recaps/{ref}/names-to-check")
+    async def me_recap_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/names-to-check/{entity_id}", status_code=202)
+    async def me_recap_name_answer(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        session, _token = signed
+        if name_answer_limit.take(f"name-answer:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request)
+        try:
+            return await answer_name_check(db, session, ref, entity_id, body)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -963,10 +994,15 @@ def create_app(
     # Importing is the heaviest thing the API does: a few a minute for a person is plenty.
     import_limit = RateLimit(60, count=6)
 
-    async def imports_enabled() -> None:
+    async def imports_enabled(ref: str) -> None:
         """Off by default (DMBOT_IMPORTS): the routes do not exist for anyone until dev1 has
-        checked a real import."""
-        if not settings.imports_on:
+        checked a real import. DMBOT_IMPORTS_SERVERS turns them on for chosen servers alone
+        (#2259); the server comes from the address, so a server that is off costs no lookup."""
+        try:
+            guild_id, _ = imports.ref_parts(ref)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+        if not settings.imports_enabled_for(guild_id):
             raise HTTPException(status_code=404, detail="not_found")
 
     async def import_body(request: Request, session: Session) -> dict[str, Any]:
@@ -1172,6 +1208,68 @@ def create_app(
             # `name` is `house_file.filename`'s slug (letters, digits, dashes): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
+
+    # An NPC's page and the caller's private notes on it (#2265): any member of the campaign's
+    # server. A note is read and written only by its own person; nothing here logs one.
+    npc_note_limit = RateLimit(60, count=60)
+
+    def npc_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.get("/me/campaigns/{ref}/npcs/{entry}")
+    async def me_npc_page(ref: str, entry: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await npc_pages.read_page(db, session, ref, entry)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+
+    @app.put("/me/campaigns/{ref}/npcs/{entry}/note")
+    async def me_npc_note(ref: str, entry: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save or clear my note: `{"body": "..."}` (empty clears it)."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > npc_pages.NOTE_MAX * 8:
+            raise HTTPException(status_code=413, detail="too_big")  # (read nothing bigger)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("body") if isinstance(body, dict) else None
+        try:
+            await npc_pages.save_note(db, session, ref, entry, text)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return {"ok": True}
+
+    @app.get("/me/npc-notes")
+    async def me_npc_notes(campaign: str, signed: Signed) -> Response:
+        """All of my notes in one campaign, as a file (including those on names no longer
+        listed)."""
+        session, _token = signed
+        try:
+            found = await npc_pages.my_notes(db, session, campaign)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return Response(
+            json.dumps(found, ensure_ascii=False, indent=2).encode(),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="my-npc-notes.json"'},
+        )
+
+    @app.delete("/me/npc-notes")
+    async def me_npc_notes_delete(campaign: str, signed: Signed) -> dict[str, Any]:
+        """Delete all of my notes in one campaign."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            return {"deleted": await npc_pages.delete_my_notes(db, session, campaign)}
+        except RecapError as err:
+            raise npc_refusal(err) from None
 
     # A campaign's homebrew the DM let the players know (#1525): any member of the server; hidden
     # entries never leave the database. No plan rule, as the bot has none for homebrew.

@@ -4,7 +4,7 @@ CI runs the same questions with a fake AI (`tests/test_sidebar_answer.py`); this
 check with the real thing, run by hand on the server before the sidebar goes live, so
 Supervisor can read the answers and the times:
 
-    ANTHROPIC_API_KEY=... python -m dmbot.devtools.sidebar_check [path/to/sidebar_brevity_cases.py]
+    ANTHROPIC_API_KEY=... python -m dmbot.devtools.sidebar_check [path/to/other_cases.py]
         [--fast-model MODEL]   # the fast tier's model for this run only (#2055)
 
 It prints each question, DMbot's answer and how long it took, then whether the answer kept to
@@ -29,13 +29,16 @@ from typing import Any
 from dmbot.ai import FEATURE_TIERS, AIError, AnthropicClient, Feature
 from dmbot.campaigns.models import Campaign
 from dmbot.config import ConfigError, parse_ai_models
-from dmbot.devtools.common import add_fast_model_arg, with_fast_model
+from dmbot.devtools import sidebar_cases
+from dmbot.devtools.common import add_fast_model_arg, timing_line, with_fast_model
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
 from dmbot.sidebar import brevity
 from dmbot.sidebar.answer import Sidebar
 
-DEFAULT_CASES = Path("tests/sidebar_brevity_cases.py")
+# The questions ship in the package (`dmbot.devtools.sidebar_cases`), so the tool finds them
+# wherever DMbot is installed, from any folder. A path given on the command line still wins.
+DEFAULT_CASES = Path(sidebar_cases.__file__)
 MAX_ERRORS_IN_A_ROW = 3
 SAMPLE_HOUSE_RULE = HouseRule(
     3, "check", "Criticals deal maximum damage plus the roll.", "Critical hits", None, None, 1, 0, 0
@@ -78,6 +81,7 @@ class Checked:
     total: int
     lines: list[str]
     errors: list[str] = field(default_factory=list)  # the AI errors' own plain words, each once
+    seconds: list[float] = field(default_factory=list)  # each answered question's time (#2263)
 
 
 async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = False) -> Checked:
@@ -86,6 +90,7 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
     failed = 0
     lines: list[str] = []
     errors: list[str] = []
+    seconds: list[float] = []
     in_a_row = 0
 
     def say(text: str) -> None:
@@ -110,6 +115,7 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
             continue
         in_a_row = 0
         took = time.monotonic() - started
+        seconds.append(took)
         body = got.text.rsplit(" (", 1)[0] if got.text.endswith(")") else got.text
         ok = brevity.within_limit(body) or len(got.parts) > 1
         # What the answer must and must not say (#992): the words are the case's own.
@@ -125,7 +131,7 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
         say(f"{number:2}. {case.question}")
         say(f"    → {got.text}")
         say(f"    {took:.1f} s, {len(got.text)} characters, {verdict}, answered by {got.model}")
-    return Checked(failed, len(cases), lines, errors)
+    return Checked(failed, len(cases), lines, errors, seconds)
 
 
 def new_sidebar(client: Any) -> Sidebar:
@@ -161,6 +167,7 @@ async def run(path: Path, fast_model: str | None = None) -> int:
         await ai_client.close()
     passed = result.total - result.failed
     print(f"\n{passed} of {result.total} passed (length, must-say and must-not-say).")
+    print(f"Time per answer: {timing_line(result.seconds)}.")
     return 1 if result.failed else 0
 
 

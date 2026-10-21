@@ -1823,11 +1823,19 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def set_note(
-        self, guild_id: int, campaign_id: str, entity_id: str, note: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        note: str,
+        *,
+        source: str,
+        limit: int = 200,
     ) -> Written[Entity]:
-        """The note shown with a suggestion (how it was heard, or spelled out at the table). Only
-        a suggestion still waiting for the DM has one that can change."""
-        note = " ".join(note.split())[:200]
+        """The note shown with a suggestion (how it was heard, or spelled out at the table, or
+        what the DM wrote about it on the recap page: `limit` letters). Only a suggestion still
+        waiting for the DM has one that can change."""
+        note = " ".join(note.split())[:limit]
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if current["status"] != PROPOSED:
@@ -2358,6 +2366,7 @@ class MemoryStore:
                 raise MemoryRuleError("A secret name can't be the main name.")
             await _move_relations(w, keep_id, gone_id)
             await _move_standing(w, keep_id, gone_id)
+            await _move_npc_notes(w, guild_id, campaign_id, keep_id, gone_id)
             for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
                 await w.update_where(
                     table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id]
@@ -2751,6 +2760,50 @@ class MemoryStore:
             await w.delete(RELATIONS, relation_id)  # _sync_plays makes the DM's own link
             await _sync_plays(w, link["object_id"])
             return Written(None, w.batch)
+
+    async def apply_import_plays(
+        self, guild_id: int, campaign_id: str, character_id: str, user_id: int
+    ) -> Written[bool]:
+        """The DM's "plays which character" choice from the import page (#2135), made a link when
+        the bot gets to it. The DM may have changed things since, so it is judged again here,
+        in one write: the character must still be a confirmed character that nobody plays, that
+        everyone may know, whose own name is a confirmed, non-secret one (the transcript-export
+        rule). Anything else leaves it alone and returns False. It sets the role and the player
+        only: names waiting for the DM stay waiting."""
+        if not 0 < user_id <= INT64_MAX:
+            raise ValueError("Bad Discord user ID")
+        async with self._write(guild_id, campaign_id, DM) as w:
+            rows = await w.select(ENTITIES, " AND id = %s", [character_id])
+            if not rows:
+                return Written(False, w.batch)
+            row = rows[0]
+            if (
+                row["type"] != "character"
+                or row["status"] != CONFIRMED
+                or row["played_by"] is not None
+                or row["audience_limited"]
+            ):
+                return Written(False, w.batch)
+            named = sorted(
+                await w.select(
+                    ALIASES,
+                    " AND entity_id = %s AND text = %s AND status <> 'rejected'",
+                    [character_id, row["name"]],
+                ),
+                key=lambda a: str(a["id"]),
+            )
+            own = named[0]["key"] if named else None
+            if not any(
+                a["status"] == CONFIRMED and not a["secret"] and a["key"] == own for a in named
+            ):
+                return Written(False, w.batch)
+            await w.update(
+                ENTITIES,
+                character_id,
+                {"role": PLAYER_CHARACTER, "played_by": user_id, "needs_look": False},
+            )
+            await _sync_plays(w, character_id)
+            return Written(True, w.batch)
 
     async def forget_learned(self, guild_id: int, user_id: int) -> int:
         """Stop recording me (#1188): in every campaign of the server, remove the names
@@ -4176,6 +4229,48 @@ async def _move_aliases(
             ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
+
+
+async def _move_npc_notes(
+    w: Changes, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
+) -> None:
+    """A person's private notes on the merged entry go to the one kept (#2265); a person with a
+    note on both keeps both, the kept entry's first, joined. If the two together would be over the
+    5,000 characters a note may hold, the merged entry's note is not joined: it stays as a note on
+    a name no longer listed (30 days, in the person's "Notes on names no longer listed", where they
+    can copy it), so no word is lost. Nothing of a note is read here beyond its length, and
+    nothing is logged. (Undoing a merge does not move notes back: they stay on the kept entry.)"""
+    ids = (guild_id, campaign_id)
+    now = int(time.time())
+    # too long to join: the merged note is kept apart, marked as no longer listed
+    await w.conn.execute(
+        "UPDATE npc_notes g SET orphaned_at = %s FROM npc_notes k"
+        " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.entry_id = %s"
+        " AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id AND k.entry_id = %s"
+        " AND k.user_id = g.user_id AND char_length(k.body) + 2 + char_length(g.body) > 5000",
+        (now, *ids, gone_id, keep_id),
+    )
+    await w.conn.execute(
+        "UPDATE npc_notes k SET body = k.body || E'\\n\\n' || g.body,"
+        " updated_at = greatest(k.updated_at, g.updated_at)"
+        " FROM npc_notes g WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
+        " AND g.guild_id = k.guild_id AND g.campaign_id = k.campaign_id AND g.entry_id = %s"
+        " AND g.user_id = k.user_id AND g.orphaned_at IS NULL",
+        (*ids, keep_id, gone_id),
+    )
+    await w.conn.execute(
+        "DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
+        " AND g.entry_id = %s AND g.orphaned_at IS NULL AND k.guild_id = g.guild_id"
+        " AND k.campaign_id = g.campaign_id AND k.entry_id = %s AND k.user_id = g.user_id",
+        (*ids, gone_id, keep_id),
+    )
+    await w.conn.execute(
+        "UPDATE npc_notes SET entry_id = %s, orphaned_at = NULL WHERE guild_id = %s"
+        " AND campaign_id = %s AND entry_id = %s AND orphaned_at IS NULL"
+        " AND NOT EXISTS (SELECT 1 FROM npc_notes x WHERE x.guild_id = %s AND x.campaign_id = %s"
+        "  AND x.entry_id = %s AND x.user_id = npc_notes.user_id)",
+        (keep_id, *ids, gone_id, *ids, keep_id),
+    )
 
 
 async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:

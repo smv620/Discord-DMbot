@@ -22,14 +22,19 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
+from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
+from dmbot.recaps import motives as mo
+from dmbot.recaps import significance as sg
+from dmbot.recaps import split as sp
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
@@ -38,13 +43,19 @@ from dmbot.transcript.models import Line
 log = logging.getLogger(__name__)
 
 # AI calls for one recap: three stages, a retry each (two for the prose), the checks, and since
-# #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4.
-MAX_CALLS = 17
+# #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4,
+# and since #2253 the one call that splits the opening (talk, catch-up, last time's recap, play):
+# and the one careful-tier call where PlotBot marks what matters (#2254): 19 for a run with no
+# restarts; each restart (at most two) makes those calls again. With the critics loop (#2255) a
+# recap may read its draft four times (PlotBot, the motive check) and write it three times more (the
+# writer, the formatter, the fact check, the grader): about 30 more calls, so the ceiling is five
+# times what it was: 95.
+MAX_CALLS = 95
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
-# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is six
-# calls now (beats, write, format, facts, grade, title), so 50 keeps the eight a day that 40 gave
-# five-call recaps (#2074).
-DAILY_CALLS = 50
+# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is eight
+# calls now (split, beats, notes, write, format, facts, grade, title; the first only for a session
+# with an earlier one), so 56 keeps the seven a day that 40 gave five-call recaps (#2074).
+DAILY_CALLS = 280  # (five times the 56 of before the critics loop, #2255)
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
@@ -91,6 +102,13 @@ class Inputs:
     notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
     # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
     corrections: Sequence[str] = ()
+    # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
+    campaign_name: str = ""
+    ending: int = 0  # which of the ten closing lines this recap takes (fixed_lines.ENDINGS)
+    # What the campaign's previous session was about, to find a retelling of it at the start of
+    # this one (#2253). None when there is no earlier session (the first, or the first imported):
+    # then nothing is a recap and the split stage makes no call.
+    earlier: sp.Earlier | None = None
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -99,6 +117,20 @@ SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and 
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
+SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
+SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
+SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
+SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
+SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
+PLOT_TOKENS = 1200  # room for up to eight changes as JSON
+CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
+CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
+CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
+# Why the loop stopped before any draft was read: the recap then waits for its check (below),
+# or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
+STOP_ERRORS, STOP_CEILING, STOP_TALLY = "service errors", "job ceiling", "day's tally"
+CHECK_TALLY_RETRY_S = 3600  # and this long after the day's tally was reached (it is a rolling day)
+CHECK_WAIT = cr.CHECK_WAIT  # (the words live with the loop's other fixed wording)
 
 
 def more_room(tokens: int, attempt: int) -> int:
@@ -133,6 +165,8 @@ class Client(Protocol):
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
 Consenting = Callable[[], Awaitable[Collection[int]]]
+# (server, campaign, job, names in the beats) -> the confirmed story memory around them (#2254)
+Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -147,6 +181,7 @@ class RecapWorker:
         consenting: Callable[[int], Consenting],
         allowed: Callable[[int, str, Job], Awaitable[bool]],
         notify: Notify,
+        unchecked: Notify | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
@@ -154,10 +189,14 @@ class RecapWorker:
         on_call: Callable[[cl.CallEvent], None] | None = None,
         creative: Client | None = None,
         formatting: Client | None = None,
+        story: Story | None = None,
+        critics: bool = False,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
         # structured call of before writes and shapes it at once (tests and small tools).
+        self._story = story
+        self._critics = critics  # the critics loop after the prose (#2255); off for small tools
         self._creative = creative
         self._formatting = formatting
         self._two = creative is not None and formatting is not None
@@ -195,6 +234,7 @@ class RecapWorker:
         self._consenting = consenting
         self._allowed = allowed
         self._notify = notify
+        self._unchecked = unchecked  # tells the DM once that a recap could not be checked
         self._allowance = allowance
         self._now = clock
 
@@ -239,6 +279,8 @@ class RecapWorker:
             job.restarts,
             job.problems,
             job.window_done,
+            job.split is None,
+            repr(job.critics),
         )
 
     async def _tell(self, gid: int, cid: str, job: Job) -> None:
@@ -277,13 +319,15 @@ class RecapWorker:
                 gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
                 title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
                 attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
-                window_done=0, window_count=0, to_confirm=[], names_state=0,
+                window_done=0, window_count=0, to_confirm=[], names_state=0, split=None,
+                critics=None,
             )  # fmt: skip
             await self._store.reset_audio(gid, cid, job.session_at)  # a new recap, new audio
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
-        if self._allowance is not None and job.state == "queued" and job.calls == 0:
+        first = job.state == "queued" and job.calls == 0 and job.split is None
+        if self._allowance is not None and first:
             # The monthly allowance (#1428), before the first paid call of this recap. A count
             # that can't be read spends nothing: the job waits, and fails if it keeps failing.
             try:
@@ -295,7 +339,9 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, over)
         if job.calls >= self._ceiling(job):
             return await self._fail(gid, cid, job, CAP)
-        if await self._store.calls_since(gid, cid, int(self._now()) - DAY_S) >= DAILY_CALLS:
+        in_loop = job.state == "prose" and self._critics and not cr.loop_from_json(job.critics).done
+        spent_today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
+        if spent_today >= DAILY_CALLS and not in_loop:  # (the loop stops by itself, below)
             return await self._fail(gid, cid, job, DAILY)
         inputs = await self._load(gid, cid, job)
         if inputs is None:
@@ -311,6 +357,8 @@ class RecapWorker:
         if stage == "checked":
             return await self._prose(gid, cid, job, inputs, consenting)
         if stage == "prose":
+            if self._critics and not cr.loop_from_json(job.critics).done:
+                return await self._critique(gid, cid, job, inputs, consenting)
             return await self._finish(gid, cid, job, inputs, consenting)
         return await self._fail(gid, cid, job, "unknown stage")
 
@@ -325,13 +373,20 @@ class RecapWorker:
         max_tokens: int,
         schema: dict[str, Any] | None = None,
         stage: str = "",
+        soft: bool = False,
+        free: bool = False,
     ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
-        failed already: the caller returns)."""
+        failed already: the caller returns). `soft`: a call of the critics loop (#2255), whose
+        failure never fails a recap that is already written: it only waits, and after
+        `CRITIC_ERRORS_MAX` of them a draft not yet read waits for its check (`_hold`). `free`: a
+        call of a recap that waits for its check, which has its own small budget
+        (`cr.WAIT_CALLS` a try): counted in the day's tally (`spent`) but not against the job's
+        own calls, so waiting can never fail the job."""
         # Counted from the stored job, not the one handed in: a try can make several calls (the
         # writer, then the formatter and its re-run, #2074), and each one must count.
         now = await self._store.get(gid, cid, job.session_at) or job
-        calls, spent = now.calls + 1, now.spent + 1
+        calls, spent = now.calls + (0 if free else 1), now.spent + 1
         await self._store.update(gid, cid, job.session_at, calls=calls, spent=spent)
         try:
             if schema is None:
@@ -343,6 +398,9 @@ class RecapWorker:
             return None
         except Exception as exc:  # the AI service, the network: a wait, never fatal to the bot
             log.warning("Recap: a call failed (%s)", type(exc).__name__)  # the type, not the text
+            if soft:
+                await self._soft_wait(gid, cid, job, calls, spent, type(exc).__name__)
+                return None
             await self._wait(
                 gid,
                 cid,
@@ -420,14 +478,21 @@ class RecapWorker:
         said = [s for s in readable(inputs.lines) if s.user_id in agreed]
         if not said:
             return await self._fail(gid, cid, job, NOTHING)
+        if job.split is None and job.window_done == 0:
+            return await self._split(gid, cid, job, inputs, said, consenting)
+        split = sp.from_json(job.split) or sp.all_play(said)  # (a job begun before #2253: all play)
+        # The beats come from the play alone; the table's retelling of earlier sessions goes with
+        # them as labelled context, and the talk is left out (#2253).
+        play = sp.pick(said, split, sp.PLAY) or said
         rows = [
-            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in said
+            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in play
         ]
+        retold = " ".join(s.text for s in sp.pick(said, split, sp.RECAP))
         parts = bt.windows(rows, inputs.window_chars)
         k = job.window_done
         if k >= len(parts):  # the transcript is shorter than when this began: begin again
             return await self._restart(gid, cid, job)
-        text = bt.message(parts[k], inputs.allowed_names)
+        text = bt.message(parts[k], inputs.allowed_names, retold)
         if job.problems:
             text += (
                 "\nYour last sheet was rejected: " + "; ".join(job.problems) + ". Write it again."
@@ -437,7 +502,9 @@ class RecapWorker:
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
-        sent = {s.user_id for s in said}
+        # (everyone whose words went to an AI for this recap: the play, the retelling, and the
+        # catching up the housekeeping step reads; the talk went nowhere)
+        sent = {s.user_id for s in sp.pick(said, split, sp.PLAY, sp.RECAP, sp.CATCHUP)}
         if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
         parsed = bt.parse(raw.text)
@@ -460,14 +527,77 @@ class RecapWorker:
         )
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _split(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        said: Sequence[Said],
+        consenting: Consenting,
+    ) -> Job | None:
+        """Mark the opening's parts: talk, catching up, last time's retelling and play (#2253).
+        With no earlier session there is nothing to retell, so no call and all play. Otherwise one
+        fast-tier call labels the opening and code checks the answer against the earlier session's
+        words; an answer it cannot read falls back to strong evidence only, else all play, and a
+        line is never dropped on a guess."""
+        split = sp.all_play(said)
+        earlier = inputs.earlier
+        if earlier is not None and job.errors >= SPLIT_ERRORS_MAX:
+            # The labelling is optional: after repeated service errors the recap goes on with
+            # what code alone can tell, rather than fail for it.
+            split = sp.without_ai(said, earlier, inputs.previous)
+        elif earlier is not None:
+            region = sp.opening_of(said)
+            rows = [
+                (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text)
+                for s in region
+            ]
+            raw = await self._call(
+                gid,
+                cid,
+                job,
+                self._fast,
+                sp.system(),
+                sp.message(rows, earlier, inputs.previous),
+                SPLIT_TOKENS,
+                schema=sp.SCHEMA,
+                stage="split",
+            )
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
+            if not {s.user_id for s in region} <= set(await consenting()):  # after it
+                return await self._restart(gid, cid, job)
+            labelled = None if unusable(raw) else sp.parse(raw.text)
+            if labelled is None:
+                split = sp.without_ai(said, earlier, inputs.previous)
+            else:
+                split = sp.build(said, labelled, earlier, inputs.previous)
+            self._annotate(gid, cid, job, "split", checks=[] if labelled is not None else ["shape"])
+        # Counts only: how many lines went to each part, never a word of them.
+        log.info(
+            "Recap: split by %s into %s%s",
+            split.method,
+            {label: len(sp.pick(said, split, label)) for label in sp.LABELS},
+            ", the retelling unsure" if split.unsure else "",
+        )
+        # (stored with a clean error count: the split's service errors are not the beats' budget)
+        await self._store.update(
+            gid, cid, job.session_at, split=split.to_json(), errors=0, next_at=0, last_error=""
+        )
+        return await self._store.get(gid, cid, job.session_at)
+
     async def _check_beats(
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         said = self._said(inputs, set(job.speakers))
+        # A beat may rest only on play lines: one citing only the table's retelling, catching up or
+        # talk has no real line and is cut here (#2253). Names are known from every line.
+        play = self._parts(job, said)[0]
         kept, problems = bt.check(
             [b for b in (job.beats or []) if isinstance(b, dict)],
-            lines={s.number: s.text for s in said},
-            speakers={s.number: s.user_id for s in said},
+            lines={s.number: s.text for s in play},
+            speakers={s.number: s.user_id for s in play},
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             dm_ids=inputs.dm_ids,
@@ -481,6 +611,12 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, TOO_LITTLE)
             return await self._back_to_start(gid, cid, job, problems)
         log.info("Recap: %d beat(s) kept, %d problem(s)", len(kept), len(problems))  # counts only
+        marked = await self._significance(gid, cid, job, inputs, kept, consenting)
+        if not isinstance(marked, list):
+            return (
+                marked  # the call failed or the speakers changed: the job is waiting or begun again
+            )
+        kept = marked
         await self._store.update(
             gid,
             cid,
@@ -493,9 +629,91 @@ class RecapWorker:
         )
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _significance(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        kept: list[bt.Beat],
+        consenting: Consenting,
+    ) -> list[bt.Beat] | Job | None:
+        """PlotBot marks which beats matter and adds the few left-out details that tie to the story
+        so far (#2254). Optional: with nothing to tie to, no way to read the memory, a service that
+        keeps failing, or an answer that cannot be read, the recap goes on with the beats as they
+        are. Returns the beats to store, or the job when the step must stop (waiting, restarted)."""
+        if self._story is None or job.errors >= SIG_ERRORS_MAX:
+            return kept
+        if (
+            job.calls >= self._ceiling(job) - SIG_RESERVE
+        ):  # optional: never spend what the rest needs
+            return kept
+        said = self._said(inputs, set(job.speakers))
+        play, retold, _ = self._parts(job, said)
+        seeds = sorted({n for b in kept for n in (*b.who, b.where) if n})[:40]
+        try:
+            memory = list(await self._story(gid, cid, job, seeds))
+        except Exception as exc:  # the memory is optional context: the type, never the text
+            log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
+            memory = []
+        if not sg.worth_asking(memory, inputs.previous):
+            return kept
+        rows = [
+            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in play
+        ]
+        raw = await self._call(
+            gid,
+            cid,
+            job,
+            self._careful,
+            sg.system(),
+            sg.message(kept, memory, inputs.previous, rows, retold),
+            SIG_TOKENS,
+            schema=sg.SCHEMA,
+            stage="significance",
+        )
+        if raw is None:
+            return await self._store.get(gid, cid, job.session_at)
+        # (the people whose words were in the call: the play lines sent, and the retelling shown)
+        split = sp.from_json(job.split) or sp.all_play(said)
+        sent = {s.user_id for s in play} | {s.user_id for s in sp.pick(said, split, sp.RECAP)}
+        if not sent <= set(await consenting()):  # again, after the answer
+            return await self._restart(gid, cid, job)
+        parsed = None if unusable(raw) else sg.parse(raw.text)
+        if parsed is None:
+            self._annotate(gid, cid, job, "significance", checks=["shape"])
+            return kept
+        play_lines = {s.number: s.text for s in play}
+        vocabulary = sg.known_words(
+            kept, memory, inputs.previous, list(play_lines.values()), retold
+        )
+        notes, details, cut = sg.check(
+            *parsed,
+            beats=kept,
+            memory=memory,
+            has_recap=bool(inputs.previous.strip()),
+            play_lines=play_lines,
+            known_words=vocabulary,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+        )
+        self._annotate(gid, cid, job, "significance", checks=lambda: cl.kinds(cut))
+        log.info("Recap: %d note(s), %d detail(s), %d cut", len(notes), len(details), len(cut))
+        return sg.apply(kept, notes, details)
+
     @staticmethod
     def _said(inputs: Inputs, speakers: set[int]) -> list[Said]:
         return [s for s in readable(inputs.lines) if s.user_id in speakers]
+
+    @staticmethod
+    def _parts(job: Job, said: Sequence[Said]) -> tuple[list[Said], str, str]:
+        """(the play lines, the table's retelling, its catching up) from the stored split. A job
+        with none (begun before #2253) is all play."""
+        split = sp.from_json(job.split) or sp.all_play(said)
+        play = sp.pick(said, split, sp.PLAY) or list(said)
+        retold = " ".join(s.text for s in sp.pick(said, split, sp.RECAP))
+        catchup = " ".join(s.text for s in sp.pick(said, split, sp.CATCHUP))
+        return play, retold, catchup
 
     async def _back_to_start(
         self, gid: int, cid: str, job: Job, problems: Sequence[str]
@@ -529,9 +747,15 @@ class RecapWorker:
         # `length.beats` of a long sheet; the checks still use all of it, so a name from any beat
         # is known.
         said = self._said(inputs, set(job.speakers))
-        length = rd.length_for(rd.session_hours(said, inputs.hours))
+        play, retold, _ = self._parts(job, said)
+        # (the hours are the play's: the talk and the retelling are not session time)
+        length = rd.length_for(rd.session_hours(play, inputs.hours))
         message = rd.prose_message(
-            rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
+            rd.pick_beats(sheet, length.beats),
+            inputs.previous,
+            inputs.allowed_names,
+            inputs.day,
+            retold,
         )
         if job.problems:
             message += rd.prose_retry(
@@ -715,7 +939,7 @@ class RecapWorker:
         )  # fmt: skip
 
     async def _shape(
-        self, gid: int, cid: str, job: Job, written: str, length: rd.Length
+        self, gid: int, cid: str, job: Job, written: str, length: rd.Length, soft: bool = False
     ) -> rd.Prose | str:
         """The written text cut into the schema's sections by the formatting model, or why it
         could not be (#2074). The check is in code: the formatted narration's words must be the
@@ -734,6 +958,7 @@ class RecapWorker:
                 more_room(length.max_tokens, job.attempt),
                 schema=rd.prose_schema(),
                 stage="format",
+                soft=soft,
             )
             if reply is None:
                 return ""
@@ -993,6 +1218,389 @@ class RecapWorker:
         self._announce(gid, cid, job, self._fast, GRADE_TOKENS, reply, stage="grade", grade=grade)
         return grade
 
+    # --- stage 2b: the critics, until they agree (#2255) ------------------------------
+
+    async def _critique(
+        self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
+    ) -> Job | None:
+        """One step of the critics loop on the draft the prose stage accepted. The draft is read
+        (the motive check, then PlotBot, and the grader's marks it already has); if every critic
+        passes the loop is done; if not, the writer revises with all their changes at once and the
+        revision is read in its turn, at most `cr.MAX_ROUNDS` readings in all. Each step is saved
+        before the next, so a restart never repays for one that finished. A service that keeps
+        failing, or the day's tally within reach, makes a draft not yet read wait for its check
+        (`_hold`); one that was read keeps the best reading made. What is never shipped (a motive
+        nobody said, a secret PlotBot found) is cut in code at the end, or the job fails as it
+        does for any unfixable check."""
+        loop = cr.loop_from_json(job.critics)
+        today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
+        if job.errors >= CRITIC_ERRORS_MAX:
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_ERRORS)
+        if job.calls >= self._ceiling(job) - CRITIC_RESERVE:
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_CEILING)
+        if today >= DAILY_CALLS - CRITIC_RESERVE:  # what the title step needs is kept
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_TALLY)
+        sheet = bt.from_json(job.beats)
+        prose = rd.Prose(job.summary, tuple(job.music))
+        sentences = rd.sentences_of(prose.summary)
+        said = self._said(inputs, set(job.speakers))
+        play, retold, _ = self._parts(job, said)
+        if loop.pending is None:
+            return await self._read(
+                gid, cid, job, inputs, consenting, loop, sheet, sentences, play, retold
+            )
+        if not loop.pending:  # every critic passed
+            log.info("Recap: the critics agree after %d reading(s)", loop.round)
+            unchecked = (
+                () if job.grade else (cr.STYLE_UNCHECKED,)
+            )  # (the grader failed on this one)
+            return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=unchecked))
+        room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
+        if loop.round >= cr.MAX_ROUNDS or job.calls > room:
+            return await self._stop_critics(gid, cid, job, loop, inputs, "no agreement")
+        return await self._revise(
+            gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
+        )
+
+    async def _save_loop(self, gid: int, cid: str, job: Job, loop: cr.Loop) -> Job | None:
+        # (errors back to none: a step of the loop got through)
+        await self._store.update(
+            gid, cid, job.session_at, critics=loop.to_json(), errors=0, last_error=""
+        )  # (a step got through: a "waiting for its check" note is over)
+        return await self._store.get(gid, cid, job.session_at)
+
+    async def _read(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        consenting: Consenting,
+        loop: cr.Loop,
+        sheet: Sequence[bt.Beat],
+        sentences: Sequence[str],
+        play: Sequence[Said],
+        retold: str,
+    ) -> Job | None:
+        """The critics read the draft: the motive check, then PlotBot, and the style marks the
+        draft was graded with. The motive check's result is saved before PlotBot is asked, so a
+        PlotBot call that fails does not make the next try pay for it again."""
+        lines = {s.number: s.text for s in play}
+        waiting = loop.waits > 0  # a try of a recap that waits: its own small budget of calls
+        if loop.motives is None:
+            asked = mo.candidates(sentences)
+            found: list[cr.Change] = []
+            batches = mo.batches(asked)
+            # (a waiting try's budget covers its batches and PlotBot: `cr.wait_budget`)
+            for batch in batches:
+                raw = await self._call(
+                    gid, cid, job, self._fast, mo.SYSTEM, mo.message(batch, lines, inputs.previous),
+                    mo.answer_tokens(len(batch)), schema=mo.SCHEMA, stage="motives", soft=True,
+                    free=waiting,
+                )  # fmt: skip
+                if raw is None:
+                    return await self._store.get(gid, cid, job.session_at)
+                if not set(job.speakers) <= set(await consenting()):  # again, after the answer
+                    return await self._restart(gid, cid, job)
+                answer = None if unusable(raw) else mo.parse(raw.text)
+                if answer is None or not mo.complete(answer, batch):
+                    # neither agreement nor a finding (not readable, or a sentence left out)
+                    return await self._unreadable(gid, cid, job, "motives")
+                bad = mo.failures(batch, answer, lines, inputs.previous)
+                found += [cr.Change("motive", mo.instruction(f), True, f.number) for f in bad]
+            self._annotate(gid, cid, job, "motives", checks=["motive"] if found else [])
+            # A provisional best for the first draft only, right away, so that if PlotBot cannot be
+            # reached a motive nobody said is still cut (or fails the job) and never ships. A later
+            # draft that PlotBot has not read never takes the place of one that it has.
+            first = cr.best_from(job.summary, job.music, job.grade, found)
+            loop = replace(
+                loop,
+                motives=tuple(found),
+                best=first if loop.best is None else loop.best,
+                waits=0,  # a reading got through: the waiting is over
+                since=0,
+                told=False,
+            )
+            await self._save_loop(gid, cid, job, loop)
+            job = await self._store.get(gid, cid, job.session_at) or job
+        plot: list[cr.Change] = []
+        memory: list[sg.Memory] = []
+        if self._story is not None:
+            seeds = sorted({n for b in sheet for n in (*b.who, b.where) if n})[:40]
+            try:
+                memory = list(await self._story(gid, cid, job, seeds))
+            except Exception as exc:  # optional context: the type, never the text
+                log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
+        if sg.worth_asking(memory, inputs.previous):
+            raw = await self._call(
+                gid, cid, job, self._careful, cr.plot_system(),
+                cr.plot_message(sheet, memory, inputs.previous, sentences),
+                PLOT_TOKENS, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
+            )  # fmt: skip
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
+            if not set(job.speakers) <= set(await consenting()):
+                return await self._restart(gid, cid, job)
+            parsed = None if unusable(raw) else cr.parse_plot(raw.text)
+            if parsed is None:  # an answer that cannot be read is not "nothing to change"
+                self._annotate(gid, cid, job, "plotbot", checks=["shape"])
+                return await self._unreadable(gid, cid, job, "plotbot")
+            if parsed is not None:
+                vocabulary = sg.known_words(
+                    sheet, memory, inputs.previous, [s.text for s in play], retold
+                )
+                plot, cut = cr.plot_changes(
+                    parsed,
+                    sentences=sentences,
+                    memory=memory,
+                    has_recap=bool(inputs.previous.strip()),
+                    known_words=vocabulary,
+                    allowed_names=inputs.allowed_names,
+                    secret_names=inputs.secret_names,
+                )
+                self._annotate(gid, cid, job, "plotbot", checks=lambda: cl.kinds(cut))
+        style = cr.style_changes(rd.weak(job.grade)) if job.grade else []
+        changes = [*(loop.motives or ()), *plot, *style]
+        hard, soft = cr.count(changes)
+        log.info("Recap: critics reading %d: %d hard, %d soft", loop.round + 1, hard, soft)
+        best = cr.best_from(job.summary, job.music, job.grade, changes)
+        # (the same draft's provisional best, from the motive check alone, is replaced by this
+        # fuller one; any other draft's is kept only if it failed less)
+        same = loop.best is not None and loop.best.summary == job.summary
+        return await self._save_loop(
+            gid,
+            cid,
+            job,
+            replace(
+                loop,
+                round=loop.round + 1,
+                pending=tuple(changes),
+                motives=None,
+                best=best if same or best.better_than(loop.best) else loop.best,
+            ),
+        )
+
+    async def _revise(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        consenting: Consenting,
+        loop: cr.Loop,
+        sheet: Sequence[bt.Beat],
+        prose: rd.Prose,
+        play: Sequence[Said],
+        retold: str,
+    ) -> Job | None:
+        """The writer revises the draft with all the critics' changes at once. The revision has to
+        pass the same checks as any draft (code, then the fact check; a flagged sentence is cut,
+        and one that still fails the checks is no draft), and is graded again. One that does not
+        pass is not used: the loop stops and the best draft so far goes on."""
+        key = (gid, cid, job.session_at)
+        assert loop.pending
+        length = rd.length_for(rd.session_hours(play, inputs.hours))
+        message = rd.prose_message(
+            rd.pick_beats(sheet, length.beats),
+            inputs.previous,
+            inputs.allowed_names,
+            inputs.day,
+            retold,
+        ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
+        attempt = 1  # the careful writer's room, as for a retry
+        kept = self._written.pop(key, None)  # the writer's text, if only the formatter failed
+        raw = None if kept is not None else await self._call(
+            gid, cid, job,
+            self._creative if self._creative is not None and self._two else self._careful,
+            rd.prose_system(
+                inputs.setting, length, plain=self._two, style=inputs.style,
+                notes=inputs.notes, corrections=inputs.corrections,
+            ),
+            message,
+            more_room(rd.write_room(length) if self._two else length.max_tokens, attempt),
+            schema=None if self._two else rd.prose_schema(),
+            stage="revise",
+            soft=True,
+        )  # fmt: skip
+        if raw is None and kept is None:
+            return await self._store.get(gid, cid, job.session_at)
+        if not set(job.speakers) <= set(await consenting()):
+            return await self._restart(gid, cid, job)
+        revised: rd.Prose | None = None
+        if kept is not None or (raw is not None and not unusable(raw)):
+            written = kept if kept is not None else (raw.text if raw is not None else "")
+            if self._two:
+                shaped = await self._shape(gid, cid, job, written, length, soft=True)
+                if shaped == "":  # the formatter's call failed; the loop will try again
+                    self._written[key] = written  # without paying for the writing twice
+                    return await self._store.get(gid, cid, job.session_at)
+                revised = None if isinstance(shaped, str) else shaped
+            else:
+                revised = rd.parse_prose(written)
+        transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
+        grade: dict[str, int] = {}
+        if revised is not None:
+            revised, refused = rd.respelled(
+                rd.fix_prose(revised, length.sections),
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                transcript=transcript,
+            )
+            if rd.check_prose(
+                revised, beats=sheet, transcript=transcript,
+                allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
+                previous=inputs.previous, setting=inputs.setting, length=length, last=True,
+                refused=refused, style=inputs.style, corrections=inputs.corrections,
+            ):  # fmt: skip
+                revised = None
+        if revised is not None:
+            try:
+                facts, asked = await self._facts(
+                    gid, cid, job, rd.pick_beats(sheet, length.beats), revised,
+                    {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
+                    inputs.corrections,
+                )  # fmt: skip
+            except AIOutOfFunds:
+                return await self._fail(gid, cid, job, FUNDS)
+            if not asked:  # a revision that could not be checked is not shipped
+                revised = None
+            elif facts is not None and not facts.clean:
+                revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
+            if revised is not None:
+                try:
+                    grade = await self._grade(gid, cid, job, sheet, revised.summary)
+                except AIOutOfFunds:
+                    return await self._fail(gid, cid, job, FUNDS)
+                if facts is not None and grade:
+                    grade["faithful"] = facts.score()
+        if not set(job.speakers) <= set(await consenting()):  # after the last of the AI calls
+            return await self._restart(gid, cid, job)
+        if revised is None:
+            log.info("Recap: a critics revision did not pass the checks; the best draft stands")
+            return await self._stop_critics(gid, cid, job, loop, inputs, "revision failed")
+        await self._store.update(
+            gid, cid, job.session_at,
+            summary=revised.summary, original=revised.summary, music=list(revised.music),
+            grade=grade, errors=0,
+            to_confirm=self._to_confirm(revised.summary, sheet, transcript, inputs),
+            critics=replace(loop, pending=None, motives=None).to_json(),
+        )  # fmt: skip
+        self._forget_draft(key)
+        return await self._store.get(gid, cid, job.session_at)
+
+    @staticmethod
+    def _to_confirm(
+        summary: str, sheet: Sequence[bt.Beat], transcript: str, inputs: Inputs
+    ) -> list[str]:
+        return rd.kept_names(
+            summary,
+            beats=sheet,
+            transcript=transcript,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+            previous=inputs.previous,
+            setting=inputs.setting,
+        )[: un.MAX_TO_CONFIRM]
+
+    def _forget_draft(self, key: tuple[int, str, int]) -> None:
+        self._rejected_prose.pop(key, None)
+        self._fallback.pop(key, None)
+        self._flags.pop(key, None)
+        self._revised.discard(key)
+        self._written.pop(key, None)
+
+    async def _hold(self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str) -> Job | None:
+        """No draft could be read (the service, or the day's tally): the recap waits for its check
+        and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
+        hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
+        (`cr.wait_budget`, kept out of the job's calls). After 3 days the DM is told once that
+        DMbot hasn't been able to finish checking it and keeps trying; players never see an
+        unchecked draft."""
+        now = int(self._now())
+        since = loop.since or now
+        delay = cr.wait_for(loop.waits)
+        if why == STOP_TALLY:
+            delay = max(delay, CHECK_TALLY_RETRY_S)  # the day's tally is a rolling day
+        told = loop.told
+        if not told and now - since >= cr.UNCHECKED_AFTER_S:
+            told = True
+            if self._unchecked is not None:
+                try:
+                    await self._unchecked(gid, cid, job)
+                except Exception:
+                    log.exception("Recap: the unchecked notice failed")
+        log.info(
+            "Recap: the check waits (%s), wait %d; tried again in %d s", why, loop.waits, delay
+        )
+        await self._store.update(
+            gid, cid, job.session_at,
+            critics=replace(loop, waits=loop.waits + 1, since=since, told=told).to_json(),
+            errors=0, next_at=now + delay, last_error=CHECK_WAIT,
+        )  # fmt: skip
+        return await self._store.get(gid, cid, job.session_at)
+
+    async def _stop_critics(
+        self, gid: int, cid: str, job: Job, loop: cr.Loop, inputs: Inputs, why: str
+    ) -> Job | None:
+        """The loop ends without agreement (or could not go on): the best draft read goes on, and
+        what its soft critics still asked is kept for the DM's recap page. A hard change in it is
+        never shipped: those sentences are cut in code, and if what is left no longer passes the
+        checks, or the change was not about one sentence, the job fails as any unfixable check
+        does. A draft the critics never got to read (the service failed twice before the motive
+        check ran, or a ceiling or the day's tally was reached) is never shipped unchecked and
+        never cut by a word list: the recap waits for its check (`CHECK_WAIT`) and it is tried
+        again, or it fails when the job's own ceiling is the reason."""
+        self._written.pop((gid, cid, job.session_at), None)  # (a writer's text is not kept on)
+        best = loop.best
+        sheet = bt.from_json(job.beats)
+        said = self._said(inputs, set(job.speakers))
+        length = rd.length_for(rd.session_hours(self._parts(job, said)[0], inputs.hours))
+        transcript = "\n".join(s.text for s in said)
+        if best is None:
+            # No draft could be read. A word list cannot tell a player character's aim from story
+            # (an NPC's request is often the cliffhanger), so nothing is cut and nothing ships
+            # unchecked: the recap waits and the check is tried again, or fails when the job's own
+            # ceiling is the reason (waiting would never change it).
+            if why == STOP_CEILING:
+                return await self._fail(gid, cid, job, CAP)
+            return await self._hold(gid, cid, job, loop, why)
+        prose = rd.Prose(best.summary, best.music)
+        cut = 0
+        if best.hard:
+            if best.unfixable:
+                return await self._fail(gid, cid, job, FAILED_CHECKS)
+            prose = rd.cut_sentences(prose, best.cuts)
+            if rd.check_prose(
+                prose, beats=sheet, transcript=transcript,
+                allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
+                previous=inputs.previous, setting=inputs.setting, length=length, last=True,
+                refused=[], style=inputs.style, corrections=inputs.corrections,
+            ):  # fmt: skip
+                return await self._fail(gid, cid, job, FAILED_CHECKS)
+            cut = len(best.cuts)
+        log.info(
+            "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
+            why, loop.round, len(best.notes), cut,
+        )  # fmt: skip
+        await self._store.update(
+            gid, cid, job.session_at,
+            summary=prose.summary, original=prose.summary, music=list(prose.music),
+            grade=best.grade or job.grade, errors=0,
+            to_confirm=self._to_confirm(prose.summary, sheet, transcript, inputs),
+            critics=replace(
+                loop,
+                done=True,
+                pending=None,
+                motives=None,
+                notes=best.notes + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
+                cut=cut,
+            ).to_json(),
+        )  # fmt: skip
+        return await self._store.get(gid, cid, job.session_at)
+
     # --- stage 3: the title and the housekeeping ---------------------------------------
 
     async def _finish(
@@ -1000,7 +1608,9 @@ class RecapWorker:
     ) -> Job | None:
         sheet = bt.from_json(job.beats)
         key = (gid, cid, job.session_at)
-        message = rd.housekeeping_message(sheet, job.summary)
+        # The table's own catching up before play goes to the housekeeping alone (#2253).
+        catchup = self._parts(job, self._said(inputs, set(job.speakers)))[2]
+        message = rd.housekeeping_message(sheet, job.summary, catchup)
         if job.problems:
             message += rd.finish_retry(job.problems, self._rejected_finish.get(key))
         raw = await self._call(
@@ -1063,6 +1673,15 @@ class RecapWorker:
             cid,
             job.session_at,
             state="ready",
+            # The fixed opening and closing lines go on last (#2253), after every check, so they
+            # are never counted or checked as story; the stored original has them too, so the
+            # DM's edit is compared with the text they were shown.
+            summary=(
+                wrapped := fixed_lines.wrap(
+                    job.summary, inputs.campaign_name, inputs.secret_names, inputs.ending
+                )
+            ),
+            original=wrapped,
             title=finish.title,
             housekeeping=list(finish.housekeeping),
             to_confirm=un.to_confirm(
@@ -1129,6 +1748,32 @@ class RecapWorker:
         )
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _unreadable(self, gid: int, cid: str, job: Job, stage: str) -> Job | None:
+        """A critic's answer could not be read. That is never agreement: it counts as a failed
+        call (asked again after a wait, and the loop stops after `CRITIC_ERRORS_MAX`)."""
+        fresh = await self._store.get(gid, cid, job.session_at) or job
+        await self._soft_wait(gid, cid, fresh, fresh.calls, fresh.spent, f"unreadable {stage}")
+        return await self._store.get(gid, cid, job.session_at)
+
+    async def _soft_wait(
+        self, gid: int, cid: str, job: Job, calls: int, spent: int, error: str
+    ) -> None:
+        """A critics-loop call failed: count it and wait, but never fail the job (the loop stops
+        by itself after `CRITIC_ERRORS_MAX`: a draft not yet read then waits, `_hold`)."""
+        errors = job.errors + 1
+        await self._store.update(
+            gid,
+            cid,
+            job.session_at,
+            errors=errors,
+            next_at=int(self._now()) + BACKOFF_S[min(errors, len(BACKOFF_S)) - 1],
+            # (a recap that is waiting for its check keeps saying so between its tries)
+            last_error=CHECK_WAIT if cr.loop_from_json(job.critics).waits > 0 else SERVICE,
+            calls=calls,
+            spent=spent,
+        )
+        log.info("Recap: a critics call failed (%s), %d so far", error, errors)
+
     async def _fail(self, gid: int, cid: str, job: Job, why: str, *, error: str = "") -> Job | None:
         log.info("Recap: failed at %s (%s)", job.state, error or "plain reason")
         self._forget(gid, cid, job)
@@ -1160,7 +1805,20 @@ class RecapWorker:
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))
         self._written.pop((gid, cid, job.session_at), None)
-        for stage in ("beats", "prose", "write", "format", "facts", "grade", "title"):
+        for stage in (
+            "split",
+            "beats",
+            "significance",
+            "motives",
+            "plotbot",
+            "revise",
+            "prose",
+            "write",
+            "format",
+            "facts",
+            "grade",
+            "title",
+        ):
             self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
@@ -1176,6 +1834,8 @@ class RecapWorker:
             job.session_at,
             state="queued",
             beats=[],
+            split=None,  # the split is made again from whoever is still recorded
+            critics=None,  # and so are the critics' readings of the old draft
             window_done=0,
             window_count=0,
             speakers=[],

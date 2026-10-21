@@ -377,6 +377,8 @@ describe("the limits", () => {
     open();
     await pick([file("big.txt", "A: x", 3 * 1024 * 1024)]);
     expect(screen.getByRole("alert").textContent).toBe(w.fileTooBig("big.txt"));
+    // Files are added to the list now, so the big one is removed before the next is judged alone.
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile("big.txt") }));
     await pick([file("notes.docx", "A: x")]);
     expect(screen.getByRole("alert").textContent).toBe(
       w.fileNotTxt("notes.docx"),
@@ -403,6 +405,9 @@ describe("the Preview button", () => {
     expect(previewButton().disabled).toBe(true);
     await pick([file("big.txt", "A: x", 3 * 1024 * 1024)]);
     expect(previewButton().disabled).toBe(true);
+    // Removing the bad files frees it again, and a good file can then be chosen.
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile("notes.docx") }));
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile("big.txt") }));
     await pick([s1]);
     expect(previewButton().disabled).toBe(false);
   });
@@ -751,5 +756,88 @@ describe("over the wire", () => {
     await expect(real(422, "bad_mapping")).rejects.toMatchObject({
       kind: "bad-mapping",
     });
+  });
+});
+
+describe("the chosen files can be managed (#2303)", () => {
+  const names = () =>
+    within(screen.getByRole("list", { name: w.filesListLabel }))
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector(".campaign-name")?.textContent);
+  const previewButton = () => screen.getByRole("button", { name: w.preview }) as HTMLButtonElement;
+
+  it("lists each chosen file on its own row, and choosing more adds to the list", async () => {
+    open();
+    await pick([s1]);
+    expect(names()).toEqual([w.shownName(s1.name)]);
+    await pick([s2]);
+    expect(names()).toEqual([w.shownName(s1.name), w.shownName(s2.name)]);
+    expect(screen.getByText(w.chosen(2))).toBeTruthy();
+  });
+
+  it("skips a file that is already on the list, and says so", async () => {
+    open();
+    await pick([s1]);
+    await pick([s1, s2]);
+    expect(names()).toHaveLength(2);
+    expect(screen.getByRole("status").textContent).toBe(w.alreadyChosen);
+  });
+
+  it("removes one file, leaving the others", async () => {
+    open();
+    await pick([s1, s2]);
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile(s1.name) }));
+    expect(names()).toEqual([w.shownName(s2.name)]);
+    expect(screen.getByRole("status").textContent).toBe(w.removed(s1.name, 1));
+  });
+
+  it("lets a removed file be chosen again", async () => {
+    open();
+    const input = await pick([s1]);
+    expect(input.value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile(s1.name) }));
+    expect(screen.queryByRole("list", { name: w.filesListLabel })).toBeNull();
+    await pick([s1]);
+    expect(names()).toEqual([w.shownName(s1.name)]);
+  });
+
+  it("Remove all clears the files and the links together", async () => {
+    open();
+    await pick([s1, s2]);
+    fireEvent.input(screen.getByLabelText(w.linkLabel), {
+      target: { value: "https://docs.google.com/document/d/abc123/edit" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: w.addLink }));
+    fireEvent.click(screen.getByRole("button", { name: w.removeAll }));
+    expect(screen.queryByRole("list", { name: w.filesListLabel })).toBeNull();
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe(w.removedAll);
+    expect(previewButton().disabled).toBe(true);
+  });
+
+  it("a removed file takes its result row, and the rest of the Preview, with it", async () => {
+    open();
+    await pick([file("session-unknown.txt", "xyz"), s1]);
+    fireEvent.click(previewButton());
+    expect(await screen.findByText(w.fileError.unknown_format ?? "")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile("session-unknown.txt") }));
+    expect(screen.queryByText(w.fileError.unknown_format ?? "")).toBeNull();
+    expect(screen.queryByRole("heading", { name: w.matchHeading })).toBeNull();
+    expect(names()).toEqual([w.shownName(s1.name)]);
+  });
+
+  it("says why a file couldn't be read, in plain words", async () => {
+    open();
+    await pick([file("a-unknown.txt", "xyz"), file("b-nonames.txt", "xyz"), s1]);
+    fireEvent.click(previewButton());
+    expect(await screen.findByText(w.fileError.unknown_format ?? "")).toBeTruthy();
+    expect(screen.getByText("This caption file has no names in it, so DMbot can't tell who spoke.")).toBeTruthy();
+    expect(w.fileError.unknown_format).toContain("DMbot's own download");
+  });
+
+  it("shows no Remove all for a single item", async () => {
+    open();
+    await pick([s1]);
+    expect(screen.queryByRole("button", { name: w.removeAll })).toBeNull();
   });
 });

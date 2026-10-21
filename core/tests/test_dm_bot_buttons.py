@@ -315,7 +315,7 @@ class Cards(PanelTest):
         view = buttons.panel_view(self.campaign.id)
         self.assertEqual(
             [getattr(getattr(c, "item", c), "label", "") for c in view.children],
-            ["👤 My buttons", "❓ Help"],
+            ["👤 DMbot Main Menu", "❓ Help"],
         )
 
 

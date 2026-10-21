@@ -65,7 +65,9 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
 from dmbot.recaps.pipeline import Client
@@ -146,6 +148,24 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     return pl.MAX_CALLS + windows - 1, tokens
 
 
+def split_lines(out: Outcome) -> list[str]:
+    """How the opening was split (#2253), counts and ranges only: never a word of a line."""
+    split = sp.from_json(out.job.split)
+    if split is None:
+        return []
+    said = readable(out.inputs.lines)
+    counts = ", ".join(
+        f"{label} {n}" for label in sp.LABELS if (n := len(sp.pick(said, split, label)))
+    )
+    ranges = ", ".join(f"{p.label} {p.first}-{p.last}" for p in split.parts)
+    return [
+        "",
+        f"Split ({split.method}): {counts}.",
+        f"  lines {ranges}"
+        + ("; the retelling is UNSURE and was played as play" if split.unsure else ""),
+    ]
+
+
 def dollars(
     price: tuple[float, float] | None, tokens_in: int, tokens_out: int, model: str = "MODEL"
 ) -> str:
@@ -165,6 +185,7 @@ async def run_text(
     creative: Client | None = None,
     formatting: Client | None = None,
     creative_models: tuple[str, str] = ("creative", "formatting"),
+    critics: bool = False,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -204,6 +225,7 @@ async def run_text(
         on_call=calls.append,
         creative=creative_c,
         formatting=formatting_c,
+        critics=critics,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -250,7 +272,9 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         transcript_words={w for s in mine for w in words_of(s.text)},
     )
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
-    prose = rd.Prose(job.summary, tuple(job.music))
+    prose = rd.Prose(
+        fixed_lines.without(job.summary), tuple(job.music)
+    )  # (the story, not the lines)
     transcript = "\n".join(s.text for s in mine)
     length = rd.length_for(rd.session_hours(mine, inputs.hours))
     issues = rd.check_prose(
@@ -265,7 +289,9 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         last=True,  # the last try may stand up to 35% over the target (#2013)
     )
     out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
-    words = len(narration_of(job.summary).split())
+    words = len(
+        narration_of(fixed_lines.without(job.summary)).split()
+    )  # (the fixed lines are free)
     out.append(
         (
             f"{words} words (about {length.hours:g} hours: target {length.target}, "
@@ -394,6 +420,7 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         lines += ["", *explain_sheets(out)]
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
+    lines += split_lines(out)
     lines += cl.section(out.calls)  # counts and fixed words only (#2053)
     if out.notes:
         lines += ["", *(f"Note: {n}" for n in out.notes)]
@@ -542,6 +569,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
         "--audio the mp3s",
     )  # fmt: skip
+    parser.add_argument(
+        "--no-critics", action="store_true",
+        help="leave out the critics loop (#2255), to compare with the recap before it",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -680,6 +711,7 @@ async def main_async(args: argparse.Namespace) -> int:
     if got is None:
         return 2
     fast, careful, models = got
+    _WRITERS["critics"] = not args.no_critics  # as live (#2255): the critics read each draft
     prices = prices_of(args.price, (*models, *_WRITERS.get("creative_models", ())))
     if args.golden:
         try:
@@ -806,7 +838,13 @@ async def _session(
         # the lines of anyone who opted out are left out, read now.
         # The earlier recap (`previous`) is derived from everyone's words, so it is left out
         # of a test run rather than carry an opted-out person's words along.
-        inputs = replace(inputs, lines=await filter_lines(db, inputs.lines), previous="")
+        # (the earlier session's beats are left out for the same reason; its words only compare)
+        inputs = replace(
+            inputs,
+            lines=await filter_lines(db, inputs.lines),
+            previous="",
+            earlier=replace(inputs.earlier, beats=()) if inputs.earlier is not None else None,
+        )
         # The same rule as the live bot: with an outside engine only yeses for it count.
         engine = load_transcription_settings(os.environ).outside_engine
         consent = ConsentStore(db, outside=engine)
