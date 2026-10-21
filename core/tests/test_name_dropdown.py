@@ -94,13 +94,17 @@ class TheView(unittest.TestCase):
 
     def test_paging_buttons_show_only_where_they_go(self) -> None:
         first, middle = self.view(60), self.view(60, page=1)
-        self.assertEqual([x for x in self.labels(first) if x in "◀▶"], ["▶"])
-        self.assertEqual([x for x in self.labels(middle) if x in "◀▶"], ["◀", "▶"])
-        self.assertEqual([x for x in self.labels(self.view(5)) if x in "◀▶"], [])
+        pager = ("◀ Earlier", "Later ▶")
+        self.assertEqual([x for x in self.labels(first) if x in pager], ["Later ▶"])
+        self.assertEqual([x for x in self.labels(middle) if x in pager], list(pager))
+        self.assertEqual([x for x in self.labels(self.view(5)) if x in pager], [])
 
-    def test_the_switch_names_the_order_in_use(self) -> None:
-        self.assertIn(dd.SORT_LABELS[dd.CLOSEST], self.labels(self.view(5)))
-        self.assertIn(dd.SORT_LABELS[dd.AZ], self.labels(self.view(5, mode=dd.AZ)))
+    def test_the_switch_says_what_pressing_it_gives(self) -> None:
+        self.assertIn("🔤 Sort A–Z", self.labels(self.view(5)))  # in closest-first now
+        self.assertIn("🔗 Sort by closeness", self.labels(self.view(5, mode=dd.AZ)))
+
+    def test_with_no_other_names_only_back_is_left(self) -> None:
+        self.assertEqual(self.labels(self.view(0)), ["Back"])
 
     def test_typing_a_name_is_still_there_and_every_label_fits_a_phone(self) -> None:
         labels = self.labels(self.view(60, page=1))

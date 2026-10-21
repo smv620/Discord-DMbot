@@ -112,8 +112,8 @@ NOTHING_CHANGED = (
 CARD_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 SHOWN = 3  # per section, then "… and N more"
 # A state, not an action: it is a setting that stays until pressed again.
-SECRET_OFF = "🤫 Secret: no"
-SECRET_ON = "🤫 Secret: yes"
+SECRET_OFF = "🤫 New one: public"
+SECRET_ON = "🤫 New one: secret"
 SECRET_FORCED = "You found it by a secret name, so this one is secret too."
 SECRET_DENIED_PRESS = "Only the campaign's DM can keep a connection secret."
 SECRET_DENIED_SAVE = (
@@ -918,7 +918,7 @@ class NameCard(_Menu):
         from dmbot.ui.name_dropdown import show_dropdown  # (it builds on this module)
 
         # A list to pick from; "Type a name" there keeps the old search (#2321).
-        await show_dropdown(interaction, self.campaign_id, self.entity_id, SAME)
+        await show_dropdown(interaction, self.campaign_id, self.entity_id, SAME, replacing=self)
 
     async def _connect(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2305,9 +2305,17 @@ class Connect(_Menu):
         if removable and secrets:  # who sees an existing connection, flipped in place (#2321)
             self.flip = _Select(
                 self._flip_picked,
-                placeholder="🤫 Change who sees a connection…",
+                placeholder="🤫 Hide or show a connection…",
                 options=[
-                    discord.SelectOption(label=logic.shorten(said, logic.OPTION_LABEL_MAX), value=r)
+                    discord.SelectOption(
+                        label=logic.shorten(said, logic.OPTION_LABEL_MAX),
+                        # The state it is changed TO, taken from what the menu showed: a double
+                        # press or a stale menu must never turn a secret back into a public one.
+                        value=f"{r}:{'show' if said.endswith('🤫') else 'hide'}",
+                        description="Secret now. Press to show players"
+                        if said.endswith("🤫")
+                        else "Players see it. Press to hide it",
+                    )
                     for r, said in removable[: logic.SELECT_OPTIONS_MAX]
                 ],
                 row=2,
@@ -2338,10 +2346,10 @@ class Connect(_Menu):
     async def _how_picked(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_dropdown import show_dropdown  # (it builds on this module)
 
-        self.stop()
         await show_dropdown(
-            interaction, self.campaign_id, self.entity_id, self.how.values[0], secret=self.secret
-        )
+            interaction, self.campaign_id, self.entity_id, self.how.values[0],
+            secret=self.secret, replacing=self,
+        )  # fmt: skip
 
     async def _remove_picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2406,13 +2414,18 @@ class Connect(_Menu):
             confirmed_only=True,
             include_secret=True,
         )
-        relation = next((r for r in mine if r.id == self.flip.values[0]), None)
+        wanted_id, _, action = self.flip.values[0].rpartition(":")
+        relation = next((r for r in mine if r.id == wanted_id), None)
         if relation is None:
-            await _tell(interaction, "That connection isn't there any more.")
+            await _tell(interaction, "That connection isn't there any more. Press Back to see it.")
+            return
+        make_secret = action == "hide"
+        if relation.secret == make_secret:  # already so (a second press, or another DM did it)
+            await _tell(interaction, "It's already like that. Press Back to see the card.")
             return
         try:
             await memory.update_relation(
-                campaign.guild_id, campaign.id, relation.id, secret=not relation.secret, source=DM
+                campaign.guild_id, campaign.id, relation.id, secret=make_secret, source=DM
             )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
@@ -2421,9 +2434,9 @@ class Connect(_Menu):
         self.stop()
         said = sentence(names, relation) or "that connection"
         note = (
-            f"👁 Players can see this again: {_md(said)}."
+            f"👁 Players can see it now: {_md(said)}."
             if relation.secret
-            else f"🤫 Now secret, players can't see it: {_md(said)}."
+            else f"🤫 Hidden from players: {_md(said)}."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

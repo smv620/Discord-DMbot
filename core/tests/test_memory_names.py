@@ -983,10 +983,10 @@ class NameCards(NamesTest):
         view = name_card.Connect(
             self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
         )
-        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
         it = self.it()
         await view._flip_picked(it)
-        self.assertIn("Now secret, players can't see it", it.response.edited[0][0])
+        self.assertIn("Hidden from players", it.response.edited[0][0])
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
@@ -994,12 +994,42 @@ class NameCards(NamesTest):
         view = name_card.Connect(
             self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
         )
-        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        view.flip = SimpleNamespace(values=[f"{rel.id}:show"])  # type: ignore[assignment]
         again = self.it()
         await view._flip_picked(again)
-        self.assertIn("Players can see this again", again.response.edited[0][0])
+        self.assertIn("Players can see it now", again.response.edited[0][0])
         (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(shown.secret)
+
+    async def test_a_second_press_or_a_stale_menu_never_makes_a_secret_public(self) -> None:
+        from dmbot.ui import name_card
+
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+        for _ in range(2):  # the same "hide" twice, as a double tap or a stale menu would
+            view = name_card.Connect(
+                self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
+            )
+            view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
+            it = self.it()
+            await view._flip_picked(it)
+        (now,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertTrue(now.secret)
+        self.assertIn(
+            "already like that",
+            it.response.sent[0][0] if it.response.sent else str(it.followup.send.await_args),
+        )
+
+    async def test_same_as_retires_the_card_so_it_cannot_time_out_over_the_dropdown(self) -> None:
+        from dmbot.ui import name_card
+
+        await self.two_names()
+        card = name_card.NameCard(self.campaign.id, self.bell.id)
+        await card._same(self.it())
+        self.assertTrue(card.is_finished())
 
     async def test_only_a_dm_is_offered_the_flip_and_a_manager_pressing_it_changes_nothing(
         self,
@@ -1014,7 +1044,7 @@ class NameCards(NamesTest):
         view = name_card.Connect(
             self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
         )
-        view.flip = SimpleNamespace(values=[rel.id])  # type: ignore[assignment]
+        view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
         await view._flip_picked(self.it(MANAGER))  # (a press from someone who is not a DM)
         (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(same.secret)

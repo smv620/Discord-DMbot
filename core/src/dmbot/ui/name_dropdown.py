@@ -22,6 +22,7 @@ from dmbot.memory.store import PERSON
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select
 from dmbot.ui.name_card import (
+    SAME,
     PickForm,
     _asked,
     _current,
@@ -35,7 +36,9 @@ from dmbot.ui.names import _md, sees_secrets
 PAGE = 25  # what one Discord menu holds
 CLOSEST = "closest"
 AZ = "az"
-SORT_LABELS = {CLOSEST: "↕ Order: closest first", AZ: "↕ Order: A–Z"}
+# The button says what pressing it does; the message says what order the list is in now.
+SORT_LABELS = {CLOSEST: "🔤 Sort A–Z", AZ: "🔗 Sort by closeness"}
+SHOWING = {CLOSEST: "Showing nearest first.", AZ: "Showing A–Z."}
 TYPE_LABEL = "🔍 Type a name"
 NONE_YET = "There are no other names yet. Add one with ➕ Add a name on the names panel."
 
@@ -71,8 +74,11 @@ async def show_dropdown(
     secret: bool = False,
     mode: str = CLOSEST,
     page: int = 0,
+    replacing: _Menu | None = None,
 ) -> None:
-    """Draw the dropdown in place of the message that was pressed (or as a reply)."""
+    """Draw the dropdown in place of the message that was pressed (or as a reply).
+    `replacing`: the menu this takes over from; stopped once the new one is drawn, so a redraw
+    that can't happen leaves the old one working."""
     await _answer_first(interaction, in_place=True)
     found = await _current(interaction, campaign_id, entity_id)
     if found is None:
@@ -91,10 +97,16 @@ async def show_dropdown(
         secret=secret, mode=mode, page=page, last=last,
     )  # fmt: skip
     asked = f"**{_md(_asked(name, how))}**" + (" 🤫 Secret." if secret else "")
-    text = f"{asked} Pick one." if shown else f"{asked}\n{NONE_YET}"
+    text = (
+        f"{asked} Pick the other name below. {SHOWING[mode]}" if shown else f"{asked}\n{NONE_YET}"
+    )
+    if mode == CLOSEST and shown and page == 0:
+        text += f"\n_Nearest = joined to {_md(name)} by the fewest connections._"
     if last:
-        text += f"\n_Page {page + 1} of {last + 1}._"
+        text += f"\n_Page {page + 1} of {last + 1}. Too many to scroll? Press 🔍 Type a name._"
     await _replace(interaction, text, view)
+    if replacing is not None:
+        replacing.stop()
 
 
 class NameDropdown(_Menu):
@@ -118,7 +130,7 @@ class NameDropdown(_Menu):
         if shown:
             self.pick = _Select(
                 self._picked,
-                placeholder="Pick the other name…",
+                placeholder="Pick the same name…" if how == SAME else "Pick the name to connect…",
                 options=[
                     discord.SelectOption(
                         label=logic.shorten(
@@ -132,11 +144,12 @@ class NameDropdown(_Menu):
             )
             self.add_item(self.pick)
         if page > 0:
-            self.add_item(_Button(self._earlier, label="◀", row=1))
+            self.add_item(_Button(self._earlier, label="◀ Earlier", row=1))
         if page < last:
-            self.add_item(_Button(self._later, label="▶", row=1))
-        self.add_item(_Button(self._switch, label=SORT_LABELS[mode], row=2))
-        self.add_item(_Button(self._type, label=TYPE_LABEL, row=2))
+            self.add_item(_Button(self._later, label="Later ▶", row=1))
+        if shown:  # nothing to order or type for when there are no other names
+            self.add_item(_Button(self._switch, label=SORT_LABELS[mode], row=2))
+            self.add_item(_Button(self._type, label=TYPE_LABEL, row=2))
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
@@ -145,13 +158,16 @@ class NameDropdown(_Menu):
             secret=self.secret,
         )  # fmt: skip
 
-    async def _again(self, interaction: discord.Interaction, **change: object) -> None:
-        self.stop()
+    async def _again(
+        self, interaction: discord.Interaction, *, mode: str | None = None, page: int | None = None
+    ) -> None:
+        # Not stopped first: if the redraw can't happen, this list keeps working.
         await show_dropdown(
             interaction, self.campaign_id, self.entity_id, self.how,
             secret=self.secret,
-            mode=str(change.get("mode", self.mode)),
-            page=int(change.get("page", self.page)),  # type: ignore[call-overload]
+            mode=mode or self.mode,
+            page=self.page if page is None else page,
+            replacing=self,
         )  # fmt: skip
 
     async def _earlier(self, interaction: discord.Interaction) -> None:
