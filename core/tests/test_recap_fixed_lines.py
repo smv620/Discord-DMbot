@@ -13,6 +13,7 @@ from dmbot.recaps.audio import script
 from dmbot.recaps.draft import SUMMARY_MAX, WORDS_CEILING, length_for
 from dmbot.recaps.text import narration_of, words
 from tests import recap_fixtures as fx
+from tests.pg import DatabaseTest
 
 NAME = "The Ember Road"
 BARE_CLOSING = fl.CLOSING_BARE.format(ending=fl.ENDINGS[0])
@@ -128,6 +129,43 @@ class TheTenEndings(unittest.TestCase):
 
     def test_no_name_still_ends_with_the_chosen_variant(self) -> None:
         self.assertEqual(fl.lines("", (), 5)[1], "And so we continue, the epic tale.")
+
+
+class TheEndingByPlace(DatabaseTest):
+    """Through `load_inputs` on a real database: the ending follows the session's place in the
+    campaign, whatever was posted, drafted or imported."""
+
+    async def test_endings_run_round_the_ten_whatever_was_posted(self) -> None:
+        from dmbot.campaigns.store import CampaignStore
+        from dmbot.memory.lookup import LookupCache
+        from dmbot.memory.store import MemoryStore
+        from dmbot.recaps.inputs import load_inputs
+        from dmbot.recaps.store import RecapStore
+        from dmbot.transcript.store import TranscriptStore
+
+        campaigns = CampaignStore(self.db)
+        camp = await campaigns.create(1, "One", fx.DM)
+        transcripts = TranscriptStore(self.db)
+        recaps = RecapStore(self.db)
+        starts = [1_700_000_000 + n * 86_400 for n in range(11)]
+        for at in starts:
+            sid = await transcripts.open_session(1, camp.id, at)
+            await transcripts.add_lines(1, sid, fx.lines())
+        # An unposted draft before them (and nothing posted at all) changes nothing.
+        await recaps.enqueue(1, camp.id, starts[1], dm_user_id=fx.DM)
+
+        async def ending_at(at: int) -> int:
+            got = await load_inputs(
+                campaigns=campaigns, lookup=LookupCache(MemoryStore(self.db)),
+                transcripts=transcripts, recaps=recaps, clocks=None, guild_id=1,
+                campaign_id=camp.id, session_at=at,
+            )  # fmt: skip
+            assert got is not None
+            return got.ending
+
+        self.assertEqual([await ending_at(at) for at in starts[:3]], [0, 1, 2])
+        self.assertEqual(await ending_at(starts[10]), 0)  # the eleventh wraps
+        self.assertEqual(await ending_at(starts[9]), 9)
 
 
 class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):

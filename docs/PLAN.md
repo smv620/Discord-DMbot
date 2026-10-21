@@ -1298,6 +1298,32 @@ so the docs always show names the way Discord does. For the campaign
   and a lost row is made good by deleting DMbot's own unrecorded messages and posting them again.
   Organized mode is a separate
   decision and is not changed here.
+- **Every NPC opens its own page, with private notes** (owner, 2026-10-21; details Supervisor's).
+  - **In Discord:** each message in the NPC list gets one small link button, **📖 Open**. It opens
+    that NPC's page on the website. It is a plain link button, so no click is handled by the bot,
+    nothing breaks after a restart, and the message text is unchanged. The link carries the entry's
+    reference in its address, not in the text.
+  - **Who sees the page:** anyone in the campaign's Discord server, signed in on the website with
+    Discord, the same people who may read the transcripts. Someone not in that server gets "This
+    page is for the people in that Discord server."
+  - **What the page shows** is the NPC list's own players' view, from `RecallService.roster` with
+    the same rules, not a second copy: the name, what it is, its other names, its groups and close
+    ties. It also links the **posted** recaps that mention it, which the table has already seen.
+    Never a secret name, a clue, a condition, a thread, the DM's note or anything from the
+    adventure plan. The campaign's DMs also see their own note on the NPC (DM-only, as in Discord).
+  - **My notes:** a private notes box for each person and each NPC, up to 5,000 characters.
+    - Only that person ever sees their notes: not the DM, not other players.
+    - Notes never go into transcripts, AI prompts, the story memory or a campaign backup, since
+      anyone in the server may download a backup.
+    - Each person can download all of their own notes, and delete them (Delete my notes).
+    - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
+      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      note is kept for 30 days in "Notes on names no longer listed", then deleted.
+    - Notes are never logged, are kept to one campaign and one server, and are protected by
+      row-level security.
+  - **Plans:** the same as the NPC list (where the NPC list exists, its pages do too).
+  - **Words:** "📖 Open" on the button. On the page: "My notes: only you can see these." The privacy
+    page says what My notes keeps and who sees it.
 - Server owners and admins always see every channel (see above).
 
 *Modes.*
