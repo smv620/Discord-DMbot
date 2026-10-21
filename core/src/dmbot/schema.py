@@ -7907,9 +7907,19 @@ IMPORT_SUGGEST = r"""
                     JOIN memory_entities ch ON ch.guild_id = r.guild_id
                          AND ch.campaign_id = r.campaign_id AND ch.id = r.object_id
                     WHERE r.guild_id = g AND r.campaign_id = c AND r.predicate = 'plays'
-                      AND r.status = 'confirmed' AND r.to_session_at IS NULL
+                      AND r.status = 'confirmed' AND r.to_session_at IS NULL AND NOT r.secret
                       AND p.type = 'person' AND p.played_by = uid AND p.status = 'confirmed'
                       AND ch.status = 'confirmed' AND ch.type = 'character'
+                      AND NOT ch.audience_limited
+                      AND EXISTS (SELECT 1 FROM memory_aliases a
+                                  WHERE a.guild_id = g AND a.campaign_id = c
+                                    AND a.entity_id = ch.id AND a.text = ch.name
+                                    AND a.status = 'confirmed' AND NOT a.secret
+                                    AND a.key = (SELECT n.key FROM memory_aliases n
+                                                 WHERE n.guild_id = g AND n.campaign_id = c
+                                                   AND n.entity_id = ch.id AND n.text = ch.name
+                                                   AND n.status <> 'rejected'
+                                                 ORDER BY n.id LIMIT 1))
                     ORDER BY ch.created_at DESC, ch.id LIMIT 1;
                 IF plays IS NOT NULL THEN
                     plays_why := 'plays';
@@ -7920,6 +7930,16 @@ IMPORT_SUGGEST = r"""
                     WHERE ch.guild_id = g AND ch.campaign_id = c AND ch.type = 'character'
                       AND ch.status = 'confirmed' AND ch.played_by IS NULL
                       AND lower(ch.name) = s
+                      AND NOT ch.audience_limited
+                      AND EXISTS (SELECT 1 FROM memory_aliases a
+                                  WHERE a.guild_id = g AND a.campaign_id = c
+                                    AND a.entity_id = ch.id AND a.text = ch.name
+                                    AND a.status = 'confirmed' AND NOT a.secret
+                                    AND a.key = (SELECT n.key FROM memory_aliases n
+                                                 WHERE n.guild_id = g AND n.campaign_id = c
+                                                   AND n.entity_id = ch.id AND n.text = ch.name
+                                                   AND n.status <> 'rejected'
+                                                 ORDER BY n.id LIMIT 1))
                     ORDER BY ch.created_at, ch.id LIMIT 1;
                 IF plays IS NOT NULL THEN
                     plays_why := 'same_name';

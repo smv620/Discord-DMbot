@@ -300,28 +300,45 @@ class TheSuggestions(WithImports):
             )
 
     async def character(
-        self, ident: int, name: str, *, played_by: int | None = None, type_: str = "character"
+        self,
+        ident: int,
+        name: str,
+        *,
+        played_by: int | None = None,
+        type_: str = "character",
+        secret_name: bool = False,
+        audience_limited: bool = False,
     ) -> str:
         eid = f"{ident:032x}"
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(
                 "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
-                " status, source, created_at, played_by, role)"
-                " VALUES (%s, %s, %s, %s, %s, '', 'confirmed', 'dm', %s, %s, %s)",
+                " status, source, created_at, played_by, role, audience_limited)"
+                " VALUES (%s, %s, %s, %s, %s, '', 'confirmed', 'dm', %s, %s, %s, %s)",
                 (
                     THURSDAY.id, self.one.id, eid, type_, name, ident, played_by,
-                    "player_character" if played_by else "npc",
+                    "player_character" if played_by else "npc", audience_limited,
+                ),
+            )  # fmt: skip
+            # its own name, as the name list holds it: a confirmed alias (secret or not)
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key, kind,"
+                " secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, 'full', %s, 'confirmed', '{}', 'dm', 1)",
+                (
+                    THURSDAY.id, self.one.id, f"{ident + 10_000:032x}", eid, name,
+                    name.lower(), secret_name,
                 ),
             )  # fmt: skip
         return eid
 
-    async def plays(self, person: str, character: str) -> None:
+    async def plays(self, person: str, character: str, *, secret: bool = False) -> None:
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
                 " object_id, detail, confidence, status, source, mention_ids, secret, created_at)"
-                " VALUES (%s, %s, %s, %s, 'plays', %s, '', 1, 'confirmed', 'dm', '{}', false, 1)",
-                (THURSDAY.id, self.one.id, f"{99:032x}", person, character),
+                " VALUES (%s, %s, %s, %s, 'plays', %s, '', 1, 'confirmed', 'dm', '{}', %s, 1)",
+                (THURSDAY.id, self.one.id, f"{99:032x}", person, character, secret),
             )
 
     @staticmethod
@@ -403,6 +420,31 @@ class TheSuggestions(WithImports):
         one = await self.guess("Mira (mira_v)")
         self.assertEqual(one["suggested"]["why"], "remembered")
         self.assertEqual(one["suggestedCharacter"], {"name": "Mira", "why": "same_name"})
+
+    async def test_a_character_whose_name_is_secret_or_limited_is_never_offered(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        # same-name fallback: a secret own name, and a character only some may know
+        await self.character(510, "Veyra", secret_name=True)
+        await self.character(511, "Brannock", audience_limited=True)
+        self.assertIsNone((await self.guess("Veyra (mira_v)"))["suggestedCharacter"])
+        self.assertIsNone((await self.guess("Brannock (mira_v)"))["suggestedCharacter"])
+        # the character they play: the same rules
+        for ident, kw in ((512, {"secret_name": True}), (513, {"audience_limited": True})):
+            self.assertIsNone(await self.played(ident, **kw))
+
+    async def test_a_secret_plays_link_is_never_followed(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        hidden = await self.character(514, "Orsin", played_by=MIRA)
+        await self.plays(f"{0:032x}", hidden, secret=True)
+        self.assertIsNone((await self.guess("Mira (mira_v)"))["suggestedCharacter"])
+
+    async def played(self, ident: int, **kw: bool) -> object:
+        """What is offered for Mira when the character she plays is made with these flags."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM memory_relations")
+        chosen = await self.character(ident, f"Played{ident}", played_by=MIRA, **kw)
+        await self.plays(f"{0:032x}", chosen)
+        return (await self.guess("Mira (mira_v)"))["suggestedCharacter"]
 
     async def test_only_characters_are_offered_not_places(self) -> None:
         await self.character(504, "Waterdeep", type_="location")
