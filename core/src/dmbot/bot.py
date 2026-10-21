@@ -960,6 +960,8 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._import_queued: dict[str, list[int]] = {}
+        # campaign -> how many of its import's sessions had their name check given up
+        self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
@@ -9188,6 +9190,9 @@ class DMBot(commands.AutoShardedBot):
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
                         log.warning("Import: giving up on a session's name scan")
                         await store.give_up_scan(gid, ready.session_id)
+                        self._import_unchecked[ready.campaign_id] = (
+                            self._import_unchecked.get(ready.campaign_id, 0) + 1
+                        )
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
@@ -9227,6 +9232,23 @@ class DMBot(commands.AutoShardedBot):
                     campaign.dm_screen_channel_id,
                     after_session_text(names, where="your imported sessions"),
                     view=review_view(cid),
+                )
+        for cid in list(self._import_unchecked):
+            if await store.pending_scans(gid, cid):
+                continue  # once, at the end of the import
+            skipped = self._import_unchecked.pop(cid)
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and campaign.dm_screen_channel_id is not None:
+                which = (
+                    "1 of your imported sessions"
+                    if skipped == 1
+                    else (f"{skipped} of your imported sessions")
+                )
+                await self.post(
+                    campaign.dm_screen_channel_id,
+                    f"📝 I couldn't check names for {which}. Any new names in "
+                    f"{'it' if skipped == 1 else 'them'} won't be on your list; you can add "
+                    "them yourself.",
                 )
         for cid in list(self._import_queued):
             if await store.pending_scans(gid, cid):

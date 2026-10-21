@@ -143,6 +143,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_names={},
         _import_unhonoured={},
         _import_queued={},
+        _import_unchecked={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         _hold_or_queue=AsyncMock(return_value="held"),
         **kw,
@@ -290,6 +291,16 @@ class TheCrashAndTheNews(WithImports):
         one.campaigns.get = AsyncMock(return_value=campaign)
         await one._tell_import_news(GUILD, self.store)
         self.assertIn("1 recap you asked for", one.post.await_args.args[1])
+
+    async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(side_effect=RuntimeError("down"))
+        await rounds(bot, 5)
+        told = [c.args[1] for c in bot.post.await_args_list if "couldn't check names" in c.args[1]]
+        self.assertEqual(len(told), 1)
+        self.assertIn("1 of your imported sessions", told[0])
 
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)
