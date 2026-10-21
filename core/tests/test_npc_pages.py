@@ -12,13 +12,13 @@ from typing import Any, cast
 
 import httpx
 
+from dmbot.bot import register_backup_sections
+from dmbot.consent import ConsentStore
 from dmbot.dm_screen import npc_pages as npg
 from dmbot.dm_screen import npcs_channel as nc
-from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.recall import RosterEntry
 from dmbot.memory.store import MemoryStore
-from dmbot.rules.house import HouseRulesSection
 from dmbot.web import npc_pages as web
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -231,12 +231,14 @@ class TheNotes(WithNpcs):
         self.assertEqual(len(await self.notes(self.alice)), 1)  # nobody else's were touched
 
     async def export_with_every_section(self) -> dict[str, Any]:
-        """A backup made with the sections the bot registers for memory and rules.
-
-        Without them the export holds no memory at all, so "no note in it" proves nothing.
-        """
-        self.campaigns.register_section(MemorySection())
-        self.campaigns.register_section(HouseRulesSection())
+        """A backup made with every section the running bot registers (one shared helper), so
+        "no note in it" is proved against what production exports, including the sections that
+        write their own rows, and not against two of them."""
+        register_backup_sections(
+            self.campaigns,
+            forget_audio=lambda guild, campaign: None,
+            consenting=ConsentStore(self.db).consenting,
+        )
         return await self.campaigns.export(GUILD, self.one.id)
 
     async def test_no_backup_section_reads_the_note_tables(self) -> None:

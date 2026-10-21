@@ -36,11 +36,19 @@ from dmbot.campaigns.models import (
     HandoverOffer,
 )
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
-from dmbot.dm_screen import handover, messages, quiet_stop, story_mode, table_chat_panel
+from dmbot.dm_screen import (
+    handover,
+    import_button,
+    messages,
+    quiet_stop,
+    story_mode,
+    table_chat_panel,
+)
 from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
+from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_panel import RecapsButton
@@ -183,6 +191,8 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(GameMastersButton(campaign.id, row=2))  # who the DMs are (#1600)
         view.add_item(DeleteButton(campaign.id))  # delete the campaign, plan holder only (#1608)
         view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
+        if import_button.enabled(campaign.guild_id):  # only where importing is on (#2154, #2259)
+            view.add_item(ImportButton(campaign.id))
     return view
 
 

@@ -597,6 +597,7 @@ export default function Import({
           aria-label={words.pickLabel}
         />
         <form
+          class="link-form"
           noValidate
           onSubmit={(e) => {
             e.preventDefault();

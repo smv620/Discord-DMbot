@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dmbot import imports_switch
 from dmbot.ai import DEFAULT_MODELS, AIModels
 from dmbot.entitlements import parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
@@ -78,6 +79,10 @@ class Settings:
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
+    # Importing older sessions (#2105): off for everyone until dev1 has checked a real import,
+    # and on for the listed servers alone (#2259). The web API reads the same two settings.
+    imports_on: bool = False
+    imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
     # A time jump suggested from vague narration (#1758): the DM screen only, never automatic.
     # Off until dev1 has run a live check.
     time_suggestions: bool = False
@@ -93,6 +98,9 @@ class Settings:
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
+
+    def imports_enabled_for(self, guild_id: int) -> bool:
+        return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
 
     @property
     def recap_audio_on(self) -> bool:
@@ -293,6 +301,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
+    imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
+    if imports_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_IMPORTS must be 1 (on) or 0 (off), got "' + imports_raw + '".')
+    try:
+        imports_servers = imports_switch.parse_servers(get("DMBOT_IMPORTS_SERVERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     voice_tags_raw = (get("DMBOT_RECAP_VOICE_TAGS") or "1").lower()
     if voice_tags_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(
@@ -367,6 +382,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        imports_on=imports_raw in ("1", "true", "on"),
+        imports_servers=imports_servers,
         time_suggestions=suggestions_raw in ("1", "true", "on"),
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
