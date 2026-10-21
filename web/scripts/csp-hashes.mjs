@@ -32,10 +32,10 @@ let headers = readFileSync(headersFile, "utf8");
 if (
   !headers.includes("script-src 'self';") ||
   !headers.includes("connect-src 'self';") ||
-  !headers.includes("media-src 'self';")
+  !headers.includes("media-src 'self' blob:;")
 ) {
   console.error(
-    "dist/_headers must contain \"script-src 'self';\", \"connect-src 'self';\" and \"media-src 'self';\"",
+    "dist/_headers must contain \"script-src 'self';\", \"connect-src 'self';\" and \"media-src 'self' blob:;\"",
   );
   process.exit(1);
 }
@@ -48,7 +48,7 @@ if (turnstile) {
 const origin = apiOrigin(effectiveApiBase(process.env));
 if (origin) {
   headers = headers.replace("connect-src 'self';", `connect-src 'self' ${origin};`);
-  headers = headers.replace("media-src 'self';", `media-src 'self' ${origin};`);
+  headers = headers.replace("media-src 'self' blob:;", `media-src 'self' blob: ${origin};`);
 }
 // The development site is a test copy: keep it out of search results (#837).
 try {

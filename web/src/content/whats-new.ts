@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Hear and record how a name sounds",
+    what: "Beside the box for how a name is said, you can now ask DMbot for a suggestion, say the name out loud and have it turned into letters, and hear the letters read back. Nothing is saved until you save it, and your recording is deleted once it has been turned into letters.",
+    reason: "In review (#2317); held until the API (#2316) and the speech recogniser on the server (#2318) are deployed by dev1.",
+  },
+  {
+    date: "2026-10-21",
     title: "Recaps are checked before you see them",
     what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
     reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",

@@ -146,6 +146,14 @@ const pages = [
   ["account, free access", "/account?demo=free-paying"],
   ["recap list", "/account/recaps?demo=table"],
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
+  ["a recap's names, with how to say each (#2317)", `/account/recaps/${REF}?demo=table`, async (page) => {
+    await page.getByText("Names in this campaign").first().click();
+    await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
+    await page.getByRole("button", { name: /Say it/ }).first().waitFor();
+    // A suggestion fills the box, which brings the Hear it button.
+    await page.getByRole("button", { name: /Suggest/ }).first().click();
+    await page.getByRole("button", { name: /Hear it/ }).first().waitFor();
+  }],
   ["transcripts", "/account/transcripts?demo=table"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
   ["import: the chosen files, each with Remove", "/account/import/100.cmp1?demo=table", async (page) => {

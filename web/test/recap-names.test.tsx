@@ -70,7 +70,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "  Kah-zeth  " } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect(await screen.findByText(words.saved)).toBeTruthy();
     expect((api as { calls: string[] }).calls).toContain(
       `saveSaidAs:200000000000000001.cmp1:${"a".repeat(32)}:Kah-zeth`,
@@ -83,7 +83,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Brynwater"));
     fireEvent.input(input, { target: { value: "" } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect(await screen.findByText(words.cleared)).toBeTruthy();
   });
 
@@ -93,7 +93,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "x".repeat(81) } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect((await screen.findByRole("alert")).textContent).toBe(words.tooLong);
     expect((api as { calls: string[] }).calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false);
   });
@@ -115,7 +115,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect((await screen.findByRole("alert")).textContent).toBe(message);
   });
 
@@ -133,7 +133,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
-    const button = input.parentElement!.querySelector("button")!;
+    const button = input.parentElement!.querySelector("button[id^='save-said-as']")!;
     fireEvent.click(button);
     fireEvent.click(button);
     expect(calls).toBe(1);

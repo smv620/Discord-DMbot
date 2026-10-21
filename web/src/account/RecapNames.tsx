@@ -8,6 +8,7 @@ import { nameWords as words, SAID_AS_MAX } from "../content/recap-names";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type CampaignName } from "./api";
 import { keepFocus } from "./focus";
+import SayIt from "./SayIt";
 
 type Load =
   | { kind: "idle" }
@@ -147,6 +148,19 @@ export default function RecapNames({
                       if (rows[name.id]?.kind !== "saving") say(name.id, null);
                     }}
                     disabled={row?.kind === "saving"}
+                  />
+                  <SayIt
+                    api={api}
+                    campaignRef={ref}
+                    nameId={name.id}
+                    name={name.text}
+                    value={drafts[name.id] ?? ""}
+                    disabled={row?.kind === "saving"}
+                    onValue={(text) => {
+                      // Into the box, unsaved: "Saved." must not stay over words that are not saved.
+                      setDrafts((d) => ({ ...d, [name.id]: text }));
+                      say(name.id, null);
+                    }}
                   />
                   <button
                     type="button"
