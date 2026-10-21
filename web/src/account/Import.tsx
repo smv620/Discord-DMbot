@@ -201,6 +201,32 @@ export default function Import({
     return [...seen.values()];
   }, [usable]);
 
+  // While the site's switch is off, ask whether this campaign's server has imports on (#2260). The
+  // page's address is `<server>.<campaign>`; /me lists the campaign by its own id.
+  const [open, setOpen] = useState<"unknown" | "on" | "off">(IMPORT_LIVE ? "on" : "unknown");
+  useEffect(() => {
+    if (IMPORT_LIVE || !ref) return;
+    let live = true;
+    setOpen("unknown");
+    const campaign = ref.split(".").slice(1).join(".");
+    api
+      .me()
+      .then((me) => {
+        if (!live) return;
+        if (me === null) {
+          // Not signed in: the page's own sign-in panel says so.
+          setSignedOut(true);
+          setOpen("on");
+          return;
+        }
+        setOpen(me.campaigns.some((c) => c.id === campaign && c.importsOn === true) ? "on" : "off");
+      })
+      .catch(() => live && setOpen("off"));
+    return () => {
+      live = false;
+    };
+  }, [api, ref]);
+
   // Follow the work once it has started, until every session is done or failed.
   useEffect(() => {
     if (!importId || !ref || !api.importProgress) return;
@@ -229,8 +255,16 @@ export default function Import({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref, importId, pollTries]);
 
-  // Nothing is shown unless importing is live and the API has the routes (an older API has none).
-  if (!IMPORT_LIVE || !api.importPreview || !ref) return null;
+  // Nothing is shown unless the API has the routes (an older API has none) and importing is open:
+  // for the whole site (IMPORT_LIVE), or for this campaign's server alone (`importsOn`, #2260).
+  if (!api.importPreview || !ref) return null;
+  if (!IMPORT_LIVE && open === "unknown")
+    return (
+      <p class="muted" role="status">
+        {words.loading}
+      </p>
+    );
+  if (!IMPORT_LIVE && open === "off") return <p>{words.notOpen}</p>;
 
   const remember = (list: ImportMember[]): void =>
     setKnown((now) => {
