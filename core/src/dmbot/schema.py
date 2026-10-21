@@ -7860,7 +7860,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         SUPPORT_MINE_THREAD,
     ),  # a person reads their own ticket's thread (#2193)
     (
-        "0152_support_ticket_times",
+        "0154_support_ticket_times",
         SUPPORT_TICKET_TIMES,
     ),  # no two of a person's tickets share a time
 )
