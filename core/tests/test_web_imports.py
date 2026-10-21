@@ -851,6 +851,32 @@ class TheProgress(WithImports):
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
 
+    async def test_a_hold_or_job_of_another_campaign_changes_nothing_here(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+        from dmbot.recaps.store import RecapStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        other = self.two.id  # same start time, another campaign
+        await HoldStore(self.db).hold(
+            THURSDAY.id, other, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            names_open=4,
+        )  # fmt: skip
+        await RecapStore(self.db).enqueue(THURSDAY.id, other, at, dm_user_id=ALICE.id)
+        got = await self.stage(imp)
+        self.assertEqual((got["stage"], got["namesToAnswer"]), ("starting_recap", 0))
+
+    async def test_a_silent_hold_is_not_waiting_on_the_dm(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        await HoldStore(self.db).hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            asked=False,
+        )  # fmt: skip
+        self.assertEqual((await self.stage(imp))["stage"], "finding_names")
+
     async def test_a_session_without_a_recap_is_done_once_its_names_are_checked(self) -> None:
         imp, _, _ = await self.one_import(False)
         await self.set_import(state="done", scanned=True, scan_finished=True)

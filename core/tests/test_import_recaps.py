@@ -298,9 +298,10 @@ class TheCrashAndTheNews(WithImports):
         campaign.id = self.campaign.id
         bot._scan_import = AsyncMock(side_effect=RuntimeError("down"))
         await rounds(bot, 5)
-        told = [c.args[1] for c in bot.post.await_args_list if "couldn't check names" in c.args[1]]
+        told = [c.args[1] for c in bot.post.await_args_list if "couldn't check" in c.args[1]]
         self.assertEqual(len(told), 1)
-        self.assertIn("1 of your imported sessions", told[0])
+        self.assertIn("one imported session", told[0])
+        self.assertIn("➕ Add a name", told[0])
 
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)

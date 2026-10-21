@@ -589,6 +589,7 @@ async def progress(
                 "state": s["state"],
                 "reason": s["reason"] or None,
                 # Where it has got to, for the page's progress: cleaning, checking_names,
+                # finding_names (held while names are found, nothing to answer yet),
                 # waiting_for_names, starting_recap, writing_recap, recap_ready, recap_failed,
                 # recap_not_written, done or failed.
                 "stage": s["stage"],

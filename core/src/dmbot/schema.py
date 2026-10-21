@@ -7698,6 +7698,7 @@ IMPORT_PROGRESS = """
                            WHEN i.state <> 'done' THEN 'cleaning'
                            WHEN NOT i.scan_finished THEN 'checking_names'
                            WHEN NOT i.write_recap THEN 'done'
+                           WHEN h.session_at IS NOT NULL AND NOT h.asked THEN 'finding_names'
                            WHEN h.session_at IS NOT NULL THEN 'waiting_for_names'
                            WHEN r.state = 'ready' THEN 'recap_ready'
                            WHEN r.state = 'failed' THEN 'recap_failed'

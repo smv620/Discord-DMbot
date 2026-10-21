@@ -960,7 +960,8 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._import_queued: dict[str, list[int]] = {}
-        # campaign -> how many of its import's sessions had their name check given up
+        # campaign -> how many of its import's sessions had their name check given up (told once;
+        # best effort across a restart, the website's progress reads the saved flag)
         self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
@@ -9239,16 +9240,12 @@ class DMBot(commands.AutoShardedBot):
             skipped = self._import_unchecked.pop(cid)
             campaign = await self.campaigns.get(gid, cid)
             if campaign is not None and campaign.dm_screen_channel_id is not None:
-                which = (
-                    "1 of your imported sessions"
-                    if skipped == 1
-                    else (f"{skipped} of your imported sessions")
-                )
+                what = "one imported session" if skipped == 1 else f"{skipped} imported sessions"
                 await self.post(
                     campaign.dm_screen_channel_id,
-                    f"📝 I couldn't check names for {which}. Any new names in "
-                    f"{'it' if skipped == 1 else 'them'} won't be on your list; you can add "
-                    "them yourself.",
+                    f"📝 I couldn't check {what} for new names, so any in "
+                    f"{'it' if skipped == 1 else 'them'} aren't on your list. "
+                    "Add them by hand with ➕ Add a name in your names list.",
                 )
         for cid in list(self._import_queued):
             if await store.pending_scans(gid, cid):
