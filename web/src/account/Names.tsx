@@ -23,7 +23,12 @@ import {
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
   const match = /^\/account\/names\/([^/]+)\/?$/.exec(path);
-  return match ? decodeURIComponent(match[1] ?? "") : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return null; // a broken %-escape in the address is just a campaign that isn't there
+  }
 }
 
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
@@ -47,7 +52,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [news, setNews] = useState<{ ok: boolean; text: string } | null>(null);
+  const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
@@ -55,6 +60,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   queryNow.current = { q, kind, sort };
   const newsBox = useRef<HTMLParagraphElement>(null);
   const first = useRef(true);
+  const sayings = useRef(0);
 
   /** Reads one page and says which page is showing afterwards (for the page bar). */
   async function load(page: number, silent = false): Promise<number> {
@@ -78,7 +84,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       else if (kindOf === "bad-page" && page !== 1) {
         // The list got shorter: the first page is always there.
         const shown = await load(1, true);
-        setPageNotice(words.pageGone);
+        if (pageNow.current === shown) setPageNotice((now) => now ?? words.pageGone);
         return shown;
       } else if (silent || data) setPageNotice(words.pageDown);
       else setView("down");
@@ -93,6 +99,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     if (!ref || !api.allNames) return;
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
+    setNews(null);
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these three restart the read.
@@ -113,13 +120,13 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       if (error instanceof ApiError && error.kind === "not-found") {
         // The name is gone (someone else removed it): the list is read again and says so.
         setEditing(null);
-        setNews({ ok: false, text: said });
+        setNews({ ok: false, text: said, n: ++sayings.current });
         await load(pageNow.current, true);
         return null;
       }
       return said;
     }
-    setNews({ ok: true, text: ok });
+    setNews({ ok: true, text: ok, n: ++sayings.current });
     if (change.action === "remove" || change.action === "merge") {
       setEditing(null);
       // The editor is gone: the keyboard goes to the news, where the result is said.
@@ -129,7 +136,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     return null;
   }
 
-  if (!ref || !api.allNames) return null;
+  if (!ref || !api.allNames) return <p role="status">{words.notYours}</p>;
   if (view === "signed-out")
     return (
       <div class="panel" role="status">
@@ -213,13 +220,14 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
         {words.howMany(data.total)}
       </p>
-      <p
-        class={news ? (news.ok ? "ok" : "warn") : "visually-hidden"}
-        role={news && !news.ok ? "alert" : "status"}
-        tabIndex={-1}
-        ref={newsBox}
-      >
-        {news?.text ?? ""}
+      {/* Two boxes that are always there, each with one role for good: a role that changes is
+          missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
+          heard again. */}
+      <p class={news?.ok ? "ok" : "visually-hidden"} role="status" tabIndex={-1} ref={newsBox}>
+        {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
+      </p>
+      <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
+        {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
       {data.names.length === 0 ? (
@@ -296,7 +304,7 @@ function NameItem({ row, kinds, canEdit, open, onToggle, act, api, refId, campai
       )}
       <div class="row">
         {row.npcId && (
-          <a class="small" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
+          <a class="button secondary" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
             {words.npcLink}
           </a>
         )}
@@ -347,11 +355,11 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
 
   // Finding the name to merge into: the same list, searched; this name itself is left out.
   useEffect(() => {
+    const mine = ++seq.current;
     if (mergeQ.trim() === "" || !api.allNames) {
       setMergeFound(null);
       return;
     }
-    const mine = ++seq.current;
     const timer = setTimeout(() => {
       api
         .allNames?.(refId, { q: mergeQ, kind: "", sort: "name", page: 1 })
@@ -360,16 +368,20 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
         })
         .catch(() => mine === seq.current && setMergeFound([]));
     }, SEARCH_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      seq.current++; // an answer still on its way is for words that are gone
+    };
   }, [api, refId, mergeQ, row.id]);
 
-  async function run(change: NameChange, ok: string): Promise<void> {
+  /** Resolves true when the change worked, so a box is emptied only then. */
+  async function run(change: NameChange, ok: string): Promise<boolean> {
     setWorking(true);
     setProblem(null);
     const said = await act(row, change, ok);
     setWorking(false);
     if (said) setProblem(said);
-    return;
+    return !said;
   }
 
   return (
@@ -453,7 +465,7 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           onSubmit={(e) => {
             e.preventDefault();
             if (other.trim() === "") return;
-            void run({ action: "add-other", other }, words.saved).then(() => setOther(""));
+            void run({ action: "add-other", other }, words.saved).then((worked) => worked && setOther(""));
           }}
         >
           <label class="field">
@@ -521,7 +533,7 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
               {words.mergeYes}
             </button>
             <button type="button" class="button secondary" onClick={() => setAsk(null)}>
-              {words.keep}
+              {words.mergeKeep}
             </button>
           </div>
         ) : (

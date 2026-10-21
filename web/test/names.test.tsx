@@ -285,11 +285,15 @@ describe("someone who can't change names", () => {
     await ready();
   });
 
-  it("shows nothing for an API without the Names routes", () => {
+  it("says it can't show the list for an API without the Names routes", () => {
     const api = mockApi("table");
     delete (api as { allNames?: unknown }).allNames;
     const { container } = render(<Names api={api} path={DM} />);
-    expect(container.textContent).toBe("");
+    expect(container.textContent).toBe(w.notYours);
+  });
+
+  it("treats a broken address as a campaign that isn't there", () => {
+    expect(namesRefFromPath("/account/names/%E0%A4%A")).toBeNull();
   });
 });
 

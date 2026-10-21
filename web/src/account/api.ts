@@ -671,7 +671,6 @@ export type RecapAudioLinks = Partial<
 
 export type RecapAction = "post" | "again" | "drop";
 
-/** Why a call failed, in a form the page can turn into plain words. */
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow {
   id: string;
@@ -728,6 +727,7 @@ export type NameChange =
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
