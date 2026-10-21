@@ -26,7 +26,12 @@ class RecordingNoticeTests(DatabaseTest):
         self.voice_ok = True
 
         async def fake_post(
-            channel_id: int, text: str, view: object = None, *, remember: object = None
+            channel_id: int,
+            text: str,
+            view: object = None,
+            *,
+            remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.posts.append((channel_id, text))
             return channel_id != VOICE or self.voice_ok

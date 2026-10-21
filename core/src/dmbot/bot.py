@@ -95,6 +95,7 @@ from dmbot.dm_screen import (
     pack_update,
     peek_view,
     rules_cards,
+    secret_posts,
     set_suggestion,
     set_update,
     update_notes,
@@ -248,6 +249,7 @@ from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import CharacterSheet, SheetStore
 from dmbot.memory.sheet_watch import SheetWatch
+from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
@@ -305,6 +307,7 @@ from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
+from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
@@ -377,9 +380,16 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
-from dmbot.ui.name_card import UndoButton, UndoConnectionButton
+from dmbot.ui.name_card import (
+    FinishPastButton,
+    UndoButton,
+    UndoConnectionButton,
+    UndoRunButton,
+    UndoSpellingButton,
+)
 from dmbot.ui.name_lists import UndoListButton
 from dmbot.ui.names import (
+    SPELLED_OUT,
     RecapNamesButton,
     ReviewButton,
     after_session_text,
@@ -427,6 +437,7 @@ TRANSCRIPT_FLUSH_S = 2.0
 TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this often
 SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
+SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
@@ -470,6 +481,9 @@ RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+SECRET_QUESTION_WAITING = (
+    "🤫 DMbot has a question for you about a secret name. Open your private messages."
+)
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
@@ -581,6 +595,15 @@ class Table:
     steward_tally: Tally = field(default_factory=Tally)
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
+    # Names someone spelled out at the table this session (#2168): watched for in every cleaned
+    # line, kept as (spelling, whom it was said by, a word nearby that sounds like it) for the
+    # after-session suggestions, and as speech hints at once. Words only, never a line.
+    spelling: spelled_out.SpellingWatcher = field(default_factory=spelled_out.SpellingWatcher)
+    spelled: list[tuple[str, int, str]] = field(default_factory=list)
+    spelled_hints: tuple[str, ...] = ()
+    held_spelled: dict[tuple[int, int], list[spelled_out.SpelledOut]] = field(
+        default_factory=dict
+    )  # spellings found in lines the off-topic filter holds, until they are labelled
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
     # last read, the schedule, and the loop that runs it (cancelled at the end).
@@ -1333,7 +1356,14 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(fightbot.FightButton)  # #1129
         self.add_dynamic_items(timer_screen.EffectButton)  # timed effects (#998)
         # Undo after forgetting a name (its card), after a restart too.
-        self.add_dynamic_items(UndoButton, UndoConnectionButton, UndoListButton)
+        self.add_dynamic_items(
+            UndoButton,
+            UndoConnectionButton,
+            UndoListButton,
+            UndoSpellingButton,
+            FinishPastButton,
+            UndoRunButton,
+        )
         # "Download transcript" in the private message when a session ends.
         self.add_dynamic_items(DownloadButton)
         self.add_dynamic_items(
@@ -1629,6 +1659,12 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
+            table.held_spelled = {k: v for k, v in table.held_spelled.items() if k[0] != user_id}
+            table.spelled = [
+                x for x in table.spelled if x[1] != user_id
+            ]  # and nothing they spelled
+            table.spelling.forget(user_id)  # nor the words they said just before
+            table.spelled_hints = tuple(w for w, _, _ in table.spelled)[-SPELLED_MAX:]  # nor hints
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
@@ -2556,6 +2592,8 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            # After the scan: a spelling can belong to a name the scan just suggested (#2168).
+            ("spelled names", lambda: self.suggest_spelled(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
@@ -3790,9 +3828,20 @@ class DMBot(commands.AutoShardedBot):
         view: discord.ui.View | None = None,
         *,
         remember: Hashable | None = None,
+        secret_of: tuple[int, str] | None = None,
     ) -> bool:
-        """Send a message; returns False (and logs) if it could not be posted."""
-        return await self.post_message(channel_id, text, view, remember=remember) is not None
+        """Send a message; returns False (and logs) if it could not be posted. `secret_of`: the
+        (server, campaign) of a question that shows a secret name, remembered so it can be
+        pulled back if the DM screen opens up (#2097)."""
+        sent = await self.post_message(channel_id, text, view, remember=remember)
+        if sent is not None and secret_of is not None:
+            # Asked again after the send: if the screen opened up meanwhile, pull it back at once.
+            campaign = await self.campaigns.get(*secret_of)
+            if campaign is None or campaign.dm_screen_visibility != "private":
+                await secret_posts.hide_one(sent)
+            else:
+                secret_posts.remember(*secret_of, sent)
+        return sent is not None
 
     async def post_message(
         self,
@@ -4322,7 +4371,19 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
-        if text and not self._topic_holds(table, cleaned or text, names_said):
+        # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
+        # filter holds for a label is left out, as for the word list.
+        # One answer for the whole line, so the callers below can't disagree (#1748).
+        holds = bool(text and self._topic_holds(table, cleaned or text, names_said))
+        if text and self.tables.get(table.guild_id) is table:
+            # Every line goes to the watcher (memory only); what it finds waits with a held line.
+            self._note_spelling(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                held_key=(utterance.user_id, utterance.start_ms) if holds else None,
+            )
+        if text and not holds:
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
             # waiting for the off-topic filter adds its words only once labelled game talk
@@ -4336,7 +4397,7 @@ class DMBot(commands.AutoShardedBot):
                 table,
                 utterance.user_id,
                 str(cleaned or text),
-                held=self._topic_holds(table, cleaned or text, names_said),
+                held=holds,
             )
         labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
@@ -4379,7 +4440,7 @@ class DMBot(commands.AutoShardedBot):
                     )
                 else:
                     self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
-        if text and self._topic_pending(table, utterance, cleaned or text, names_said):
+        if text and self._topic_pending(table, utterance, cleaned or text, holds):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
             # The cleaned line: a known name misheard and fixed live isn't new (#394).
@@ -4503,11 +4564,20 @@ class DMBot(commands.AutoShardedBot):
                     if alone:  # players may peek at the screen: the DM's own messages, not there
                         sent = await self.sidebar_send_dm(speaker, text, view)
                         posted = sent == "sent"
+                        if not posted:  # no way to ask privately: say so on the screen, no name
+                            await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
                         # Their private messages are closed: the key stays claimed, so each later
                         # line naming it doesn't fetch, send and log again for the whole session.
                         closed = sent == "forbidden"
                     else:
-                        posted = bool(await self.post(table.screen_channel_id, text, view=view))
+                        posted = bool(
+                            await self.post(
+                                table.screen_channel_id,
+                                text,
+                                view=view,
+                                secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
+                            )
+                        )
                 finally:
                     if not posted and not closed:
                         reveal.asked.discard(found.key)  # nothing was said: it may ask again
@@ -5377,11 +5447,12 @@ class DMBot(commands.AutoShardedBot):
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
 
-    def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
+    def _topic_pending(self, table: Table, utterance: Utterance, text: str, holds: bool) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
         AI, a window at a time; True if it's waiting. No AI key, or a session still
-        finishing: no filter, nothing is hidden."""
-        if not self._topic_holds(table, text, named):
+        finishing: no filter, nothing is hidden. `holds` is the line's one answer from
+        `_topic_holds` (worked out once, so the callers can't disagree)."""
+        if not holds:
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
@@ -5443,6 +5514,7 @@ class DMBot(commands.AutoShardedBot):
         stopped = [w for w in lines if not self.consent.has_consent(table.guild_id, w.speaker)]
         for waiting in stopped:
             table.held.pop((waiting.speaker, waiting.started_ms), None)
+            table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
         lines = [w for w in lines if w not in stopped]
         if not lines:
             return
@@ -5466,8 +5538,11 @@ class DMBot(commands.AutoShardedBot):
         hide: list[Waiting] = []
         for waiting, topic in zip(lines, topics, strict=True):
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
+            if topic != OFF_TOPIC and spelling:
+                self._record_spelled(table, waiting.speaker, spelling)
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
             if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
@@ -7117,6 +7192,7 @@ class DMBot(commands.AutoShardedBot):
             people=people,
             absent=absent,
             sheet=table.sheet_hints,
+            spelled=table.spelled_hints,
         )
 
     async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople:
@@ -8487,12 +8563,33 @@ class DMBot(commands.AutoShardedBot):
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
             every = spoken(secrets, players_lines(lines, players=players))
             found = every[:MAX_ASKED]
+            alone = campaign.dm_screen_visibility != "private"
+            reached = 0  # DMs who got the question privately
             for said in found:
+                if alone:  # players may look at the screen: the name goes to the DMs only
+                    for dm_id in sorted(campaign.dm_user_ids):
+                        sent = await self.sidebar_send_dm(
+                            dm_id,
+                            question_text(
+                                said.text,
+                                said.entries,
+                                private=True,
+                                campaign_name=campaign.name,
+                            ),
+                            secret_aloud_view(cid, said.alias_id, gid),
+                        )
+                        reached += sent == "sent"
+                    continue
                 await self.post(
                     table.screen_channel_id,
                     question_text(said.text, said.entries),
-                    view=secret_aloud_view(cid, said.alias_id),
+                    view=secret_aloud_view(cid, said.alias_id, gid),
+                    secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
                 )
+            if alone and found:
+                log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
+                if not reached:  # no one can be asked privately: say so, with no name
+                    await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
             if len(every) > len(found):  # the DM should know the rest exist
                 await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
             if found:
@@ -8621,6 +8718,102 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=cid):
             dms = {table.dm_user_id, *table.dm_user_ids}
             await self.memory.check_people(gid, cid, dms)
+
+    def _note_spelling(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        *,
+        held_key: tuple[int, int] | None = None,
+    ) -> None:
+        """A name spelled out at the table (#2168): the word becomes a speech hint at once (a hint
+        only, nothing says it is a name) and is kept for the end-of-session suggestion. The line is
+        from someone who agreed (the pipeline has just re-checked) and is not kept: only the word,
+        who said it and a nearby word that sounds like it. A secret name is neither hinted nor
+        suggested. The log gets counts only."""
+        found = table.spelling.note(user_id, line, time.monotonic())
+        if not found:
+            return
+        if held_key is not None:
+            # The off-topic filter has this line: its finds count only if it is labelled game
+            # talk (`_label_topics`), never for talk about something else (#1748).
+            table.held_spelled[held_key] = found
+            return
+        self._record_spelled(table, user_id, found)
+
+    def _record_spelled(
+        self, table: Table, user_id: int, found: list[spelled_out.SpelledOut]
+    ) -> None:
+        secret = table.hint_parts.secret if table.hint_parts is not None else frozenset()
+        for hit in found:
+            key = name_key(hit.word)
+            if key in secret or any(name_key(w) == key for w, _, _ in table.spelled):
+                continue
+            if len(table.spelled) >= SPELLED_MAX:
+                break
+            like = set(sound_codes(hit.word))
+            near = next(
+                (w for w in hit.near if name_key(w) != key and like & set(sound_codes(w))), ""
+            )
+            table.spelled.append((hit.word, user_id, near))
+            table.spelled_hints = (*table.spelled_hints, hit.word)[-SPELLED_MAX:]
+            log.info("Spelled out at the table: a name of %d letters", len(hit.word))
+
+    async def suggest_spelled(self, table: Table) -> None:
+        """After a session: the names spelled out at the table become suggestions for the DM to
+        check (#2168), marked "spelled out at the table". Only from people who still agree
+        (checked now, after the session), only a spelling DMbot does not already have, and
+        nothing changes without the DM. A spelling that sounds like a known name with a different
+        spelling is suggested all the same: the review shows which known name it sounds like."""
+        spelled = table.spelled
+        table.spelled = []
+        # (the watcher's recent lines are not kept past the session)
+        table.spelling = spelled_out.SpellingWatcher()
+        if self.memory is None or table.campaign_id is None or not spelled:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            agreed = await self.consent.consenting(gid)
+            known = set(await self.memory.known_keys(gid, cid))
+            added = 0
+            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            given: set[str] = set()  # suggestions that already got a spelling in this run
+            for word, user_id, near in spelled:
+                key = name_key(word)
+                if user_id not in agreed or key in known:
+                    continue
+                # Said next to a suggestion that sounds like it: that suggestion is what was being
+                # spelled, so it gets the spelling and the DM is offered to fix it (#2168).
+                target = next(
+                    (e for e in waiting if near and name_key(e.name) == name_key(near)), None
+                )
+                if target is not None and name_key(target.name) != key:
+                    if target.id in given or target.description.startswith(SPELLED_OUT):
+                        continue  # the first spelling stays; a second never silently wins
+                    given.add(target.id)
+                    try:
+                        await self.memory.set_note(
+                            gid, cid, target.id, f"{SPELLED_OUT}: {word}", source="scan"
+                        )
+                        added += 1
+                    except MemoryRuleError as exc:
+                        log.info("Skipped a spelling for a suggestion: %s", exc)
+                    continue
+                try:
+                    await self.memory.add_entity(
+                        gid,
+                        cid,
+                        type="concept",
+                        name=word,
+                        source="scan",
+                        description=SPELLED_OUT,
+                    )
+                except MemoryRuleError as exc:
+                    log.info("Skipped a spelled-out name: %s", exc)
+                    continue
+                added += 1
+            log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to

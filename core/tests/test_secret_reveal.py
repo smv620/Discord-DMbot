@@ -122,6 +122,9 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         bot.post.assert_awaited_once()
         self.assertEqual(bot.post.await_args.args[0], 55)
         self.assertEqual(bot.post.await_args.args[1], question_text("Arcane Brotherhood"))
+        self.assertIsNotNone(
+            bot.post.await_args.kwargs["secret_of"]
+        )  # pulled back if opened (#2097)
         labels = [c.item.label for c in bot.post.await_args.kwargs["view"].children]
         self.assertEqual(labels, ["Yes, players know now", "No, keep it secret"])
         await ask(bot, table, "the Arcane Brotherhood again", [BROTHERHOOD])
@@ -233,7 +236,9 @@ class TheHook(unittest.TestCase):
 
 
 def press(act: str, user: int, *, in_server: bool = True, guild: int = GUILD) -> Any:
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_screen_visibility="private"
+    )
     written = SimpleNamespace(value=[object()])
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
@@ -266,7 +271,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(interaction)
         bot.memory.make_name_not_secret.assert_not_awaited()
         self.assertEqual(
-            interaction.response.edit_message.await_args.kwargs["content"], kept_text("Auril")
+            interaction.response.edit_message.await_args.kwargs["content"], kept_text()
         )
 
     async def test_a_player_or_a_stranger_is_refused(self) -> None:
