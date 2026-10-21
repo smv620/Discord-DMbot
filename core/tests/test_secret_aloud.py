@@ -404,6 +404,15 @@ class WhenTheScreenIsOpen(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.post.await_args.args[1], SECRET_QUESTION_WAITING)
         self.assertNotIn("Auril", bot.post.await_args.args[1])
 
+    async def test_a_send_that_only_failed_says_nothing_on_the_screen(self) -> None:
+        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="peek")
+        bot.sidebar_send_dm = AsyncMock(return_value="failed")
+        from unittest import mock
+
+        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
+            await DMBot.ask_about_secrets(bot, fake_table())
+        bot.post.assert_not_awaited()  # nothing for the DM to change; it is asked next time
+
     async def test_the_private_question_carries_the_server_and_the_campaigns_name(self) -> None:
         bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="open")
         from unittest import mock

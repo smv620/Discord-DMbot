@@ -27,6 +27,7 @@ NOT_A_MESSAGE = {
     "memory/story_plan.py": "the most nodes read from one document",
     "recaps/draft.py": "characters of the last recap given to the next draft's prompt",
     "recaps/requests.py": "the longest transcribed voice note",
+    "recaps/significance.py": "characters of the earlier recap shown to the significance check",
     "rules/homebrew.py": "the longest homebrew text stored",
     "rules/house_file_link.py": "the longest link",
     "rules/rule_sets.py": "the longest link",

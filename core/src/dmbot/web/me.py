@@ -8,6 +8,7 @@ other campaigns, and servers the person isn't in, are never read.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,7 +77,12 @@ def _iso_date(seconds: int | None) -> str | None:
 
 
 async def build_me(
-    db: Database, session: Session, *, now: int, recap_audio_for_sale: bool = False
+    db: Database,
+    session: Session,
+    *,
+    now: int,
+    recap_audio_for_sale: bool = False,
+    imports_for: Callable[[int], bool] = lambda guild_id: False,
 ) -> dict[str, Any]:
     plan, grant, access = await entitlements.plan_grant_access(db, session.user_id, now)
     # The month whose hours count now (None: no meter), and the minutes used in it, read through
@@ -154,6 +160,9 @@ async def build_me(
                         # before owners were recorded) is "co-dm" for everyone.
                         "status": "active",
                         "role": "owner" if row["owner_user_id"] == session.user_id else "co-dm",
+                        # Whether importing older sessions works in its server (#2259), so the
+                        # page shows the importer only where it does.
+                        "importsOn": imports_for(guild.id),
                     }
                 )
             for row in await offered.fetchall():
