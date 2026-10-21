@@ -317,6 +317,7 @@
 
   /* Every kind of box is as tall as a thumb (#2250): the email, link, search and date boxes and the
      "who is who" lists used to be the browser's own, about 20 px high. */
+  /* (A list is as wide as its row, on a desktop too: a name's list reads best full width.) */
   .account textarea,
   .account input[type="text"],
   .account input[type="email"],
@@ -400,15 +401,16 @@
     cursor: pointer;
   }
 
-  /* The link box and its Add button (Import): side by side with room between, or stacked. */
-  .account form:has(> label.field) {
+  /* The link box and its Add button (Import): side by side with room between, or stacked. Its own
+     class, so no other form picks this up. */
+  .account .link-form {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--space-3);
   }
 
-  .account form:has(> label.field) > label.field {
+  .account .link-form > label.field {
     flex: 1 1 14rem;
   }
 

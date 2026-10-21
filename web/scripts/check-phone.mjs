@@ -84,8 +84,9 @@ const REF = "200000000000000001.cmp1.1791000000";
 const LONG_NAME = "session-with-a-really-long-file-name-that-goes-on-and-on-2026-09-14-final-v2.txt";
 
 /** Runs in the page: what sticks out sideways, and which touch targets are too small or too close. */
-function measure() {
-  const vw = innerWidth;
+function measure(vw) {
+  // The width the phone has, passed in: a mobile browser widens its own layout window (innerWidth)
+  // to fit whatever is too wide, so comparing with innerWidth could never fail (#2250 review).
   const out = { sw: document.documentElement.scrollWidth, vw, over: [], small: [], close: [] };
   const shown = (el) => {
     const r = el.getBoundingClientRect();
@@ -181,9 +182,11 @@ for (const width of [360, 390]) {
     try {
       await page.goto(origin + address, { waitUntil: "load" });
       await page.locator("main").first().waitFor();
+      // PHONE_PROOF=<px> adds a block that wide to every page, to prove the check can fail.
+      if (process.env.PHONE_PROOF) await page.evaluate((px) => { const d = document.createElement("div"); d.style.cssText = `width:${px}px;height:10px`; (document.querySelector("main") ?? document.body).append(d); }, Number(process.env.PHONE_PROOF));
       if (steps) await steps(page);
       await page.waitForTimeout(500);
-      const m = await page.evaluate(measure);
+      const m = await page.evaluate(measure, width);
       if (m.sw > m.vw) problems.push(`the page scrolls sideways (${m.sw} px in a ${m.vw} px window)`);
       const list = (what, items, max) => {
         const all = [...new Set(items)];
