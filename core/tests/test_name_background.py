@@ -110,6 +110,66 @@ class TheReader(unittest.TestCase):
         self.assertEqual(merged[0].secret, ("Brother Aldric",))
         self.assertIn("never in also", bg.instructions())
 
+    def test_two_that_hold_each_other_keep_the_first_and_a_chain_loses_nothing(self) -> None:
+        def entry(name: str, *secret: str) -> bg.Found:
+            return bg.Found(name, "npc", (), secret, "")
+
+        pair = bg.merge(
+            [[entry("Vecnor", "Brother Aldric"), entry("Brother Aldric", "Vecnor")]], ()
+        )
+        self.assertEqual([f.name for f in pair], ["Vecnor"])
+        chain = bg.merge(
+            [[entry("Brother Aldric"), entry("Vecnor", "Brother Aldric"), entry("Mira", "Vecnor")]],
+            (),
+        )
+        self.assertEqual([f.name for f in chain], ["Brother Aldric", "Mira"])  # nobody lost
+        loop = bg.merge(
+            [
+                [
+                    entry("Vecnor", "Brother Aldric"),
+                    entry("Brother Aldric", "Mira"),
+                    entry("Mira", "Vecnor"),
+                ]
+            ],
+            (),
+        )
+        shown = {f.name for f in loop} | {s for f in loop for s in f.secret}
+        self.assertEqual(shown, {"Vecnor", "Brother Aldric", "Mira"})  # every name is somewhere
+        self.assertEqual([f.name for f in loop], ["Vecnor", "Mira"])
+
+    def test_a_folded_entrys_other_spellings_arrive_as_secrets_never_public(self) -> None:
+        def entry(name: str, *also: str, secret: tuple[str, ...] = ()) -> bg.Found:
+            return bg.Found(name, "npc", also, secret, "")
+
+        merged = bg.merge(
+            [[entry("Vecnor", secret=("Brother Aldric",)), entry("Brother Aldric", "Aldric")]], ()
+        )
+        (vecnor,) = merged
+        self.assertEqual(vecnor.name, "Vecnor")
+        self.assertEqual(vecnor.secret, ("Brother Aldric", "Aldric"))
+        self.assertEqual(vecnor.also, ())  # the disguise is never a public spelling
+        # a spelling the holder already has, or another entry's own name, is not added twice
+        again = bg.merge(
+            [
+                [
+                    entry("Vecnor", secret=("Brother Aldric", "Aldric")),
+                    entry("Brother Aldric", "Aldric"),
+                ]
+            ],
+            (),
+        )
+        self.assertEqual(again[0].secret, ("Brother Aldric", "Aldric"))
+
+    def test_a_folded_disguise_takes_no_slot_so_the_cap_never_drops_its_holder(self) -> None:
+        def entry(name: str, *secret: str) -> bg.Found:
+            return bg.Found(name, "npc", (), secret, "")
+
+        found = [entry("Vecnor", "Brother Aldric"), entry("Brother Aldric"), entry("Mira")]
+        merged = bg.merge([found], (), cap=2)
+        self.assertEqual([f.name for f in merged], ["Vecnor", "Mira"])  # the disguise cost nothing
+        self.assertEqual(merged[0].secret, ("Brother Aldric",))
+        self.assertEqual([f.name for f in bg.merge([found], (), cap=1)], ["Vecnor"])
+
     def test_a_spell_is_looked_for_among_ideas_and_items_only(self) -> None:
         place = bg.Found("Sanctuary", "place", (), (), "")
         wish = bg.Found("Wish", "npc", (), (), "")
@@ -253,33 +313,6 @@ class ThePath(NamesTest):
         )
         for word in ("from his tower", "near Oakmere", "carries Heartseeker"):
             self.assertEqual(await self.log_count(ids, word), 0, word)  # nowhere in the log
-
-    def test_two_that_hold_each_other_keep_the_first_and_a_chain_loses_nothing(self) -> None:
-        def entry(name: str, *secret: str) -> bg.Found:
-            return bg.Found(name, "npc", (), secret, "")
-
-        pair = bg.merge(
-            [[entry("Vecnor", "Brother Aldric"), entry("Brother Aldric", "Vecnor")]], ()
-        )
-        self.assertEqual([f.name for f in pair], ["Vecnor"])
-        chain = bg.merge(
-            [[entry("Brother Aldric"), entry("Vecnor", "Brother Aldric"), entry("Mira", "Vecnor")]],
-            (),
-        )
-        self.assertEqual([f.name for f in chain], ["Brother Aldric", "Mira"])  # nobody lost
-        loop = bg.merge(
-            [
-                [
-                    entry("Vecnor", "Brother Aldric"),
-                    entry("Brother Aldric", "Mira"),
-                    entry("Mira", "Vecnor"),
-                ]
-            ],
-            (),
-        )
-        shown = {f.name for f in loop} | {s for f in loop for s in f.secret}
-        self.assertEqual(shown, {"Vecnor", "Brother Aldric", "Mira"})  # every name is somewhere
-        self.assertEqual([f.name for f in loop], ["Vecnor", "Mira"])
 
     async def test_the_log_gate_leaves_a_later_note_alone(self) -> None:
         from dmbot.memory.store import _forget_quotes

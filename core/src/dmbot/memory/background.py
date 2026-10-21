@@ -309,7 +309,32 @@ def merge(
             settle(key, True)  # nobody holds it
     for key in place:  # what is left hangs in a loop: the earliest stays
         settle(key, True)
-    out = [f for f in out if kept_keys[name_key(f.name)]]
+    # The cap counts the kept entries only: a folded disguise takes no slot, so it can never
+    # cost its holder one. A holder that is cut takes its folded disguise's spellings with it.
+    folded = [f for f in out if not kept_keys[name_key(f.name)]]
+    out = [f for f in out if kept_keys[name_key(f.name)]][:cap]
+    # A folded entry's other spellings name the same disguise, so they join its holder as
+    # secret spellings (never public ones): "Brother Aldric also [Aldric]" folded into Vecnor
+    # leaves Vecnor holding "Aldric" in secret. A loop is allowed to leave a kept entry as
+    # another kept entry's secret too (Vecnor is an entry and Mira's secret): every name is
+    # then somewhere, and nothing is lost to the fold.
+    extra: dict[str, list[str]] = {}
+    for f in folded:
+        above = holder.get(name_key(f.name))
+        if above is not None:
+            extra.setdefault(above, []).extend(f.also)
+    joined: list[Found] = []
+    for f in out:
+        have = {name_key(x) for x in (f.name, *f.also, *f.secret)}
+        more: list[str] = []
+        for a in extra.get(name_key(f.name), ()):
+            if name_key(a) not in have and name_key(a) not in skip:
+                have.add(name_key(a))
+                more.append(a)
+        joined.append(
+            Found(f.name, f.kind, f.also, (*f.secret, *more)[:MAX_ALSO], f.quote) if more else f
+        )
+    out = joined
     # An other spelling that is another name's own name is that name's, not an alias; and a
     # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}
@@ -327,7 +352,7 @@ def merge(
         )
         for f in out
     ]
-    return out[:cap]
+    return out
 
 
 def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
