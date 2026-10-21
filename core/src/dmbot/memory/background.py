@@ -239,7 +239,9 @@ def merge(
     rules: tuple[str, str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
-    leaving out names DMbot already has, ordinary words and game terms, at most `cap`. `rules`
+    leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
+    that is a disguise of another entry folds into it, and its other spellings become that
+    entry's secret spellings. `rules`
     (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     order: list[str] = []
@@ -309,7 +311,35 @@ def merge(
             settle(key, True)  # nobody holds it
     for key in place:  # what is left hangs in a loop: the earliest stays
         settle(key, True)
-    out = [f for f in out if kept_keys[name_key(f.name)]]
+    # The cap counts the kept entries only: a folded disguise takes no slot, so it can never
+    # cost its holder one. A holder that is cut takes its folded disguise's spellings with it.
+    folded = [f for f in out if not kept_keys[name_key(f.name)]]
+    out = [f for f in out if kept_keys[name_key(f.name)]][:cap]
+    # A folded entry's other spellings (its secret ones too) name the same disguise, so they join
+    # its holder as secret spellings, never public ones and never another entry's own name:
+    # "Brother Aldric also [Aldric]" folded into Vecnor leaves Vecnor holding "Aldric" in secret.
+    # A loop is allowed to leave a kept entry as another kept entry's secret too (Vecnor is an
+    # entry and Mira's secret): every name is then somewhere, and nothing is lost to the fold.
+    extra: dict[str, list[str]] = {}
+    for gone in folded:
+        top = holder.get(name_key(gone.name))
+        if top is not None:
+            extra.setdefault(top, []).extend((*gone.also, *gone.secret))
+    joined: list[Found] = []
+    entry_names = {name_key(f.name) for f in out}  # another entry's own name stays that entry's
+    for f in out:
+        have = {name_key(x) for x in (f.name, *f.also, *f.secret)} | entry_names
+        carried: list[str] = []
+        for a in extra.get(name_key(f.name), ()):
+            if name_key(a) not in have and name_key(a) not in skip:
+                have.add(name_key(a))
+                carried.append(a)
+        joined.append(
+            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote)
+            if carried
+            else f
+        )
+    out = joined
     # An other spelling that is another name's own name is that name's, not an alias; and a
     # spelling a name holds as secret is never also public.
     names = {name_key(f.name) for f in out}
@@ -327,7 +357,7 @@ def merge(
         )
         for f in out
     ]
-    return out[:cap]
+    return out
 
 
 def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:

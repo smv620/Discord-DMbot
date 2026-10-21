@@ -110,6 +110,9 @@ export const text = {
   pageNewer: "Newer",
   pageOlder: "Older",
   pageOldest: "Oldest",
+  // What a page-bar button is called to a screen reader: the move, and the page it goes to (a
+  // disabled one keeps just the move: it goes nowhere).
+  pageTo: (move: string, target: number): string => `${move}, page ${target}`,
   pageBox: "Page",
   pageGo: "Go",
   pageOf: (pages: number): string => `of ${pages}`,

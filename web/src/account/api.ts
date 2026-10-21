@@ -543,6 +543,9 @@ export interface ImportProgress {
     state: ImportState;
     reason: string | null;
     stage?: ImportStage;
+    /** This session's own recap (its address is `/account/recaps/<recap>`), sent for the stages that
+     * have a recap or a held one; null otherwise, missing from an API older than #2240. */
+    recap?: string | null;
     /** The name questions its recap waits on. */
     namesToAnswer?: number;
     /** True when the name check for this session was given up. */

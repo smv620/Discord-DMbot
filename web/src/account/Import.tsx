@@ -75,6 +75,11 @@ function RecapsWhyLine({ why }: { why: string }) {
   );
 }
 
+/** Where a session's recap link goes: its own recap when the API names it (#2240), else the list. */
+function recapHref(s: Session): string {
+  return s.recap ? `/account/recaps/${encodeURIComponent(s.recap)}` : "/account/recaps";
+}
+
 /** The words for where one session has got to; the plain state's words when there is no stage. */
 function stageLine(s: Session): string {
   if (!s.stage) return words.state[s.state] ?? s.state;
@@ -534,7 +539,7 @@ export default function Import({
               {s.stage === "waiting_for_names" && (
                 <a
                   class="small"
-                  href="/account/recaps"
+                  href={recapHref(s)}
                   aria-label={words.linkFor(words.namesLink, shownApi(s.file))}
                 >
                   {words.namesLink}
@@ -543,7 +548,8 @@ export default function Import({
               {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
                 <a
                   class="small"
-                  href="/account/recaps"
+                  // A failed recap may have no page of its own to open; its words say "recap list".
+                  href={s.stage === "recap_failed" ? "/account/recaps" : recapHref(s)}
                   aria-label={words.linkFor(words.recapLink, shownApi(s.file))}
                 >
                   {words.recapLink}
