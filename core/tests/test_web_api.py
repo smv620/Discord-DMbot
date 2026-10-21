@@ -136,6 +136,26 @@ class WebApi(DatabaseTest):
             done = await self.sign_in_returning_to(wanted)
             self.assertEqual(done.headers["location"], f"{SITE}/account", wanted)
 
+    def clears_the_return_cookie(self, response: httpx.Response) -> bool:
+        return any(
+            h.startswith("__Host-dmbot_signin_next=") and "max-age=0" in h.lower()
+            for h in response.headers.get_list("set-cookie")
+        )
+
+    async def test_the_return_cookie_is_cleared_when_sign_in_works(self) -> None:
+        done = await self.sign_in_returning_to("/account/recaps")
+        self.assertTrue(self.clears_the_return_cookie(done))
+
+    async def test_the_return_cookie_is_cleared_when_sign_in_fails(self) -> None:
+        start = await self.client.get("/auth/discord/start", params={"next": "/account/recaps"})
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.client.cookies.clear()  # a different browser: the state does not match
+        done = await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+        self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
+        self.assertTrue(self.clears_the_return_cookie(done))
+
     async def test_the_asked_for_page_is_forgotten_after_one_sign_in(self) -> None:
         await self.sign_in_returning_to("/account/recaps")
         again = await self.sign_in_returning_to(None)

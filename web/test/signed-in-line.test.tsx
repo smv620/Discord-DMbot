@@ -5,9 +5,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, httpApi } from "../src/account/api";
+import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import SignedInLine from "../src/account/SignedInLine";
+import Homebrew from "../src/account/Homebrew";
+import HouseRules from "../src/account/HouseRules";
+import Import from "../src/account/Import";
+import Names from "../src/account/Names";
+import Recaps from "../src/account/Recaps";
+import Transcripts from "../src/account/Transcripts";
 import TranscriptsIsland from "../src/account/TranscriptsIsland";
 import { signedInLine as w } from "../src/content/signed-in-words";
 
@@ -76,7 +82,7 @@ describe("the signed-in line", () => {
     };
     const second = render(<SignedInLine api={down} />);
     await waitFor(() => expect(second.queryByText(w.checking)).toBeNull());
-    expect(within(second.container).queryByText(w.notSignedIn, { exact: false })).toBeNull();
+    expect(within(second.container as HTMLElement).queryByText(w.notSignedIn, { exact: false })).toBeNull();
     expect(second.queryByRole("button", { name: w.signOut })).toBeNull();
   });
 });
@@ -110,5 +116,28 @@ describe("every signed-in page has it", () => {
   it.each(["Recaps", "Transcripts", "HouseRules", "Homebrew", "Import", "Names"])("%sIsland", (name) => {
     const source = readFileSync(`src/account/${name}Island.tsx`, "utf8");
     expect(source).toContain("<SignedInLine api={api} />");
+  });
+});
+
+describe("signed out, a page has exactly one Sign in with Discord button", () => {
+  // The page's own panel keeps its sentence; the button is the shared line's, so there is one to press.
+  it.each([
+    ["Recaps", (api: AccountApi) => <Recaps api={api} path="/account/recaps" />],
+    ["Transcripts", (api: AccountApi) => <Transcripts api={api} path="/account/transcripts/100.cmp1" />],
+    ["HouseRules", (api: AccountApi) => <HouseRules api={api} path="/account/house-rules/100.cmp1" />],
+    ["Homebrew", (api: AccountApi) => <Homebrew api={api} path="/account/homebrew/100.cmp1" />],
+    ["Names", (api: AccountApi) => <Names api={api} path="/account/names/100.cmp1" />],
+    ["Import", (api: AccountApi) => <Import api={api} path="/account/import/100.cmp1" />],
+  ])("%s", async (_name, page) => {
+    const api = mockApi("signed-out");
+    render(
+      <>
+        <SignedInLine api={api} />
+        {page(api)}
+      </>,
+    );
+    await screen.findByText(w.notSignedIn, { exact: false });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getAllByRole("link", { name: w.signIn })).toHaveLength(1);
   });
 });

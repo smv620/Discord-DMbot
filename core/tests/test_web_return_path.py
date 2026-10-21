@@ -29,6 +29,7 @@ class SafeReturnPath(unittest.TestCase):
             "/account/../admin",
             "/account/./x",
             "/account\\evil",
+            "/account/\\evil.com",
             "https://evil.example/account",
             "/account?x=1",
             "/account#frag",
