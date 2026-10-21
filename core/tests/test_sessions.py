@@ -316,7 +316,12 @@ class SaveAndResume(SessionTests):
         self.posts: list[tuple[int, str]] = []
 
         async def fake_post(
-            channel_id: int, text: str, view: object = None, *, remember: object = None
+            channel_id: int,
+            text: str,
+            view: object = None,
+            *,
+            remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.posts.append((channel_id, text))
             return True
@@ -1521,6 +1526,71 @@ class SaveAndResume(SessionTests):
         for _ in range(10):
             await asyncio.sleep(0)
 
+    def fixing(self, table: Any) -> list[Any]:
+        """Every line is cleaned with one sure fix by sound; the counts are collected."""
+        from dmbot.transcript.cleaner import SOUND, Cleaned, Fix
+
+        counted: list[Any] = []
+        table.name_lookup = object()
+        patcher = patch("dmbot.bot.find_mentions", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
+            text, (Fix(0, 4, "Kerr", "Cerric", "e1", SOUND),)
+        )
+        self.bot._count_heard_forms = lambda t, user, fixes: counted.append((user, len(fixes)))  # type: ignore[method-assign,assignment]
+        return counted
+
+    async def test_a_game_talk_line_is_counted_for_the_say_it_this_way_offers(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        counted = self.fixing(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Kerr sneaks past the guards")
+        self.assertEqual(counted, [(PLAYER, 1)])
+
+    async def test_a_held_line_is_not_counted_whatever_its_label(self) -> None:
+        for answer in ("1 other\n2 other", "1 game\n2 game"):
+            table = await self.filtered(answer)
+            counted = self.fixing(table)
+            self.said(table, "Kerr called about the spreadsheet")
+            self.said(table, "Kerr sneaks past the guards", at_ms=5_000)
+            await self.settle()
+            self.assertEqual(counted, [], answer)
+
+    def pronounced_calls(self, table: Any) -> list[Any]:
+        """Every line is looked at for a name said with its pronunciation; the calls are kept."""
+        calls: list[Any] = []
+        self.fixing(table)
+        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign]
+            (user, kw.get("held_key"))
+        )
+        return calls
+
+    async def test_a_game_talk_line_is_looked_at_for_a_pronunciation_at_once(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [(PLAYER, None)])
+
+    async def test_a_held_line_is_looked_at_with_its_key_so_it_waits_for_its_label(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.said(table, "Kerr called about the spreadsheet")
+        self.said(table, "Cerric is pronounced Seh-rick", at_ms=5_000)
+        await self.settle()
+        self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
+        self.assertTrue(all(key is not None for _, key in calls))  # both are held
+
+    async def test_a_table_that_is_only_finishing_is_not_looked_at(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None
+        self.bot.tables.pop(GUILD, None)  # the session has ended, but is still finishing
+        self.bot._ending[GUILD] = [table]
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [])
+
     async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
         table = await self.filtered("1 other\n2 game")
         self.said(table, "my boss called again")
@@ -1593,6 +1663,47 @@ class SaveAndResume(SessionTests):
         await self.settle()
         self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # when unsure, keep
         self.assertTrue(table.vocabulary.is_word("sneak"))
+
+    async def spelled_through_the_gate(self, answer: str) -> Any:
+        """#2168: the find is held with the line, not skipped, until the line is labelled."""
+        table = await self.filtered(answer)
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        self.assertEqual(table.spelled, [])  # held: not recorded yet
+        self.assertIn((PLAYER, 5_000), table.held_spelled)
+        await self.settle()
+        self.assertEqual(table.held_spelled, {})
+        return table
+
+    async def test_a_spelled_line_labelled_game_talk_is_recorded(self) -> None:
+        table = await self.spelled_through_the_gate("1 game\n2 game")
+        self.assertEqual([w for w, _, _ in table.spelled], ["Brannoch"])
+
+    async def test_a_spelled_line_labelled_off_topic_is_dropped(self) -> None:
+        table = await self.spelled_through_the_gate("1 other\n2 other")
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_drops_a_held_spelling_and_what_was_kept(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        table.spelled.append(("Kael", PLAYER, ""))  # already kept, and hinted
+        table.spelled_hints = ("Kael",)
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertEqual((table.held_spelled, table.spelled, table.spelled_hints), ({}, [], ()))
+        await self.settle()
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_forgets_their_ask_and_the_words_before_it(self) -> None:
+        import time
+
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "We were sent by Brannoch")
+        self.said(table, "how do you spell that", at_ms=2_000)
+        self.bot.stop_recording(GUILD, PLAYER)
+        # Right now, inside the windows: their ask is gone, so another's letters don't count.
+        later = table.spelling.note(DM, "B R A N N O C H", time.monotonic())
+        self.assertEqual(later, [])
 
     async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
         table = await self.filtered("1 other\n2 game")

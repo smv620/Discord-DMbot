@@ -68,7 +68,7 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
     async def plan_allows(*_: Any, **__: Any) -> bool:
         return True
 
-    newest = [SimpleNamespace(started_at=newer)] if newer else [SimpleNamespace(started_at=AT)]
+    newest = [SimpleNamespace(id="s", started_at=newer or AT)]
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True, site_url="https://site.example.com"),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
@@ -89,10 +89,11 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         post_message=AsyncMock(return_value=SimpleNamespace(id=1, content="q")),
         decision_lines=MagicMock(close=AsyncMock(), remember_pressed=MagicMock()),
         _short_asks={},
+        recap_holds=None,
     )
     for name in (
         "recap_session", "_queue_recap", "recap_allowed", "recap_short_expired",
-        "recap_write_anyway", "_expire_short_asks",
+        "recap_write_anyway", "_expire_short_asks", "_hold_or_queue", "_say_writing",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -232,6 +233,14 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         await button.callback(i)
         self.assertIn(screen.ALREADY, i.edit_original_response.await_args.kwargs["content"])
         bot.post.assert_not_awaited()
+
+    async def test_pressing_write_a_recap_waits_for_the_name_answers_like_any_session(self) -> None:
+        bot = fake_bot([said(0, 10)])
+        bot.recap_write_anyway = AsyncMock(return_value="held")
+        button, i = press_on(bot, "go")
+        await button.callback(i)
+        self.assertIn(screen.HELD, i.edit_original_response.await_args.kwargs["content"])
+        self.assertEqual(screen.HELD, "Waiting for your answers about names.")
 
 
 if __name__ == "__main__":

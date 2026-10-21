@@ -52,6 +52,23 @@ def _iso_time(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
 
 
+def _plan_state(plan: entitlements.Entitlement, now: int) -> dict[str, Any]:
+    """The plan line's state and its dates (#2165). Dates are ISO days; the page words them."""
+    expired = plan.status == "lapsed" or (plan.status == "active" and not plan.usable(now))
+    if expired:
+        ended = plan.lapsed_at or plan.ends_at or plan.period_end
+        return {"state": "expired", "endedOn": _iso_date(ended)}
+    if plan.ends_at is not None:
+        return {"state": "ending"}
+    if plan.next_plan and plan.next_plan != plan.plan and plan.next_plan_on is not None:
+        return {
+            "state": "changing",
+            "nextPlan": plan.next_plan,
+            "nextPlanOn": _iso_date(plan.next_plan_on),
+        }
+    return {"state": "active"}
+
+
 def _iso_date(seconds: int | None) -> str | None:
     if seconds is None:
         return None
@@ -237,9 +254,9 @@ async def build_me(
         **({"dmbotId": account_number} if account_number else {}),
         "experiencePoints": experience,
         "canMove": can_move(plan, now),
-        # The Support form is for every account with a plan row, Try It too (#1435); someone with
-        # no account yet sees the public Q&A link (#1340).
-        "canSupport": support.may_write(plan),
+        # The Support form is for every account with a plan row, Try It too (#1435), and for free
+        # access without one (#2190); someone with no account yet sees the public Q&A link (#1340).
+        "canSupport": support.may_write(plan, access),
         # A first payment that failed and no payment since: the page says "try again" (#922).
         # Left out otherwise, so the common reply is unchanged.
         **({"firstPaymentFailed": True} if first_failed else {}),
@@ -259,7 +276,12 @@ async def build_me(
             "graceEndsOn": _iso_date(plan.grace_ends_at),
         }
         # Cancelled on the payment page: it works to this date and then ends (#824).
-        | ({"endsOn": _iso_date(plan.ends_at)} if plan.ends_at is not None else {}),
+        | ({"endsOn": _iso_date(plan.ends_at)} if plan.ends_at is not None else {})
+        # What the plan is doing, for the account page's plan line (#2165): "active" (renews),
+        # "ending" (cancelled, still works), "changing" (another plan starts at the period's end)
+        # or "expired" (it has stopped). Read from what the payment company's events stored; the
+        # page load never asks the company.
+        | _plan_state(plan, now),
         # Free access (#771): "free" (the owner's list or the admin's grant: people see
         # "Free access", never why), "paid" or "none". endsOn: a grant's end date.
         # stillPaying: covered while a paid plan still works, so the page offers to stop

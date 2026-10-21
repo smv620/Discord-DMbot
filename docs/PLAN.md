@@ -4124,7 +4124,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   higher, `pcm_24000`), and `RECAP_AUDIO_LIVE` on the site. Narration comes with Guild and Pro
   (`RECAP_AUDIO_PLANS`); on the other paid plans it is an add-on priced from one constant
   (`RECAP_AUDIO_PRICE_CENTS`, web `recap-audio.ts`; the price is the owner's, #1385). A DM may
-  ask for the audio again once every 10 minutes (#1418).
+  ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
+  again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
+  spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
+  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
+  once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
+  gets that audio afterwards, for its page. Recaps left in that state before this change (when they
+  never got it) are marked failed by migration 0149, so nothing old is narrated without a new press.
 - **Monthly allowance** (Supervisor decision 2026-10-16, #1428, #1437, #1445): each campaign gets
   **10 recaps a month** and **8 narrated ones** (`DMBOT_RECAPS_PER_MONTH`,
   `DMBOT_RECAP_AUDIO_PER_MONTH`; the site mirrors them in `recap-words.ts`, change both
@@ -4273,7 +4280,7 @@ months.
   ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
   and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
   `asked` with no AI call, #1518), the 5-answer limit is reached, the account has no address, or the helper
-  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (the `<dmbot private>` email) to
+  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md) to
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
@@ -4294,8 +4301,26 @@ months.
   come on any day of that week.
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
-  anyone else's and never their own words back (#1458). The privacy page says all of this; the
+  anyone else's (#1458). **Opening a ticket shows its whole conversation** (owner, 2026-10-21,
+  replacing #1458's "never their own words back"): their question, each of the helper's answers,
+  each of their emailed replies and each of the team's replies, oldest first, each labelled
+  "You", "DMbot's helper (a program)" or "DMbot team" with its date. Only the ticket's own account
+  sees it. The privacy page says all of this; the
   site's words show only when `SUPPORT_AI_LIVE` is on (`support-words.ts`).
+- **The email chain is kept** (owner, 2026-10-21). A ticket's history is the conversation: the
+  question, the helper's answers, the person's emailed replies and the team's replies, all kept
+  in `support_tickets` and `support_replies` for the ticket's life (12 months), never trimmed to
+  the latest. Every email about a ticket to the person (the helper's answer, the team's reply, the
+  "a person will reply" note) carries the conversation so far below the new message, newest first,
+  each part labelled and dated as on the account page, like an ordinary email reply. The history
+  starts with one fixed line ("Earlier in this conversation:") that `support_mail` cuts at, so a
+  reply from a mail program that adds no ">" still stores only the new words. All of a
+  ticket's emails share the subject `Re: <subject>` and thread together in the person's mail
+  (`In-Reply-To` and `References` naming the ticket's earlier emails), and the team's "Needs the
+  team" email carries the whole conversation too. An emailed reply is stored without the quoted
+  text below it (`support_mail`), since the earlier parts are already kept; a reply that is only
+  quoted text is not stored. The 30-reply flood limit per ticket stays. Mail the team answers
+  straight from the team inbox, outside the admin page, is not part of the ticket.
 - **Spend** is bounded by the 5 answers per ticket, the Try It limit of three tickets a day and
   one waiting, and the owner's spend limit on the Anthropic console. The web API holds
   `ANTHROPIC_API_KEY` for this one use (a compose pass-through, never a web setting).

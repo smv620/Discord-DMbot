@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
 import unittest.mock
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
+from dmbot.transcript import import_link
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import sessions as web_sessions
@@ -69,6 +72,165 @@ class WithImports(Base):
         return await imports.confirm(
             self.web, self.session, self.ref_c, files(*pairs), plan, **self.kw
         )
+
+
+class TheLinks(WithImports):
+    """Google Doc links next to uploads (#2140): each becomes a file, then follows the same path."""
+
+    DOC = "https://docs.google.com/document/d/" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+    def reader(self, texts: dict[str, str | import_link.DocError]) -> Any:
+        async def read(link: object) -> str:
+            got = texts[str(link)]
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        return unittest.mock.patch.object(import_link, "read_doc", read)
+
+    async def test_a_shared_doc_previews_and_imports_like_a_file(self) -> None:
+        with self.reader({self.DOC: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+            (one,) = got["files"]
+            self.assertEqual(
+                (one["name"], one["format"], one["lineCount"]), ("Google Doc 1.txt", "plain", 3)
+            )
+            done = await imports.confirm(
+                self.web, self.session, self.ref_c, None,
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "Google Doc 1.txt", "date": "2026-09-14"}],
+                },
+                links=[self.DOC], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(
+            done["sessions"],
+            [{"file": "Google Doc 1.txt", "state": "waiting", "writeRecap": False}],
+        )
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
+        err = import_link.DocError
+        other = self.DOC + "x"
+        with self.reader({self.DOC: err("doc_not_shared"), other: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                links=[self.DOC, other], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("a.txt", None), ("Google Doc 1.txt", "doc_not_shared"), ("Google Doc 2.txt", None)],
+        )
+
+    async def test_a_link_that_is_not_a_google_doc_is_marked(self) -> None:
+        got = await imports.preview(
+            self.web, self.session, self.ref_c, None, links=["https://example.com/x"], **self.kw
+        )
+        self.assertEqual(got["files"][0]["error"], "not_a_google_doc")
+
+    async def test_links_and_files_count_together_toward_the_limit(self) -> None:
+        many = [(f"{n}.txt", CRAIG) for n in range(imports.MAX_FILES)]
+        with self.assertRaises(RecapError) as refused:
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(*many), links=[self.DOC], **self.kw
+            )
+        self.assertEqual(refused.exception.code, "too_many_files")
+        with self.assertRaises(RecapError):
+            await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC] * 21, **self.kw
+            )
+
+    async def test_nothing_at_all_is_refused_and_a_bad_links_value_too(self) -> None:
+        for files_, links in ((None, None), ([], []), (None, "https://x"), (None, {"a": 1})):
+            with self.assertRaises(RecapError):
+                await imports.preview(
+                    self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                )
+
+    async def test_a_bad_request_fetches_nothing(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        bad = (
+            ("x", [self.DOC]),  # files is not a list
+            ([{"name": "Google Doc 1.txt", "text": CRAIG}], [self.DOC]),  # a name taken
+            ([{"name": "a.txt", "text": ""}, {"name": "a.txt", "text": ""}], [self.DOC]),
+            ([{"text": "no name"}], [self.DOC]),
+        )
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            for files_, links in bad:
+                with self.assertRaises(RecapError):
+                    await imports.preview(
+                        self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                    )
+        fake.assert_not_awaited()
+
+    async def test_the_same_doc_twice_is_read_once_and_the_repeat_is_refused(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        spelled = self.DOC + "/edit?usp=sharing"  # another spelling of the same document
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC, spelled], **self.kw
+            )
+        self.assertEqual(fake.await_count, 1)
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("Google Doc 1.txt", None), ("Google Doc 2.txt", "repeated_link")],
+        )
+
+    async def test_a_cancelled_request_cancels_the_reads_still_running(self) -> None:
+        started = asyncio.Event()
+        cancelled: list[bool] = []
+
+        async def slow(_link: object) -> str:
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return CRAIG
+
+        with unittest.mock.patch.object(import_link, "read_doc", slow):
+            task = asyncio.ensure_future(
+                imports.preview(
+                    self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+                )
+            )
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(0.05)
+        self.assertEqual(cancelled, [True])
+
+    async def test_a_slow_google_marks_the_unfinished_docs_unreachable(self) -> None:
+        async def slow(_link: object) -> str:
+            await asyncio.sleep(5)
+            return CRAIG
+
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", slow),
+            unittest.mock.patch.object(imports, "LINKS_DEADLINE_S", 0.05),
+        ):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+        self.assertEqual(got["files"][0]["error"], "doc_unreachable")
+
+    async def test_a_non_dm_reads_no_doc(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", fake),
+            self.assertRaises(RecapError),
+        ):
+            await imports.preview(self.web, bob, self.ref_c, None, links=[self.DOC], **self.kw)
+        fake.assert_not_awaited()
 
 
 class ThePreviewAndCheck(WithImports):
@@ -130,12 +292,71 @@ class TheStore(WithImports):
             {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 1}]},
             ("a.txt", CRAIG),
         )
-        self.assertEqual(done["sessions"], [{"file": "a.txt", "state": "waiting"}])
+        self.assertEqual(
+            done["sessions"], [{"file": "a.txt", "state": "waiting", "writeRecap": False}]
+        )
         (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
         lines = await self.transcripts.lines(THURSDAY.id, stored.id)
         self.assertEqual({line.user_id for line in lines}, {MIRA})
         self.assertEqual(len(lines), 2)
         self.assertEqual(stored.speakers, (MIRA,))
+
+    async def write_recap_of(self) -> dict[str, bool]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT file_name, write_recap FROM session_imports")
+            return {r["file_name"]: r["write_recap"] for r in await cur.fetchall()}
+
+    async def test_write_recaps_is_kept_for_the_sessions_the_dm_chose_only(self) -> None:
+        plan = {
+            "mapping": MAPPING,
+            "sessions": [
+                {"file": "a.txt", "date": "2026-09-14", "order": 1, "writeRecap": True},
+                {"file": "b.txt", "date": "2026-09-15", "order": 1},
+                {"file": "c.txt", "date": "2026-09-16", "order": 1, "writeRecap": "yes"},
+            ],
+        }
+        done = await self.confirm(plan, ("a.txt", CRAIG), ("b.txt", CRAIG), ("c.txt", CRAIG))
+        self.assertEqual(
+            {s["file"]: s["writeRecap"] for s in done["sessions"]},
+            {"a.txt": True, "b.txt": False, "c.txt": False},
+        )
+        self.assertEqual(
+            await self.write_recap_of(), {"a.txt": True, "b.txt": False, "c.txt": False}
+        )  # (only a plain true counts)
+
+    async def test_the_choice_door_is_for_a_dm_of_the_campaign_while_it_waits(self) -> None:
+        done = await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            ("a.txt", CRAIG),
+        )
+        (stored,) = await self.transcripts.sessions(THURSDAY.id, self.one.id)
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        async with self.web.user(BOB.id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                (THURSDAY.id, self.one.id, stored.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertFalse(row["r"])  # not a DM of this campaign
+        self.assertEqual(await self.write_recap_of(), {"a.txt": False})
+        self.assertEqual(done["sessions"][0]["writeRecap"], False)
+        async with self.db.guild(THURSDAY.id) as conn:  # once it is being cleaned it is too late
+            await conn.execute("UPDATE session_imports SET state = 'working'")
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_write_recap(%s, %s, %s, TRUE) AS r",
+                (THURSDAY.id, self.one.id, stored.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertFalse(row["r"])
 
     async def test_the_door_drops_a_line_of_anyone_not_recorded_whatever_it_is_sent(self) -> None:
         sent = [
@@ -449,6 +670,29 @@ class TheRoutes(WithImports):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["files"][0]["speakers"][0]["label"], "Mira (mira_v)")
 
+    async def test_the_sites_recap_switch_reaches_the_preview_and_the_confirm(self) -> None:
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview", json={"files": files(("a.txt", CRAIG))}
+        )
+        self.assertEqual((got.json()["recapsPossible"], got.json()["recapsWhy"]), (False, "off"))
+        on = create_app(
+            settings(imports_on=True, recaps_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=on), base_url=API, headers=HEADERS
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            body = {"files": files(("a.txt", CRAIG))}
+            got = await client.post(f"/me/campaigns/{self.ref_c}/imports/preview", json=body)
+            self.assertEqual(got.json()["recapsPossible"], True, got.text)
+            plan = {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]}
+            done = await client.post(
+                f"/me/campaigns/{self.ref_c}/imports", json={**body, "plan": plan}
+            )
+            self.assertEqual(done.json()["recapsPossible"], True, done.text)
+
     async def test_a_person_who_is_not_a_dm_is_refused_before_the_body_is_read(self) -> None:
         got = await self.bob.post(
             f"/me/campaigns/{self.ref_c}/imports/preview",
@@ -567,14 +811,312 @@ class TheProgress(WithImports):
                     "date": "2026-09-14",
                     "state": "waiting",
                     "reason": None,
+                    "stage": "cleaning",
+                    "namesToAnswer": 0,
+                    "namesUnchecked": False,
                     "recap": None,
                 }
             ],
         )
 
+    async def stage(self, imp_id: str) -> dict[str, Any]:
+        got = await imports.progress(self.web, self.session, self.ref_c, imp_id, outside=None)
+        return cast(dict[str, Any], got["sessions"][0])
+
+    async def one_import(self, recap: bool) -> tuple[str, str, int]:
+        done = await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [{"file": "a.txt", "date": "2026-09-14", "writeRecap": recap}],
+            },
+            ("a.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT i.session_id, t.started_at FROM session_imports i"
+                " JOIN transcript_sessions t ON t.id = i.session_id AND t.guild_id = i.guild_id"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return done["importId"], row["session_id"], int(row["started_at"])
+
+    async def set_import(self, **cols: Any) -> None:
+        sets = ", ".join(f"{k} = %s" for k in cols)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(f"UPDATE session_imports SET {sets}", tuple(cols.values()))
+
+    async def test_a_session_goes_through_its_stages_in_order(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+        from dmbot.recaps.store import RecapStore
+
+        imp, _, at = await self.one_import(True)
+        self.assertEqual((await self.stage(imp))["stage"], "cleaning")
+        await self.set_import(state="done")
+        self.assertEqual((await self.stage(imp))["stage"], "checking_names")
+        await self.set_import(scanned=True, scan_finished=True)
+        self.assertEqual((await self.stage(imp))["stage"], "starting_recap")
+        await self.set_import(recap_started=True)
+        self.assertEqual((await self.stage(imp))["stage"], "recap_not_written")
+        holds = HoldStore(self.db)
+        await holds.hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id,
+            channel_id=66, names_open=3,
+        )  # fmt: skip
+        waiting = await self.stage(imp)
+        self.assertEqual((waiting["stage"], waiting["namesToAnswer"]), ("waiting_for_names", 3))
+        await holds.release(THURSDAY.id, self.one.id, at, queue=False)
+        recaps = RecapStore(self.db)
+        await recaps.enqueue(THURSDAY.id, self.one.id, at, dm_user_id=ALICE.id)
+        self.assertEqual((await self.stage(imp))["stage"], "writing_recap")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
+        self.assertEqual((await self.stage(imp))["stage"], "recap_ready")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+        self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
+
+    async def test_the_door_answers_only_a_dm_of_the_campaign_on_a_listed_server(self) -> None:
+        imp, _, _ = await self.one_import(True)
+
+        async def ask(user: Any, token_hash: str, guild: int) -> Any:
+            async with self.web.user(user.id, session=token_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
+                cur = await conn.execute(
+                    "SELECT dmbot_import_progress(%s, %s, %s) AS r", (guild, self.one.id, imp)
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            return row["r"]
+
+        self.assertEqual(len(await ask(ALICE, self.session.id_hash, THURSDAY.id)), 1)  # the DM
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        self.assertIsNone(await ask(BOB, bob.id_hash, THURSDAY.id))  # same server, not a DM
+        self.assertIsNone(await ask(ALICE, self.session.id_hash, 999))  # a server not on her list
+
+    async def test_a_hold_or_job_of_another_campaign_changes_nothing_here(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+        from dmbot.recaps.store import RecapStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        other = self.two.id  # same start time, another campaign
+        await HoldStore(self.db).hold(
+            THURSDAY.id, other, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            names_open=4,
+        )  # fmt: skip
+        await RecapStore(self.db).enqueue(THURSDAY.id, other, at, dm_user_id=ALICE.id)
+        got = await self.stage(imp)
+        self.assertEqual((got["stage"], got["namesToAnswer"]), ("starting_recap", 0))
+
+    async def test_a_silent_hold_is_not_waiting_on_the_dm(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        await HoldStore(self.db).hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            asked=False,
+        )  # fmt: skip
+        self.assertEqual((await self.stage(imp))["stage"], "finding_names")
+
+    async def test_a_session_without_a_recap_is_done_once_its_names_are_checked(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        self.assertEqual((await self.stage(imp))["stage"], "done")
+
+    async def test_a_failed_session_says_so(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        await self.set_import(state="failed", reason="it could not be read")
+        got = await self.stage(imp)
+        self.assertEqual((got["stage"], got["reason"]), ("failed", "it could not be read"))
+
+    async def test_a_name_check_that_was_given_up_is_shown(self) -> None:
+        from dmbot.transcript.import_job import ImportStore
+
+        imp, sid, _ = await self.one_import(False)
+        await self.set_import(state="done")
+        self.assertFalse((await self.stage(imp))["namesUnchecked"])
+        await ImportStore(self.db).give_up_scan(THURSDAY.id, sid)
+        got = await self.stage(imp)
+        self.assertTrue(got["namesUnchecked"])
+        self.assertEqual(got["stage"], "done")  # it moves on, but the DM is told it was skipped
+
     async def test_an_unknown_import_is_not_found(self) -> None:
         with self.assertRaises(RecapError):
             await imports.progress(self.web, self.session, self.ref_c, "f" * 32, outside=None)
+
+
+class TheRecapFacts(WithImports):
+    """Whether the import page may offer a recap tick (#2225): the bot's own gates, read first."""
+
+    async def preview(self, **kw: Any) -> dict[str, Any]:  # type: ignore[override]
+        return await imports.preview(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            **{**self.kw, "site_recaps_on": True, **kw},
+        )
+
+    async def test_it_is_possible_when_every_gate_is_open(self) -> None:
+        got = await self.preview()
+        self.assertEqual((got["recapsPossible"], "recapsWhy" in got), (True, False))
+
+    async def test_switched_off_for_the_server(self) -> None:
+        got = await self.preview(site_recaps_on=False)
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "off"))
+
+    async def test_turned_off_by_the_dm_for_the_campaign(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        got = await self.preview()
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "campaign_off"))
+
+    async def test_the_confirm_step_says_it_too(self) -> None:
+        done = await imports.confirm(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            **{**self.kw, "site_recaps_on": False},
+        )
+        self.assertEqual((done["recapsPossible"], done["recapsWhy"]), (False, "off"))
+
+    async def test_the_plan_decides_from_the_owner_and_costs_nothing(self) -> None:
+        from dmbot.entitlements import Access
+
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), 99)
+        free = Access("free", "Free access", 1, 1, False)
+        paid = Access("paid", "Pro", None, None, True)
+        for access, want in ((free, False), (paid, True), (None, False)):
+            with unittest.mock.patch.object(
+                imports, "plan_grant_access", AsyncMock(return_value=(None, None, access))
+            ) as asked:
+                got = await imports.recap_facts(
+                    self.web,
+                    self.session,
+                    self.ref_c,
+                    campaign,
+                    site_recaps_on=True,
+                    now=NOW,
+                    enforce_plans=True,
+                )
+            self.assertEqual(got["recapsPossible"], want, access)
+            if not want:
+                self.assertEqual(got["recapsWhy"], "plan")
+            asked.assert_awaited_once()  # (the owner's plan is read, nothing is spent)
+
+    async def test_a_campaign_without_an_owner_has_no_plan(self) -> None:
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), None)
+        got = await imports.recap_facts(
+            self.web,
+            self.session,
+            self.ref_c,
+            campaign,
+            site_recaps_on=True,
+            now=NOW,
+            enforce_plans=True,
+        )
+        self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "plan"))
+
+    async def test_without_enforced_plans_no_plan_is_read(self) -> None:
+        with unittest.mock.patch.object(
+            imports, "plan_grant_access", AsyncMock(side_effect=AssertionError("read a plan"))
+        ) as asked:
+            got = await self.preview()
+        asked.assert_not_awaited()
+        self.assertTrue(got["recapsPossible"])
+
+    async def test_text_off_speaks_before_the_plan(self) -> None:
+        from dmbot.entitlements import Access
+
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), 99)
+        free = Access("free", "Free access", 1, 1, False)
+        with unittest.mock.patch.object(
+            imports, "plan_grant_access", AsyncMock(return_value=(None, None, free))
+        ):
+            got = await imports.recap_facts(
+                self.web,
+                self.session,
+                self.ref_c,
+                campaign,
+                site_recaps_on=True,
+                now=NOW,
+                enforce_plans=True,
+            )
+        self.assertEqual(got["recapsWhy"], "campaign_off")
+
+    async def test_a_check_that_cannot_be_made_hides_the_tick_and_never_fails_a_stored_import(
+        self,
+    ) -> None:
+        with unittest.mock.patch(
+            "dmbot.web.recap_choices.read_choices", AsyncMock(side_effect=RuntimeError("down"))
+        ):
+            got = await self.preview()
+            done = await imports.confirm(
+                self.web,
+                self.session,
+                self.ref_c,
+                files(("a.txt", CRAIG)),
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+                **{**self.kw, "site_recaps_on": True},
+            )
+        self.assertEqual(got["recapsPossible"], False)
+        self.assertNotIn("recapsWhy", got)
+        self.assertEqual(done["recapsPossible"], False)
+        self.assertEqual(await self.sessions(), 1)  # the import was stored all the same
+
+    async def test_the_facts_are_asked_before_the_import_is_stored(self) -> None:
+        stored_when_asked: list[int] = []
+        real = imports.recap_facts
+
+        async def ask(*a: Any, **k: Any) -> Any:
+            stored_when_asked.append(await self.sessions())
+            return await real(*a, **k)
+
+        with unittest.mock.patch.object(imports, "recap_facts", ask):
+            await imports.confirm(
+                self.web,
+                self.session,
+                self.ref_c,
+                files(("a.txt", CRAIG)),
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+                **{**self.kw, "site_recaps_on": True},
+            )
+        self.assertEqual(stored_when_asked, [0])  # nothing stored yet when it was asked
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_the_replies_carry_exactly_these_keys(self) -> None:
+        got = await self.preview()
+        self.assertEqual(set(got), {"files", "estimate", "recapsPossible"})
+        off = await self.preview(site_recaps_on=False)
+        self.assertEqual(set(off), {"files", "estimate", "recapsPossible", "recapsWhy"})
+        done = await imports.confirm(
+            self.web,
+            self.session,
+            self.ref_c,
+            files(("a.txt", CRAIG)),
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            **{**self.kw, "site_recaps_on": True},
+        )
+        self.assertEqual(set(done), {"importId", "sessions", "estimate", "recapsPossible"})
+
+    async def test_the_reasons_come_in_the_bots_order(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        got = await self.preview(site_recaps_on=False)
+        self.assertEqual(got["recapsWhy"], "off")  # the server's switch speaks first
 
 
 class TheGuards(WithImports):
@@ -642,3 +1184,119 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class TheMemberDirectory(WithImports):
+    """The server's recorded members who never signed in to the website (#2141)."""
+
+    async def find(self, q: str) -> list[tuple[str, bool]]:
+        got = await imports.search_members(self.web, self.session, self.ref_c, q, **self.kw)
+        return [(m["name"], m["agreed"]) for m in got["members"]]
+
+    async def test_a_recorded_member_who_never_signed_in_can_be_found_by_name_or_username(
+        self,
+    ) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9201
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        self.assertEqual(await self.find("_a"), [("Quill Ardent", True)])  # the username too
+        self.assertEqual(await self.find("nobody"), [])
+
+    async def test_a_member_who_withdrew_or_has_old_consent_is_not_offered(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9202
+        directory = MemberDirectory(self.db)
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await directory.remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION - 1,))
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s", (TERMS_VERSION, MIRA)
+            )
+        self.assertEqual(await self.find("quill"), [])  # a stale row is never offered
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION,))
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        await directory.forget(THURSDAY.id, who)
+        self.assertEqual(await self.find("quill"), [])
+
+    async def test_another_servers_members_never_show(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9203
+        await ConsentStore(self.db).grant(555, who)
+        await MemberDirectory(self.db).remember(555, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [])
+        async with self.db.guild(THURSDAY.id) as conn:  # and the table itself is per server
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_the_campaigns_own_person_comes_first_and_is_not_listed_twice(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
+        for q in ("", "mira_v", "real", "player 0"):  # whichever of her names is searched
+            names = [n for n, _ in await self.find(q)]
+            self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
+            self.assertNotIn("Mira Real", names, q)
+
+    async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        for who in (9301, 9302):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+            await directory.remember(THURSDAY.id, who, f"Name {who}", f"u{who}")
+        async with self.db.guild(THURSDAY.id) as conn:  # 9301 stopped on the website, bot down
+            await conn.execute("DELETE FROM consent WHERE user_id = 9301")
+        await directory.forget(THURSDAY.id, 9999)  # any stop in the server tidies the rest
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id FROM member_directory")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [9302])
+
+    async def test_nothing_is_kept_for_someone_with_no_consent_row(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, 9206, "Ghost", "ghost")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_consent_for_another_outside_company_hides_the_member(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9207
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET outside_to = 'deepgram' WHERE user_id = %s", (who,)
+            )
+        kw = {**self.kw, "outside": "other-company"}
+        got = await imports.search_members(self.web, self.session, self.ref_c, "quill", **kw)
+        self.assertEqual(
+            got["members"], [{"userId": str(who), "name": "Quill Ardent", "agreed": False}][:0]
+        )
+
+    async def test_empty_names_keep_no_row_and_a_name_is_cut_to_a_sane_length(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        for who in (9204, 9205):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await directory.remember(THURSDAY.id, 9204, "", None)
+        await directory.remember(THURSDAY.id, 9205, "x" * 500, "  ")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, char_length(display_name) AS n FROM member_directory"
+            )
+            rows = await cur.fetchall()
+        self.assertEqual([(r["user_id"], r["n"]) for r in rows], [(9205, 100)])

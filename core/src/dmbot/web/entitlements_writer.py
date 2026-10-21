@@ -241,6 +241,37 @@ async def recap_audio_subscription(db: Database, user_id: int) -> str | None:
     return None if row is None or row["s"] is None else str(row["s"])
 
 
+async def plan_subscription(db: Database, user_id: int) -> str | None:
+    """The company's id of the subscription behind this person's working paid plan, or None
+    (Try It, a plan set by hand, or one that has stopped). The billing page opens on choosing a
+    plan for it, and Renew undoes its cancellation (#2165)."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT provider_subscription_id AS s, status FROM entitlements WHERE user_id = %s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+    if row is None or row["s"] is None or row["status"] == "lapsed":
+        return None
+    return str(row["s"])
+
+
+async def clear_cancel(db: Database, user_id: int, *, now: int) -> bool:
+    """Renew (#2165): the company has been told to undo the cancellation, so the "ends on" date
+    goes here too, at once, instead of waiting for its event. True if there was one to clear.
+
+    `last_event_at` is the payment company's clock and is not touched: our clock must not decide
+    whether one of its real events is stale. Only a "cancelled" event older than this Renew is
+    ignored, by its own column (`renewed_at`)."""
+    async with db.plan_writer(user_id) as conn:
+        cur = await conn.execute(
+            "UPDATE entitlements SET ends_at = NULL, renewed_at = %s, updated_at = %s"
+            " WHERE user_id = %s AND ends_at IS NOT NULL AND status = 'active' RETURNING 1 AS ok",
+            (now, now, user_id),
+        )
+        return await cur.fetchone() is not None
+
+
 async def forget_recap_audio(db: Database, user_id: int, *, now: int) -> None:
     """The add-on subscription was cancelled at the company: clear it here too."""
     async with db.plan_writer(user_id) as conn:
@@ -394,7 +425,9 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 "   ELSE entitlements.extra_hours END,"
                 " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
                 " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
-                " ends_at = NULL,"
+                " ends_at = NULL, next_plan = NULL, next_plan_on = NULL,"
+                " next_plan_event_at = GREATEST(entitlements.next_plan_event_at,"
+                "   EXCLUDED.last_event_at),"
                 " plan_changed_at = CASE WHEN %(changed)s THEN EXCLUDED.plan_changed_at"
                 "   ELSE entitlements.plan_changed_at END,"
                 " provider = EXCLUDED.provider,"
@@ -456,8 +489,16 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
             # had stopped before they started Try It.
             await _record(conn, event, now)
             return "ignored"  # about a subscription that was replaced
-        if event.occurred_at < row["last_event_at"]:
+        # Plan-change schedule events are ordered by their own column below, not by the plan's
+        # clock: at a plan change's start the schedule's "released" and the change arrive in the
+        # same moment, and the later of them must not make the real change look stale.
+        schedule = event.kind in ("plan_scheduled", "plan_unscheduled")
+        if not schedule and event.occurred_at < row["last_event_at"]:
             await _record(conn, event, now)
+            return "stale"
+        renewed = row.get("renewed_at")
+        if event.kind == "subscription_cancelled" and renewed and event.occurred_at < renewed:
+            await _record(conn, event, now)  # said before the person pressed Renew
             return "stale"
         paid = await _has_paid(conn, event.user_id)  # before this event is recorded
         await _record(conn, event, now)
@@ -492,11 +533,37 @@ async def _apply_once(db: Database, event: PaymentEvent, *, now: int) -> Outcome
                 " WHERE user_id = %s",
                 (event.period_end, event.occurred_at, now, event.user_id),
             )
+        elif event.kind == "plan_scheduled":
+            # The company has set a plan change for the end of the period: stored so the account
+            # page can say what starts and when (#2165). It is cleared when the change begins
+            # (a renewal or plan change), is undone, or the plan ends.
+            await conn.execute(
+                "UPDATE entitlements SET next_plan = %s, next_plan_on = %s,"
+                " next_plan_event_at = %s, updated_at = %s"
+                " WHERE user_id = %s AND next_plan_event_at <= %s",
+                (
+                    event.plan,
+                    event.period_start,
+                    event.occurred_at,
+                    now,
+                    event.user_id,
+                    event.occurred_at,
+                ),
+            )
+        elif event.kind == "plan_unscheduled":
+            await conn.execute(
+                "UPDATE entitlements SET next_plan = NULL, next_plan_on = NULL,"
+                " next_plan_event_at = %s, updated_at = %s"
+                " WHERE user_id = %s AND next_plan_event_at <= %s",
+                (event.occurred_at, now, event.user_id, event.occurred_at),
+            )
         else:  # subscription_ended
             await conn.execute(
                 "UPDATE entitlements SET status = 'lapsed', grace_ends_at = NULL, ends_at = NULL,"
-                " lapsed_at = %s, last_event_at = %s, updated_at = %s WHERE user_id = %s",
-                (event.occurred_at, event.occurred_at, now, event.user_id),
+                " next_plan = NULL, next_plan_on = NULL,"
+                " next_plan_event_at = GREATEST(next_plan_event_at, %s), lapsed_at = %s,"
+                " last_event_at = %s, updated_at = %s WHERE user_id = %s",
+                (event.occurred_at, event.occurred_at, event.occurred_at, now, event.user_id),
             )
         return "applied"
 
@@ -527,7 +594,7 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
             " hours_cap = EXCLUDED.hours_cap, extra_hours = 0, minutes_taken = 0,"
             " campaign_cap = EXCLUDED.campaign_cap, period_start = EXCLUDED.period_start,"
             " period_end = EXCLUDED.period_end, grace_ends_at = NULL, lapsed_at = NULL,"
-            " ends_at = NULL,"
+            " ends_at = NULL, next_plan = NULL, next_plan_on = NULL,"
             " plan_changed_at = EXCLUDED.plan_changed_at, provider = EXCLUDED.provider,"
             # The stopped plan's company ids go: no billing page for Try It, and its late
             # events are then about a plan the person no longer has.

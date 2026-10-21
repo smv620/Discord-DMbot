@@ -13,6 +13,7 @@ import {
   IMPORT_LIVE,
   importPage as words,
 } from "../content/import-words";
+import { RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
@@ -31,6 +32,37 @@ export function campaignFromPath(path: string): string | null {
 
 const DROP = "drop";
 const POLL_MS = 3000;
+/** While every unfinished session is only waiting for the DM's answers about names, nothing on the
+ * page changes until they answer, so ask once a minute instead (#2230). */
+const SLOW_POLL_MS = 60_000;
+
+type Session = ImportProgress["sessions"][number];
+
+/** A session that will not change on its own any more. A session waiting for names is not final:
+ * the DM's answers move it on. Without a stage (an older API) the plain state decides. */
+function isFinal(s: Session): boolean {
+  // A stage this page doesn't know (a newer API) is read by the plain state, never polled forever.
+  if (!s.stage || !(Object.hasOwn(words.stage, s.stage) || s.stage === "waiting_for_names"))
+    return s.state === "done" || s.state === "failed";
+  return (
+    s.stage === "recap_ready" ||
+    s.stage === "recap_failed" ||
+    s.stage === "recap_not_written" ||
+    s.stage === "done" ||
+    s.stage === "failed"
+  );
+}
+
+function isFailed(s: Session): boolean {
+  return s.stage ? s.stage === "failed" : s.state === "failed";
+}
+
+/** The words for where one session has got to; the plain state's words when there is no stage. */
+function stageLine(s: Session): string {
+  if (!s.stage) return words.state[s.state] ?? s.state;
+  if (s.stage === "waiting_for_names") return words.waitingForNames(s.namesToAnswer ?? 0);
+  return words.stage[s.stage] ?? words.state[s.state] ?? s.state;
+}
 /** A real calendar day: the round trip catches "2026-02-31", which some engines would shift. */
 const isDate = (s: string): boolean =>
   /^\d{4}-\d{2}-\d{2}$/.test(s) &&
@@ -59,6 +91,16 @@ export default function Import({
 }) {
   const ref = campaignFromPath(path);
   const [picked, setPicked] = useState<File[]>([]);
+  // Google Doc links (#2140) sit in the same list as the files, 20 items in all.
+  const [links, setLinks] = useState<string[]>([]);
+  const [linkText, setLinkText] = useState("");
+  const [linkProblem, setLinkProblem] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const linkBox = useRef<HTMLInputElement>(null);
+  // The links that opened, in the order they are sent from here on, and what each one is called
+  // there: the API names a link by its place in the list it is sent, so dropping a bad link renames the rest.
+  const [sentLinks, setSentLinks] = useState<string[]>([]);
+  const [sentNames, setSentNames] = useState<Record<string, string>>({});
   const [texts, setTexts] = useState<ImportFileIn[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [known, setKnown] = useState<Record<string, ImportMember>>({});
@@ -68,6 +110,8 @@ export default function Import({
   const [dates, setDates] = useState<Record<string, string>>({});
   const [guessed, setGuessed] = useState<Record<string, boolean>>({});
   const [order, setOrder] = useState<string[]>([]);
+  // The sessions the DM wants a recap of (by file name): none until ticked (#2221).
+  const [recaps, setRecaps] = useState<Record<string, boolean>>({});
   const [importId, setImportId] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +131,9 @@ export default function Import({
     const kind = error instanceof ApiError ? error.kind : "server";
     if (kind === "signed-out") setSignedOut(true);
     // The message is announced by its role="alert"; moving focus too would read it twice.
-    setProblem(words.problem[kind] ?? words.problem.server ?? "");
+    // A doc can stop opening after Preview (sharing turned off), so "the files" is the wrong advice.
+    const key = kind === "bad-files" && sentLinks.length > 0 ? "bad-files-docs" : kind;
+    setProblem(words.problem[key] ?? words.problem.server ?? "");
   };
 
   /** Runs one request at a time, with the busy state and the problem line every step shares. */
@@ -140,12 +186,11 @@ export default function Import({
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
         setProgress(next);
-        if (
-          next.sessions.some(
-            (s) => s.state === "waiting" || s.state === "working",
-          )
-        )
-          timer = setTimeout(() => void tick(), POLL_MS);
+        const open = next.sessions.filter((s) => !isFinal(s));
+        if (open.length > 0) {
+          const onlyNames = open.every((s) => s.stage === "waiting_for_names");
+          timer = setTimeout(() => void tick(), onlyNames ? SLOW_POLL_MS : POLL_MS);
+        }
       } catch (error) {
         if (live) fail(error);
       }
@@ -170,12 +215,15 @@ export default function Import({
       return next;
     });
 
-  const choose = (event: Event): void => {
-    const list = Array.from((event.target as HTMLInputElement).files ?? []);
-    setPicked(list);
+  /** The name the DM saw in the list they built, for a name the API sent back (it renames links by place). */
+  const shownApi = (apiName: string): string => {
+    const seen = Object.entries(sentNames).find(([, sent]) => sent === apiName)?.[0];
+    return words.shownName(seen ?? apiName);
+  };
+
+  /** Everything after Preview comes from one snapshot of the files and links, so a change clears it all. */
+  const forgetPreview = (): void => {
     setProblem(null);
-    setPickProblem(null);
-    // Everything after Preview comes from one snapshot of the files, so new files clear it all.
     setPreview(null);
     setTexts([]);
     setCheck(null);
@@ -184,13 +232,80 @@ export default function Import({
     setDates({});
     setGuessed({});
     setKnown({});
-    if (list.length > IMPORT_MAX_FILES) setPickProblem(words.tooManyFiles);
-    else {
-      const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
-      const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
-      if (big) setPickProblem(words.fileTooBig(big.name));
-      else if (odd) setPickProblem(words.fileNotTxt(odd.name));
+    setSentLinks([]);
+    setSentNames({});
+  };
+
+  /** The problem with the chosen files and links as they stand, if there is one. */
+  const checkPicked = (list: File[], linkList: string[]): void => {
+    if (list.length + linkList.length > IMPORT_MAX_FILES) {
+      setPickProblem(words.tooManyFiles);
+      return;
     }
+    const big = list.find((f) => f.size > IMPORT_MAX_MB * 1024 * 1024);
+    // Links are told apart from files by the name "Google Doc N.txt", so a file may not use it.
+    const clash = list.find((f) => /^Google Doc \d+\.txt$/.test(f.name));
+    const odd = list.find((f) => !f.name.toLowerCase().endsWith(".txt"));
+    setPickProblem(
+      big
+        ? words.fileTooBig(big.name)
+        : clash
+          ? words.fileNameTaken(clash.name)
+          : odd
+          ? words.fileNotTxt(odd.name)
+          : null,
+    );
+  };
+
+  const choose = (event: Event): void => {
+    if (busy) return;
+    const list = Array.from((event.target as HTMLInputElement).files ?? []);
+    setPicked(list);
+    forgetPreview();
+    checkPicked(list, links);
+  };
+
+  const addLink = (): void => {
+    const link = linkText.trim();
+    if (link === "" || busy) return;
+    // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
+    if (!/^(https?:\/\/)?docs\.google\.com\/document\//i.test(link)) {
+      setLinkProblem(words.notAGoogleDocLink);
+      return;
+    }
+    // The same doc can be pasted with a different ending, so compare the doc's id when there is one.
+    const docId = (l: string): string => /\/d\/([\w-]+)/.exec(l)?.[1] ?? l;
+    if (links.some((l) => docId(l) === docId(link))) {
+      setLinkProblem(words.linkAlreadyAdded);
+      return;
+    }
+    if (picked.length + links.length >= IMPORT_MAX_FILES) {
+      setLinkProblem(words.tooManyToAdd);
+      return;
+    }
+    const next = [...links, link];
+    setLinks(next);
+    setLinkText("");
+    setLinkProblem(null);
+    forgetPreview();
+    checkPicked(picked, next);
+    setAnnounce(words.added(words.linkName(next.length), picked.length + next.length));
+    linkBox.current?.focus();
+  };
+
+  const removeLink = (at: number): void => {
+    if (busy) return;
+    const next = links.filter((_, i) => i !== at);
+    setLinks(next);
+    setLinkProblem(null);
+    forgetPreview();
+    checkPicked(picked, next);
+    setAnnounce(words.removed(words.linkName(at + 1), picked.length + next.length));
+    // The button that was pressed is gone, so focus goes to the next Remove, or to the box.
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>("[data-remove-link]");
+      (buttons[Math.min(at, buttons.length - 1)] ?? linkBox.current)?.focus();
+    });
   };
 
   const lookAtFiles = (): Promise<void> =>
@@ -198,8 +313,25 @@ export default function Import({
       const files: ImportFileIn[] = await Promise.all(
         picked.map(async (f) => ({ name: f.name, text: await f.text() })),
       );
-      const found = await api.importPreview!(ref, files);
+      const found = await api.importPreview!(ref, files, links);
       const good = found.files.filter((f) => f.error === null);
+      // A link that did not open is left out from here on, so the ones that did are renamed by place.
+      const opened: string[] = [];
+      const names: Record<string, string> = {};
+      let unanswered = false;
+      links.forEach((link, i) => {
+        const shown = `${words.linkName(i + 1)}.txt`;
+        const answer = found.files.find((f) => f.name === shown);
+        // An older API ignores `links`; a link it never answered must not just vanish.
+        if (!answer) unanswered = true;
+        if (answer?.error === null) {
+          opened.push(link);
+          names[shown] = `${words.linkName(opened.length)}.txt`;
+        }
+      });
+      if (unanswered) setProblem(words.docNoAnswer);
+      setSentLinks(opened);
+      setSentNames(names);
       setTexts(files);
       setPreview(found);
       setCheck(null);
@@ -255,7 +387,7 @@ export default function Import({
   const doCheck = (): Promise<void> =>
     run(async () => {
       if (!api.importCheck) return;
-      setCheck(await api.importCheck(ref, sentFiles(), mapping));
+      setCheck(await api.importCheck(ref, sentFiles(), mapping, sentLinks));
     });
 
   const move = (name: string, by: -1 | 1): void =>
@@ -265,27 +397,44 @@ export default function Import({
       if (i < 0 || j < 0 || j >= now.length) return now;
       const next = [...now];
       [next[i], next[j]] = [next[j] as string, next[i] as string];
-      setMoved(words.moved(name, j + 1, now.length));
+      setMoved(words.moved(words.shownName(name), j + 1, now.length));
       return next;
     });
 
   const allDates = order.every((n) => isDate(dates[n] ?? ""));
+  // The choice is offered while recaps are on for the site (the bot decides the rest, with the
+  // DM's own recap choice and the plan, and says so on the DM screen).
+  const offerRecaps = RECAPS_LIVE;
+  const allRecaps = order.length > 0 && order.every((n) => recaps[n] === true);
+  const someRecaps = order.some((n) => recaps[n] === true);
 
   const start = (): Promise<void> =>
     run(async () => {
       if (!api.importStart) return;
-      const started = await api.importStart(ref, sentFiles(), {
-        mapping,
-        sessions: order.map((file, i) => ({
-          file,
-          date: dates[file] ?? "",
-          order: i + 1,
-        })),
-      });
+      // A Google Doc goes by the name it will have in the list that is sent now.
+      const sentName = (file: string): string => sentNames[file] ?? file;
+      const sentDates = Object.fromEntries(
+        order.map((file) => [sentName(file), dates[file] ?? ""]),
+      );
+      const started = await api.importStart(
+        ref,
+        sentFiles(),
+        {
+          mapping,
+          sessions: order.map((file, i) => ({
+            file: sentName(file),
+            date: dates[file] ?? "",
+            order: i + 1,
+            // Only a ticked session says anything about recaps.
+            ...(offerRecaps && recaps[file] ? { writeRecap: true as const } : {}),
+          })),
+        },
+        sentLinks,
+      );
       setProgress({
         sessions: started.sessions.map((s) => ({
           file: s.file,
-          date: dates[s.file] ?? "",
+          date: sentDates[s.file] ?? "",
           state: s.state,
           reason: null,
         })),
@@ -309,10 +458,9 @@ export default function Import({
 
   // After the import has started, only the progress is shown.
   if (progress) {
-    const done = progress.sessions.every(
-      (s) => s.state === "done" || s.state === "failed",
-    );
-    const failed = progress.sessions.some((s) => s.state === "failed");
+    const done = progress.sessions.every(isFinal);
+    const failed = progress.sessions.some(isFailed);
+    const unchecked = progress.sessions.some((s) => s.namesUnchecked === true);
     return (
       <div class="stack">
         <h2>{words.progressHeading}</h2>
@@ -335,24 +483,43 @@ export default function Import({
         )}
         <p role="status" aria-live="polite">
           {words.doneCount(
-            progress.sessions.filter((s) => s.state === "done").length,
+            progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
             progress.sessions.length,
           )}
         </p>
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
-              <span class="campaign-name">{s.file}</span>
+              <span class="campaign-name">{shownApi(s.file)}</span>
               <span class="small">
-                {s.date} · {words.state[s.state] ?? s.state}
+                {s.date} · {stageLine(s)}
                 {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
               </span>
+              {s.stage === "waiting_for_names" && (
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.namesLink, shownApi(s.file))}
+                >
+                  {words.namesLink}
+                </a>
+              )}
+              {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.recapLink, shownApi(s.file))}
+                >
+                  {words.recapLink}
+                </a>
+              )}
             </li>
           ))}
         </ul>
+        {unchecked && <p class="small muted">{words.namesUnchecked}</p>}
         {done && (
           <p role="status">
             {failed ? words.someFailed : words.allDone}{" "}
@@ -387,18 +554,88 @@ export default function Import({
           accept=".txt,text/plain"
           multiple
           onChange={choose}
+          disabled={busy}
           aria-label={words.pickLabel}
         />
-        {picked.length > 0 && (
-          <p class="small">{words.chosen(picked.length)}</p>
+        <form
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            addLink();
+          }}
+        >
+          <label class="field">
+            {words.linkLabel}
+            <input
+              ref={linkBox}
+              type="url"
+              value={linkText}
+              placeholder={words.linkPlaceholder}
+              autoComplete="off"
+              spellcheck={false}
+              aria-describedby="import-link-help"
+              onInput={(e) => setLinkText((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          <button
+            type="submit"
+            class="button secondary"
+            disabled={linkText.trim() === "" || busy}
+          >
+            {words.addLink}
+          </button>
+        </form>
+        {linkProblem && (
+          <p class="note bad" role="alert">
+            {linkProblem}
+          </p>
+        )}
+        <div class="muted small" id="import-link-help">
+          <p>{words.linkHelp}</p>
+          <ol>
+            {words.linkSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p>{words.linkHelpAfter}</p>
+        </div>
+        <p class="sr-only" role="status">
+          {announce}
+        </p>
+        {links.length > 0 && (
+          <ul class="campaigns">
+            {links.map((link, i) => (
+              <li key={`${i}-${link}`}>
+                <span class="campaign-name">{words.linkName(i + 1)}</span>
+                <span class="small">{words.shortLink(link)}</span>
+                <button
+                  type="button"
+                  data-remove-link
+                  disabled={busy}
+                  class="button secondary"
+                  aria-label={words.removeLink(i + 1)}
+                  onClick={() => removeLink(i)}
+                >
+                  {words.remove}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {picked.length + links.length > 0 && (
+          <p class="small">
+            {links.length > 0
+              ? words.chosenItems(picked.length, links.length)
+              : words.chosen(picked.length)}
+          </p>
         )}
         <button
           type="button"
           class="button"
           disabled={
             busy ||
-            picked.length === 0 ||
-            picked.length > IMPORT_MAX_FILES ||
+            picked.length + links.length === 0 ||
+            picked.length + links.length > IMPORT_MAX_FILES ||
             // Only a problem with the chosen files blocks Preview. An answer from the API (a busy
             // moment, a refusal) must not leave it locked: the DM can press it again.
             pickProblem !== null
@@ -416,7 +653,7 @@ export default function Import({
               .filter((f) => f.error !== null)
               .map((f) => (
                 <li key={f.name}>
-                  <span class="campaign-name">{f.name}</span>
+                  <span class="campaign-name">{words.shownName(f.name)}</span>
                   <span class="small">
                     {words.fileError[f.error ?? ""] ?? words.fileErrorOther}
                   </span>
@@ -523,7 +760,12 @@ export default function Import({
                       <ul class="campaigns">
                         {check.files.map((f) => (
                           <li key={f.name}>
-                            <span class="campaign-name">{f.name}</span>
+                            <span class="campaign-name">{shownApi(f.name)}</span>
+                            {f.error !== null && (
+                              <span class="small" role="alert">
+                                {words.fileError[f.error] ?? words.fileErrorOther}
+                              </span>
+                            )}
                             {f.leftOut > 0 && (
                               <span class="small">
                                 {words.leftOutFile(f.leftOut)}
@@ -571,12 +813,12 @@ export default function Import({
                 <ol class="campaigns">
                   {order.map((name, i) => (
                     <li key={name}>
-                      <span class="campaign-name">{name}</span>
+                      <span class="campaign-name">{words.shownName(name)}</span>
                       <span class="small">
                         {words.position(i + 1, order.length)}
                       </span>
                       <label class="field">
-                        {words.dateLabel(name)}
+                        {words.dateLabel(words.shownName(name))}
                         <input
                           type="date"
                           value={dates[name] ?? ""}
@@ -594,7 +836,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveUp(name)}
+                          aria-label={words.moveUp(words.shownName(name))}
                           aria-disabled={i === 0}
                           onClick={() => move(name, -1)}
                         >
@@ -603,7 +845,7 @@ export default function Import({
                         <button
                           type="button"
                           class="button secondary"
-                          aria-label={words.moveDown(name)}
+                          aria-label={words.moveDown(words.shownName(name))}
                           aria-disabled={i === order.length - 1}
                           onClick={() => move(name, 1)}
                         >
@@ -624,6 +866,44 @@ export default function Import({
                     (check?.estimate ?? preview.estimate).fastCalls,
                   )}
                 </p>
+                {offerRecaps && order.length > 0 && (
+                  <fieldset class="recap-choices">
+                    <legend>{words.recapsHeading}</legend>
+                    <label class="choice">
+                      <input
+                        type="checkbox"
+                        checked={allRecaps}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someRecaps && !allRecaps;
+                        }}
+                        disabled={busy}
+                        onChange={(e) =>
+                          setRecaps(
+                            Object.fromEntries(
+                              order.map((n) => [n, e.currentTarget.checked]),
+                            ),
+                          )
+                        }
+                      />
+                      <span>{words.recapsAll}</span>
+                    </label>
+                    {order.map((n) => (
+                      <label class="choice" key={`recap-${n}`}>
+                        <input
+                          type="checkbox"
+                          checked={recaps[n] === true}
+                          disabled={busy}
+                          onChange={(e) => {
+                            const on = e.currentTarget.checked;
+                            setRecaps((now) => ({ ...now, [n]: on }));
+                          }}
+                        />
+                        <span>{words.recapsOne(words.shownName(n))}</span>
+                      </label>
+                    ))}
+                    <p class="small">{words.recapsNote}</p>
+                  </fieldset>
+                )}
                 <p class="small">{words.confirmNote}</p>
                 <p class="small">{words.renumberNote}</p>
                 <button

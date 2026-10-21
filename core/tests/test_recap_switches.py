@@ -113,6 +113,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
         plan_allows=plan_allows,
         recap_worker=object(),
+        recap_holds=None,  # no hold store: queued at once, as before #2169
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         transcripts=SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
@@ -126,8 +127,9 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         meter=None,
     )
     for name in (
-        "recap_session", "_queue_recap", "recap_allowed", "recap_told", "recap_audio_wanted",
-        "recap_audio_switched", "recap_audio_allowed", "recap_plan_facts",
+        "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
+        "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
+        "recap_plan_facts",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot

@@ -25,6 +25,14 @@ export interface MyPlan {
   graceEndsOn: string | null;
   /** ISO date a cancelled plan ends (it works until then and does not renew), if it was. */
   endsOn?: string;
+  /** What the plan is doing (#2165): renews, cancelled but still works, another plan starts at the
+   * period's end, or stopped. Missing from an API older than that. */
+  state?: "active" | "ending" | "changing" | "expired";
+  /** ISO date a stopped plan ended (state "expired"). */
+  endedOn?: string;
+  /** The plan that starts on `nextPlanOn` (state "changing"). */
+  nextPlan?: PlanId;
+  nextPlanOn?: string;
 }
 
 export interface Campaign {
@@ -174,6 +182,14 @@ export interface MySupport {
   reply: boolean;
 }
 
+/** One part of a question's whole conversation (#2193): who wrote it, the words, and when (Unix
+ * seconds). "you" is the person's own first message and emailed replies. */
+export interface SupportMessage {
+  who: "you" | "helper" | "team";
+  text: string;
+  at: number;
+}
+
 /** What the Support form sends (#1340). */
 export interface SupportTicket {
   subject: string;
@@ -202,6 +218,11 @@ export interface Recap {
   housekeeping: string[];
   /** Names the recap kept that DMbot didn't know: the DM's copy only, never posted (#2027). */
   toConfirm?: string[];
+  /** Held until the DM answers DMbot's questions about names (#2169, #2210). Missing from an API
+   * older than that: then nothing is held. */
+  waitingForNames?: boolean;
+  /** How many of those questions are left. */
+  namesToAnswer?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -216,6 +237,9 @@ export interface Recap {
   transcriptsDeletedAt?: number | null;
   /** How many days the table keeps transcripts (30, 90 or 365), null for forever. */
   keepDays?: number | null;
+  /** When a fixed spelling changed this recap's text (Unix seconds), else null (#2178). A posted
+   * recap's Discord message keeps the old spelling. Missing from an older API. */
+  respelledAt?: number | null;
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
@@ -347,6 +371,9 @@ export interface RecapAudioState {
   error: string;
   current: boolean;
   canAskAgain: boolean;
+  /** The recap is already posted: a new narration is for this page, and the Discord message keeps
+   * its old audio (#2183). Missing from an older API. */
+  postedNote?: boolean;
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
@@ -381,6 +408,39 @@ export interface TranscriptCampaign {
   /** How many days the campaign keeps transcripts (30, 90 or 365), null for until the game master
    * deletes them; missing from an older API (#1575). */
   keepDays?: number | null;
+}
+
+/** "Tell DMbot what to fix" (#2114; core #2113): the DM's note is queued, the bot sorts it into
+ * points, and the page polls for them. Ids are only good for the request that made them. */
+export interface FixPoint {
+  id: string;
+  text: string;
+}
+export interface FixPoints {
+  corrections: FixPoint[];
+  style: FixPoint[];
+  /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
+  replies: string[];
+}
+export interface VoiceResult {
+  state: FixState;
+  /** Only when `done`: what was heard. */
+  text?: string;
+  /** Only when `failed`: "bad_clip", "too_long", "no_words", "transcribe_failed" or "no_consent". */
+  error?: string;
+}
+export type FixState = "waiting" | "working" | "done" | "failed";
+export interface FixResult {
+  state: FixState;
+  /** Only when `done`. */
+  points?: FixPoints;
+  /** Only when `failed`: "sort_failed", "not_allowed" or "too_soon". */
+  error?: string;
+}
+export interface Rewritten {
+  recap: Recap;
+  triesLeft: number;
+  needsApproval: boolean;
 }
 
 /** Importing older sessions (#2107; core #2105). The files travel as text; nothing a speaker said
@@ -442,20 +502,41 @@ export interface ImportCheck {
 /** The mapping is `{ label: userId | "drop" }`; `order` starts at 1. */
 export interface ImportPlan {
   mapping: Record<string, string>;
-  sessions: { file: string; date: string; order: number }[];
+  /** `writeRecap` is sent only as `true`, and only for a session the DM ticked (#2221); the API
+   * counts nothing else. */
+  sessions: { file: string; date: string; order: number; writeRecap?: true }[];
 }
 export type ImportState = "waiting" | "working" | "done" | "failed";
 export interface ImportStarted {
   importId: string;
-  sessions: { file: string; state: ImportState }[];
+  sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
   estimate: { sessions: number; fastCalls: number };
 }
+/** Where one imported session has got to (#2230); an older API sends none and the page falls back
+ * to the plain `state`. */
+export type ImportStage =
+  | "cleaning"
+  | "checking_names"
+  | "finding_names"
+  | "waiting_for_names"
+  | "starting_recap"
+  | "writing_recap"
+  | "recap_ready"
+  | "recap_failed"
+  | "recap_not_written"
+  | "done"
+  | "failed";
 export interface ImportProgress {
   sessions: {
     file: string;
     date: string;
     state: ImportState;
     reason: string | null;
+    stage?: ImportStage;
+    /** The name questions its recap waits on. */
+    namesToAnswer?: number;
+    /** True when the name check for this session was given up. */
+    namesUnchecked?: boolean;
   }[];
 }
 
@@ -580,6 +661,9 @@ export type RecapAction = "post" | "again" | "drop";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "bad-type" // a spoken note in a format the API doesn't read (#2113)
+  | "bad-clip" // a spoken note that can't be heard as audio
+  | "no-consent" // the DM has not agreed to be recorded
   | "signed-out" // the session ended
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
@@ -608,11 +692,16 @@ export type ApiErrorKind =
   | "ticket-too-long" // the message is over 4,000 letters (#1340)
   | "subject-too-long" // the subject is over 120 letters (#1340)
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
+  | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
+  | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "no-tries" // no Try again left, so no rewrite (#2114)
+  | "sort-failed" // DMbot could not sort the note into points (#2114)
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
+  | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
@@ -651,7 +740,9 @@ export interface AccountApi {
   /** The payment company's checkout page for a paid plan. */
   checkoutUrl(plan: PlanId): Promise<string>;
   /** The payment company's page to change plan, fix a payment or stop. */
-  billingPortalUrl(): Promise<string>;
+  billingPortalUrl(flow?: "plans"): Promise<string>;
+  /** Renew (#2165): undo a cancellation that has not taken effect. The plan renews on its date as before. */
+  renewPlan?(): Promise<void>;
   /** The payment company's page to add narrated recaps (#1390). Missing from an API older than #1389. */
   recapAudioUrl?(): Promise<string>;
   /** The payment company's page to buy more hours for this month (a paid, working plan). */
@@ -749,19 +840,39 @@ export interface AccountApi {
   ): Promise<void>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
+   * the DM kept. Missing from an API older than #2113. */
+  sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
+  fixResult?(ref: string, requestId: string): Promise<FixResult>;
+  /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
+   * follow the request. The clip is turned into words and deleted at once; only the words come back. */
+  sendVoice?(ref: string, clip: Blob): Promise<{ requestId: string }>;
+  voiceResult?(ref: string, requestId: string): Promise<VoiceResult>;
+  rewriteWith?(
+    ref: string,
+    requestId: string,
+    corrections: string[],
+    style: string[],
+  ): Promise<Rewritten>;
   /** Importing older sessions (#2107): look at the files, find people to match, check what would be
    * kept, start, and follow the work. Missing from an API older than #2105. */
-  importPreview?(ref: string, files: ImportFileIn[]): Promise<ImportPreview>;
+  importPreview?(
+    ref: string,
+    files: ImportFileIn[],
+    links?: string[],
+  ): Promise<ImportPreview>;
   importMembers?(ref: string, q: string): Promise<ImportMember[]>;
   importCheck?(
     ref: string,
     files: ImportFileIn[],
     mapping: Record<string, string>,
+    links?: string[],
   ): Promise<ImportCheck>;
   importStart?(
     ref: string,
     files: ImportFileIn[],
     plan: ImportPlan,
+    links?: string[],
   ): Promise<ImportStarted>;
   importProgress?(ref: string, importId: string): Promise<ImportProgress>;
   /** Turn a posted recap's public link on, off, or make a new one (#2118). */
@@ -772,6 +883,9 @@ export interface AccountApi {
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
   mySupport?(): Promise<MySupport>;
+  /** The whole conversation of one of the person's own questions, oldest first, named by the time
+   * it was sent as the list gives it (#2193). Missing from an API older than that. */
+  supportThread?(at: number): Promise<SupportMessage[]>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -831,11 +945,19 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  not_ending: "not-ending",
+  use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
+  audio_off: "audio-off",
   bad_choice: "bad-choice",
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  no_tries: "no-tries",
+  sort_failed: "sort-failed",
+  bad_type: "bad-type",
+  bad_clip: "bad-clip",
+  no_consent: "no-consent",
   not_a_dm: "not-allowed",
   not_on_a_paid_plan: "no-paid-plan",
   too_many_lines: "too-many-lines",
@@ -850,6 +972,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_action: "bad-action",
 };
 
+/** An import request's body with its Google Doc links, only when there are any (#2140). */
+function withLinks<T extends object>(
+  body: T,
+  links: string[] | undefined,
+): T & { links?: string[] } {
+  return links && links.length > 0 ? { ...body, links } : body;
+}
+
 /** The real API over HTTP. `base` is the API's address, e.g. "https://api.example". */
 export function httpApi(
   base: string,
@@ -862,6 +992,7 @@ export function httpApi(
     path: string,
     body?: unknown,
     asFile = false,
+    raw?: Blob,
     anonymous = false,
   ): Promise<unknown> {
     let response: Response;
@@ -875,7 +1006,11 @@ export function httpApi(
             credentials: "include",
             headers: { "X-DMbot-Request": "1", Accept: "application/json" },
           };
-      if (body !== undefined) {
+      if (raw !== undefined) {
+        // A recorded clip goes as it is, with its own type; the API reads webm and ogg only.
+        init.headers = { ...init.headers, "Content-Type": raw.type };
+        init.body = raw;
+      } else if (body !== undefined) {
         init.headers = { ...init.headers, "Content-Type": "application/json" };
         init.body = JSON.stringify(body);
       }
@@ -967,10 +1102,25 @@ export function httpApi(
             typeof t.subject === "string" &&
             (t.status === "new" ||
               t.status === "answered" ||
+              t.status === "escalated" ||
               t.status === "closed"),
         ),
         reply: answer?.reply !== false,
       };
+    },
+    supportThread: async (at) => {
+      const answer = (await call("GET", `/support/mine/${encodeURIComponent(String(at))}`)) as {
+        messages?: unknown;
+      } | null;
+      const parts = Array.isArray(answer?.messages) ? answer.messages : [];
+      return parts.filter(
+        (m): m is SupportMessage =>
+          typeof m === "object" &&
+          m !== null &&
+          (m.who === "you" || m.who === "helper" || m.who === "team") &&
+          typeof m.text === "string" &&
+          typeof m.at === "number",
+      );
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");
@@ -979,7 +1129,10 @@ export function httpApi(
       await call("POST", "/plan/try-it");
     },
     checkoutUrl: (plan) => url("/billing/checkout", { plan }),
-    billingPortalUrl: () => url("/billing/portal"),
+    billingPortalUrl: (flow) => url("/billing/portal", flow ? { flow } : undefined),
+    renewPlan: async () => {
+      await call("POST", "/billing/renew");
+    },
     extraHoursUrl: () => url("/billing/extra-hours"),
     recapAudioUrl: () => url("/billing/recap-audio"),
     downloadExport: async () =>
@@ -1115,11 +1268,44 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
-    importPreview: async (ref, files) =>
+    sendFix: async (ref, text) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/instructions`,
+        { text },
+      )) as { requestId: string },
+    fixResult: async (ref, requestId) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/instructions/${encodeURIComponent(requestId)}`,
+      )) as FixResult,
+    sendVoice: async (ref, clip) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/voice`,
+        undefined,
+        false,
+        clip,
+      )) as { requestId: string },
+    voiceResult: async (ref, requestId) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/voice/${encodeURIComponent(requestId)}`,
+      )) as VoiceResult,
+    rewriteWith: async (ref, requestId, corrections, style) => {
+      const got = (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/rewrite`,
+        { requestId, corrections, style },
+      )) as Rewritten;
+      return { ...got, recap: recapFrom(got.recap) };
+    },
+    // Google Doc links ride along with the files (#2140); the API opens each and names it "Google Doc N.txt".
+    importPreview: async (ref, files, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/preview`,
-        { files },
+        withLinks({ files }, links),
       )) as ImportPreview,
     importMembers: async (ref, q) =>
       (
@@ -1128,17 +1314,17 @@ export function httpApi(
           `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
         )) as { members: ImportMember[] }
       ).members,
-    importCheck: async (ref, files, mapping) =>
+    importCheck: async (ref, files, mapping, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
-        { files, mapping },
+        withLinks({ files, mapping }, links),
       )) as ImportCheck,
-    importStart: async (ref, files, plan) =>
+    importStart: async (ref, files, plan, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
-        { files, plan },
+        withLinks({ files, plan }, links),
       )) as ImportStarted,
     importProgress: async (ref, importId) =>
       (await call(
@@ -1155,6 +1341,7 @@ export function httpApi(
         `/recaps/${encodeURIComponent(token)}`,
         undefined,
         false,
+        undefined,
         true,
       )) as PublicRecap,
     decideRecap: async (ref, action) =>

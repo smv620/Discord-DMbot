@@ -10,6 +10,7 @@ import type {
   AccountApi,
   Campaign,
   Character,
+  ImportProgress,
   Me,
   Offer,
   Person,
@@ -372,6 +373,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
+  const fixLooks = new Map<string, number>();
+  const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -410,10 +413,32 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric
     // is suggested as Stormy (who agreed) and Ash has not agreed to be recorded.
-    async importPreview(ref, files) {
-      calls.push(`importPreview:${ref}:${files.map((f) => f.name).join(",")}`);
+    // A Google Doc link (#2140) is read as a file named "Google Doc N.txt". A link with "private" in
+    // it is not shared, "notadoc" is not a Google Doc, and a link pasted twice is flagged the second time.
+    async importPreview(ref, files, links = []) {
+      calls.push(
+        `importPreview:${ref}:${files.map((f) => f.name).join(",")}${links.length ? `|links:${links.length}` : ""}`,
+      );
+      const docs = links.map((link, i) => {
+        const name = `Google Doc ${i + 1}.txt`;
+        const error = links.indexOf(link) !== i || link.includes("repeat")
+          ? "repeated_link"
+          : link.includes("notadoc")
+            ? "not_a_google_doc"
+            : link.includes("private")
+              ? "doc_not_shared"
+              : link.includes("unreachable")
+                ? "doc_unreachable"
+                : link.includes("toobig")
+                  ? "doc_too_big"
+                  : null;
+        return { name, text: error ? "" : "Cerric: Hello from the doc\nMira: And hello", error };
+      });
       return {
-        files: files.map((f) => {
+        files: [...files, ...docs.map((d) => ({ name: d.name, text: d.text }))].map((f) => {
+          const bad = docs.find((d) => d.name === f.name)?.error;
+          if (bad)
+            return { name: f.name, format: null, error: bad, suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           if (!f.name.toLowerCase().endsWith(".txt"))
             return { name: f.name, format: null, error: "not_txt", suggestedDate: null, lineCount: 0, leftOut: 0, speakers: [] };
           const counts = new Map<string, number>();
@@ -436,7 +461,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
             })),
           };
         }),
-        estimate: { sessions: files.length, fastCalls: 14 * files.length },
+        estimate: { sessions: files.length + links.length, fastCalls: 14 * (files.length + links.length) },
       };
     },
     async importMembers(ref, q) {
@@ -448,8 +473,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       ];
       return all.filter((m) => m.name.toLowerCase().includes(q.toLowerCase()));
     },
-    async importCheck(ref, files, mapping) {
-      calls.push(`importCheck:${ref}`);
+    async importCheck(ref, files, mapping, links = []) {
+      calls.push(`importCheck:${ref}${links.length ? `|links:${links.length}` : ""}`);
+      files = [
+        ...files,
+        ...links.map((_, i) => ({ name: `Google Doc ${i + 1}.txt`, text: "Cerric: Hello from the doc\nMira: And hello" })),
+      ];
       const members: Record<string, boolean> = { "1": true, "2": false, "3": true };
       return {
         files: files.map((f) => {
@@ -458,9 +487,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
             const who = /^([^:]{1,40}):/.exec(line)?.[1];
             if (who) counts.set(who, (counts.get(who) ?? 0) + 1);
           }
+          // A doc with "later" in its link opened at Preview but is not shared any more at Check.
+          const lostDoc = links.some((l, i) => l.includes("later") && f.name === `Google Doc ${i + 1}.txt`);
           return {
             name: f.name,
-            error: null,
+            error: lostDoc ? "doc_not_shared" : null,
             leftOut: 0,
             speakers: [...counts].map(([label, n]) => {
               const to = mapping[label] ?? "drop";
@@ -481,8 +512,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         estimate: { sessions: files.length, fastCalls: 14 * files.length },
       };
     },
-    async importStart(ref, _files, plan) {
-      calls.push(`importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}`);
+    async importStart(ref, _files, plan, links = []) {
+      calls.push(
+        `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}${s.writeRecap ? "#recap" : ""}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
+      );
+      if (links.some((l) => l.includes("later"))) throw new ApiError("bad-files");
       return {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
@@ -493,7 +527,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
-      return { sessions: [{ file: "session-1-2026-09-14.txt", date: "2026-09-14", state, reason: null }] };
+      return {
+        sessions: [
+          {
+            file: "session-1-2026-09-14.txt",
+            date: "2026-09-14",
+            state,
+            reason: null,
+            stage: state === "done" ? ("done" as const) : ("cleaning" as const),
+          },
+        ],
+      };
     },
     async recapChoices(campaignRef) {
       calls.push(`recapChoices:${campaignRef}`);
@@ -688,6 +732,69 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
       return { ...r };
     },
+    // "Tell DMbot what to fix" (#2114). The note is sorted into the same points every time; the
+    // first look says "working", the next says "done", as the bot's queue would.
+    async sendFix(ref, text) {
+      calls.push(`sendFix:${ref}`);
+      const r = await find(ref);
+      if (!r.canEdit) throw new ApiError("not-editable");
+      if (text.trim() === "") throw new ApiError("bad-text");
+      if (text.length > 1000) throw new ApiError("too-big");
+      fixLooks.set("r1", 0);
+      return { requestId: "r1" };
+    },
+    async fixResult(ref, requestId) {
+      calls.push(`fixResult:${ref}:${requestId}`);
+      const looks = (fixLooks.get(requestId) ?? 0) + 1;
+      fixLooks.set(requestId, looks);
+      if (looks < 2) return { state: "working" as const };
+      return {
+        state: "done" as const,
+        points: {
+          corrections: [
+            { id: "c1", text: "Fix the innkeeper's name" },
+            { id: "c2", text: "Shorten the second part" },
+          ],
+          style: [{ id: "s1", text: "A warmer voice" }],
+          replies: ["I can't add story that didn't happen. That's your call."],
+        },
+      };
+    },
+    // "Speak instead" (#2113 part 2). The clip is never kept: only its size and type are looked at.
+    // A clip of 7 bytes is a DM who has not agreed to be recorded, 13 bytes has no words in it.
+    async sendVoice(ref, clip) {
+      calls.push(`sendVoice:${ref}:${clip.type}:${clip.size}`);
+      const r = await find(ref);
+      if (!r.canEdit) throw new ApiError("not-editable");
+      if (clip.type !== "audio/webm" && clip.type !== "audio/ogg") throw new ApiError("bad-type");
+      if (clip.size > 2 * 1024 * 1024) throw new ApiError("too-big");
+      voiceLooks.set("v1", { looks: 0, size: clip.size });
+      return { requestId: "v1" };
+    },
+    async voiceResult(ref, requestId) {
+      calls.push(`voiceResult:${ref}:${requestId}`);
+      const seen = voiceLooks.get(requestId) ?? { looks: 0, size: 0 };
+      seen.looks += 1;
+      voiceLooks.set(requestId, seen);
+      if (seen.looks < 2) return { state: "working" as const };
+      if (seen.size === 7) return { state: "failed" as const, error: "no_consent" };
+      if (seen.size === 13) return { state: "failed" as const, error: "no_words" };
+      return { state: "done" as const, text: "Change the innkeeper's name to Brannoch." };
+    },
+    async rewriteWith(ref, requestId, corrections, style) {
+      calls.push(`rewriteWith:${ref}:${requestId}:${corrections.join("+")}|${style.join("+")}`);
+      const r = await find(ref);
+      if (r.triesLeft <= 0) throw new ApiError("no-tries");
+      const known = new Set(["c1", "c2", "s1"]);
+      if ([...corrections, ...style].some((id) => !known.has(id))) throw new ApiError("bad-choice");
+      r.triesLeft -= 1;
+      r.working = true;
+      r.canEdit = false;
+      r.canPost = false;
+      r.canTryAgain = false;
+      r.approval = { approved: false, choice: "", approvedAt: null, canApprove: false };
+      return { recap: { ...r }, triesLeft: r.triesLeft, needsApproval: true };
+    },
     // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
     async shareRecap(ref, action) {
       calls.push(`shareRecap:${ref}:${action}`);
@@ -767,6 +874,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return { tickets: questions, reply: true };
     },
+    async supportThread(at) {
+      calls.push("support-thread");
+      signedIn();
+      const found = questions.find((q) => q.at === at);
+      if (!found) throw new ApiError("not-found");
+      // The mock has only the first message; the real API adds the helper's and the team's.
+      return [{ who: "you", text: found.subject, at }];
+    },
     async startTryIt() {
       calls.push("startTryIt");
       const now = signedIn();
@@ -789,6 +904,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async billingPortalUrl() {
       calls.push("portal");
       return "#demo-billing";
+    },
+    async renewPlan() {
+      calls.push("renew");
+      if (me?.plan?.state !== "ending") throw new ApiError("not-ending");
+      const { endsOn: _ended, ...rest } = me.plan;
+      me = { ...me, plan: { ...rest, state: "active" } };
     },
     async recapAudioUrl() {
       calls.push("recap-audio");
@@ -983,3 +1104,33 @@ function mockHomebrew() {
     ],
   };
 }
+
+/** One imported session in each stage the API can report (#2230), for the page's tests and demos:
+ * the old shape, with no stage, is covered in the tests. */
+export const everyImportStage: ImportProgress = {
+  sessions: [
+    ...(
+      [
+        "cleaning",
+        "checking_names",
+        "finding_names",
+        "waiting_for_names",
+        "starting_recap",
+        "writing_recap",
+        "recap_ready",
+        "recap_failed",
+        "recap_not_written",
+        "done",
+        "failed",
+      ] as const
+    ).map((stage, i) => ({
+      file: `${stage}.txt`,
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      state: stage === "done" || stage.startsWith("recap_") ? ("done" as const) : stage === "failed" ? ("failed" as const) : ("working" as const),
+      reason: null,
+      stage,
+      namesToAnswer: stage === "waiting_for_names" ? 3 : 0,
+      namesUnchecked: false,
+    })),
+  ],
+};

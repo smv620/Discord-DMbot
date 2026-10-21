@@ -211,6 +211,18 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         self.redirect("/loop", "/loop")
         self.assertEqual(await self.refused("/loop"), fetch.NOT_SHARED)
 
+    async def test_a_caller_can_lower_the_size_cap_and_keep_redirects_on_named_hosts(self) -> None:
+        self.route("/big", web.Response(text="x" * 5000, content_type="text/plain"))
+        with self.assertRaises(fetch.TooBig):
+            await fetch.fetch(self.base + "/big", self.policy, max_bytes=1000)
+        self.redirect("/away", f"http://127.0.0.1:{self.server.port}/doc")
+        self.route("/doc", web.Response(text="Auril", content_type="text/plain"))
+        with self.assertRaises(fetch.Unreachable):  # off the named hosts: refused
+            await fetch.fetch(self.base + "/away", self.policy, stay_on=("docs.google.com",))
+        self.assertEqual(  # no list: the old behaviour, unchanged
+            (await fetch.fetch(self.base + "/away", self.policy)).data, b"Auril"
+        )
+
     async def test_problems_in_plain_words(self) -> None:
         self.route("/private", web.Response(status=403))
         self.route("/gone", web.Response(status=404))

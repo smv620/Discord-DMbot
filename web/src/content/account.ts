@@ -97,6 +97,9 @@ export const text = {
   errors: {
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
+    "not-ending": "This plan isn't ending, or has already ended. The page now shows how things are.",
+    "use-billing-page":
+      "We can't renew it from here. Tap Change plan and renew on our payment company's page.",
     "payments-off": "Paying for a plan isn't open yet. Please try again soon.",
     "already-linked":
       "Someone else already said they added DMbot here. If that's wrong, ask your server's owner for help.",
@@ -146,6 +149,25 @@ export const text = {
   addHours: `Add ${extraHours} hours (${extraPrice})`,
   addHoursNote: `You pay once, on our payment company's page. These ${extraHours} hours are for this month only and don't roll over.`,
   changePlan: "Change plan",
+  // The plan line says what the plan is doing, not only its name (#2165). Dates are the site's usual words.
+  planRenews: (plan: string, iso: string): string => `${plan} (renews on ${shortDate(iso)})`,
+  planEndsLine: (plan: string, iso: string): string => `${plan} (ends on ${shortDate(iso)})`,
+  planChanging: (plan: string, next: string, iso: string): string =>
+    `${plan} (new plan: ${next} starts on ${shortDate(iso)})`,
+  planExpired: (plan: string, iso: string): string => `Your ${plan} plan ended on ${shortDate(iso)}.`,
+  planExpiredNoDate: (plan: string): string => `Your ${plan} plan has ended.`,
+  // Renew undoes a cancellation that hasn't taken effect, after one plain question.
+  renew: "Renew",
+  renewAsk: (plan: string, iso: string): string =>
+    `Keep your ${plan} plan? It renews on ${shortDate(iso)}, as before. Nothing is charged before then.`,
+  renewAskNoDate: (plan: string): string =>
+    `Keep your ${plan} plan? It renews as before. Nothing is charged before the renewal date.`,
+  renewYes: "Yes, renew",
+  renewNo: "Not now",
+  renewed: (plan: string, iso: string | null): string =>
+    iso ? `Done. Your ${plan} plan renews on ${shortDate(iso)}.` : `Done. Your ${plan} plan will renew as before.`,
+  endingNote: "You won't be charged again unless you tap Renew.",
+  changePlanNote: "Opens our payment company's page, on the plans.",
   pickPlan: "Pick a plan",
   hoursBarLabel: "Hours used this month",
   grace: (date: string | null): string =>
@@ -184,7 +206,7 @@ export const text = {
   // Only without a paid plan: with one, the plan's own date is above, and what happens
   // after the grant ends depends on whether they stop paying.
   freeEnds: (iso: string): string => `After ${shortDate(iso)}, pick a plan to keep playing.`,
-  lapsed: `Your plan has stopped. Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
+  lapsed: `Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
   campaignsHeading: "Your campaigns",
@@ -322,16 +344,33 @@ export const text = {
   supportSentNoEmail:
     "Sent. Thanks, the team will read it. But we don't have an email for your account, so we can't reply. Add and confirm an email in your Discord settings, sign in here again, and write to us again.",
   supportAnother: "Write another",
-  // The person's own questions under the form (#1373): what they sent and where it stands. No
-  // words of the message come back; the team answers by email.
+  // The person's own questions under the form (#1373): what they sent and where it stands; each
+  // opens to its whole conversation (#2193).
   questionsHeading: "Your questions",
-  questionsLead: "What you have sent the team. Replies come by email.",
+  questionsLead:
+    "What you have sent the team. Replies come by email, and you can read the whole conversation here.",
   // No email on the account: the team can't write back, so say what to do (as the thank-you does).
   questionsLeadNoEmail:
-    "What you have sent the team. We have no email for your account, so the team can't write back. Add and confirm an email in your Discord settings, then sign in here again.",
+    "What you have sent the team. You can read the whole conversation here. We have no email for your account, so the team can't write back. Add and confirm an email in your Discord settings, then sign in here again.",
   questionSent: (date: string) => `Sent ${date}`,
   // The first line of the last reply from DMbot's AI helper or the team, under the question (#1432).
   questionLatest: (line: string) => `Last reply: ${line}`,
+  // Opening a question shows the whole conversation (#2193): yours, DMbot's helper's and the team's.
+  conversationOpen: "Read the conversation",
+  conversationClose: "Hide the conversation",
+  conversationLoading: "Loading the conversation…",
+  conversationLoaded: "The conversation is shown below.",
+  conversationError: "We couldn't load this conversation. Try again in a minute.",
+  conversationRetry: "Try again",
+  conversationOrder: "Oldest first.",
+  conversationNoReply: "No reply yet. Replies come by email.",
+  conversationNoReplyNoEmail: "No reply yet.",
+  conversationLabel: (subject: string) => `Conversation: ${subject}`,
+  conversationWho: {
+    you: "You",
+    helper: "DMbot's helper (a program)",
+    team: "DMbot team",
+  },
   questionStatus: {
     new: "Waiting",
     answered: "Answered — check your email",

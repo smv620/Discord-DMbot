@@ -587,7 +587,7 @@ describe("the admin API calls", () => {
       counts,
     });
     expect((list.mock.calls[0] as unknown as [string])[0]).toBe(
-      "https://api.example/admin/support?status=all",
+      "https://api.example/admin/support?status=all&page=1",
     );
     const change = reply(204);
     await httpAdminApi("https://api.example", change).setTicketStatus("csrf-9", 7, "closed");
