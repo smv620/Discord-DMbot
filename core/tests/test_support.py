@@ -1104,7 +1104,9 @@ class SupportAdmin(SupportBase):
 
     async def test_tickets_sent_at_the_same_second_keep_one_order_across_a_page_edge(self) -> None:
         for n in range(25):
-            await self.add_row(ALICE.id, self.now, f"same {n:03d}")  # one second, 25 tickets
+            # One second, 25 tickets from 25 people: one person can't send two in the same second
+            # (#2214), so it is different people who share a time.
+            await self.add_row(9000 + n, self.now, f"same {n:03d}")
         await self.sign_in()
         one = (await self.client.get("/admin/support")).json()["tickets"]
         two = (await self.client.get("/admin/support", params={"page": 2})).json()["tickets"]
