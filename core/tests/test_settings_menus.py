@@ -3,12 +3,14 @@ management, with Back, per viewer; and the words that point to them."""
 
 import re
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import discord
 
+from dmbot.campaigns.models import HandoverOffer
 from dmbot.dm_screen import settings as settings_module
 from dmbot.dm_screen.settings import (
     BackToSettingsButton,
@@ -17,6 +19,7 @@ from dmbot.dm_screen.settings import (
     VisibilityMenuButton,
     management_text,
     management_view,
+    settings_text,
     settings_view,
     visibility_view,
 )
@@ -77,6 +80,60 @@ class Menus(unittest.TestCase):
             self.assertLessEqual(len(custom_id), 100)
             self.assertIsNotNone(cls.__discord_ui_compiled_template__.fullmatch(custom_id))
 
+    def test_each_viewer_gets_the_management_buttons_they_can_use(self) -> None:
+        owner, co_dm, manager = 7, 8, 9
+        c = replace(campaign(), owner_user_id=owner, dm_user_ids=frozenset({owner, co_dm}))
+        mine = labels(management_view(c, None, owner))
+        for wanted in (
+            "Hand over",
+            "Pause this campaign",
+            "Transcript retention",
+            "Game masters",
+            "Delete this campaign",
+        ):
+            self.assertTrue(any(wanted in x for x in mine), (wanted, mine))
+        self.assertEqual(mine[-1], "Back to Settings")
+        theirs = labels(management_view(c, None, co_dm))
+        for wanted in ("Transcript retention", "Game masters", "Delete this campaign"):
+            self.assertTrue(any(wanted in x for x in theirs), (wanted, theirs))
+        for not_wanted in ("Hand over", "Pause", "Take back"):
+            self.assertFalse(any(not_wanted in x for x in theirs), (not_wanted, theirs))
+        # a server manager who is not a DM: no 🗂️ on the main card, the 👁️ choices stay
+        main = labels(settings_view(c, None, manager))
+        self.assertNotIn("Campaign management", main)
+        self.assertIn("Who can see the DM screen", main)
+        self.assertEqual(labels(management_view(c, None, manager)), ["Back to Settings"])
+
+    def test_a_waiting_offer_can_be_taken_back_only_by_who_made_it(self) -> None:
+        owner, co_dm = 7, 8
+        c = replace(campaign(), owner_user_id=owner, dm_user_ids=frozenset({owner, co_dm}))
+        waiting = HandoverOffer(
+            1,
+            c.guild_id,
+            c.id,
+            owner,
+            9,
+            "Oskar",
+            "Mirelle",
+            1,
+            "open",
+            None,  # type: ignore[arg-type]
+        )
+        mine = labels(management_view(c, waiting, owner))
+        self.assertTrue(any("Take back" in x for x in mine), mine)
+        self.assertFalse(any(x.endswith("Hand over") for x in mine), mine)
+        other = labels(management_view(c, waiting, co_dm))
+        self.assertFalse(any("Take back" in x for x in other), other)
+
+    def test_a_paused_campaign_says_so_on_the_main_card_and_offers_unpause(self) -> None:
+        owner = 7
+        c = replace(campaign(), owner_user_id=owner, paused=True)
+        self.assertIn("Paused", settings_text(c, None, owner))
+        self.assertNotIn("Paused", settings_text(replace(c, paused=False), None, owner))
+        shown = labels(management_view(c, None, owner))
+        self.assertTrue(any("Unpause" in x for x in shown), shown)
+        self.assertFalse(any("Pause this campaign" in x for x in shown), shown)
+
     def test_the_management_card_names_the_owner_and_pause(self) -> None:
         text = management_text(campaign(), None, DM)
         self.assertIn("Campaign management", text)
@@ -85,8 +142,6 @@ class Menus(unittest.TestCase):
         self.assertIn("**Owner:**", text)
 
     def test_the_main_card_says_where_the_rest_went_only_to_who_has_something_there(self) -> None:
-        from dmbot.dm_screen.settings import settings_text
-
         self.assertIn("Campaign management", settings_text(campaign(), None, DM))
         self.assertNotIn("Campaign management", settings_text(campaign(), None, PLAYER))
 
@@ -121,29 +176,31 @@ class Presses(unittest.IsolatedAsyncioTestCase):
 
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "dmbot"
-OLD_PATHS = ("Settings → 📜 Transcripts", "Settings → 👥 Game masters", "👤 My buttons")
+MOVED = ("Transcript", "Game masters", "Delete", "Hand over", "Take it on", "Pause")
 
 
 class Words(unittest.TestCase):
     def test_no_message_points_at_a_place_that_moved(self) -> None:
-        # "Settings → <thing that now lives under Campaign management>" would send a DM to a button
-        # that is not on the first card. Every such path goes through 🗂️ Campaign management.
+        # A message that says "Settings → Hand over" or "Settings, then Pause" sends a DM to a
+        # button that is not on the first card any more; every such path goes through
+        # 🗂️ Campaign management. The old name of the panel button must be gone too.
         found: list[str] = []
-        moved = ("Transcript retention", "Game masters", "Delete", "Hand over", "Pause")
+        steps = re.compile(r"Settings(?: → |, then | and |, )(?!🗂️|👁️)([^.\n\"]{0,40})")
         for path in SRC.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
-            for old in OLD_PATHS:
-                if old in text:
-                    found.append(f"{path.name}: {old}")
-            for m in re.finditer(r"Settings\s*→ (?!🗂️|👁️)([^.\n\"]{0,40})", text):
-                if any(w in m.group(1) for w in moved):
+            if "My buttons" in text:
+                found.append(f"{path.name}: My buttons")
+            for m in steps.finditer(text):
+                if any(w in m.group(1) for w in MOVED):
                     found.append(f"{path.name}: {m.group(0)!r}")
         self.assertEqual(found, [])
 
-    def test_the_dm_bot_channel_calls_it_the_main_menu(self) -> None:
-        from dmbot.dm_screen import dm_bot_panel
+    def test_the_panel_and_the_timed_out_menus_use_the_new_words(self) -> None:
+        from dmbot.dm_screen import dm_bot_panel, game_masters, handover
 
-        self.assertIn("DMbot Main Menu", Path(dm_bot_panel.__file__).read_text(encoding="utf-8"))
+        self.assertIn("DMbot Main Menu", dm_bot_panel.PANEL_TEXT)
+        for text in (handover.MENU_TIMED_OUT, game_masters.MENU_TIMED_OUT):
+            self.assertIn("🗂️ Campaign management", text)
 
     def test_the_settings_button_is_still_a_dynamic_item(self) -> None:
         self.assertIsNotNone(

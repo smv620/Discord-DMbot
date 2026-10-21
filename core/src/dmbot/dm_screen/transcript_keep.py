@@ -128,7 +128,7 @@ class TranscriptsButton(
                 label="Transcript retention",
                 emoji="🗄️",
                 style=discord.ButtonStyle.secondary,
-                row=2,  # (the rows below it are full; this one holds the owner's buttons)
+                row=None,  # (the card lays it out)
                 custom_id=f"dmbot:keep:{campaign_id}",
             )
         )

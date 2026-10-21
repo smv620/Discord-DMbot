@@ -1,6 +1,6 @@
-"""👑 Game masters, on ⚙️ Settings (#1600, item 2 of #618): a campaign's DMs add and remove
-each other. Everything in DMbot already checks `dm_user_ids`; this is the only way to change
-them.
+"""👑 Game masters, in ⚙️ Settings → 🗂️ Campaign management (#1600, item 2 of
+#618): a campaign's DMs add and remove each other. Everything in DMbot already checks
+`dm_user_ids`; this is the only way to change them.
 
 - **Who:** only a DM of the campaign, checked on every press (a server manager who is not a DM
   does not get the button).
@@ -86,7 +86,7 @@ TOLD = (
     "DM screen and change its settings. This doesn't start any recording of you."
 )
 MENU_TIMED_OUT = (
-    "This menu timed out. Press ⚙️ Settings → 🗂️ Campaign management → 👑 Game masters, to try again."
+    "This menu timed out. Press ⚙️ Settings → 🗂️ Campaign management → 👑 Game masters to try again."
 )
 
 
@@ -161,7 +161,7 @@ class GameMastersButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:gms:{_ID}",
 ):
-    """👑 Game masters, on ⚙️ Settings: opens the list privately (DMs only)."""
+    """👑 Game masters, in 🗂️ Campaign management: opens the list privately (DMs only)."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:
         super().__init__(
@@ -204,7 +204,7 @@ async def open_list(interaction: discord.Interaction, campaign_id: str) -> None:
 
 
 class ListView(discord.ui.View):
-    """The list's two buttons. Short-lived: pressing ⚙️ Settings again opens a fresh one."""
+    """The list's two buttons. Short-lived: pressing 👑 Game masters again opens a fresh one."""
 
     def __init__(self, campaign: Campaign) -> None:
         super().__init__(timeout=10 * 60)

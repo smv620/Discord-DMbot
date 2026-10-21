@@ -3,8 +3,9 @@ owner offers it to another member of the server, and the person offered answers 
 message. Ownership moves only when they accept, within 7 days, and only if their plan
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
-- ⚙️ Settings shows who owns the campaign and, for the owner, **🤝 Hand over** (pick a
-  member of the server), or **Take back offer** while one waits for an answer.
+- ⚙️ Settings → 🗂️ Campaign management shows who owns the campaign and, for the owner,
+  **🤝 Hand over** (pick a member of the server), or **Take back offer** while one waits for
+  an answer.
 - The person offered gets a private message with **Accept** / **No thanks**. If DMbot
   can't reach them (they left the server, or their messages are closed), the offer is
   taken back at once and the owner is told (decision 3).

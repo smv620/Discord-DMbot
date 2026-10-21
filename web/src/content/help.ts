@@ -213,7 +213,7 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Settings. Who can see the DM screen is under 👁️ Who can see the DM screen.",
+    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Settings. Who can see the DM screen is under 👁️.",
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
@@ -888,7 +888,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To see or change who your game masters are, press ⚙️ Settings, then 🗂️ Campaign management, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    text: "To see or change who your game masters are, press 🗂️ Campaign management (it is in ⚙️ Settings), then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (🤝 Hand over, under 🗂️ Campaign management in ⚙️ Settings). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
     names: [
       { name: "Game masters", file: "dm_screen/game_masters.py" },
       { name: "Add a game master", file: "dm_screen/game_masters.py" },
@@ -896,7 +896,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To give a campaign to another game master, press ⚙️ Settings, then 🗂️ Campaign management, then Hand over. They must say yes.",
+    text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
 ];
@@ -1048,11 +1048,11 @@ export const accountSteps: Step[] = [
     text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
   },
   {
-    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then 🗂️ Campaign management, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    text: "Moving to a new Discord account? Do this for each campaign you own: press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
+    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings → 🗂️ Campaign management. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
     names: [
       { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },

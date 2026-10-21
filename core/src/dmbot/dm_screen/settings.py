@@ -125,8 +125,11 @@ def _transcripts_line(campaign: Campaign) -> str:
 
 
 MORE_LINE = (
-    "• **More:** hand over, pause, game masters, delete and how long transcripts are kept are "
-    "under 🗂️ Campaign management."
+    "• **More:** hand over, pause, transcript retention, game masters and delete are under "
+    "🗂️ Campaign management."
+)
+PAUSED_LINE = (
+    "• **⏸️ Paused.** DMbot is not listening. The owner can unpause it under 🗂️ Campaign management."
 )
 
 
@@ -156,6 +159,7 @@ def settings_text(
             f"• **How much DMbot says:** {level.capitalize()}{recommended}. "
             f"{what[:1].upper()}{what[1:]}. Warnings always show.",
             f"• **Who can see the DM screen:** {who} Change it with 👁️ Who can see the DM screen.",
+            *([PAUSED_LINE] if campaign.paused else []),
             *(
                 [MORE_LINE]
                 if viewer is not None and management_items(campaign, offer, viewer)
@@ -950,8 +954,11 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
     campaign = allowed[0]
     offer = await _open_offer(interaction, campaign_id) if card != "visibility" else None
     text, view = _drawn(campaign, offer, interaction.user.id, card)
-    with contextlib.suppress(discord.HTTPException):  # (a card too old to edit: nothing to show)
+    try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+    except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(FAILED, ephemeral=True)
 
 
 class VisibilityMenuButton(
