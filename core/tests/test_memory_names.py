@@ -386,6 +386,48 @@ class NameCards(NamesTest):
             )
             before = typed or None
 
+    async def card_labels(self, user: int = DM, *, spoken: bool = True, name: Any = None) -> Any:
+        from dmbot.ui import name_card
+
+        self.fresh()
+        it = self.it(user)
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=spoken)):
+            await name_card.show_card(it, self.campaign.id, (name or self.bell).id)
+        return [getattr(c, "label", "") for c in it.response.sent[0][1]["view"].children]
+
+    async def test_the_say_button_is_for_dms_with_spoken_recaps(self) -> None:
+        from dmbot.ui import name_card
+
+        self.assertIn(name_card.SAY_BUTTON, await self.card_labels())
+        self.assertNotIn(name_card.SAY_BUTTON, await self.card_labels(MANAGER))  # not a DM
+        self.assertNotIn(name_card.SAY_BUTTON, await self.card_labels(spoken=False))
+
+    async def test_the_say_form_sets_and_clears_how_the_narrator_says_a_name(self) -> None:
+        from dmbot.ui import name_card
+
+        for typed, told in (("Bell-air-os", "say it as **Bell-air-os**"), ("", "as written")):
+            form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+            form.said_as = SimpleNamespace(value=typed)  # type: ignore[assignment]
+            it = self.it()
+            await form.on_submit(it)
+            self.assertIn(told, it.response.edited[0][0])
+            self.assertEqual(
+                await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
+            )
+
+    async def test_the_say_form_refuses_a_non_dm_and_says_when_spoken_recaps_are_off(self) -> None:
+        from dmbot.ui import name_card
+
+        form = name_card.SayForm(self.campaign.id, self.bell.id, "Belleros", None)
+        form.said_as = SimpleNamespace(value="Bell-air-os")  # type: ignore[assignment]
+        await form.on_submit(self.it(MANAGER))
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+        card = name_card.NameCard(self.campaign.id, self.bell.id, say=True)
+        it = self.it()
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
+            await card._say(it)
+        self.assertIn("Spoken recaps aren't switched on", it.response.sent[0][0])
+
     async def test_a_form_without_the_field_never_touches_the_spelling(self) -> None:
         from dmbot.ui import name_card
 

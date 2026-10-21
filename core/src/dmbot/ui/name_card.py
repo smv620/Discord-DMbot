@@ -499,6 +499,13 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
+    # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
+    # narrator's dictionary goes to the voice company; the store refuses it too).
+    say = (
+        sees_secrets(campaign, interaction.user.id)
+        and not any(e.entity_id == entity_id and e.key == own and e.secret for e in names.names)
+        and await _spoken_recaps(interaction, campaign)
+    )
     view = NameCard(
         campaign.id,
         entity_id,
@@ -512,6 +519,7 @@ async def show_card(
         promise=entity.type == "promise" and secrets,
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
+        say=say,
         standing=(
             entity.type in ("character", "faction", "place")
             and not entity.is_player_character
@@ -658,6 +666,7 @@ class NameCard(_Menu):
         promise: bool = False,
         led: bool = False,
         book: bool = False,
+        say: bool = False,
         undo_connection: int | None = None,
     ) -> None:
         super().__init__()
@@ -680,6 +689,8 @@ class NameCard(_Menu):
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
         # Row 2, so row 1's buttons don't clip on a phone (#393).
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
+        if say:  # how the recap narrator says this name (#2171), the same as the website's field
+            self.add_item(_Button(self._say, label=SAY_BUTTON, style=grey, row=2))
         if led:  # the DM's word that this led to a thread or an event (#1679)
             self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
         if book:  # the DM's word that this is an entry in their adventure (#1715)
@@ -941,6 +952,22 @@ class NameCard(_Menu):
                 )
             )
 
+    async def _say(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if not await _spoken_recaps(interaction, campaign):  # also checked on every press
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        said = await memory.said_as(campaign.guild_id, campaign.id, self.entity_id)
+        self.origin = None  # the form's answer replaces this message; cancel keeps it
+        await interaction.response.send_modal(SayForm(self.campaign_id, self.entity_id, name, said))
+
     async def _add(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
@@ -1082,6 +1109,56 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
                         f" The name is saved, but how recaps say it wasn't. {exc}"
                         " Open Fix spelling to try again."
                     )
+        changed(interaction, campaign)
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+SAY_BUTTON = "🔊 How to say it"
+SAY_NOT_ON = "Spoken recaps aren't switched on for this campaign, so there is no narrator to tell."
+
+
+class SayForm(discord.ui.Modal, title="How to say it"):
+    """Sets or clears how the recap narrator says one name (#2171): the same field as the
+    website's Names page and the one in ✏️ Fix spelling, without touching the name."""
+
+    said_as: discord.ui.TextInput[SayForm] = discord.ui.TextInput(
+        label=SAID_AS_LABEL, placeholder=SAID_AS_HELP, max_length=SAID_AS_MAX, required=False
+    )
+
+    def __init__(self, campaign_id: str, entity_id: str, name: str, said_as: str | None) -> None:
+        super().__init__(title=logic.shorten(f"How to say {name}", 45), timeout=VIEW_TIMEOUT_S)
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.said_as.default = (said_as or "")[:SAID_AS_MAX]
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _ = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on a press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        spelling = " ".join(self.said_as.value.split()) or None
+        try:
+            await memory.set_said_as(
+                campaign.guild_id, campaign.id, self.entity_id, spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        note = (
+            f"🔊 The narration will say it as **{_md(spelling)}**."
+            if spelling
+            else "🔊 The narration will say it as written."
+        )
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

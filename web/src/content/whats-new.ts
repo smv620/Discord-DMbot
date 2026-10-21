@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "Say a name your way, from its card",
+    what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name, or leave it empty to have it said as written. It is the same as the field on the website's Names page, and only shows when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "Share a recap with a link",
     what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
