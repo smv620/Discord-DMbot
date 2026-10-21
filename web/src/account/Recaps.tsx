@@ -9,6 +9,7 @@ import {
   allowanceLines,
   cueWords,
   errors,
+  heldWords,
   sessionDay,
   statusLine,
   text,
@@ -547,6 +548,15 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
         </p>
       )}
+      {recap.waitingForNames && recap.status === "draft" ? (
+        // Held for the DM's answers about names: one line instead of the draft, and none of its
+        // buttons (#2210). The page goes back to normal on the next load once they are answered.
+        <section class="panel" aria-labelledby="recap-held">
+          <h3 id="recap-held">{heldWords.heading}</h3>
+          <p role="status">{heldWords.line(recap.namesToAnswer)}</p>
+        </section>
+      ) : (
+        <>
       {!decided && !recap.working && recap.state !== "failed" && (
         <>
           <p class="lead">{text.onlyYou}</p>
@@ -734,6 +744,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )}
       {!decided && !recap.canTryAgain && recap.triesLeft === 0 && (
         <p class="small">{text.noTriesLeft}</p>
+      )}
+        </>
       )}
       <p>
         <a href="/account/recaps">{text.back}</a>

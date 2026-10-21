@@ -202,6 +202,11 @@ export interface Recap {
   housekeeping: string[];
   /** Names the recap kept that DMbot didn't know: the DM's copy only, never posted (#2027). */
   toConfirm?: string[];
+  /** Held until the DM answers DMbot's questions about names (#2169, #2210). Missing from an API
+   * older than that: then nothing is held. */
+  waitingForNames?: boolean;
+  /** How many of those questions are left. */
+  namesToAnswer?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
