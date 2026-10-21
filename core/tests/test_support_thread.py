@@ -6,6 +6,7 @@ newest parts; and none of the words reach the log or a header. Invented words th
 from __future__ import annotations
 
 import re
+import unittest
 
 from dmbot.web import support
 from dmbot.web import support_ai as ai
@@ -16,6 +17,37 @@ from tests.test_support_helper import ALICE_EMAIL, HelperBase, answer, new_words
 
 def ids(header: str) -> list[str]:
     return re.findall(r"<[^<>\s]+>", header)
+
+
+STEP = "Please restart the bot from the menu, then try again."
+LONG = "Open the DM screen and press Settings, then choose the table channel. " * 2
+
+
+class TheCutRules(unittest.TestCase):
+    """Where a reply sent back with no ">" is cut, as a table (no database): a line is cut only
+    when it and the lines after it are wholly a copy of a sent email (#2192)."""
+
+    def test_near_misses_stay_whole_and_real_copies_are_cut(self) -> None:
+        wrapped = "\n".join(
+            re.findall(r".{1,60}(?:\s|$)", LONG.strip())
+        )  # the same words, re-wrapped by a mail program
+        mine = f"Thanks.\n{STEP} Did that, still red."
+        long_mine = f"Hi.\n{LONG.strip()} I did exactly that and nothing."
+        retyped = f"I did what you said:\n{LONG.strip()}\nStill fails."  # the known limit
+        yes = "Thanks.\nYes.\nBut now it fails again."
+        cases = [
+            # (what was sent, what the person wrote, what is kept)
+            ([STEP], mine, mine),
+            ([LONG], long_mine, long_mine),
+            ([LONG], retyped, "I did what you said:"),  # a whole retyped copy can't be told apart
+            (["Yes."], yes, yes),
+            ([STEP], f"Done.\n{STEP}", "Done."),
+            ([LONG], f"It works.\n\n{LONG.strip()}", "It works."),
+            ([LONG], f"It works.\n\n{wrapped}", "It works."),
+        ]
+        for sent, wrote, kept in cases:
+            with self.subTest(wrote[:40]):
+                self.assertEqual(sm.fresh_words(wrote, sent=sent), kept)
 
 
 class TheHistory(HelperBase):
@@ -144,6 +176,21 @@ class TheHistory(HelperBase):
         self.assertEqual(sm.fresh_words(own, sent=sent), own)
         below = "It works.\nThanks, we got your message.\nWe will look today."
         self.assertEqual(sm.fresh_words(below, sent=sent), "It works.")
+
+    async def test_a_quoted_sentence_with_the_persons_own_words_after_it_is_kept(self) -> None:
+        number = await self.talk()
+        await self.helper.team_reply(number, STEP)
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        reply = f"Thanks.\n{STEP} Did that, still red."
+        await self.inbound(to, reply)
+        self.assertEqual((await support.thread(self.web, number))[-1].text, reply)
+        # A long helper answer quoted in full with a comment on the same line is theirs too.
+        self.fake.answers.append(answer(LONG.strip()))
+        await self.helper.run_once()
+        to = str(self.mails(to_alice=True)[-1]["Reply-To"])
+        reply = f"Hi.\n{LONG.strip()} I did exactly that and nothing."
+        await self.inbound(to, reply)
+        self.assertEqual((await support.thread(self.web, number))[-1].text, reply)
 
     async def test_a_copy_the_mail_program_re_wrapped_is_still_cut(self) -> None:
         import textwrap

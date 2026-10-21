@@ -98,21 +98,29 @@ def _long_enough(text: str) -> bool:
 
 
 def _is_sent_back(lines: Sequence[str], sent: Sequence[str]) -> bool:
-    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent. Either
-    the line is the email's long opening, or the words from here on start with the email's first 80
-    characters and those are long enough to prove it. Words are compared single-spaced, so a copy
-    the mail program re-wrapped still matches; a short email ("Yes.") proves nothing alone."""
-    rest = _squash("\n".join(lines))
-    first = lines[0].strip()
+    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent.
+    Whole lines only: from this line, lines are joined (single-spaced, so a copy the mail program
+    re-wrapped still matches) while the join is still the start of the email, and it is a copy
+    once the join reaches the email's first 80 characters (or all of a shorter email), and those
+    are long enough to prove it (`_long_enough`). A line with the person's own words after the
+    email's text is never part of a copy, so "Please restart it. Did that, still red." is theirs.
+    Known limit: a person who retypes a whole stored team reply of 25 to 80 characters on a line
+    of its own, with their words on the next line, is cut too; that can't be told from a copy."""
     for email in sent:
-        opening = next((line.strip() for line in email.splitlines() if line.strip()), "")
-        if not opening:
+        whole = _squash(email)
+        target = whole[:80]
+        if not _long_enough(target):
             continue
-        if first == opening and _long_enough(opening):
-            return True
-        start = _squash(email)[:80]
-        if _long_enough(start) and rest.startswith(start):
-            return True
+        joined = ""
+        for line in lines:
+            words = _squash(line)
+            if not words:
+                continue
+            joined = f"{joined} {words}".strip()
+            if not whole.startswith(joined):
+                break
+            if len(joined) >= len(target):
+                return True
     return False
 
 
