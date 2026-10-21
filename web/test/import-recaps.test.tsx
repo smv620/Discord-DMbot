@@ -85,9 +85,12 @@ describe("the choice", () => {
     expect(one("session-2.txt").checked).toBe(false);
     expect(box(w.recapsAll).checked).toBe(false);
     expect(screen.getByText(w.recapsNote)).toBeTruthy();
-    expect(w.recapsNote).toBe(
+    // The line the issue asks for is in it, word for word, and it says a recap is optional.
+    expect(w.recapsNote).toContain(
       "Recaps wait until you've answered DMbot's questions about names, like after a live session. You'll get one message in Discord when they start.",
     );
+    expect(w.recapsNote).toContain("Nothing is written for a session you leave unticked.");
+    expect(screen.getByText(w.recapsHeading)).toBeTruthy();
   });
 
   it("'Write recaps for all' ticks every session, and unticks them again", async () => {
