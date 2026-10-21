@@ -28,6 +28,7 @@ import {
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapApprove from "./RecapApprove";
+import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
@@ -131,7 +132,8 @@ function List({ api }: { api: AccountApi }) {
         </p>
       ) : (
         <ul class="campaigns">
-          {load.recaps.map((r) => (
+          {/* Newest session first, whatever order the API sends them in. */}
+          {[...load.recaps].sort((a, b) => b.sessionAt - a.sessionAt).map((r) => (
             <li key={r.ref}>
               <span class="campaign-name">{r.title || text.untitled}</span>
               <span class="small">
@@ -669,6 +671,14 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && (
+        <RecapShareControls
+          key={`share-${recap.ref}`}
+          api={api}
+          recap={recap}
+          onShare={(share) => setRecap({ ...recap, share, shared: share.on })}
+        />
+      )}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}

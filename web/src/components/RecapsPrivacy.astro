@@ -8,8 +8,9 @@ import { aiTrainingSentence } from "../content/legal";
 interface Props {
   live: boolean;
   audio: boolean;
+  share?: boolean;
 }
-const { live, audio } = Astro.props;
+const { live, audio, share = false } = Astro.props;
 ---
 
 {
@@ -24,8 +25,9 @@ const { live, audio } = Astro.props;
         <li>
           <strong>Who writes it.</strong> The AI company named above (Anthropic). It gets the text of
           what people who said yes said in that session (marked only "DM" or "Player"), the names
-          the game master confirmed (never the ones marked secret), the game's last posted recap and
-          the day in the story. It does not get sound. {aiTrainingSentence}
+          the game master confirmed (never the ones marked secret), the game's last posted recap, the
+          day in the story, and anything the game master wrote for recaps: example recaps, style
+          notes, and corrections typed for that recap. It does not get sound. {aiTrainingSentence}
         </li>
         <li>
           <strong>Who sees it.</strong> Only the game masters of that campaign, until one of them
@@ -42,6 +44,18 @@ const { live, audio } = Astro.props;
           that the email was sent, with no words in it, and delete it after 90 days. The email
           itself holds the recap's title and goes through Google, like our other email.
         </li>
+        {share && (
+          <li>
+            <strong>A shared link.</strong> A game master can share a recap by a link. Anyone who
+            has it can read the recap{audio ? " and play its voice and music" : ""} without signing
+            in, even people outside your Discord server, and they can pass it on. We ask search
+            engines not to list it, but that is only a request: treat the link like a password. A
+            game master can turn a link off or make a new one. The old link then no longer opens
+            the recap, though anyone who already saw it may keep a copy. A posted recap is already
+            in the table's chat channel for everyone there. A recap that is not posted can be read
+            only by the game masters of its campaign.
+          </li>
+        )}
         {audio && (
           <li>
             <strong>Narrated recaps.</strong> To make the voice and the music, the words to be read

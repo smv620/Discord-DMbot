@@ -30,6 +30,7 @@ from dmbot.account_id import from_dmbot_id, to_dmbot_id
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
+from dmbot.logs import mask_tokens
 from dmbot.web import (
     admin_api,
     email_signin,
@@ -38,6 +39,7 @@ from dmbot.web import (
     imports,
     offers,
     sessions,
+    shared_recaps,
     strays,
     support,
     tokens,
@@ -78,6 +80,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    share_recap,
 )
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
@@ -233,7 +236,7 @@ def create_app(
         except Exception:
             # Any crash is still JSON the website can read, inside the CORS wrapper below
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.
-            log.exception("Request failed: %s %s", request.method, request.url.path)
+            log.exception("Request failed: %s %s", request.method, mask_tokens(request.url.path))
             response = JSONResponse({"error": "server"}, status_code=500)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -571,6 +574,8 @@ def create_app(
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
         "too_many_speakers": (413, "too_many_speakers"),
+        "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
+        "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
@@ -684,6 +689,64 @@ def create_app(
                 return JSONResponse(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The public, read-only link of a posted recap (#2118): no sign-in, the token is the key.
+    # Per address, because anyone can call it; the same answer for every way it can fail.
+    # The page itself is strict; the audio has its own, looser one (a player asks for a file in
+    # several ranges). Behind a proxy, settings.client_ip_header must be set or every visitor shares
+    # one address.
+    shared_limit = RateLimit(60, count=30)
+    shared_audio_limit = RateLimit(60, count=240)
+
+    def shared_gate(request: Request, limit: RateLimit = shared_limit) -> None:
+        verdict = limit.take(limit_key(client_address(request)))
+        if verdict != "ok":
+            raise HTTPException(
+                status_code=429 if verdict == "wait" else 503,
+                detail="slow_down" if verdict == "wait" else "busy",
+                headers={"Retry-After": "60"},
+            )
+
+    @app.get("/recaps/{token}")
+    async def shared_recap(token: str, request: Request) -> JSONResponse:
+        shared_gate(request)
+        found = await shared_recaps.read_shared(db, recap_files, token, settings.api_url)
+        if found is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return JSONResponse(
+            found, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"}
+        )
+
+    @app.get("/recaps/{token}/audio/{kind}")
+    async def shared_recap_audio(token: str, kind: str, request: Request) -> FileResponse:
+        shared_gate(request, shared_audio_limit)
+        path = await shared_recaps.audio_for(db, recap_files, token, kind)
+        if path is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        return FileResponse(
+            path,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"},
+        )
+
+    @app.post("/me/recaps/{ref}/share")
+    async def me_recap_share(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Turn the link of a posted recap on or off, or make a new one: `{"action": "on" |
+        "off" | "new"}`. DMs of the campaign only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        try:
+            return await share_recap(
+                db, session, ref, action if isinstance(action, str) else "",
+                outside_engine=settings.outside_engine,
+            )  # fmt: skip
+        except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

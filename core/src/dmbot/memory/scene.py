@@ -134,6 +134,8 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
         if entry.secret:
             secret.add(name_key(entry.text))
             continue
+        if entry.kind == "old":
+            continue  # a spelling the DM fixed (#2170): matched in lines, never listened for
         entity = entities.get(entry.entity_id)
         if entry.confirmed and entity is not None and entity.status == CONFIRMED:
             names.setdefault(entry.entity_id, []).append(entry.text)
