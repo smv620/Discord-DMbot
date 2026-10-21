@@ -17,6 +17,7 @@ from dmbot.rules import house
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.ui import house_file as file_ui
 from dmbot.ui import house_rules as ui
+from dmbot.ui import house_sources
 from dmbot.ui.logic import DESCRIPTION_MAX, PHONE_LABEL_MAX, SELECT_OPTIONS_MAX
 from tests.test_memory_names import FakeResponse
 
@@ -201,7 +202,8 @@ class UITest(unittest.IsolatedAsyncioTestCase):
             str(c.label)
             for c in view.children
             if isinstance(c, discord.ui.Button)
-            and str(c.label) not in (file_ui.DOWNLOAD_LABEL, file_ui.FILE_LABEL)
+            and str(c.label)
+            not in (file_ui.DOWNLOAD_LABEL, file_ui.FILE_LABEL, house_sources.SOURCES_LABEL)
         ]
 
     @staticmethod

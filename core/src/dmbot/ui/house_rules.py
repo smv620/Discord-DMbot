@@ -30,7 +30,7 @@ from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStor
 if TYPE_CHECKING:
     from dmbot.rules.house_voice import Proposal
 from dmbot.ui import house_file as file_ui
-from dmbot.ui import logic
+from dmbot.ui import house_sources, logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -258,6 +258,8 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if rules:  # nothing to download before the first rule
             self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
+        if rules:  # where they came from (#2285): anyone who may read the list
+            self.add_item(_Button(self._sources, label=house_sources.SOURCES_LABEL))
         if is_dm:
             self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))
         if not is_dm or not rules:
@@ -309,6 +311,9 @@ class ListMenu(_Menu):
 
     async def _file(self, interaction: discord.Interaction) -> None:
         await file_ui.open_menu(interaction, self.campaign)
+
+    async def _sources(self, interaction: discord.Interaction) -> None:
+        await house_sources.open_sources(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -544,7 +549,9 @@ class AddForm(_RuleForm, title="Add a house rule"):
 
     async def save(self, store: HouseRuleStore, user_id: int) -> str:
         c = self.campaign
-        saved = await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
+        saved = await store.add(
+            c.guild_id, c.id, user_id, self.rule.value, self.instead.value, source=self.source
+        )
         return f"➕ Added house rule {saved.number}."
 
     def refusal(self, message: str) -> str:

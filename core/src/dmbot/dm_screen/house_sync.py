@@ -231,12 +231,12 @@ async def _show(interaction: discord.Interaction, text: str, view: discord.ui.Vi
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
 
-def _origin(pending: Pending) -> dict[str, str | None]:
+def _origin(pending: Pending) -> tuple[str, str | None]:
     """Where the rules a file adds say they came from (#2285): the linked file, or an upload
     by its name."""
     if pending.from_link:
-        return {"source": "linked", "source_name": None}
-    return {"source": "upload", "source_name": pending.file_name}
+        return "linked", None
+    return "upload", pending.file_name
 
 
 async def _answer_long_job(interaction: discord.Interaction, how_many: int) -> None:
@@ -314,7 +314,13 @@ async def press(
             todo = pending.items[pending.index :]
             await _answer_long_job(interaction, len(todo))
             done = await house_file_sync.apply(
-                store, guild_id, pending.campaign_id, user_id, todo, **_origin(pending)
+                store,
+                guild_id,
+                pending.campaign_id,
+                user_id,
+                todo,
+                source=_origin(pending)[0],
+                source_name=_origin(pending)[1],
             )
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
@@ -323,7 +329,13 @@ async def press(
             if action == "accept":
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
-                    store, guild_id, pending.campaign_id, user_id, one, **_origin(pending)
+                    store,
+                    guild_id,
+                    pending.campaign_id,
+                    user_id,
+                    one,
+                    source=_origin(pending)[0],
+                    source_name=_origin(pending)[1],
                 )
                 pending.applied.done += done.done
                 pending.applied.skipped += done.skipped
