@@ -7481,6 +7481,24 @@ OLD_SPELLING = """
     -- it is set again. The grants stay.
     """ + _WEB_NAMES_FUNCTIONS.replace("a.kind <> 'misheard'", "a.kind NOT IN ('misheard', 'old')")
 
+SAID_AS_SUGGESTIONS = f"""
+    -- "Say it this way?" (#2171): when a confirmed name is again and again heard as the same
+    -- other spelling, DMbot offers that spelling for the recap narrator's "said as". One row per
+    -- name, so the DM is asked once: a "no" stays as state 'no' and is never offered again.
+    -- Words only: no speaker, no line, no time of day. It goes with the name and with the
+    -- campaign, is not part of backups (a wait, not content), and is isolated per server.
+    CREATE TABLE said_as_suggestions (
+        {_memory_scope()}
+        entity_id  TEXT NOT NULL,
+        heard      TEXT NOT NULL CHECK (length(heard) BETWEEN 1 AND 80),
+        times      INTEGER NOT NULL CHECK (times > 0),
+        state      TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'no')),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entity_id),
+        {_entity_link("entity_id")}
+    );
+    """ + _isolate("said_as_suggestions")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7636,6 +7654,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
     ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
+    ("0147_said_as_suggestions", SAID_AS_SUGGESTIONS),  # say it this way? (#2171)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -7655,6 +7674,7 @@ ISOLATED_TABLES = (
     "transcript_suggestions",
     "waiting_name_questions",
     "memory_heard",
+    "said_as_suggestions",
     "shared_confirmations",
     "campaign_handover_offers",
     "character_sheets",

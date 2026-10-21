@@ -307,6 +307,8 @@ from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
+    SOUND,
+    SPELLING,
     Cleaned,
     Fix,
     Vocabulary,
@@ -427,6 +429,9 @@ TRANSCRIPT_SAVE_S = 5.0  # stored transcript lines are saved in batches this oft
 SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names in the scene
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
+SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
+SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
+HEARD_FORMS_MAX = 1000  # (name, spelling, person) counts kept in a session
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 # The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
@@ -620,6 +625,9 @@ class Table:
     # What the Cleaner did this session, for the one line of counts in the end-of-session message
     # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
     names_fixed: int = 0
+    # How often the cleaner fixed a name from the same other spelling, per person (#2171): the
+    # words only, kept for the session. Dropped for anyone who stops being recorded.
+    heard_forms: dict[tuple[str, str, int], int] = field(default_factory=dict)
     names_asked: int = 0
     # The AI ranking of "Did they mean…?" options (#2048), counts only, for the session's end log:
     # calls, "likely" chosen, "none", errors; and of the questions answered with a likely first
@@ -1603,6 +1611,7 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
+            table.heard_forms = {k: v for k, v in table.heard_forms.items() if k[2] != user_id}
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
@@ -2520,6 +2529,7 @@ class DMBot(commands.AutoShardedBot):
             ("summary", lambda: self.post_session_summary(table, ended_at, caught_up, sent)),
             ("names heard", lambda: self.keep_heard_names(table)),
             ("name scan", lambda: self.suggest_names(table)),
+            ("say it this way", lambda: self.suggest_said_as(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
@@ -4268,6 +4278,7 @@ class DMBot(commands.AutoShardedBot):
             )
             result = self._clean(table, text, unsure=noted, count=True)
             cleaned = result.text
+            line_fixes = result.fixes
             table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result, seam)
@@ -4286,6 +4297,10 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
+            line_fixes = ()
+        if line_fixes and not self._topic_holds(table, cleaned or text, names_said):
+            # (a line held for the off-topic filter is not counted: when unsure, offer less)
+            self._count_heard_forms(table, utterance.user_id, line_fixes)
         if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
@@ -8585,6 +8600,57 @@ class DMBot(commands.AutoShardedBot):
         with log_context(guild_id=gid, campaign_id=cid):
             dms = {table.dm_user_id, *table.dm_user_ids}
             await self.memory.check_people(gid, cid, dms)
+
+    def _count_heard_forms(self, table: Table, user_id: int, fixes: Sequence[Fix]) -> None:
+        """Count the other spellings the cleaner turned into a confirmed name (#2171): the words
+        only, per person, so a person who stops being recorded can be forgotten. A fix the DM made
+        by hand is not a hearing and is not counted."""
+        for fix in fixes:
+            if fix.how not in (SPELLING, SOUND):
+                continue
+            heard = " ".join(fix.heard.split())
+            if not heard or len(heard) > SAID_AS_HEARD_MAX:
+                continue
+            key = (fix.entity_id, heard.casefold(), user_id)
+            if key not in table.heard_forms and len(table.heard_forms) >= HEARD_FORMS_MAX:
+                continue
+            table.heard_forms[key] = table.heard_forms.get(key, 0) + 1
+
+    async def suggest_said_as(self, table: Table) -> None:
+        """After a session: a name the cleaner fixed at least `SAID_AS_MIN_FIXES` times from the
+        same other spelling is offered for the narrator's "said as" (#2171), for the DM to answer
+        in 🔊 Check how to say names. Only where spoken recaps are on for the campaign, only
+        hearings from people who still agree (checked now), only a public name. Offers only,
+        never a change. The log gets counts."""
+        counts = table.heard_forms
+        table.heard_forms = {}
+        if (
+            self.memory is None
+            or table.campaign_id is None
+            or not counts
+            or not self.settings.recap_audio_on
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "recap_audio", gid, campaign, fail_open=False
+            ):
+                return
+            agreed = await self.consent.consenting(gid)  # after the waits: who still agrees
+            totals: dict[tuple[str, str], int] = {}
+            for (entity_id, heard, speaker), times in counts.items():
+                if speaker in agreed:
+                    totals[(entity_id, heard)] = totals.get((entity_id, heard), 0) + times
+            best: dict[str, tuple[str, int]] = {}
+            for (entity_id, heard), times in totals.items():
+                if times >= SAID_AS_MIN_FIXES and times > best.get(entity_id, ("", 0))[1]:
+                    best[entity_id] = (heard, times)
+            kept = await self.memory.add_said_as_suggestions(
+                gid, cid, [(e, h, t) for e, (h, t) in best.items()]
+            )
+            log.info("Say it this way: %d offered", kept)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to

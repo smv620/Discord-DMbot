@@ -95,6 +95,7 @@ from dmbot.memory.models import (
     PeopleSuggestion,
     Relation,
     RuleLink,
+    SaidAsSuggestion,
     State,
     TooLateToUndo,
     Written,
@@ -2069,6 +2070,103 @@ class MemoryStore:
                 )
             row = await w.update(ALIASES, rows[0]["id"], {"said_as": clean})
             return Written(_alias(row), w.batch)
+
+    async def add_said_as_suggestions(
+        self, guild_id: int, campaign_id: str, found: Sequence[tuple[str, str, int]]
+    ) -> int:
+        """Keep (entity ID, the spelling it is heard as, how often) as "say it this way?" offers.
+        Only for a confirmed name whose main name is public and has no "said as" yet, and not
+        one the DM already turned down or was already asked about. An observation, not an edit:
+        no change log and no reload. Returns how many were kept."""
+        async with self._read(guild_id, campaign_id) as scope:
+            entities = {
+                str(r["id"]): r for r in await scope.select(ENTITIES, " AND status = 'confirmed'")
+            }
+            mains = {(str(a["entity_id"]), a["key"]): a for a in await scope.select(ALIASES)}
+        rows = []
+        for entity_id, heard, times in found:
+            entity = entities.get(entity_id)
+            heard = " ".join(heard.split())
+            if entity is None or not heard or len(heard) > 80 or times <= 0:
+                continue
+            main = mains.get((entity_id, lookup_key(entity["name"])))
+            if main is None or main["secret"] or main["said_as"]:
+                continue  # a secret name is never sent to the narrator; one with a spelling has it
+            if lookup_key(heard) == lookup_key(entity["name"]):
+                continue
+            rows.append((entity_id, heard, times))
+        if not rows:
+            return 0
+        kept = 0
+        async with self._db.guild(guild_id) as conn:
+            for entity_id, heard, times in rows:
+                cur = await conn.execute(
+                    "INSERT INTO said_as_suggestions"
+                    " (guild_id, campaign_id, entity_id, heard, times, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (guild_id, campaign_id, entity_id) DO NOTHING",
+                    (guild_id, campaign_id, entity_id, heard, times, int(self._clock())),
+                )
+                kept += cur.rowcount
+        return kept
+
+    async def said_as_suggestions(self, guild_id: int, campaign_id: str) -> list[SaidAsSuggestion]:
+        """The offers still waiting, oldest first. One whose name has changed since (secret now,
+        or given a "said as" some other way) is not offered."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT entity_id, heard, times FROM said_as_suggestions"
+                " WHERE guild_id = %s AND campaign_id = %s AND state = 'waiting'"
+                " ORDER BY created_at, entity_id",
+                scope.ids,
+            )
+            waiting = await cur.fetchall()
+            entities = {
+                str(r["id"]): r for r in await scope.select(ENTITIES, " AND status = 'confirmed'")
+            }
+            mains = {(str(a["entity_id"]), a["key"]): a for a in await scope.select(ALIASES)}
+        out = []
+        for r in waiting:
+            entity = entities.get(str(r["entity_id"]))
+            if entity is None:
+                continue
+            main = mains.get((str(r["entity_id"]), lookup_key(entity["name"])))
+            if main is None or main["secret"] or main["said_as"]:
+                continue
+            out.append(
+                SaidAsSuggestion(str(r["entity_id"]), entity["name"], r["heard"], r["times"])
+            )
+        return out
+
+    async def answer_said_as(
+        self, guild_id: int, campaign_id: str, entity_id: str, spelling: str | None
+    ) -> None:
+        """The DM's answer to an offer: a spelling (the offered one or one they typed) sets the
+        name's "said as" and ends the offer; None is a "no" that is remembered, so the same offer
+        never comes back. Only the DM's answer reaches here (the caller checks)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM said_as_suggestions WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND state = 'waiting'",
+                (guild_id, campaign_id, entity_id),
+            )
+            if await cur.fetchone() is None:
+                raise MemoryRuleError(NOT_FOUND)
+        if spelling is None:
+            async with self._db.guild(guild_id) as conn:
+                await conn.execute(
+                    "UPDATE said_as_suggestions SET state = 'no' WHERE guild_id = %s"
+                    " AND campaign_id = %s AND entity_id = %s",
+                    (guild_id, campaign_id, entity_id),
+                )
+            return
+        await self.set_said_as(guild_id, campaign_id, entity_id, spelling, source=DM)
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM said_as_suggestions WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s",
+                (guild_id, campaign_id, entity_id),
+            )
 
     async def merge(
         self,
