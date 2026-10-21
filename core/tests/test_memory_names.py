@@ -2752,8 +2752,8 @@ class Review(NamesTest):
         await self.suggest("Hrothgar")
         await self.suggest("Belleros")
         self.bot._next_session_start = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        self.bot.import_job = None  # type: ignore[assignment]
-        self.bot.heard_questions = None  # type: ignore[assignment]
+        self.bot.import_job = None
+        self.bot.heard_questions = None
 
         async def waiting() -> int:
             return await self.bot._open_name_questions(GUILD, self.campaign.id, "live", 0)
@@ -2767,8 +2767,8 @@ class Review(NamesTest):
     async def test_the_later_button_changes_what_a_recap_waits_on(self) -> None:
         await self.suggest("Hrothgar")
         self.bot._next_session_start = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        self.bot.import_job = None  # type: ignore[assignment]
-        self.bot.heard_questions = None  # type: ignore[assignment]
+        self.bot.import_job = None
+        self.bot.heard_questions = None
         self.assertEqual(await self.bot._open_name_questions(GUILD, self.campaign.id, "s", 0), 1)
         view, _ = await self.review()
         await view._later(self.it())
@@ -2790,6 +2790,19 @@ class Review(NamesTest):
                     "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (found.id,)
                 )
             await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+
+    async def test_add_many_forgets_the_later_and_an_undo_asks_again(self) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        written = await self.memory.confirm_kinds(
+            GUILD, self.campaign.id, [found.id], "npc", source="dm"
+        )
+        assert written.batch is not None
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        self.assertIn("Hrothgar", await self.names((PROPOSED,)))  # a suggestion again
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
 
     async def test_a_deferral_goes_with_its_campaign_and_one_campaign_cannot_see_anothers(
         self,

@@ -316,18 +316,8 @@ class Changes(Scope):
         assert raw is not None
         after = row_of(raw, table)
         await self._log(table, row_id, "update", before, after)
-        if (
-            table.name == "memory_entities"
-            and "status" in changes
-            and after["status"] != "proposed"
-        ):
-            # A name decided on is no longer left "for later" (#2174): if it is ever undone back
-            # to a suggestion it asks again, rather than staying quiet for an answer nobody gave.
-            await self.conn.execute(
-                "DELETE FROM name_later"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
-                (*self.ids, row_id),
-            )
+        if "status" in changes:
+            await self._forget_later(table, [after])
         return after
 
     async def delete(self, table: Table, row_id: str) -> None:
@@ -461,7 +451,25 @@ class Changes(Scope):
         await self._log_many(
             table, "update", [(after[table.key], before, after) for before, after in logged]
         )
+        if "status" in columns:
+            await self._forget_later(table, [after for _, after in logged])
         return [after for _, after in logged]
+
+    async def _forget_later(self, table: Table, rows: list[dict[str, Any]]) -> None:
+        """A name decided on is no longer left "for later" (#2174): if it is ever undone back to
+        a suggestion it asks again, rather than staying quiet for an answer nobody gave. Every
+        path that changes a status comes through here (one change, many, and undo)."""
+        ids = [
+            r[table.key]
+            for r in rows
+            if table.name == "memory_entities" and r["status"] != "proposed"
+        ]
+        if ids:
+            await self.conn.execute(
+                "DELETE FROM name_later"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)",
+                (*self.ids, ids),
+            )
 
     def _check_columns(self, table: Table, changes: dict[str, Any]) -> None:
         unknown = set(changes) - set(table.columns)
