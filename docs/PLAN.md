@@ -4317,6 +4317,24 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   holds it in memory (#1509). The same for a player's suggested fix ("Accepted." / "Kept as is."). **Read
   it** keeps its buttons. Nothing is stored, so after a restart a copy is found again only when
   someone presses it.
+- **"How to say it", with a suggestion and the DM's own voice** (owner, 2026-10-21). Wherever a DM sets
+  how a name is said (the website's "said as" field, #1451, and the name card's "Say it this way?",
+  #2195):
+  - **A suggestion first:** DMbot offers a respelling from the written name ("Ka'zeth" → "KAH-zeth"),
+    one fast-tier call with the name and its kind only, which the DM may take, change or ignore.
+  - **🎤 Say it:** on the website, the DM records the name in the browser, can **▶️ Play it back** (in the
+    browser, before anything is sent) and re-record, then **Use this**. DMbot turns the clip into a
+    respelling in plain letters with the stressed part in capitals ("kah-ZETH"). The DM sees it, edits it
+    if needed and saves. Discord has no microphone for buttons, so the name card gets a **🎤 Say it**
+    link button straight to that name on the website (one tap, the link-button rule).
+  - **🔊 Hear it:** the website reads the respelling aloud with the browser's own voice, so the DM can
+    check it. No cost, and it isn't the narrator's voice.
+  - **How the clip becomes letters:** a small speech-sound recogniser on our own server turns the clip
+    into speech sounds (IPA). Plain code turns those into the respelling. No outside service hears the
+    clip. If the recogniser isn't installed or fails, the DM is told plainly and types it instead.
+  - **Privacy and consent:** pressing 🎤 is the DM agreeing to that one clip. It is held only while it is
+    turned into letters, then deleted, and is never in a transcript, a backup or a log (counts only). At
+    most 10 seconds and 1 MB. DMs only; per campaign.
 - **Narration and music** (#1383, #1415, #1417): a recap can come with a narrator's voice and a
   music bed as two audio files, made with ElevenLabs from the cleaned recap with the campaign's
   "said as" spellings and no secret names, kept on a named volume (`recap-audio`) that the
