@@ -319,6 +319,7 @@ class SpellingWatcher:
 
     def __init__(self) -> None:
         self._ask_at: float | None = None
+        self._asker = 0  # who asked, so their ask goes when they stop being recorded
         self._lines: deque[tuple[float, int, str]] = deque(maxlen=RECENT_LINES)
 
     def note(self, user_id: int, text: str, now: float) -> list[SpelledOut]:
@@ -335,6 +336,7 @@ class SpellingWatcher:
                 found.append(SpelledOut(word, user_id, near))
         if is_ask(text):
             self._ask_at = now
+            self._asker = user_id
         elif found:
             self._ask_at = None  # answered
         self._lines.append((now, user_id, text))
@@ -344,6 +346,8 @@ class SpellingWatcher:
         """Someone stopped being recorded: their recent words go now, so they can neither be a
         nearby word nor make another person's spelling count."""
         self._lines = deque((x for x in self._lines if x[1] != user_id), maxlen=RECENT_LINES)
+        if self._asker == user_id:
+            self._ask_at = None  # their "how do you spell that" no longer opens a window
 
     def _near(self, now: float) -> list[str]:
         """Words from the last few lines that might be the name being spelled: capitalised ones

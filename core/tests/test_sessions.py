@@ -1613,18 +1613,27 @@ class SaveAndResume(SessionTests):
         table = await self.spelled_through_the_gate("1 other\n2 other")
         self.assertEqual(table.spelled, [])
 
-    async def test_stopping_recording_drops_a_held_spelling_and_the_words_before_it(self) -> None:
+    async def test_stopping_recording_drops_a_held_spelling_and_what_was_kept(self) -> None:
         table = await self.filtered("1 game\n2 game")
-        self.said(table, "ask Brenoch about it")
-        self.said(table, "how do you spell that", at_ms=2_000)
+        self.said(table, "how do you spell that")
         self.said(table, "B R A N N O C H", at_ms=5_000)
+        table.spelled.append(("Kael", PLAYER, ""))  # already kept, and hinted
+        table.spelled_hints = ("Kael",)
         self.bot.stop_recording(GUILD, PLAYER)
-        self.assertEqual((table.held_spelled, table.spelled), ({}, []))
-        self.assertEqual(
-            table.spelling.note(DM, "B R A N N O C H", 1e9), []
-        )  # no ask left, no words
+        self.assertEqual((table.held_spelled, table.spelled, table.spelled_hints), ({}, [], ()))
         await self.settle()
         self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_forgets_their_ask_and_the_words_before_it(self) -> None:
+        import time
+
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "We were sent by Brannoch")
+        self.said(table, "how do you spell that", at_ms=2_000)
+        self.bot.stop_recording(GUILD, PLAYER)
+        # Right now, inside the windows: their ask is gone, so another's letters don't count.
+        later = table.spelling.note(DM, "B R A N N O C H", time.monotonic())
+        self.assertEqual(later, [])
 
     async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
         table = await self.filtered("1 other\n2 game")

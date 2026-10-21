@@ -181,6 +181,29 @@ class TheWatcher(unittest.TestCase):
         (hit,) = w.note(1, "It's B R A N N O C H", 3.0)
         self.assertEqual(hit.word, "Brannoch")
 
+    def test_forgetting_a_speaker_removes_their_words_and_their_ask(self) -> None:
+        w = SpellingWatcher()
+        w.note(1, "We were sent by Brannoch", 0.0)
+        w.note(1, "how do you spell that", 2.0)
+        w.forget(1)
+        self.assertEqual(w.note(2, "B R A N N O C H", 4.0), [])  # their ask no longer counts
+        w = SpellingWatcher()
+        w.note(1, "We were sent by Brannoch", 0.0)
+        w.forget(1)
+        self.assertEqual(w.note(1, "B R A N N O C H", 3.0), [])  # nor their capitalised line
+        w = SpellingWatcher()
+        w.note(1, "ask Brenoch about it", 0.0)
+        w.forget(1)
+        w.note(2, "how do you spell that", 2.0)
+        (hit,) = w.note(2, "B R A N N O C H", 4.0)
+        self.assertNotIn("Brenoch", hit.near)  # nothing near comes from the one who stopped
+
+    def test_another_speakers_ask_stays_when_someone_else_stops(self) -> None:
+        w = SpellingWatcher()
+        w.note(1, "how do you spell that", 0.0)
+        w.forget(3)
+        self.assertEqual(len(w.note(2, "B R A N N O C H", 2.0)), 1)
+
     def test_an_answered_ask_is_used_once(self) -> None:
         w = SpellingWatcher()
         w.note(1, "how do you spell that", 0.0)

@@ -1616,6 +1616,7 @@ class DMBot(commands.AutoShardedBot):
                 x for x in table.spelled if x[1] != user_id
             ]  # and nothing they spelled
             table.spelling.forget(user_id)  # nor the words they said just before
+            table.spelled_hints = tuple(w for w, _, _ in table.spelled)[-SPELLED_MAX:]  # nor hints
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
@@ -4368,7 +4369,7 @@ class DMBot(commands.AutoShardedBot):
                     )
                 else:
                     self.sidebar.ask_at_table(table, utterance.user_id, asked_line)
-        if text and self._topic_pending(table, utterance, cleaned or text, names_said):
+        if text and self._topic_pending(table, utterance, cleaned or text, holds):
             pass  # held for the off-topic filter: the names scan gets it once labelled
         elif text and len(table.heard) < HEARD_MAX:
             # The cleaned line: a known name misheard and fixed live isn't new (#394).
@@ -5366,11 +5367,12 @@ class DMBot(commands.AutoShardedBot):
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
 
-    def _topic_pending(self, table: Table, utterance: Utterance, text: str, named: int) -> bool:
+    def _topic_pending(self, table: Table, utterance: Utterance, text: str, holds: bool) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
         AI, a window at a time; True if it's waiting. No AI key, or a session still
-        finishing: no filter, nothing is hidden."""
-        if not self._topic_holds(table, text, named):
+        finishing: no filter, nothing is hidden. `holds` is the line's one answer from
+        `_topic_holds` (worked out once, so the callers can't disagree)."""
+        if not holds:
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
