@@ -64,6 +64,7 @@ describe("What's new", () => {
       "Support emails show the whole chat", // until #2192 merges and dev1 deploys it
       "Names spelled out at the table", // until dev1 deploys it (#2168)
       "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
+      "A fixed spelling reaches past transcripts", // until dev1 deploys it (#2170)
       "Your recap waits for your name answers", // until dev1 deploys it (#2169)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
       "A short session asks first", // until dev1 deploys it (#2104)
