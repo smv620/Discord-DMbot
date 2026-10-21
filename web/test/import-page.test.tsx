@@ -778,9 +778,11 @@ describe("the chosen files can be managed (#2303)", () => {
   it("skips a file that is already on the list, and says so", async () => {
     open();
     await pick([s1]);
+    await pick([s1]);
+    expect(names()).toHaveLength(1);
+    expect(screen.getByRole("status").textContent).toBe(w.alreadyChosen);
     await pick([s1, s2]);
     expect(names()).toHaveLength(2);
-    expect(screen.getByRole("status").textContent).toBe(w.alreadyChosen);
   });
 
   it("removes one file, leaving the others", async () => {
@@ -793,9 +795,14 @@ describe("the chosen files can be managed (#2303)", () => {
 
   it("lets a removed file be chosen again", async () => {
     open();
-    const input = await pick([s1]);
+    const input = (await pick([s1])) as HTMLInputElement;
+    // The page clears the picker so the same file can be chosen again. A fresh input has no value,
+    // so give it one the way a browser does after a choice, and see the next choice clear it.
+    Object.defineProperty(input, "value", { value: "C:\\fakepath\\x.txt", writable: true, configurable: true });
+    await pick([s2]);
     expect(input.value).toBe("");
     fireEvent.click(screen.getByRole("button", { name: w.removeFile(s1.name) }));
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile(s2.name) }));
     expect(screen.queryByRole("list", { name: w.filesListLabel })).toBeNull();
     await pick([s1]);
     expect(names()).toEqual([w.shownName(s1.name)]);
@@ -839,5 +846,40 @@ describe("the chosen files can be managed (#2303)", () => {
     open();
     await pick([s1]);
     expect(screen.queryByRole("button", { name: w.removeAll })).toBeNull();
+  });
+  it("moves focus to the next Remove after one is pressed, then the previous one, then the picker", async () => {
+    open();
+    await pick([s1, s2, file("c.txt", "Mira: hi")]);
+    const remove = (name: string) => screen.getByRole("button", { name: w.removeFile(name) });
+    fireEvent.click(remove(s2.name));
+    await waitFor(() => expect(document.activeElement).toBe(remove("c.txt")));
+    fireEvent.click(remove("c.txt"));
+    await waitFor(() => expect(document.activeElement).toBe(remove(s1.name)));
+    fireEvent.click(remove(s1.name));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText(w.pickLabel, { selector: "input" })),
+    );
+  });
+
+  it("counts files and links together against the limit again after a Remove", async () => {
+    open();
+    const many = Array.from({ length: IMPORT_MAX_FILES + 1 }, (_, i) => file(`n${i}.txt`, "A: x"));
+    await pick(many);
+    expect(screen.getByRole("alert").textContent).toBe(w.tooManyFiles);
+    expect(previewButton().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile("n0.txt") }));
+    expect(screen.queryByText(w.tooManyFiles)).toBeNull();
+    expect(previewButton().disabled).toBe(false);
+  });
+
+  it("says on the screen, and aloud, which choices were left off, and what was added", async () => {
+    open();
+    await pick([s1]);
+    await pick([s1, s2]);
+    // One was new and one was already there: both are said, the second on the screen too.
+    expect(screen.getByRole("status").textContent).toBe(`${w.addedFiles(1, 2)} ${w.alreadyChosen}`);
+    expect(screen.getByText(w.alreadyChosen)).toBeTruthy(); // the on-screen line, exactly
+    fireEvent.click(screen.getByRole("button", { name: w.removeFile(s2.name) }));
+    expect(screen.queryByText(w.alreadyChosen)).toBeNull();
   });
 });

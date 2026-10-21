@@ -56,6 +56,8 @@ export const namesPage = {
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
   mergeSearch: "Find the other name",
   mergeNone: "No other name matches.",
+  mergeSearchDown: "We couldn't search just now. Try again.",
+  mergeMore: "There are more matches. Type more letters to narrow them down.",
   mergeChoose: "Keep this one",
   mergeButton: "Merge them",
   mergeAsk: (name: string, into: string): string => `${name} will be removed, and its other names go to ${into}. Merge them?`,

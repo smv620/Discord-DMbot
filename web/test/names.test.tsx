@@ -342,3 +342,117 @@ describe("only the newest read counts", () => {
     expect(rows()[0]?.textContent).toContain("Gorrak");
   });
 });
+
+describe("follow-ups from the first review (#2299)", () => {
+  const edit = async (name: string) => {
+    const row = rowOf(name);
+    fireEvent.click(within(row).getByRole("button", { name: w.changeFor(name) }));
+    return within(row);
+  };
+
+  it("the name limit is 100, the same as core's NAME_MAX", async () => {
+    expect(NAME_LIMIT).toBe(100);
+    const api = mockApi("table");
+    await expect(api.changeName!("100.cmp1", "n7", { action: "spell", name: "x".repeat(100) })).resolves.toBeTruthy();
+    await expect(api.changeName!("100.cmp1", "n7", { action: "spell", name: "y".repeat(101) })).rejects.toMatchObject({
+      kind: "ticket-too-long",
+    });
+    expect(w.errors["ticket-too-long"]).toBe("That name is too long. Use 100 letters or fewer.");
+  });
+
+  it("never shows a secret name to someone who can't edit, even if the API sent one", async () => {
+    const api = mockApi("table");
+    const real = api.allNames!.bind(api);
+    api.allNames = async (ref, query) => {
+      const page = await real(ref, query);
+      return {
+        ...page,
+        canEdit: false,
+        names: [...page.names, { id: "zz", name: "Hidden Sorcerer", kind: "npc", others: [], secret: true, npcId: null }],
+      };
+    };
+    open(DM, api);
+    await ready();
+    expect(screen.queryByText("Hidden Sorcerer")).toBeNull();
+    expect(screen.queryByText(w.secretMark)).toBeNull();
+  });
+
+  it("moves the keyboard onto the question when Remove opens it, and back onto Remove on 'Keep it'", async () => {
+    open();
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByRole("button", { name: w.removeButton }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.removeYes })));
+    fireEvent.click(row.getByRole("button", { name: w.keep }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.removeButton })));
+  });
+
+  it("does the same for the merge question", async () => {
+    open();
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.input(row.getByLabelText(w.mergeSearch), { target: { value: "Dunmar" } });
+    fireEvent.click(await row.findByRole("radio", { name: /Dunmar/ }));
+    fireEvent.click(row.getByRole("button", { name: w.mergeButton }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.mergeYes })));
+    fireEvent.click(row.getByRole("button", { name: w.mergeKeep }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.mergeButton })));
+  });
+
+  it("typing in the merge search keeps the cursor there when it closes the question", async () => {
+    open();
+    await ready();
+    const row = await edit("Gorrak");
+    const box = row.getByLabelText(w.mergeSearch) as HTMLInputElement;
+    fireEvent.input(box, { target: { value: "Dunmar" } });
+    fireEvent.click(await row.findByRole("radio", { name: /Dunmar/ }));
+    fireEvent.click(row.getByRole("button", { name: w.mergeButton }));
+    box.focus();
+    fireEvent.input(box, { target: { value: "Dunmar a" } });
+    await waitFor(() => expect(row.queryByRole("button", { name: w.mergeYes })).toBeNull());
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("closes an open editor when its row leaves the list, and it stays closed when the row returns", async () => {
+    open();
+    await ready();
+    await edit("Gorrak");
+    expect(screen.getByRole("button", { name: w.doneFor("Gorrak") })).toBeTruthy();
+    const search = screen.getByLabelText(w.searchLabel);
+    fireEvent.input(search, { target: { value: "Dunmar" } });
+    await waitFor(() => expect(screen.queryByText("Gorrak")).toBeNull());
+    fireEvent.input(search, { target: { value: "" } });
+    await waitFor(() => expect(screen.getByText("Gorrak")).toBeTruthy());
+    expect(screen.getByRole("button", { name: w.changeFor("Gorrak") })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.doneFor("Gorrak") })).toBeNull();
+  });
+
+  it("says so when the merge search fails, rather than 'no other name matches'", async () => {
+    const api = mockApi("table");
+    const real = api.allNames!.bind(api);
+    api.allNames = async (ref, query) => {
+      if (query.q === "Dunmar") throw new ApiError("network");
+      return real(ref, query);
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.input(row.getByLabelText(w.mergeSearch), { target: { value: "Dunmar" } });
+    expect(await row.findByText(w.mergeSearchDown)).toBeTruthy();
+    expect(row.queryByText(w.mergeNone)).toBeNull();
+  });
+
+  it("tells the DM when the merge search has more matches than it shows", async () => {
+    const api = mockApi("table");
+    const real = api.allNames!.bind(api);
+    api.allNames = async (ref, query) => {
+      const page = await real(ref, query);
+      return query.q === "a" ? { ...page, pages: 3 } : page;
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.input(row.getByLabelText(w.mergeSearch), { target: { value: "a" } });
+    expect(await row.findByText(w.mergeMore)).toBeTruthy();
+  });
+});
