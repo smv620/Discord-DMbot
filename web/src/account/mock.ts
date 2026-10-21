@@ -511,7 +511,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     async importStart(ref, _files, plan, links = []) {
       calls.push(
-        `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
+        `importStart:${ref}:${plan.sessions.map((s) => `${s.order}=${s.file}@${s.date}${s.writeRecap ? "#recap" : ""}`).join(",")}${links.length ? `|links:${links.join(" ")}` : ""}`,
       );
       if (links.some((l) => l.includes("later"))) throw new ApiError("bad-files");
       return {
