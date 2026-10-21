@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Iterable
+from functools import partial
 
 from dmbot.db import Database
 
@@ -81,7 +82,7 @@ class InstallStore:
         for guild_id, joined_at in servers:
             try:
                 await self.joined(
-                    guild_id, joined_at, gone=(lambda g=guild_id: gone(g)) if gone else None
+                    guild_id, joined_at, gone=partial(gone, guild_id) if gone else None
                 )
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Couldn't record an install: %s", type(exc).__name__)

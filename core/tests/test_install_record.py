@@ -154,7 +154,9 @@ class Rows(DatabaseTest):
         async with self.db.unscoped() as conn:  # and the database function itself agrees
             for empty in ("ARRAY[]::bigint[]", "NULL::bigint[]"):
                 cur = await conn.execute(f"SELECT dmbot_installs_left_except({empty}) AS n")
-                self.assertEqual((await cur.fetchone())["n"], 0)
+                got = await cur.fetchone()
+                assert got is not None
+                self.assertEqual(got["n"], 0)
         self.assertIsNone((await self.row(G))["left_at"])
 
     async def test_the_start_up_pass_does_not_write_back_a_server_that_was_just_kicked(
@@ -171,6 +173,7 @@ class Rows(DatabaseTest):
                 " 'EXECUTE') AS everyone"
             )
             row = await cur.fetchone()
+        assert row is not None
         self.assertFalse(row["everyone"])
 
     async def test_a_join_and_a_quick_kick_leave_no_row_marked_present(self) -> None:
