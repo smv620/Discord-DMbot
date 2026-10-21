@@ -233,6 +233,7 @@ def a_table(secret: frozenset[str] = frozenset()) -> Any:
         spelled=[],
         spelled_hints=(),
         held_spelled={},
+        held_pronounced={},
         hint_parts=SimpleNamespace(secret=secret),
         guild_id=1,
         campaign_id="c" * 32,

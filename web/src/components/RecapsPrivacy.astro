@@ -4,6 +4,7 @@
 // (the email), campaigns/store.py (a recap goes with its campaign). It renders nothing until recaps
 // are live (content/recap-words.ts), and the narration part nothing until audio is.
 import { aiTrainingSentence } from "../content/legal";
+import { RECAP_VOICE_LIVE } from "../content/recap-words";
 
 interface Props {
   live: boolean;
@@ -44,6 +45,15 @@ const { live, audio, share = false } = Astro.props;
           that the email was sent, with no words in it, and delete it after 90 days. The email
           itself holds the recap's title and goes through Google, like our other email.
         </li>
+        {RECAP_VOICE_LIVE && (
+          <li>
+            <strong>A note you speak.</strong> On a recap's page a game master can speak a note
+            instead of typing it. The sound goes to Deepgram, the company that turns speech into text, to be turned into
+            text, and is deleted as soon as the words are ready; we keep only the words. It is
+            only for a game master who has agreed to be recorded, and it counts toward the
+            listening time.
+</li>
+)}
         {share && (
           <li>
             <strong>A shared link.</strong> A game master can share a recap by a link. Anyone who

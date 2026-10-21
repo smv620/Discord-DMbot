@@ -382,6 +382,17 @@ class Flag:
 
 
 @dataclass(frozen=True, slots=True)
+class SaidAsSuggestion:
+    """A spelling to offer for how the recap narrator says a name (#2171): the name's entry, its
+    name as the DM knows it, the other spelling it keeps being heard as, and how often."""
+
+    entity_id: str
+    name: str
+    heard: str
+    times: int
+
+
+@dataclass(frozen=True, slots=True)
 class PeopleSuggestion:
     """One question for the DM from "a name, then an answer" (#1188): `name`, a new name
     for the person `user_id` (kind "name", `row_id` the waiting name), or `name`, a

@@ -174,6 +174,14 @@ export interface MySupport {
   reply: boolean;
 }
 
+/** One part of a question's whole conversation (#2193): who wrote it, the words, and when (Unix
+ * seconds). "you" is the person's own first message and emailed replies. */
+export interface SupportMessage {
+  who: "you" | "helper" | "team";
+  text: string;
+  at: number;
+}
+
 /** What the Support form sends (#1340). */
 export interface SupportTicket {
   subject: string;
@@ -405,6 +413,13 @@ export interface FixPoints {
   style: FixPoint[];
   /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
   replies: string[];
+}
+export interface VoiceResult {
+  state: FixState;
+  /** Only when `done`: what was heard. */
+  text?: string;
+  /** Only when `failed`: "bad_clip", "too_long", "no_words", "transcribe_failed" or "no_consent". */
+  error?: string;
 }
 export type FixState = "waiting" | "working" | "done" | "failed";
 export interface FixResult {
@@ -638,6 +653,9 @@ export type RecapAction = "post" | "again" | "drop";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "bad-type" // a spoken note in a format the API doesn't read (#2113)
+  | "bad-clip" // a spoken note that can't be heard as audio
+  | "no-consent" // the DM has not agreed to be recorded
   | "signed-out" // the session ended
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
@@ -814,6 +832,10 @@ export interface AccountApi {
    * the DM kept. Missing from an API older than #2113. */
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
   fixResult?(ref: string, requestId: string): Promise<FixResult>;
+  /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
+   * follow the request. The clip is turned into words and deleted at once; only the words come back. */
+  sendVoice?(ref: string, clip: Blob): Promise<{ requestId: string }>;
+  voiceResult?(ref: string, requestId: string): Promise<VoiceResult>;
   rewriteWith?(
     ref: string,
     requestId: string,
@@ -849,6 +871,9 @@ export interface AccountApi {
   decideRecap?(ref: string, action: RecapAction): Promise<Recap>;
   /** The person's own questions to the team (#1373). Missing from an API older than that. */
   mySupport?(): Promise<MySupport>;
+  /** The whole conversation of one of the person's own questions, oldest first, named by the time
+   * it was sent as the list gives it (#2193). Missing from an API older than that. */
+  supportThread?(at: number): Promise<SupportMessage[]>;
   /** The person's own characters. Missing from an API older than #1164. */
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
@@ -916,6 +941,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_text: "bad-text",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
+  bad_type: "bad-type",
+  bad_clip: "bad-clip",
+  no_consent: "no-consent",
   not_a_dm: "not-allowed",
   not_on_a_paid_plan: "no-paid-plan",
   too_many_lines: "too-many-lines",
@@ -950,6 +978,7 @@ export function httpApi(
     path: string,
     body?: unknown,
     asFile = false,
+    raw?: Blob,
     anonymous = false,
   ): Promise<unknown> {
     let response: Response;
@@ -963,7 +992,11 @@ export function httpApi(
             credentials: "include",
             headers: { "X-DMbot-Request": "1", Accept: "application/json" },
           };
-      if (body !== undefined) {
+      if (raw !== undefined) {
+        // A recorded clip goes as it is, with its own type; the API reads webm and ogg only.
+        init.headers = { ...init.headers, "Content-Type": raw.type };
+        init.body = raw;
+      } else if (body !== undefined) {
         init.headers = { ...init.headers, "Content-Type": "application/json" };
         init.body = JSON.stringify(body);
       }
@@ -1055,10 +1088,25 @@ export function httpApi(
             typeof t.subject === "string" &&
             (t.status === "new" ||
               t.status === "answered" ||
+              t.status === "escalated" ||
               t.status === "closed"),
         ),
         reply: answer?.reply !== false,
       };
+    },
+    supportThread: async (at) => {
+      const answer = (await call("GET", `/support/mine/${encodeURIComponent(String(at))}`)) as {
+        messages?: unknown;
+      } | null;
+      const parts = Array.isArray(answer?.messages) ? answer.messages : [];
+      return parts.filter(
+        (m): m is SupportMessage =>
+          typeof m === "object" &&
+          m !== null &&
+          (m.who === "you" || m.who === "helper" || m.who === "team") &&
+          typeof m.text === "string" &&
+          typeof m.at === "number",
+      );
     },
     signOutEverywhere: async () => {
       await call("POST", "/me/sign-out-everywhere");
@@ -1214,6 +1262,19 @@ export function httpApi(
         "GET",
         `/me/recaps/${encodeURIComponent(ref)}/instructions/${encodeURIComponent(requestId)}`,
       )) as FixResult,
+    sendVoice: async (ref, clip) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/voice`,
+        undefined,
+        false,
+        clip,
+      )) as { requestId: string },
+    voiceResult: async (ref, requestId) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/voice/${encodeURIComponent(requestId)}`,
+      )) as VoiceResult,
     rewriteWith: async (ref, requestId, corrections, style) => {
       const got = (await call(
         "POST",
@@ -1263,6 +1324,7 @@ export function httpApi(
         `/recaps/${encodeURIComponent(token)}`,
         undefined,
         false,
+        undefined,
         true,
       )) as PublicRecap,
     decideRecap: async (ref, action) =>
