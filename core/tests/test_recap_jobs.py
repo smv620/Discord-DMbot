@@ -12,6 +12,7 @@ from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.transcript.models import Line
@@ -207,6 +208,7 @@ class Working(Base):
         window_chars: int = 40_000,
         hours: float = 2.5,
         heard: str = "",
+        campaign_name: str = "",
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -227,6 +229,7 @@ class Working(Base):
                 day=4,
                 window_chars=window_chars,
                 hours=hours,  # the canned recap is 353 words: a 2.5-hour session's (#2013)
+                campaign_name=campaign_name,
             )
 
         async def ok(gid: int, cid: str, job: Job) -> bool:
@@ -251,6 +254,30 @@ class Working(Base):
 
     def happy(self) -> fx.Canned:
         return fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+
+    async def test_a_ready_recap_opens_and_closes_with_the_fixed_lines_outside_the_count(
+        self,
+    ) -> None:
+        await self.setUpWorker(self.happy(), campaign_name="The Ember Road")
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        paragraphs = job.summary.split("\n\n")
+        self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
+        self.assertEqual(
+            paragraphs[-1], "And so the party continues the adventure of The Ember Road."
+        )
+        self.assertEqual(fixed_lines.without(job.summary), fx.SUMMARY)  # the story is untouched
+        self.assertEqual(job.original, job.summary)  # the DM's edit is compared with what they saw
+        self.assertEqual(job.grade["tension"], 4)  # graded as the writer wrote it, before the lines
+
+    async def test_a_secret_campaign_name_is_left_out_of_the_lines(self) -> None:
+        await self.setUpWorker(
+            self.happy(), campaign_name="The Ember Road", secret=["The Ember Road"]
+        )
+        job = await self.go()
+        self.assertNotIn("Ember", job.summary)
+        self.assertTrue(job.summary.startswith("Previously…"))
+        self.assertTrue(job.summary.endswith("continues the adventure."))
 
     async def test_a_good_session_goes_all_the_way_and_the_dm_is_told_once(self) -> None:
         await self.setUpWorker(self.happy())
@@ -533,7 +560,9 @@ class Working(Base):
         job = await self.go()
         self.assertEqual(job.state, "ready")
         self.assertEqual(job.grade["tension"], 2)  # the first draft's own grade
-        self.assertEqual(job.summary, fx.SUMMARY)  # the first draft, not the revision
+        self.assertEqual(
+            fixed_lines.without(job.summary), fx.SUMMARY
+        )  # the first draft, not the revision
         self.assertEqual(self.worker._fallback, {})
         self.assertEqual(len(self.careful.sent), 1)  # one revision tried, not three
         self.assertTrue(any("first draft stands" in n for n in notes))
@@ -555,7 +584,7 @@ class Working(Base):
         )
         self.fast.answers += [fx.FINISH_ANSWER]
         job = await self.go()
-        self.assertEqual((job.state, job.summary), ("ready", fx.SUMMARY))
+        self.assertEqual((job.state, fixed_lines.without(job.summary)), ("ready", fx.SUMMARY))
 
     async def test_a_name_made_secret_between_the_tries_is_not_kept_in_the_first_draft(
         self,
@@ -838,7 +867,7 @@ class Working(Base):
         self.assertIn("<previous_draft>", retry)
         self.assertEqual(len(self.careful.fact_sent), 2)  # the first draft and its revision
         self.assertEqual(job.grade["faithful"], 5)  # the revision is clean
-        self.assertEqual(job.summary, fx.SUMMARY)
+        self.assertEqual(fixed_lines.without(job.summary), fx.SUMMARY)
 
     async def test_an_added_direction_is_flagged_as_a_direction(self) -> None:
         await self.flagged_then_clean("direction")
