@@ -64,9 +64,9 @@ export const text = {
   confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
   yesRevoke: "Yes, revoke",
   // A grant for someone who is now on the server's free list (#2196): it changes nothing.
-  olderGrant: "An older free-access grant is also on file. It isn't needed.",
-  removeOlderGrant: "Remove it",
-  olderGrantRemoved: (who: string): string => `Done. The older grant for ${who} is gone. They are still always free.`,
+  olderGrant: "They're always free anyway. An older free-access entry for them isn't needed.",
+  removeOlderGrant: "Remove old entry",
+  olderGrantRemoved: (who: string): string => `Done. The older entry for ${who} is removed. They are still always free.`,
   cancel: "Cancel",
   revoked: (who: string): string => `Done. ${who} no longer has free access.`,
   addHeading: "Add someone",
