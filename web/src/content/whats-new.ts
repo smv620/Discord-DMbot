@@ -234,6 +234,9 @@ export const held: Held[] = [
     title: "Recaps are checked before you see them",
     what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
     reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
+  },
+  {
+    date: "2026-10-21",
     title: "Settings has two small menus",
     what: "Settings is now in the DM Bot channel, under DMbot Main Menu. The choices you use least are grouped: Who can see the DM screen, and Campaign management (hand over, pause, how long transcripts are kept, game masters and delete). Each has a Back button.",
     reason: "In review (#2281); held until dev1 deploys it.",
