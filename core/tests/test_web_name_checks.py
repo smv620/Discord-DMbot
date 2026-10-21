@@ -102,6 +102,45 @@ class TheList(WithChecks):
             await self.code(self.ask(secret, action="not_a_name")), "not_found"
         )  # and it cannot be answered
 
+    async def test_a_known_name_with_any_secret_spelling_is_not_offered(self) -> None:
+        keep = await self.known("Oakmere")
+        hidden = await self.known("Brother Aldric")
+        await self.memory.add_alias(
+            GUILD, self.one.id, hidden, "The Lich", kind="full", source="dm", secret=True
+        )  # (a secret spelling that is not its main name)
+        got = await self.listed()
+        self.assertEqual([k["id"] for k in got["known"]], [keep])
+        mira = await self.suggest("Mirelle")
+        self.assertEqual(await self.code(self.ask(mira, action="same", known=hidden)), "bad_target")
+
+    async def test_the_known_names_and_the_name_ids_are_held_to_the_campaign_and_the_recap(
+        self,
+    ) -> None:
+        mine = await self.suggest("Mirelle")
+        theirs = await self.memory.add_entity(
+            GUILD, self.two.id, type="concept", name="Zorgul", source="scan"
+        )
+        their_known = await self.memory.add_entity(
+            GUILD, self.two.id, type="place", name="Stormhold", source="dm", status=CONFIRMED
+        )
+        await self.answers.link(GUILD, self.two.id, AT, [theirs.value.id])
+        self.assertEqual((await self.listed())["known"], [])  # another campaign's names: none
+        # another campaign's confirmed name cannot be a merge target here
+        self.assertEqual(
+            await self.code(self.ask(mine, action="same", known=their_known.value.id)),
+            "bad_target",
+        )
+        # another campaign's suggestion cannot be answered through this one
+        self.assertEqual(
+            await self.code(self.ask(theirs.value.id, action="not_a_name")), "not_found"
+        )
+        # a suggestion linked only to another recap of this campaign is not this recap's
+        elsewhere = await self.suggest("Elsewhere", link=False)
+        await self.answers.link(GUILD, self.one.id, 999, [elsewhere])
+        self.assertEqual(await self.code(self.ask(elsewhere, action="not_a_name")), "not_found")
+        entity = await self.memory.entity(GUILD, self.two.id, theirs.value.id)
+        assert entity is not None and entity.status == PROPOSED  # nothing of theirs was touched
+
     async def test_another_recap_or_campaign_shows_none_of_it(self) -> None:
         await self.suggest("Mirelle")
         theirs = await self.memory.add_entity(

@@ -8300,7 +8300,8 @@ NAME_ANSWERS = (
     -- kept (id, name, the note kept with it, whether an answer is on its way or failed), and the
     -- known names a suggestion can be said to be (confirmed, public, not a person at the table).
     -- Never a secret name: a suggestion with a secret spelling is left out, and so is a known
-    -- name whose main name is secret. NULL for anyone else.
+    -- name with any secret spelling (the same rule as the queue door and the bot). NULL for anyone
+    -- else.
     CREATE FUNCTION dmbot_recap_names_read(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -8349,8 +8350,7 @@ NAME_ANSWERS = (
                                     AND lower(a.text) = lower(e.name))
                       AND NOT EXISTS (SELECT 1 FROM memory_aliases s
                                       WHERE s.guild_id = g AND s.campaign_id = c
-                                        AND s.entity_id = e.id AND s.secret
-                                        AND lower(s.text) = lower(e.name))
+                                        AND s.entity_id = e.id AND s.secret)
                     ORDER BY lower(e.name), e.id
                     LIMIT 200
                 ) n), '[]'::jsonb));
