@@ -200,6 +200,19 @@ class TheSplit(unittest.TestCase):
                 self.assertEqual(split.label_of(8), sp.PLAY)
                 self.assertEqual(split.label_of(5), sp.RECAP)
 
+    def test_one_common_long_word_does_not_keep_a_backstory_in_the_recap(self) -> None:
+        # "remember" and "everything" are 8+ letters and in any earlier session's words.
+        earlier = sp.Earlier(sp.vocabulary_of(PREVIOUS_PLAY) | {"remember", "everything"}, ())
+        backstory = [
+            "I remember my father forging a sword for the village long before the winter.",
+            "Everything my mother carried to the river was lost in the flood that night.",
+        ]
+        lines = said(READ_ALOUD, [CLOSING], backstory, PLAY * 3)
+        split = sp.build(lines, [("recap", 8)], earlier)
+        self.assertEqual((split.label_of(7), split.label_of(8)), (sp.PLAY, sp.PLAY))
+        # two of the earlier session's own rare words do keep a line with it
+        self.assertEqual(sp.RARE_SHARED, 2)
+
     def test_the_fixed_lines_alone_never_make_a_recap(self) -> None:
         # opening and closing lines around text that has nothing to do with the earlier session
         lines = said(["Previously…"], PLAY, [CLOSING], PLAY * 3)
