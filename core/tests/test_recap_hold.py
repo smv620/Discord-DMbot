@@ -682,6 +682,49 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         self.assertIn("Writing 2 recaps", lines[0])
         self.assertEqual(bot._group_made, {})
 
+    async def test_a_press_during_the_three_day_expiry_tells_the_group_once(self) -> None:
+        """The same interleaving at the expiry: its release is held after the database change
+        while the real press runs for the import. One line, "Writing 2 recaps"."""
+        bot = fake_bot()
+        first, second = self.group(hold.HOLD_MAX_S + 60, 2, asked=True)
+        released: set[int] = set()
+        gate = asyncio.Event()
+
+        async def release(gid: int, cid: str, session_at: int) -> str:
+            if session_at == first.session_at and not released:
+                released.add(session_at)  # (the expiry's release: done in the database)
+                await gate.wait()  # ... but not yet back in the round
+                return hold.QUEUED
+            await asyncio.sleep(0)
+            if session_at in released:
+                return hold.GONE
+            released.add(session_at)
+            return hold.QUEUED
+
+        async def held(gid: int) -> list[Any]:
+            await asyncio.sleep(0)
+            return [h for h in (first, second) if h.session_at not in released]
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = held
+        bot.recap_holds.get = AsyncMock(return_value=first)
+        expiry = asyncio.create_task(
+            bot._release_one(bot.recap_holds, GUILD, first, group=[first, second])
+        )
+        await asyncio.sleep(0)  # the expiry is inside its release
+        press_task = asyncio.create_task(
+            bot.recap_hold_write_now(GUILD, "c" * 32, AT, group_id=GROUP)
+        )
+        for _ in range(20):  # the press runs as far as it can (without the lock: to the end)
+            await asyncio.sleep(0)
+        gate.set()
+        await press_task
+        await expiry
+        lines = [c.args[1] for c in bot.post.await_args_list if "Writing" in c.args[1]]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("Writing 2 recaps", lines[0])
+        self.assertEqual(bot._group_made, {})
+
     async def test_the_list_is_claimed_by_a_pop_not_a_read(self) -> None:
         bot = fake_bot()
         (only,) = self.group(100, 1, asked=True)
