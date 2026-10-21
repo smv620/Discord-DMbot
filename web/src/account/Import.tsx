@@ -32,6 +32,37 @@ export function campaignFromPath(path: string): string | null {
 
 const DROP = "drop";
 const POLL_MS = 3000;
+/** While every unfinished session is only waiting for the DM's answers about names, nothing on the
+ * page changes until they answer, so ask once a minute instead (#2230). */
+const SLOW_POLL_MS = 60_000;
+
+type Session = ImportProgress["sessions"][number];
+
+/** A session that will not change on its own any more. A session waiting for names is not final:
+ * the DM's answers move it on. Without a stage (an older API) the plain state decides. */
+function isFinal(s: Session): boolean {
+  // A stage this page doesn't know (a newer API) is read by the plain state, never polled forever.
+  if (!s.stage || !(s.stage in words.stage || s.stage === "waiting_for_names"))
+    return s.state === "done" || s.state === "failed";
+  return (
+    s.stage === "recap_ready" ||
+    s.stage === "recap_failed" ||
+    s.stage === "recap_not_written" ||
+    s.stage === "done" ||
+    s.stage === "failed"
+  );
+}
+
+function isFailed(s: Session): boolean {
+  return s.stage ? s.stage === "failed" : s.state === "failed";
+}
+
+/** The words for where one session has got to; the plain state's words when there is no stage. */
+function stageLine(s: Session): string {
+  if (!s.stage) return words.state[s.state] ?? s.state;
+  if (s.stage === "waiting_for_names") return words.waitingForNames(s.namesToAnswer ?? 0);
+  return words.stage[s.stage] ?? words.state[s.state] ?? s.state;
+}
 /** A real calendar day: the round trip catches "2026-02-31", which some engines would shift. */
 const isDate = (s: string): boolean =>
   /^\d{4}-\d{2}-\d{2}$/.test(s) &&
@@ -157,12 +188,11 @@ export default function Import({
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
         setProgress(next);
-        if (
-          next.sessions.some(
-            (s) => s.state === "waiting" || s.state === "working",
-          )
-        )
-          timer = setTimeout(() => void tick(), POLL_MS);
+        const open = next.sessions.filter((s) => !isFinal(s));
+        if (open.length > 0) {
+          const onlyNames = open.every((s) => s.stage === "waiting_for_names");
+          timer = setTimeout(() => void tick(), onlyNames ? SLOW_POLL_MS : POLL_MS);
+        }
       } catch (error) {
         if (live) fail(error);
       }
@@ -437,10 +467,9 @@ export default function Import({
 
   // After the import has started, only the progress is shown.
   if (progress) {
-    const done = progress.sessions.every(
-      (s) => s.state === "done" || s.state === "failed",
-    );
-    const failed = progress.sessions.some((s) => s.state === "failed");
+    const done = progress.sessions.every(isFinal);
+    const failed = progress.sessions.some(isFailed);
+    const unchecked = progress.sessions.some((s) => s.namesUnchecked === true);
     return (
       <div class="stack">
         <h2>{words.progressHeading}</h2>
@@ -474,7 +503,7 @@ export default function Import({
         )}
         <p role="status" aria-live="polite">
           {words.doneCount(
-            progress.sessions.filter((s) => s.state === "done").length,
+            progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
             progress.sessions.length,
           )}
         </p>
@@ -483,15 +512,34 @@ export default function Import({
             <li key={s.file}>
               <span class="campaign-name">{shownApi(s.file)}</span>
               <span class="small">
-                {s.date} · {words.state[s.state] ?? s.state}
+                {s.date} · {stageLine(s)}
                 {/* A reason can come with any state: "done" can still say some lines were not sorted. */}
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
               </span>
+              {s.stage === "waiting_for_names" && (
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.namesLink, shownApi(s.file))}
+                >
+                  {words.namesLink}
+                </a>
+              )}
+              {(s.stage === "recap_ready" || s.stage === "recap_failed") && (
+                <a
+                  class="small"
+                  href="/account/recaps"
+                  aria-label={words.linkFor(words.recapLink, shownApi(s.file))}
+                >
+                  {words.recapLink}
+                </a>
+              )}
             </li>
           ))}
         </ul>
+        {unchecked && <p class="small muted">{words.namesUnchecked}</p>}
         {done && (
           <p role="status">
             {failed ? words.someFailed : words.allDone}{" "}
