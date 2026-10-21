@@ -76,11 +76,12 @@ PLAIN = [
 
 
 class TheMotiveCheck(unittest.TestCase):
-    def test_every_sentence_is_asked_about_and_the_word_list_is_a_floor(self) -> None:
+    def test_every_sentence_is_asked_about_whatever_the_word_list_says(self) -> None:
         asked = mo.candidates(SENTENCES)
         self.assertEqual([n for n, _ in asked], [1, 2, 3, 4, 5])  # all of them
         self.assertEqual(mo.candidates(["", "  "]), [])
-        self.assertEqual([n for n, _ in mo.floor_flagged(SENTENCES)], [2, 3, 4])
+        marked = [n for n, t in asked if mo.states_purpose(t)]
+        self.assertEqual(marked, [2, 3, 4])  # (marked as "must be asked": all are)
 
     def test_the_word_list_knows_each_way_of_putting_a_purpose_and_no_plain_sentence(self) -> None:
         for text in PURPOSES:
@@ -88,13 +89,22 @@ class TheMotiveCheck(unittest.TestCase):
                 self.assertTrue(mo.states_purpose(text))
                 # asked about, the call says it is a reason and nobody said it: a failure
                 self.assertEqual(len(mo.failures([(1, text)], [ans(1)], LINES, "")), 1)
-                # a sentence the call left out of its answer is judged by the list
-                self.assertEqual(len(mo.failures([(1, text)], [], LINES, "")), 1)
+                # the list alone never fails it: the call decides
+                self.assertEqual(mo.failures([(1, text)], [ans(1, reason=False)], LINES, ""), [])
         for text in PLAIN:
             with self.subTest(text):
                 self.assertFalse(mo.states_purpose(text))
                 self.assertEqual(mo.failures([(1, text)], [ans(1, reason=False)], LINES, ""), [])
-                self.assertEqual(mo.failures([(1, text)], [], LINES, ""), [])
+
+    def test_an_answer_that_leaves_a_sentence_out_is_not_complete_and_nothing_is_judged(
+        self,
+    ) -> None:
+        asked = mo.candidates(SENTENCES)
+        self.assertTrue(mo.complete([ans(n, reason=False) for n, _ in asked], asked))
+        self.assertFalse(mo.complete([ans(1), ans(2), ans(3)], asked))  # 4 and 5 left out
+        self.assertEqual(
+            mo.failures(asked, [], LINES, ""), []
+        )  # a missing entry is never a verdict
 
     def test_the_call_decides_so_a_word_list_hit_is_not_a_failure_by_itself(self) -> None:
         for text in PURPOSES:
@@ -134,9 +144,9 @@ class TheMotiveCheck(unittest.TestCase):
 
     def test_a_citation_has_to_be_a_real_line_that_shares_the_sentences_words(self) -> None:
         asked = mo.candidates(SENTENCES)
-        # a line that does not exist, one that says something else, and a missing answer
+        # a line that does not exist, and one that says something else
         answer = [ans(2, [99]), ans(3, [5])]
-        self.assertEqual([f.number for f in mo.failures(asked, answer, LINES, "")], [2, 3, 4])
+        self.assertEqual([f.number for f in mo.failures(asked, answer, LINES, "")], [2, 3])
 
     def test_the_earlier_recap_counts_only_when_it_says_it(self) -> None:
         asked = [(2, SENTENCES[1])]
@@ -153,7 +163,7 @@ class TheMotiveCheck(unittest.TestCase):
         self.assertEqual(mo.parse(good), [ans(2, [5])])
 
     def test_the_writer_is_told_the_sentence_and_to_say_only_what_was_done(self) -> None:
-        (failure,) = mo.failures([(2, SENTENCES[1])], [], LINES, "")
+        (failure,) = mo.failures([(2, SENTENCES[1])], [ans(2)], LINES, "")
         text = mo.instruction(failure)
         self.assertIn(SENTENCES[1], text)
         self.assertIn("say only what the characters did", text)

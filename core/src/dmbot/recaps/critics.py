@@ -43,6 +43,10 @@ NOTES = {
     "contradiction": 'Check: sentence {n} ("{s}") may not match the story so far.',
     "continuity": 'Check: sentence {n} ("{s}") may not follow from where the story left off.',
 }
+CHECK_WAIT = (
+    "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon "
+    "as it can."
+)  # on a recap whose draft could not be read yet (the service, or the day's tally): it waits
 STYLE_UNCHECKED = "Check: the style could not be checked this time."
 GENERIC = {
     "missed": "include what matters to the story so far that the draft leaves out",

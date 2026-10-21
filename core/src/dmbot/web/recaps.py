@@ -133,6 +133,9 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # ("Check: ..."): things for the DM to look at, never orders.
         "criticNotes": list(critics.loop_from_json(row.get("critics")).notes),
         "error": row["last_error"],
+        # The recap is written and waits for its last check (#2255): a note for the DM's card
+        # (the words are `error`); not a failure and nothing to do.
+        "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
         "canEdit": ready,
         "canPost": ready,
         "canTryAgain": status == "draft"

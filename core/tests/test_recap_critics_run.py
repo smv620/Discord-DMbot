@@ -151,17 +151,24 @@ class Criticising(WorkerHarness):
         asked = [int(n) for t in fast.motive_sent for n in re.findall(r"^\[(\d+)\] ", t, re.M)]
         self.assertEqual(sorted(set(asked)), list(range(1, 23)))
 
-    async def test_an_unreadable_motive_answer_is_never_agreement(self) -> None:
-        fast = self.fast_for(WITH_MOTIVE)
+    async def test_an_unreadable_motive_answer_is_never_agreement_the_recap_waits_for_its_check(
+        self,
+    ) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.raw = ["not json", "still not json"]
-        await self.setUpWorker(fast, fx.Canned(), critics=True)
-        job = await self.go()
-        job = await self.settle(job)
-        self.assertEqual(job.state, "ready")
-        self.assertEqual(len(fast.motive_sent), 2)  # asked again
-        self.assertNotIn("avenge", job.summary)  # and, never read, the word list cut it
-        loop = cr.loop_from_json(job.critics)
-        self.assertEqual((loop.done, loop.round, loop.cut), (True, 0, 1))
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.settle(await self.go(), 2)
+        # not shipped (and not cut by a word list), not failed: it waits for one last check
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        self.assertIn("avenge", job.summary)
+        self.assertFalse(cr.loop_from_json(job.critics).done)
+        self.assertEqual(len(fast.motive_sent), 2)  # asked again, never taken as agreement
+        self.assertGreater(job.next_at, int(self.clock.now))
+        # the service is back: the check reads the draft, the invented motive is fixed
+        self.clock.now = job.next_at + 1
+        job = await self.settle(await self.go(), 4)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertNotIn("avenge", job.summary)
 
     async def test_what_plotbot_says_matters_reaches_the_writer_and_the_revision_is_read(
         self,
@@ -318,7 +325,9 @@ class Criticising(WorkerHarness):
         self.assertEqual((job.state, loop.round), ("ready", cr.MAX_ROUNDS))  # no agreement
         self.assertIn(cr.STYLE_UNCHECKED, loop.notes)
 
-    async def test_a_service_that_keeps_failing_never_fails_a_recap_that_is_written(self) -> None:
+    async def test_a_service_failing_after_the_draft_was_read_ships_it_with_only_the_calls_cuts(
+        self,
+    ) -> None:
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(AIError("down"), AIError("down"), AIError("down"))
         await self.setUpWorker(fast, careful, critics=True)
@@ -327,21 +336,20 @@ class Criticising(WorkerHarness):
         self.assertTrue(cr.loop_from_json(job.critics).done)
         self.assertNotIn("avenge", job.summary)  # the hard failure was cut, not shipped
 
-    async def test_the_ceilings_hold_and_a_loop_that_cannot_begin_cuts_every_purpose(self) -> None:
+    async def test_the_ceilings_hold_and_a_job_at_its_ceiling_is_neither_shipped_nor_cut(
+        self,
+    ) -> None:
         self.assertEqual((pl.MAX_CALLS, pl.DAILY_CALLS), (95, 280))
         fast = self.fast_for(WITH_MOTIVE)
         await self.setUpWorker(fast, fx.Canned(), critics=True)
         with patch.object(pl, "MAX_CALLS", 9):  # the loop keeps what the title step needs
             job = await self.go()
-        self.assertEqual(job.state, "ready")
+        # waiting would never change the job's own ceiling: it stops with the "limit" words
+        self.assertEqual((job.state, job.last_error), ("failed", pl.CAP))
         self.assertLessEqual(job.calls, 9)
-        loop = cr.loop_from_json(job.critics)
-        self.assertTrue(loop.done)
-        self.assertEqual(fast.motive_sent, [])  # never read, so nothing was asked...
-        self.assertNotIn("avenge", job.summary)  # ...and what the word list flags is cut
-        self.assertEqual(loop.cut, 1)
+        self.assertEqual(fast.motive_sent, [])  # never read, so nothing was asked or cut
 
-    async def test_a_plain_recap_with_ordinary_phrasing_ships_uncut_even_when_the_loop_cannot_run(
+    async def test_when_the_day_is_used_up_the_recap_waits_then_ships_uncut_once_checked(
         self,
     ) -> None:
         plain = CLEAN.replace(
@@ -350,14 +358,18 @@ class Criticising(WorkerHarness):
             "Mira drew her blade without a word,",
             1,
         )
-        for sentence in ("During the fight Oskar fell.", "They climbed out of the pit."):
-            self.assertFalse(mo.states_purpose(sentence))
-        self.assertFalse(mo.states_purpose("Mira tried the door."))
         fast = self.fast_for(plain)
         await self.setUpWorker(fast, fx.Canned(), critics=True)
-        with patch.object(pl, "MAX_CALLS", 9):  # the loop does not begin
+        tally = AsyncMock(return_value=pl.DAILY_CALLS - 3)  # room for the title, no more
+        with patch.object(self.store, "calls_since", tally):
             job = await self.go()
-        self.assertEqual(job.state, "ready")
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))  # waits
+        self.assertEqual(fast.motive_sent, [])  # the loop did not begin
+        self.assertGreaterEqual(job.next_at - int(self.clock.now), pl.CHECK_TALLY_RETRY_S)
+        # the tally has gone down: the check answers "no reason" for each sentence, nothing is cut
+        self.clock.now = job.next_at + 1
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
         for kept in (
             "During the fight Oskar fell.",
             "They climbed out of the pit.",
@@ -373,18 +385,15 @@ class Criticising(WorkerHarness):
         self.assertEqual(job.state, "ready")
         self.assertIn(cr.STYLE_UNCHECKED, cr.loop_from_json(job.critics).notes)
 
-    async def test_the_days_tally_near_its_cap_stops_the_loop_and_never_fails_the_recap(
-        self,
-    ) -> None:
+    async def test_a_draft_with_a_purpose_in_it_is_not_shipped_or_cut_while_it_waits(self) -> None:
         fast = self.fast_for(WITH_MOTIVE)
         await self.setUpWorker(fast, fx.Canned(), critics=True)
-        tally = AsyncMock(return_value=pl.DAILY_CALLS - 3)  # room for the title, no more
+        tally = AsyncMock(return_value=pl.DAILY_CALLS - 3)
         with patch.object(self.store, "calls_since", tally):
             job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("ready", ""))
-        self.assertEqual(fast.motive_sent, [])  # the loop did not begin
-        self.assertNotIn("avenge", job.summary)
-        self.assertTrue(cr.loop_from_json(job.critics).done)
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        self.assertIn("avenge", job.summary)  # waiting for the call that can tell, not cut
+        self.assertIsNone(job.critics)  # the loop has not begun
 
     async def test_a_speaker_who_stops_between_the_replies_begins_the_loop_again(self) -> None:
         agreed = {fx.DM, fx.ALICE, fx.BOB}

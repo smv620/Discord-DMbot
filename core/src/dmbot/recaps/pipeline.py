@@ -126,6 +126,12 @@ PLOT_TOKENS = 1200  # room for up to eight changes as JSON
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
 CRITIC_ERRORS_MAX = 2  # service errors in the loop before it stops and the draft goes on
+# Why the loop stopped before any draft was read: the recap then waits for its check (below),
+# or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
+STOP_ERRORS, STOP_CEILING, STOP_TALLY = "service errors", "job ceiling", "day's tally"
+CHECK_RETRY_S = 900  # the check is tried again this long after the service failed
+CHECK_TALLY_RETRY_S = 3600  # and this long after the day's tally was reached (it is a rolling day)
+CHECK_WAIT = cr.CHECK_WAIT  # (the words live with the loop's other fixed wording)
 
 
 def more_room(tokens: int, attempt: int) -> int:
@@ -1222,12 +1228,12 @@ class RecapWorker:
         is cut in code at the end, or the job fails as it does for any unfixable check."""
         loop = cr.loop_from_json(job.critics)
         today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
-        if (
-            job.errors >= CRITIC_ERRORS_MAX
-            or job.calls >= self._ceiling(job) - CRITIC_RESERVE
-            or today >= DAILY_CALLS - CRITIC_RESERVE  # what the title step needs is kept
-        ):
-            return await self._stop_critics(gid, cid, job, loop, inputs, "stopped early")
+        if job.errors >= CRITIC_ERRORS_MAX:
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_ERRORS)
+        if job.calls >= self._ceiling(job) - CRITIC_RESERVE:
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_CEILING)
+        if today >= DAILY_CALLS - CRITIC_RESERVE:  # what the title step needs is kept
+            return await self._stop_critics(gid, cid, job, loop, inputs, STOP_TALLY)
         sheet = bt.from_json(job.beats)
         prose = rd.Prose(job.summary, tuple(job.music))
         sentences = rd.sentences_of(prose.summary)
@@ -1252,7 +1258,9 @@ class RecapWorker:
 
     async def _save_loop(self, gid: int, cid: str, job: Job, loop: cr.Loop) -> Job | None:
         # (errors back to none: a step of the loop got through)
-        await self._store.update(gid, cid, job.session_at, critics=loop.to_json(), errors=0)
+        await self._store.update(
+            gid, cid, job.session_at, critics=loop.to_json(), errors=0, last_error=""
+        )  # (a step got through: a "waiting for its check" note is over)
         return await self._store.get(gid, cid, job.session_at)
 
     async def _read(
@@ -1285,7 +1293,8 @@ class RecapWorker:
                 if not set(job.speakers) <= set(await consenting()):  # again, after the answer
                     return await self._restart(gid, cid, job)
                 answer = None if unusable(raw) else mo.parse(raw.text)
-                if answer is None:  # neither agreement nor a finding: ask again, or stop
+                if answer is None or not mo.complete(answer, batch):
+                    # neither agreement nor a finding (not readable, or a sentence left out)
                     return await self._unreadable(gid, cid, job, "motives")
                 bad = mo.failures(batch, answer, lines, inputs.previous)
                 found += [cr.Change("motive", mo.instruction(f), True, f.number) for f in bad]
@@ -1496,10 +1505,9 @@ class RecapWorker:
         never shipped: those sentences are cut in code, and if what is left no longer passes the
         checks, or the change was not about one sentence, the job fails as any unfixable check
         does. A draft the critics never got to read (the service failed twice before the motive
-        check ran, or the ceiling was already near) has the sentences the narrow word list flags
-        cut in code (when in doubt nobody said it); the rest goes on as it is. That is the one
-        path where the loop can fail a written recap: when what is left no longer passes the
-        checks. Otherwise the loop is optional, like the grader."""
+        check ran, or a ceiling or the day's tally was reached) is never shipped unchecked and
+        never cut by a word list: the recap waits for its check (`CHECK_WAIT`) and it is tried
+        again, or it fails when the job's own ceiling is the reason."""
         self._written.pop((gid, cid, job.session_at), None)  # (a writer's text is not kept on)
         best = loop.best
         sheet = bt.from_json(job.beats)
@@ -1507,13 +1515,19 @@ class RecapWorker:
         length = rd.length_for(rd.session_hours(self._parts(job, said)[0], inputs.hours))
         transcript = "\n".join(s.text for s in said)
         if best is None:
-            # The draft was never read (the service failed, or a ceiling was near): every sentence
-            # the word list says states a purpose is cut in code. When in doubt nobody said it.
-            flagged = mo.floor_flagged(rd.sentences_of(job.summary))
-            best = cr.Best(
-                job.summary, tuple(job.music), dict(job.grade), len(flagged), 0, (),
-                tuple(n for n, _ in flagged),
+            # No draft could be read. A word list cannot tell a player character's aim from story
+            # (an NPC's request is often the cliffhanger), so nothing is cut and nothing ships
+            # unchecked: the recap waits and the check is tried again, or fails when the job's own
+            # ceiling is the reason (waiting would never change it).
+            if why == STOP_CEILING:
+                return await self._fail(gid, cid, job, CAP)
+            wait = CHECK_TALLY_RETRY_S if why == STOP_TALLY else CHECK_RETRY_S
+            log.info("Recap: the check waits (%s); tried again in %d s", why, wait)
+            await self._store.update(
+                gid, cid, job.session_at,
+                errors=0, next_at=int(self._now()) + wait, last_error=CHECK_WAIT,
             )  # fmt: skip
+            return await self._store.get(gid, cid, job.session_at)
         prose = rd.Prose(best.summary, best.music)
         cut = 0
         if best.hard:

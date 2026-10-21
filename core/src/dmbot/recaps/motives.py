@@ -6,9 +6,9 @@ did). Every sentence of a draft that states an intention, a plan, a goal or a re
 a line; one that cannot is a failure, and the writer is told to say what they did instead.
 
 Every sentence of the draft goes to one fast-tier call (in batches), which says which of them state
-a reason, an aim or a plan and which numbered lines carry it. Code adds a narrow word list of
-the ways a purpose is usually put: it judges only a sentence the call left out, and cuts in code
-when the call could not be made at all. It never fails an ordinary story sentence by itself.
+a reason, an aim or a plan and which numbered lines carry it. Code keeps a
+word list of the ways a purpose is usually put, only to mark what must be asked: it never cuts or
+fails a sentence. An answer that leaves a sentence out is asked again.
 Code then checks every citation: a cited line must be a play line a recorded person said that
 the call was shown, and must share words with the sentence, so an invented citation cannot
 pass. The answer carries numbers only, never text. Nothing here touches Discord or the database.
@@ -40,10 +40,10 @@ def answer_tokens(asked: int) -> int:
 
 
 # Ways a purpose, a plan, a wish or a reason is usually put. Matched on whole words, case ignored.
-# Narrow on purpose: a hit only means "the call must be asked and the answer read", it never fails
-# a sentence by itself (the call decides, so ordinary story sentences are not cut). The list is used
-# when the call could not be made at all (the sentence is then cut in code) and for a sentence the
-# call left out of its answer.
+# It only marks sentences that must be asked about (every sentence is, so it changes nothing in the
+# check itself) and it never cuts, fails or decides anything: a pattern cannot tell a player
+# character's aim from story (an NPC's request is often the cliffhanger), so only the call decides.
+# When no call could be made the recap waits for one (CHECK_WAIT in pipeline.py).
 _INTENT = re.compile(
     r"\b(?:want|wants|wanted|wanting|wish|wishes|wished|hop(?:e|es|ed|ing) (?:to|that|for)|"
     r"plan|plans|planned|planning|intend|intends|intended|intent on|seek|seeks|sought|seeking|"
@@ -181,10 +181,11 @@ def candidates(sentences: Sequence[str]) -> list[tuple[int, str]]:
     return [(n, text) for n, text in enumerate(sentences, start=1) if text.strip()][:MAX_CANDIDATES]
 
 
-def floor_flagged(sentences: Sequence[str]) -> list[tuple[int, str]]:
-    """The sentences the word list alone says state a purpose: what is cut in code when the call
-    could not be made at all (when in doubt, nobody said it)."""
-    return [(n, t) for n, t in candidates(sentences) if states_purpose(t)]
+def complete(answer: Sequence[Answer], asked: Sequence[tuple[int, str]]) -> bool:
+    """Whether the answer has an entry for every sentence asked. One that leaves a sentence out
+    was not read to the end: it is asked again, never taken as agreement and never judged by a
+    word list."""
+    return {n for n, _ in asked} <= {a.sentence for a in answer}
 
 
 def batches(asked: Sequence[tuple[int, str]]) -> list[list[tuple[int, str]]]:
@@ -255,23 +256,21 @@ def failures(
     lines: Mapping[int, str],
     previous: str,
 ) -> list[Failure]:
-    """The asked sentences that state a purpose (the call says so; the word list judges a sentence
-    the call left out) and have no real citation. A citation counts only when the line is one of
-    the lines shown (a recorded person's play line) and shares at least `MIN_SHARED` content words
-    with the sentence;
-    "recap" counts only when the earlier recap shares them. A sentence the call leaves out is
-    judged by the word list alone."""
+    """The asked sentences that state a purpose (the call says so) and have no real citation. A
+    citation counts only when the line is one of the lines shown (a recorded person's play line)
+    and shares at least `MIN_SHARED` content words with the sentence; "recap" counts only when
+    the earlier recap shares them."""
     said = {n: content_words(text) for n, text in shown_lines(asked, lines).items()}
     earlier = content_words(previous)
     by_sentence = {a.sentence: a for a in answer}
     bad: list[Failure] = []
     for n, text in asked:
         got = by_sentence.get(n)
-        # The call decides. A sentence it left out of its answer is judged by the word list.
-        if not (got.reason if got is not None else states_purpose(text)):
+        # The call decides, and `complete` has seen to it that it answered for every sentence.
+        if got is None or not got.reason:
             continue
         mine = content_words(text)
-        cited, recap = (got.lines, got.recap) if got is not None else ((), False)
+        cited, recap = got.lines, got.recap
         backed = any(len(mine & said[c]) >= MIN_SHARED for c in cited if c in said)
         if not backed and recap:
             backed = len(mine & earlier) >= MIN_SHARED

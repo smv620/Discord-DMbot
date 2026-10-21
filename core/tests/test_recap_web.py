@@ -239,6 +239,18 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertEqual(listed[0]["criticNotes"], [note])
 
+    async def test_a_recap_waiting_for_its_last_check_says_so_and_is_not_a_failure(self) -> None:
+        from dmbot.recaps.critics import CHECK_WAIT
+
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT)
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(
+            (one["waitingForCheck"], one["working"], one["error"]), (True, True, CHECK_WAIT)
+        )
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
+        again = await read_recap(self.web, self.session, self.ref)
+        self.assertFalse(again["waitingForCheck"])
+
     async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
         """(#2022) The recap stays; its page says the transcript went, and when, and how long the
         table keeps them. Read through the transcripts page's own door, scoped to the recap's
