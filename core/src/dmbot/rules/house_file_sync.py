@@ -161,7 +161,10 @@ def describe(item: Item) -> str:
     )
 
 
-UNCHECKED = "Rules added from the file couldn't be checked against your other house rules."
+UNCHECKED = (
+    "Couldn't check the file's rules for clashes with your other house rules. "
+    "Added anyway; look them over in `/dmbot houserules`."
+)
 
 
 def _named(number: int, from_set: str | None) -> str:
@@ -205,9 +208,9 @@ async def apply(
                     continue
                 if item.number in held:
                     out.skipped.append(
-                        f"Rule {item.number} in the file seems to disagree with {held[item.number]}"
-                        ", so it wasn't added. Press **Add a house rule** in `/dmbot houserules` "
-                        "to add it and choose which one wins."
+                        f"Rule {item.number} in the file may clash with {held[item.number]}"
+                        ", so it wasn't added. To add it and pick a winner, use **Add a house "
+                        "rule** in `/dmbot houserules`."
                     )
                     continue
                 saved = await store.add(

@@ -334,9 +334,7 @@ class Pressing(TableTest):
         self.assertIn("rule 1", text)
         self.assertEqual(self.table.house_voice.proposals, {})  # nobody else can save it meanwhile
         press = self.interaction()
-        await next(b for b in view.children if b.label == "Keep both, this one wins").callback(
-            press
-        )
+        await next(b for b in view.children if b.label == "New rule wins").callback(press)
         (added,) = self.store.added
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertIn("✅ Saved as house rule 2.", press.response.edited[0][0])

@@ -2,7 +2,7 @@
 
 `look` compares the words being saved with the campaign's own house rules and the ones it follows
 (`dmbot.rules.conflicts`). On a disagreement `DisagreeView` shows both rules and four buttons:
-**Replace rule N**, **Keep both, this one wins**, **Keep both, rule N wins** and **Cancel**.
+**Replace rule N**, **New rule wins**, **Rule N wins** and **Cancel**.
 Nothing is saved until the DM presses one, and DMbot never picks. A check that could not run (no
 AI key, the service down) lets the rule be saved and says so; it never blocks a save.
 
@@ -31,10 +31,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-UNCHECKED = " _DMbot couldn't check it against your other house rules this time._"
+UNCHECKED = (
+    " _Couldn't check for clashes with your other house rules. Saved anyway; look them over in "
+    "`/dmbot houserules`._"
+)
 ONLY_DMS = "Only this campaign's DMs can answer this."
-WORDS_MAX = 300
-LABEL_MAX = 80
+WORDS_MAX = 150
+LABEL_MAX = 25  # a phone cuts a longer label
 
 
 def _words(rule: HouseRule) -> str:
@@ -115,17 +118,17 @@ class DisagreeView(_Menu):
 
     def prompt(self) -> str:
         o = self.other
+        count = f" (clash {self.at + 1} of {len(self.others)})" if len(self.others) > 1 else ""
         return (
-            f"⚠️ **This rule seems to disagree with {name_of(o)}.**\n"
+            f"⚠️ **Your new rule may clash with {name_of(o)}{count}. Which one wins?**\n"
             f"**New:** {_fit(self.words, WORDS_MAX)}\n"
             f"**{name_of(o).capitalize()}:** {_fit(o.words, WORDS_MAX)}\n"
-            "Which one should win at your table? You decide; DMbot never picks."
+            "Both rules stay unless you replace the old one. You decide; DMbot never picks."
         )
 
     def _buttons(self) -> None:
         self.clear_items()
         o = self.other
-        n = name_of(o)
         if self._replace is not None and o.from_set is None and self.saved is None:
             self.add_item(
                 _Button(
@@ -137,14 +140,17 @@ class DisagreeView(_Menu):
         self.add_item(
             _Button(
                 self._new_wins,
-                label="Keep both, this one wins",
+                label="New rule wins",
                 style=discord.ButtonStyle.primary,
             )
         )
         self.add_item(
             _Button(
                 self._other_wins,
-                label=_fit(f"Keep both, {n} wins", LABEL_MAX),
+                label=_fit(
+                    f"Rule {o.number} wins" if o.from_set is None else f"Set rule {o.number} wins",
+                    LABEL_MAX,
+                ),
                 style=discord.ButtonStyle.primary,
             )
         )
@@ -226,8 +232,7 @@ class DisagreeView(_Menu):
             return
         await self._end(
             interaction,
-            f"{self._saved_note(self.saved)} The rest were left undecided; "
-            "DMbot will ask when one comes up.",
+            f"{self._saved_note(self.saved)} The other clashes were left unanswered.",
         )
 
 

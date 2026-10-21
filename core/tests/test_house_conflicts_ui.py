@@ -59,13 +59,13 @@ class Disagreeing(UITest):
         self.assertIn("DMbot never picks", text)
         self.assertEqual(
             self.labels(view),
-            ["Replace rule 2", "Keep both, this one wins", "Keep both, rule 2 wins", "Cancel"],
+            ["Replace rule 2", "New rule wins", "Rule 2 wins", "Cancel"],
         )
 
     async def test_keeping_both_with_the_new_rule_winning_remembers_it(self) -> None:
         _, it = await self.add()
         _, view = self.question(it)
-        await self.press(view, "Keep both, this one wins").callback(self.it())
+        await self.press(view, "New rule wins").callback(self.it())
         self.assertEqual([c[0] for c in self.store.calls], ["add"])
         winner, loser = self.wins.record.await_args.args[2:4]
         self.assertEqual((winner, loser), (RuleRef("", 3), RuleRef("", 2)))
@@ -73,7 +73,7 @@ class Disagreeing(UITest):
     async def test_keeping_both_with_the_old_rule_winning_remembers_that(self) -> None:
         _, it = await self.add()
         _, view = self.question(it)
-        await self.press(view, "Keep both, rule 2 wins").callback(self.it())
+        await self.press(view, "Rule 2 wins").callback(self.it())
         winner, loser = self.wins.record.await_args.args[2:4]
         self.assertEqual((winner, loser), (RuleRef("", 2), RuleRef("", 3)))
 
@@ -92,6 +92,19 @@ class Disagreeing(UITest):
         self.assertEqual(self.store.calls, [])
         self.wins.record.assert_not_awaited()
 
+    async def test_every_label_fits_a_phone(self) -> None:
+        followed = SimpleNamespace(number=12, rule="Potions are free", supersedes=None)
+        followed.set_name = "The Very Long Pirate Pack Name"
+
+        async def everything(guild_id: int, cid: str) -> Any:
+            return [*await self.store.list(guild_id, cid), followed]
+
+        self.bot.all_house_rules = everything
+        self.bot.rule_conflict_ai = says(3)
+        _, it = await self.add()
+        for label in self.labels(self.question(it)[1]):
+            self.assertLessEqual(len(label), 25, label)
+
     async def test_only_a_dm_can_answer(self) -> None:
         _, it = await self.add()
         _, view = self.question(it)
@@ -102,19 +115,19 @@ class Disagreeing(UITest):
         self.bot.rule_conflict_ai = says()
         _, it = await self.add()
         self.assertEqual([c[0] for c in self.store.calls], ["add"])
-        self.assertNotIn("couldn't check", self.shown(it)[0])
+        self.assertNotIn("Couldn't check", self.shown(it)[0])
 
     async def test_a_check_that_fails_saves_the_rule_and_says_so(self) -> None:
         self.bot.rule_conflict_ai = SimpleNamespace(complete=AsyncMock(side_effect=OSError))
         _, it = await self.add()
         self.assertEqual([c[0] for c in self.store.calls], ["add"])
-        self.assertIn("couldn't check", self.shown(it)[0])
+        self.assertIn("Couldn't check", self.shown(it)[0])
 
     async def test_without_the_ai_nothing_is_checked(self) -> None:
         self.bot.rule_conflict_ai = None
         _, it = await self.add()
         self.assertEqual([c[0] for c in self.store.calls], ["add"])
-        self.assertNotIn("couldn't check", self.shown(it)[0])
+        self.assertNotIn("Couldn't check", self.shown(it)[0])
 
     async def test_editing_a_rule_never_compares_it_with_itself(self) -> None:
         shown: list[list[Existing]] = []
@@ -143,7 +156,7 @@ class Disagreeing(UITest):
         text, view = self.question(it)
         self.assertIn("Red Table rule 2", text)
         self.assertNotIn("Replace rule 2", self.labels(view))
-        await self.press(view, "Keep both, Red Table rule 2 wins").callback(self.it())
+        await self.press(view, "Set rule 2 wins").callback(self.it())
         winner = self.wins.record.await_args.args[2]
         self.assertEqual(winner, RuleRef("Red Table", 2))
 
@@ -152,11 +165,11 @@ class Disagreeing(UITest):
         _, it = await self.add()
         _, view = self.question(it)
         again = self.it()
-        await self.press(view, "Keep both, this one wins").callback(again)
+        await self.press(view, "New rule wins").callback(again)
         text, view2 = again.response.edited[0]
         self.assertIn("rule 1", text)
         self.assertNotIn("Replace rule 1", self.labels(view2))  # it is saved already
-        await self.press(view2, "Keep both, rule 1 wins").callback(self.it())
+        await self.press(view2, "Rule 1 wins").callback(self.it())
         self.assertEqual(self.wins.record.await_count, 2)
         self.assertEqual([c[0] for c in self.store.calls], ["add"])  # saved once
 
@@ -193,7 +206,7 @@ class FromTheFile(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(done.done), 1)
         self.assertEqual(len(done.skipped), 1)
         self.assertIn("rule 1", done.skipped[0])
-        self.assertIn("choose which one wins", done.skipped[0])
+        self.assertIn("pick a winner", done.skipped[0])
         self.assertEqual(store.added, ["Crits double"])
 
     async def test_a_file_check_that_fails_still_adds_and_says_so(self) -> None:
