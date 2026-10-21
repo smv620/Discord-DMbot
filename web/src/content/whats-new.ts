@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "DMbot offers how to say a name",
+    what: "When your table says a name differently from how it's spelled, or says out loud how it is said (\"it's pronounced Kay-el\"), DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Your support questions now show the whole conversation",
     what: "On your account page, press \"Read the conversation\" under one of your questions to read all of it: what you wrote, the answers from DMbot's helper (a program, not a person), the replies you sent by email and the team's replies, with the dates. On our website, only you and the team can read it.",
     reason:
@@ -316,6 +322,13 @@ export const held: Held[] = [
     what: "On a recap's page, type what you'd like changed. DMbot sorts your note into points, you keep the ones you want, and it writes the recap again with them. That uses one Try again, you approve the new text again, and style notes you keep are saved for this campaign's later recaps too (the newest 10 are kept). To remove them, go to ⚙️ Settings → 📜 Recaps → ✍️ Recap style.",
     reason:
       "Waits for the website's new routes (#2113) to deploy and for dev1 to see it work. When it is live, move this up and turn on RECAP_FIX_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
+  },
+  {
+    date: "2026-10-20",
+    title: "Speak a note to DMbot",
+    what: "Under Tell DMbot what to fix, press Speak instead and say what to change (up to a minute). DMbot turns it into words in the box and deletes the recording as soon as the words are ready; nothing is kept but the words. You check the words before you press Send. It counts toward your listening time, and DMbot only listens to people who have agreed to be recorded.",
+    reason:
+      "Waits for the voice routes (#2113 part 2) to deploy, the microphone header to be live, and for dev1 to see a spoken note turned into words. When it is live, move this up and turn on RECAP_VOICE_LIVE in recap-words.ts (it needs RECAP_FIX_LIVE too).",
   },
   {
     date: "2026-10-20",

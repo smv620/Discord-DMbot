@@ -160,6 +160,29 @@
     color: var(--accent);
   }
 
+  /* A button and its small round "i" on one line (the recap page's microphone, #2114). The round
+     button is small to look at, and its tap area is stretched past its edge for a thumb. */
+  .account .with-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .account .info-dot {
+    position: relative;
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    padding: 0;
+    border-radius: 50%;
+    line-height: 1;
+  }
+
+  .account .info-dot::after {
+    content: "";
+    position: absolute;
+    inset: -0.5rem;
+  }
+
   .account .button.danger {
     background: var(--danger);
     color: var(--accent-text);
