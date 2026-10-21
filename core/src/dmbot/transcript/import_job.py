@@ -65,6 +65,28 @@ class ImportStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
+    async def waiting_plays(self, guild_id: int, limit: int = 50) -> list[tuple[str, int, str]]:
+        """(campaign, member, character) choices the DM made on the import page, oldest first,
+        that the bot has not made links of yet (#2135)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id, user_id, character_id FROM import_plays"
+                " ORDER BY created_at, user_id LIMIT %s",
+                (limit,),
+            )
+            return [
+                (r["campaign_id"], int(r["user_id"]), r["character_id"])
+                for r in await cur.fetchall()
+            ]
+
+    async def done_plays(self, guild_id: int, campaign_id: str, user_id: int) -> None:
+        """A choice has been made a link, or can no longer be: it stops waiting."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM import_plays WHERE campaign_id = %s AND user_id = %s",
+                (campaign_id, user_id),
+            )
+
     async def waiting(self, guild_id: int, limit: int = PER_ROUND) -> list[tuple[str, str]]:
         """(campaign, session) of the imports waiting in this server, oldest first."""
         async with self._db.guild(guild_id) as conn:

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
+from dmbot.memory.models import MemoryRuleError
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -134,7 +135,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         settings=SimpleNamespace(recaps_on=True),
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
-        memory=object(),
+        **{"memory": object(), **kw},
         consent=SimpleNamespace(consenting=AsyncMock(return_value={MIRA})),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         plan_allows=AsyncMock(return_value=True),
@@ -146,13 +147,13 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_unchecked={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         _hold_or_queue=AsyncMock(return_value="held"),
-        **kw,
     )
     for name in (
         "run_import_followups",
         "_scan_import",
         "_import_recap",
         "_start_import_recap",
+        "_apply_import_plays",
         "_tell_import_news",
         "_say_group_writing",
         "_say_writing",
@@ -164,6 +165,51 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
 async def rounds(bot: Any, n: int = 4) -> None:
     for _ in range(n):  # one session per campaign each round
         await bot.run_import_followups(GUILD)
+
+
+class ThePlaysChoices(WithImports):
+    """The DM's "plays which character" choices from the import page (#2135 part B)."""
+
+    async def wait(self, user: int = MIRA, character: str = "c" * 32) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO import_plays (guild_id, campaign_id, user_id, character_id,"
+                " created_at) VALUES (%s, %s, %s, %s, 1)",
+                (GUILD, self.campaign.id, user, character),
+            )
+
+    async def test_a_choice_becomes_a_dm_confirmed_link_once_and_stops_waiting(self) -> None:
+        await self.wait()
+        memory = SimpleNamespace(confirm_entity=AsyncMock())
+        bot, _ = fake_bot(self.store, memory=memory)
+        await bot.run_import_followups(GUILD)
+        memory.confirm_entity.assert_awaited_once_with(
+            GUILD, self.campaign.id, "c" * 32, "character",
+            source="dm", played_by=MIRA, role="player_character",
+        )  # fmt: skip
+        self.assertEqual(await self.store.waiting_plays(GUILD), [])
+        await bot.run_import_followups(GUILD)  # a second round does nothing
+        memory.confirm_entity.assert_awaited_once()
+
+    async def test_a_choice_that_no_longer_holds_is_dropped_and_a_failure_is_kept(self) -> None:
+        await self.wait()
+        memory = SimpleNamespace(confirm_entity=AsyncMock(side_effect=MemoryRuleError("taken")))
+        bot, _ = fake_bot(self.store, memory=memory)
+        await bot.run_import_followups(GUILD)
+        self.assertEqual(await self.store.waiting_plays(GUILD), [])  # taken since: let go
+        await self.wait()
+        memory = SimpleNamespace(confirm_entity=AsyncMock(side_effect=RuntimeError("down")))
+        bot, _ = fake_bot(self.store, memory=memory)
+        await bot.run_import_followups(GUILD)
+        self.assertEqual(len(await self.store.waiting_plays(GUILD)), 1)  # tried again next round
+
+    async def test_nothing_is_applied_for_a_member_who_is_not_recorded_now(self) -> None:
+        await self.wait(user=MIRA + 1)  # (the stand-in consent lists only MIRA)
+        memory = SimpleNamespace(confirm_entity=AsyncMock())
+        bot, _ = fake_bot(self.store, memory=memory)
+        await bot.run_import_followups(GUILD)
+        memory.confirm_entity.assert_not_awaited()
+        self.assertEqual(await self.store.waiting_plays(GUILD), [])
 
 
 class TheCrashAndTheNews(WithImports):

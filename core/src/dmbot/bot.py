@@ -244,6 +244,7 @@ from dmbot.memory.models import (
     DM,
     FIX,
     KEEP,
+    PLAYER_CHARACTER,
     PROPOSED,
     Heard,
     MemoryRuleError,
@@ -9775,8 +9776,31 @@ class DMBot(commands.AutoShardedBot):
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
+        await self._apply_import_plays(gid, store)
         await self._tell_import_news(gid, store)
         return done
+
+    async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
+        """The DM's "plays which character" choices from the import page become links, through
+        the same call the names panel uses (the DM's own decision, so DM-confirmed). One that no
+        longer holds (the character is taken, gone, or its player stopped being recorded) is
+        dropped, never forced; one that fails for another reason stays for the next round."""
+        if self.memory is None:
+            return
+        for campaign_id, user_id, character_id in await store.waiting_plays(gid):
+            with log_context(guild_id=gid, campaign_id=campaign_id):
+                try:
+                    if user_id in await self.consent.consenting(gid):
+                        await self.memory.confirm_entity(
+                            gid, campaign_id, character_id, "character",
+                            source=DM, played_by=user_id, role=PLAYER_CHARACTER,
+                        )  # fmt: skip
+                except MemoryRuleError:
+                    pass  # not a character nobody plays any more: nothing to apply
+                except Exception:
+                    log.exception("Import: a 'plays' choice could not be applied")
+                    continue
+                await store.done_plays(gid, campaign_id, user_id)
 
     async def _start_import_recap(self, gid: int, store: ImportStore, ready: Ready) -> None:
         """Start the recap of one scanned import. One that cannot be started is tried again next

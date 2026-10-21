@@ -441,6 +441,65 @@ class TheSuggestions(WithImports):
         self.assertIsNone(await self.played(512, secret_name=True))
         self.assertIsNone(await self.played(513, audience_limited=True))
 
+    async def plays_waiting(self) -> list[tuple[int, str]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id, character_id FROM import_plays ORDER BY 1")
+            return [(r["user_id"], r["character_id"]) for r in await cur.fetchall()]
+
+    async def confirm_plays(self, plays: object) -> dict[str, Any]:
+        return await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 1}],
+                "plays": plays,
+            },
+            ("a.txt", CRAIG),
+        )
+
+    async def test_a_chosen_character_waits_for_the_bot_to_make_it_a_link(self) -> None:
+        cerric = await self.character(550, "Cerric")
+        await self.confirm_plays({"Mira (mira_v)": "cerric"})  # (the name, however it is cased)
+        self.assertEqual(await self.plays_waiting(), [(MIRA, cerric)])
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_choice_for_a_label_that_is_not_mapped_or_a_member_not_recorded_is_ignored(
+        self,
+    ) -> None:
+        await self.character(551, "Cerric")
+        await self.character(552, "Brann")
+        # Tomas has not agreed; "Stranger" is not a label of this import's mapping
+        await self.confirm_plays({"Tomas (tomas#1)": "Brann", "Stranger": "Cerric", "x": 5})
+        self.assertEqual(await self.plays_waiting(), [])
+
+    async def test_only_a_character_nobody_plays_and_everybody_may_know_is_kept(self) -> None:
+        await self.character(553, "Veyra", secret_name=True)
+        await self.character(554, "Brannock", audience_limited=True)
+        await self.character(555, "Taken", played_by=TOMAS)
+        await self.character(556, "Waterdeep", type_="location")
+        await self.character(557, "Twin")
+        await self.character(558, "Twin")
+        for name in ("Veyra", "Brannock", "Taken", "Waterdeep", "Twin", "Nobody", ""):
+            self.assertEqual(await self.plays_of_one(name), [], name)
+
+    async def plays_of_one(self, name: str) -> list[tuple[int, str]]:
+        await self.confirm_plays({"Mira (mira_v)": name})
+        got = await self.plays_waiting()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM import_plays")
+            await conn.execute("DELETE FROM session_imports")
+            await conn.execute("DELETE FROM transcript_sessions")
+        return got
+
+    async def test_a_second_choice_for_a_member_replaces_the_first(self) -> None:
+        await self.character(559, "Cerric")
+        brann = await self.character(560, "Brann")
+        await self.confirm_plays({"Mira (mira_v)": "Cerric"})
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM session_imports")
+            await conn.execute("DELETE FROM transcript_sessions")
+        await self.confirm_plays({"Mira (mira_v)": "Brann"})
+        self.assertEqual(await self.plays_waiting(), [(MIRA, brann)])
+
     async def test_a_nickname_match_never_shows_a_secret_own_name(self) -> None:
         # "Lord Vex" is the person's name and it is secret; "The Stranger" is a public nickname.
         # The player agreed but has no directory row, so only the campaign's name could be shown.
