@@ -7542,6 +7542,25 @@ MEMBER_DIRECTORY = (
     REVOKE ALL ON FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
     """
 )
+RECAP_HOLDS = f"""
+    -- A session's recap held until the DM has answered DMbot's name questions (#2169). A hold is
+    -- a row here, not a job state: the recap job is made when the hold is released (the last
+    -- question answered, or "Write the recap now"), so the job list and the workers do not
+    -- change and nothing costs anything while it waits. One per session. Per campaign, isolated,
+    -- deleted with the campaign, and left out of backups (it is a wait, not content).
+    CREATE TABLE recap_holds (
+        {_memory_scope()}
+        session_at  BIGINT NOT NULL,
+        session_id  TEXT NOT NULL,
+        dm_user_id  BIGINT NOT NULL CHECK (dm_user_id > 0),
+        channel_id  BIGINT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        -- The DM has been told on the DM screen. A hold made while the story extractor still had
+        -- names to propose is silent until it is done: there may be nothing to ask.
+        asked       BOOLEAN NOT NULL DEFAULT TRUE,
+        PRIMARY KEY (guild_id, campaign_id, session_at)
+    );
+    """ + _isolate("recap_holds")
 
 OLD_SPELLING = """
     -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
@@ -7711,6 +7730,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0136_session_imports", SESSION_IMPORTS),  # sessions loaded from a file (#2105)
     ("0137_recap_share", RECAP_SHARE),  # a public link for a posted recap (#2118)
     ("0138_member_directory", MEMBER_DIRECTORY),  # who an imported name can be (#2141)
+    ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
 )
 
@@ -7744,6 +7764,7 @@ ISOLATED_TABLES = (
     "game_effects",
     "recap_jobs",
     "recap_dictionaries",
+    "recap_holds",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
