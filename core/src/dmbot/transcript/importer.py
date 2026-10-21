@@ -16,7 +16,14 @@ names them (`FORMATS`):
   seen so far): a line that is only such a placeholder is dropped and counted apart, never as a
   joined line, and a placeholder at the start of an utterance is stripped (an utterance left empty
   is dropped);
-* WebVTT and SRT whose cue text starts `Name:`.
+* the same with the name in square brackets, `[Name]:  words` (a Google Doc's transcript), or
+  `[Name] words` when no line of the file has a colon after a name; a bracket that holds a clock,
+  `[0:42:10]`, stays a time;
+* WebVTT and SRT whose cue text starts `Name:`, or WebVTT cues with a voice tag, `<v Name>words</v>`
+  (a caption track from a recording).
+
+A byte-order mark some tools write first is dropped before anything is told apart. A file that
+cannot be read is refused with a `code` the page puts in plain words (`TranscriptError.code`).
 
 Nothing here prints a line of the file; errors name the format or the speakers, never the words.
 """
@@ -28,9 +35,13 @@ from dataclasses import dataclass
 
 DMBOT, PLAIN, VTT, SRT = "dmbot", "plain", "vtt", "srt"
 FORMATS = (
-    "DMbot's own transcript download, plain 'Name: words' lines (an optional [hh:mm:ss] first), "
-    "or WebVTT or SRT whose cue text starts 'Name:'"
+    "DMbot's own transcript download, plain 'Name: words' lines (an optional [hh:mm:ss] first, "
+    "or the name in [square brackets]), or WebVTT or SRT captions that name who is speaking"
 )
+# Why a file could not be read, for the page to say in plain words (no word of the file in any).
+UNKNOWN_FORMAT = "unknown_format"  # none of the formats above
+NO_SPEAKER_NAMES = "no_speaker_names"  # captions with no names in them
+UNREADABLE = "unreadable"  # recognised, but a line or a cue could not be read
 SPEAKER_BASE = 100  # made-up speaker numbers, so none can be mistaken for a real account
 LINE_MS = 1000  # a file with no times: one second a line keeps the order
 # Braced tags in DMbot's download that say what a line is, not who a character is.
@@ -49,6 +60,31 @@ _DMBOT_OTHER = re.compile(r"^\[\d+:\d{2}:\d{2}\] \(")  # sidebar, skipped-note a
 _PLAIN = re.compile(
     rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?(?P<who>[^\s:\[\]{{}}<>][^:\[\]{{}}<>]{{0,59}}):\s+(?P<text>\S.*)$"
 )
+# The name in square brackets, as a Google Doc's transcript writes it: `[Name]:  words`. A bracket
+# that holds a clock has a colon in it, so it is never taken for a name.
+_BRACKET_COLON = re.compile(
+    rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?\[(?P<who>[^\[\]{{}}<>:]{{1,60}})\]\s*:\s*(?P<text>\S.*)$"
+)
+# `[Name] words`, with no colon: tried only when no line of the file is `Name: words` or
+# `[Name]: words`, so a wrapped line that starts with a note such as `[laughs]` is not a speaker.
+_BRACKET_ONLY = re.compile(r"^\[(?P<who>[^\[\]{}<>:]{1,60})\]\s+(?P<text>\S.*)$")
+_PLAIN_STYLES = ((_PLAIN, _BRACKET_COLON), (_BRACKET_ONLY,))
+_Style = tuple[re.Pattern[str], ...]
+
+
+def _match(style: _Style, line: str) -> re.Match[str] | None:
+    for pattern in style:
+        found = pattern.match(line)
+        if found is not None:
+            return found
+    return None
+
+
+def _at(found: re.Match[str]) -> str | None:
+    """The clock a plain line starts with, if it has one (the bracketed-name form has none)."""
+    return found["at"] if "at" in found.re.groupindex else None
+
+
 # Craig's cut-out placeholder: a braced note of up to about 40 characters, alone on its line or
 # at the start of what someone said. DMbot's own download, which uses braces for characters, is
 # tried before this format, so this only ever reads a plain file.
@@ -57,11 +93,18 @@ _CUT_OUT_LEAD = re.compile(r"^(?:\{[^{}]{1,40}\}\s*)+")
 HEADER_MAX = 10  # lines before the first utterance that a plain file may have
 JOINED_MAX_SHARE = 4  # at most one line in this many may be a wrapped line (a quarter)
 _TIMING = re.compile(r"^(?P<h>\d+:)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{3})\s+-->\s+")
+# WebVTT's voice tag, `<v Name>` or `<v.loud Name>`, with or without a closing `</v>`.
+_VOICE = re.compile(r"<v(?:\.[^\s>]*)*\s+(?P<who>[^<>]{1,60})>", re.I)
 _CUE_SPEAKER = re.compile(r"^(?P<who>[^:\[\]{}()<>]{1,60}):\s+(?P<text>\S.*)$", re.S)
 
 
 class TranscriptError(ValueError):
-    """The file can't be used; the message is plain words, never a line of the file."""
+    """The file can't be used; the message is plain words, never a line of the file. `code` is
+    one of the codes above, for the page."""
+
+    def __init__(self, message: str, code: str = UNREADABLE) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,12 +154,11 @@ def detect(text: str) -> str:
         return VTT
     if any(_TIMING.match(line) for line in lines[:6]) and lines[0].isdigit():
         return SRT
-    split = _plain_split([line for line in lines if not _CUT_OUT.match(line)])
-    if split is not None:
-        _, rows = split
-        if sum(1 for found, _ in rows if found) * 2 > len(rows):  # most lines have a name and words
-            return PLAIN
-    raise TranscriptError(f"I don't know this file's format. I can read: {FORMATS}.")
+    if _plain_style([line for line in lines if not _CUT_OUT.match(line)]) is not None:
+        return PLAIN
+    raise TranscriptError(
+        f"I don't know this file's format. I can read: {FORMATS}.", UNKNOWN_FORMAT
+    )
 
 
 def _dmbot(text: str) -> Transcript:
@@ -139,12 +181,23 @@ def _dmbot(text: str) -> Transcript:
     return Transcript(DMBOT, tuple(out), tuple(characters))
 
 
-def _plain_split(lines: list[str]) -> tuple[int, list[tuple[re.Match[str] | None, str]]] | None:
+def _plain_split(
+    lines: list[str], style: _Style = _PLAIN_STYLES[0]
+) -> tuple[int, list[tuple[re.Match[str] | None, str]]] | None:
     """(how many header lines come first, every line after them with its match or None), or None
     when no `Name: words` line comes within the first `HEADER_MAX + 1` lines."""
     for header, line in enumerate(lines[: HEADER_MAX + 1]):
-        if _PLAIN.match(line):
-            return header, [(_PLAIN.match(rest), rest) for rest in lines[header:]]
+        if _match(style, line):
+            return header, [(_match(style, rest), rest) for rest in lines[header:]]
+    return None
+
+
+def _plain_style(lines: list[str]) -> _Style | None:
+    """The first style of plain lines under which most of the lines have a name and words."""
+    for style in _PLAIN_STYLES:
+        split = _plain_split(lines, style)
+        if split is not None and sum(1 for found, _ in split[1] if found) * 2 > len(split[1]):
+            return style
     return None
 
 
@@ -152,7 +205,8 @@ def _plain(text: str) -> Transcript:
     numbered = [(n, raw.strip()) for n, raw in enumerate(text.splitlines(), start=1) if raw.strip()]
     cut_out = sum(1 for _, line in numbered if _CUT_OUT.match(line))
     numbered = [(n, line) for n, line in numbered if not _CUT_OUT.match(line)]
-    split = _plain_split([line for _, line in numbered])
+    style = _plain_style([line for _, line in numbered]) or _PLAIN_STYLES[0]
+    split = _plain_split([line for _, line in numbered], style)
     if split is None:
         raise TranscriptError(f"no 'Name: words' line in the first {HEADER_MAX + 1} lines")
     header, rows = split
@@ -167,13 +221,14 @@ def _plain(text: str) -> Transcript:
             continue
         # A line with no time follows the one before it, so a mixed file keeps its order.
         after = out[-1].at_ms + LINE_MS if out else 0
-        at = _clock_ms(found["at"]) if found["at"] else after
+        clock = _at(found)
+        at = _clock_ms(clock) if clock else after
         # A leading placeholder is stripped; an utterance left empty stays until the end so that the
         # wrapped lines after it join to it and not to the speaker before.
         said = _CUT_OUT_LEAD.sub("", found["text"].strip())
         out.append(Utterance(found["who"].strip(), at, said))
     kept = tuple(Utterance(u.speaker, u.at_ms, u.text.strip()) for u in out if u.text.strip())
-    timed = any(found["at"] for found, _ in rows if found is not None)
+    timed = any(_at(found) for found, _ in rows if found is not None)
     return Transcript(
         PLAIN, kept, skipped=header, joined=len(wrapped), cut_out=cut_out, timed=timed
     )
@@ -182,6 +237,7 @@ def _plain(text: str) -> Transcript:
 def _cues(text: str, kind: str) -> Transcript:
     """WebVTT and SRT: a timing line, then the cue's text, which starts `Name:`."""
     out: list[Utterance] = []
+    unnamed: list[int] = []  # cues with no speaker named
     block: list[str] = []
     start = 0
     count = 0
@@ -190,9 +246,26 @@ def _cues(text: str, kind: str) -> Transcript:
         nonlocal block
         if not block:
             return
-        said = _CUE_SPEAKER.match(" ".join(block))
+        text = " ".join(block)
+        if _VOICE.search(text):
+            # `<v Ann>one</v> <v Bo>two</v>`: each voice is a speaker. Words before the first tag
+            # carry on the speaker of the cue before.
+            parts = _VOICE.split(text)  # [before, who, words, who, words, ...]
+            if parts[0].strip() and out:
+                out[-1] = Utterance(
+                    out[-1].speaker, out[-1].at_ms, f"{out[-1].text} {parts[0].strip()}"
+                )
+            for who, words in zip(parts[1::2], parts[2::2], strict=True):
+                said = re.sub(r"</?[a-z][^>]*>", "", words).strip()
+                if said:
+                    out.append(Utterance(who.strip(), start, said))
+            block = []
+            return
+        said = _CUE_SPEAKER.match(text)
         if said is None:
-            raise TranscriptError(f"cue {count} has no 'Name:' at the start of its text")
+            unnamed.append(count)
+            block = []
+            return
         out.append(Utterance(said["who"].strip(), start, said["text"].strip()))
         block = []
 
@@ -215,10 +288,13 @@ def _cues(text: str, kind: str) -> Transcript:
         elif i + 1 < len(rows) and _TIMING.match(rows[i + 1]):
             continue  # a cue's number (SRT) or identifier (WebVTT), on the line before its timing
         elif count:
-            block.append(re.sub(r"</?[a-z][^>]*>", "", line))  # <i>, <b>: styling, not words
+            # <v Name> is kept for `close` (it names who speaks); <i>, <b> and the like are styling
+            block.append(re.sub(r"</?(?!v[\s.>])[a-z][^>]*>", "", line, flags=re.I))
     close()
-    if not out:
+    if not out and not unnamed:
         raise TranscriptError("the file has no cues in it")
+    if unnamed:
+        raise TranscriptError(f"cue {unnamed[0]} does not say who is speaking", NO_SPEAKER_NAMES)
     return Transcript(kind, tuple(out))
 
 

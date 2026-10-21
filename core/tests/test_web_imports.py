@@ -262,7 +262,7 @@ class ThePreviewAndCheck(WithImports):
         got = await self.preview(
             ("notes.md", CRAIG), ("a.txt", "just prose\nwith no speakers\n"), ("b.txt", "   ")
         )
-        self.assertEqual([f["error"] for f in got["files"]], ["not_txt", "unreadable", "empty"])
+        self.assertEqual([f["error"] for f in got["files"]], ["not_txt", "unknown_format", "empty"])
         self.assertNotIn("rusty", json.dumps(got))
 
     async def test_the_limits_are_enforced(self) -> None:
