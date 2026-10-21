@@ -1396,12 +1396,19 @@ Code changes: #87.
   channel (a music bot, DMbot itself) is nobody, by Discord's own bot flag, the same test the consent
   allowlist uses.
   - **The rules:** no person in the voice channel for 5 minutes (always on), or no person speaking or
-    typing in table chat for 30 minutes. The DM sets this in ⚙️ Settings → Stop when quiet: 30, 60 or
-    90 minutes, or Off for tables that take long silent breaks.
+    typing in table chat for 10 minutes. The DM sets this in ⚙️ Settings → Stop when quiet, a button
+    that cycles 5 → 10 → 15 → 30 minutes; 10 is the default, and there is no Off (owner, 2026-10-21:
+    a forgotten session must always end). Campaigns that had 60, 90 or Off move to 30, the longest
+    choice; a 30 stays 30, and a backup holding an old value loads as 30.
   - **A warning first:** the DM screen says it will stop in 5 minutes, with a **Keep listening** button.
     Someone speaking or rejoining cancels the warning.
   - **The stop** is the same as ⏹ Stop: the transcript is saved, the session-end messages go out and the
     recap starts. The DM screen says why it stopped, and hours stop being counted.
+  - **Everyone is told privately** (owner, 2026-10-21): when DMbot stops by itself, it sends a private
+    message to the campaign's DM and to each person (never a bot) still in the voice channel, once per
+    stop, saying it stopped listening and why. The DM's message also says where to change it:
+    ⚙️ Settings → Stop when quiet. A person whose private messages are closed is skipped; the DM screen
+    line still says why it stopped.
     *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
