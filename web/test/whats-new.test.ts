@@ -29,6 +29,13 @@ beforeAll(async () => {
 });
 
 describe("What's new", () => {
+  it("says style notes are kept for this campaign's later recaps and where to remove them", () => {
+    const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
+    expect(fix?.what).toContain("this campaign's later recaps");
+    expect(fix?.what).toContain("newest 10");
+    expect(fix?.what).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+  });
+
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
     const shown = [...page.querySelectorAll(".entry")];
@@ -62,6 +69,8 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "DMbot offers how to say a name", // until #2171 merges and dev1 deploys it
+      "Your support questions now show the whole conversation", // until #2193 deploys and the helper is on (SUPPORT_AI_LIVE)
+      "Make the audio again for a recap you already posted", // until dev1 deploys it (#2203)
       "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
       "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
@@ -72,6 +81,7 @@ describe("What's new", () => {
       "A note when a spelling changed a posted recap", // until dev1 deploys it (#2170, #2178)
       "Your recap waits for your name answers", // until dev1 deploys it (#2169)
       "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
+      "Tell DMbot what to fix", // until the web routes (#2113) are deployed (RECAP_FIX_LIVE, #2114)
       "A short session asks first", // until dev1 deploys it (#2104)
       "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)
       "A 📇 Names button", // until dev1 deploys it (#1987, #2002)

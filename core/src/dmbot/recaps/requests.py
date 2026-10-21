@@ -19,13 +19,16 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
+from dmbot.recaps import voice
 from dmbot.recaps.feedback import NOTHING_REPLY, Sorted
 
 log = logging.getLogger(__name__)
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 SORT_TIMEOUT_S = RETAKE_AFTER_S - 30  # the sort always ends before its claim can be taken back
+VOICE_TIMEOUT_S = SORT_TIMEOUT_S  # so does a clip's decoding and speech-to-text
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
+CLIP_KEEP_S = 600  # and a voice clip waits no longer than this
 
 SORT_FAILED = "sort_failed"  # the AI failed or its answer could not be read: try again
 NOT_ALLOWED = "not_allowed"  # recaps or the plan are off for this campaign
@@ -40,6 +43,9 @@ class Request:
     user_id: int
     body: str
     claimed_at: int = 0  # this worker's claim: only it may finish the row
+    kind: str = "instructions"  # or "voice": a clip to write down (#2113)
+    clip: bytes = b""  # a voice request's audio: in memory only, gone from the row when it ends
+    clip_type: str = ""  # its container type (audio/webm or audio/ogg)
 
 
 def answer_of(sorted_: Sorted) -> dict[str, Any]:
@@ -71,7 +77,7 @@ class RequestStore:
                 " = (SELECT guild_id, id FROM recap_requests WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, session_at, user_id, body",
+                " RETURNING id, campaign_id, session_at, user_id, body, kind, clip, clip_type",
                 (now, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
@@ -84,6 +90,9 @@ class RequestStore:
             int(row["user_id"]),
             row["body"],
             now,
+            row["kind"],
+            bytes(row["clip"] or b""),
+            row["clip_type"],
         )
 
     async def finish(
@@ -96,10 +105,12 @@ class RequestStore:
     ) -> bool:
         """The points (done) or the reason it could not be done (failed). Only the worker that
         holds the current claim can write: a slow worker whose row was taken back and answered
-        by another changes nothing. False: it was not this worker's row any more."""
+        by another changes nothing. False: it was not this worker's row any more. A voice clip
+        goes in the same statement, whatever the outcome: the words (or the failure) and the
+        deleted audio are one change."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE recap_requests SET state = %s, error = %s, answer = %s"
+                "UPDATE recap_requests SET state = %s, error = %s, answer = %s, clip = NULL"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
                     "done" if answer is not None else "failed",
@@ -112,8 +123,19 @@ class RequestStore:
             )
             return bool(cur.rowcount)
 
+    async def sweep_clips(self) -> int:
+        """Clear every clip older than `CLIP_KEEP_S`, in every server, the ones the bot has left
+        included (the rows stay for their hour), through `dmbot_sweep_old_clips`: a function that
+        does that and nothing else, so the ten-minute promise holds for every server. Counts
+        how many were emptied."""
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute("SELECT dmbot_sweep_old_clips() AS n")
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def sweep(self, guild_id: int) -> int:
-        """Delete requests older than `KEEP_FOR_S`, whatever their state."""
+        """Delete requests older than `KEEP_FOR_S`, whatever their state (their clips went long
+        before, `sweep_clips`)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM recap_requests WHERE guild_id = %s AND created_at < %s",
@@ -169,3 +191,53 @@ async def run_one(
         except Exception:
             log.warning("Recap request could not be marked failed")
         return SORT_FAILED
+
+
+VOICE_ANSWER_MAX = 2000  # characters of speech kept from one clip (two minutes of talk is less)
+
+Writer = Callable[[Request], Awaitable[tuple[str, float]]]
+Meter = Callable[[Request, float], Awaitable[None]]
+
+
+async def run_voice(
+    store: RequestStore,
+    guild_id: int,
+    request: Request,
+    *,
+    gate: Gate,
+    write: Writer,
+    meter: Meter,
+) -> str:
+    """Do one claimed voice request. `gate` is as for `run_one`; `write` turns the clip into
+    words and its length in seconds (decode, speech-to-text with the campaign's name hints, name
+    fixing) and raises `voice.ClipError` for a clip it can't use. The clip is deleted in the same
+    statement that stores the outcome (`RequestStore.finish`). `meter` adds the clip's minutes
+    to the hours meter, and only runs when this worker's claim was the one that finished the row,
+    so a retaken claim is not billed twice. Returns the outcome word for the log (never the
+    words). Never raises."""
+    try:
+        stopped = await gate(request)
+        if stopped is not None:
+            await store.finish(guild_id, request, answer=None, error=stopped)
+            return stopped
+        text, seconds = await asyncio.wait_for(write(request), VOICE_TIMEOUT_S)
+        if not text.strip():
+            await store.finish(guild_id, request, answer=None, error=voice.NO_WORDS)
+            return voice.NO_WORDS
+        if await store.finish(guild_id, request, answer={"text": text[:VOICE_ANSWER_MAX]}):
+            await meter(request, seconds)
+        return "done"
+    except voice.ClipError as exc:
+        await _fail(store, guild_id, request, exc.code)
+        return exc.code
+    except Exception as exc:  # the row must never stay "working", and the clip never stay
+        log.warning("Recap voice failed: %s", type(exc).__name__)  # never the words
+        await _fail(store, guild_id, request, voice.TRANSCRIBE_FAILED)
+        return voice.TRANSCRIBE_FAILED
+
+
+async def _fail(store: RequestStore, guild_id: int, request: Request, code: str) -> None:
+    try:
+        await store.finish(guild_id, request, answer=None, error=code)
+    except Exception:
+        log.warning("Recap request could not be marked failed")
