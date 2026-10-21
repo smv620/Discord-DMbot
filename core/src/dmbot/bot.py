@@ -7926,7 +7926,7 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
                     return
                 note = recap_hold.EXPIRED_NOTE if waiting and held.asked else ""
-                if len(members) > 1:
+                if held.group_id:
                     if not lead:
                         return  # the oldest of the import ends them all, with one line
                     made = [
@@ -7935,6 +7935,8 @@ class DMBot(commands.AutoShardedBot):
                         if await store.release(gid, m.campaign_id, m.session_at)
                         == recap_hold.QUEUED
                     ]
+                    # Recaps answers released earlier were not told: they are told here too.
+                    made += self._group_made.pop(held.group_id, [])
                     if made:
                         await self._say_group_writing(
                             campaign, held.channel_id, len(made), note=note, session_at=made[-1]
@@ -8045,6 +8047,8 @@ class DMBot(commands.AutoShardedBot):
             for h in group
             if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED
         ]
+        if held.group_id:  # the ones answers released earlier were not told: tell them too
+            made += self._group_made.pop(held.group_id, [])
         if not made:
             return "already"
         await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])

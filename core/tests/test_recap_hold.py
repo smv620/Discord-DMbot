@@ -583,6 +583,59 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         other = dataclasses.replace(mine[0], campaign_id="d" * 32)
         self.assertEqual(hold.group_of([*mine, other], mine[0]), mine)
 
+    async def test_recaps_released_early_are_told_with_the_rest_at_expiry(self) -> None:
+        bot = fake_bot()
+        members = self.group(hold.HOLD_MAX_S + 60, 3)
+        remaining = list(members)
+
+        async def release(gid: int, cid: str, at: int, **kw: Any) -> str:
+            remaining[:] = [m for m in remaining if m.session_at != at]
+            return hold.QUEUED
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = AsyncMock(side_effect=lambda gid: list(remaining))
+        early = dataclasses.replace(members[2], created_at=int(time.time()))  # answered in time
+        await bot._release_one(bot.recap_holds, GUILD, early, group=members)
+        self.assertEqual(bot.post.await_count, 0)  # others of the group are still held
+        bot.post.reset_mock()
+        await bot._release_one(bot.recap_holds, GUILD, members[0], group=list(remaining))
+        self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
+        self.assertEqual(bot._group_made, {})  # nothing is kept
+
+    async def test_recaps_released_early_are_told_with_the_press_too(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot._group_made["imp"] = [AT + 7]  # one was released by its answers
+        members = self.group(100, 2)
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        bot.recap_holds.get = AsyncMock(return_value=members[0])
+        await bot.recap_hold_write_now(GUILD, "c" * 32, AT)
+        self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
+        self.assertEqual(bot._group_made, {})
+
+    async def test_a_hold_made_without_saying_posts_nothing_at_all(self) -> None:
+        bot = fake_bot()  # nothing to answer: the recap is queued at once
+        result = await bot._hold_or_queue(campaign(), "s9", AT, 66, DM, say=False)
+        self.assertEqual(result, "queued")
+        bot.post.assert_not_awaited()
+        bot.recaps.enqueue.assert_awaited_once()
+
+    async def test_a_group_with_any_member_reminded_gets_no_reminder(self) -> None:
+        bot = fake_bot(proposed=2)
+        members = self.group(hold.HOLD_REMIND_S + 60)
+        members[2] = dataclasses.replace(members[2], reminded=True)  # not the oldest
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        await bot.release_recap_holds(GUILD)
+        bot.recap_holds.mark_reminded.assert_not_awaited()
+        bot.post.assert_not_awaited()
+
+    async def test_a_reminder_that_cannot_be_posted_gives_back_every_claim(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.post = AsyncMock(return_value=False)
+        bot.recap_holds.held = AsyncMock(return_value=self.group(hold.HOLD_REMIND_S + 60))
+        await bot.release_recap_holds(GUILD)
+        given = [c.args[2] for c in bot.recap_holds.unmark_reminded.await_args_list]
+        self.assertEqual(sorted(given), [AT, AT + 1, AT + 2])
+
     async def test_a_quiet_hold_is_made_without_asking_again(self) -> None:
         bot = fake_bot(proposed=2)
         result = await bot._hold_or_queue(campaign(), "s9", AT, 66, DM, quiet=True, group_id="imp")
