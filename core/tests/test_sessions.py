@@ -1526,6 +1526,37 @@ class SaveAndResume(SessionTests):
         for _ in range(10):
             await asyncio.sleep(0)
 
+    def fixing(self, table: Any) -> list[Any]:
+        """Every line is cleaned with one sure fix by sound; the counts are collected."""
+        from dmbot.transcript.cleaner import SOUND, Cleaned, Fix
+
+        counted: list[Any] = []
+        table.name_lookup = object()
+        patcher = patch("dmbot.bot.mentions", return_value=set())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
+            text, (Fix(0, 4, "Kerr", "Cerric", "e1", SOUND),)
+        )
+        self.bot._count_heard_forms = lambda t, user, fixes: counted.append((user, len(fixes)))  # type: ignore[method-assign,assignment]
+        return counted
+
+    async def test_a_game_talk_line_is_counted_for_the_say_it_this_way_offers(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        counted = self.fixing(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Kerr sneaks past the guards")
+        self.assertEqual(counted, [(PLAYER, 1)])
+
+    async def test_a_held_line_is_not_counted_whatever_its_label(self) -> None:
+        for answer in ("1 other\n2 other", "1 game\n2 game"):
+            table = await self.filtered(answer)
+            counted = self.fixing(table)
+            self.said(table, "Kerr called about the spreadsheet")
+            self.said(table, "Kerr sneaks past the guards", at_ms=5_000)
+            await self.settle()
+            self.assertEqual(counted, [], answer)
+
     async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
         table = await self.filtered("1 other\n2 game")
         self.said(table, "my boss called again")

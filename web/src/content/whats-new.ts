@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "DMbot offers how to say a name",
+    what: "When your table says a name differently from how it's spelled, DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Your support questions now show the whole conversation",
     what: "On your account page, press \"Read the conversation\" under one of your questions to read all of it: what you wrote, the answers from DMbot's helper (a program, not a person), the replies you sent by email and the team's replies, with the dates. On our website, only you and the team can read it.",
     reason:

@@ -236,7 +236,16 @@ from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
-from dmbot.memory.models import DM, FIX, KEEP, PROPOSED, Heard, MemoryRuleError, name_key
+from dmbot.memory.models import (
+    DM,
+    FIX,
+    KEEP,
+    PROPOSED,
+    Heard,
+    MemoryRuleError,
+    lookup_key,
+    name_key,
+)
 from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
@@ -315,6 +324,7 @@ from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript.cleaner import (
     DM_EDIT,
+    SOUND,
     Cleaned,
     Fix,
     Vocabulary,
@@ -444,6 +454,9 @@ SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names i
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
 SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
+SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
+SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
+HEARD_FORMS_MAX = 1000  # (name, spelling, person) counts kept in a session
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
 VOICE_TRANSCRIBE_S = 65.0  # a spoken note is up to two minutes: far longer than a live line
@@ -657,6 +670,9 @@ class Table:
     # What the Cleaner did this session, for the one line of counts in the end-of-session message
     # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
     names_fixed: int = 0
+    # How often the cleaner fixed a name from the same other spelling, per person (#2171): the
+    # words only, kept for the session. Dropped for anyone who stops being recorded.
+    heard_forms: dict[tuple[str, str, str, int], int] = field(default_factory=dict)
     names_asked: int = 0
     # The AI ranking of "Did they mean…?" options (#2048), counts only, for the session's end log:
     # calls, "likely" chosen, "none", errors; and of the questions answered with a likely first
@@ -1690,6 +1706,7 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
+            table.heard_forms = {k: v for k, v in table.heard_forms.items() if k[3] != user_id}
             table.held_spelled = {k: v for k, v in table.held_spelled.items() if k[0] != user_id}
             table.spelled = [
                 x for x in table.spelled if x[1] != user_id
@@ -2625,6 +2642,7 @@ class DMBot(commands.AutoShardedBot):
             ("name scan", lambda: self.suggest_names(table)),
             # After the scan: a spelling can belong to a name the scan just suggested (#2168).
             ("spelled names", lambda: self.suggest_spelled(table)),
+            ("say it this way", lambda: self.suggest_said_as(table)),
             ("close calls", lambda: self.log_close_calls(table)),
             ("who is who", lambda: self.learn_people(table)),
             ("unanswered questions", lambda: self.save_unanswered(table)),
@@ -4403,6 +4421,7 @@ class DMBot(commands.AutoShardedBot):
             )
             result = self._clean(table, text, unsure=noted, count=True)
             cleaned = result.text
+            line_fixes = result.fixes
             table.names_fixed += len(result.fixes)
             seam = self._look_back(table, utterance, text, result)
             self._offer_question(table, utterance.user_id, utterance.start_ms, text, result, seam)
@@ -4421,6 +4440,7 @@ class DMBot(commands.AutoShardedBot):
             names_said = len(named)
         else:
             names_said = 0
+            line_fixes = ()
         # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
         # filter holds for a label is left out, as for the word list.
         # One answer for the whole line, so the callers below can't disagree (#1748).
@@ -4433,6 +4453,8 @@ class DMBot(commands.AutoShardedBot):
                 str(cleaned or text),
                 held_key=(utterance.user_id, utterance.start_ms) if holds else None,
             )
+        if line_fixes and not holds:  # (a held line is not counted: when unsure, offer less)
+            self._count_heard_forms(table, utterance.user_id, line_fixes)
         if text and not holds:
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
@@ -9125,6 +9147,61 @@ class DMBot(commands.AutoShardedBot):
                     continue
                 added += 1
             log.info("Spelled-out names: %d of %d suggested", added, len(spelled))
+
+    def _count_heard_forms(self, table: Table, user_id: int, fixes: Sequence[Fix]) -> None:
+        """Count the other spellings the cleaner turned into a confirmed name (#2171): the words
+        only, per person, so a person who stops being recorded can be forgotten. Only a sure fix
+        by sound is a hearing: an unsure one may be undone, a spelling fix is dropped later, and
+        a fix the DM made by hand is no hearing at all. The name written is kept too, because a
+        fix to an alias says nothing about the main name (the store checks it)."""
+        for fix in fixes:
+            if fix.how != SOUND or not fix.sure:
+                continue
+            heard = " ".join(fix.heard.split())
+            if not heard or len(heard) > SAID_AS_HEARD_MAX:
+                continue
+            written = lookup_key(fix.written.removesuffix("'s").removesuffix("’s"))
+            key = (fix.entity_id, heard.casefold(), written, user_id)
+            if key not in table.heard_forms and len(table.heard_forms) >= HEARD_FORMS_MAX:
+                continue
+            table.heard_forms[key] = table.heard_forms.get(key, 0) + 1
+
+    async def suggest_said_as(self, table: Table) -> None:
+        """After a session: a name the cleaner fixed at least `SAID_AS_MIN_FIXES` times from the
+        same other spelling is offered for the narrator's "said as" (#2171), for the DM to answer
+        in 🔊 Check how to say names. Only where spoken recaps are on for the campaign, only
+        hearings from people who still agree (checked now), only a public name. Offers only,
+        never a change. The log gets counts."""
+        counts = table.heard_forms
+        table.heard_forms = {}
+        if (
+            self.memory is None
+            or table.campaign_id is None
+            or not counts
+            or not self.settings.recap_audio_on
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "recap_audio", gid, campaign, fail_open=False
+            ):
+                return
+            agreed = await self.consent.consenting(gid)  # after the waits: who still agrees
+            totals: dict[tuple[str, str, str], int] = {}
+            for (entity_id, heard, written, speaker), times in counts.items():
+                if speaker in agreed:
+                    key = (entity_id, heard, written)
+                    totals[key] = totals.get(key, 0) + times
+            best: dict[str, tuple[str, str, int]] = {}
+            for (entity_id, heard, written), times in totals.items():
+                if times >= SAID_AS_MIN_FIXES and times > best.get(entity_id, ("", "", 0))[2]:
+                    best[entity_id] = (heard, written, times)
+            kept = await self.memory.add_said_as_suggestions(
+                gid, cid, [(e, h, w, t) for e, (h, w, t) in best.items()]
+            )
+            log.info("Say it this way: %d offered", kept)
 
     async def _propose_new_names(
         self, gid: int, cid: str, lines: Sequence[str], users: Collection[int]
