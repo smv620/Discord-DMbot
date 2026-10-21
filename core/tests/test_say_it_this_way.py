@@ -333,3 +333,85 @@ class TheSafetyRules(TheReview):
             row = await cur.fetchone()
         assert row is not None
         self.assertEqual(row["n"], 0)  # deleted with the campaign
+
+
+class TheSpokenWay(SaidAsTest):
+    """A name said with its pronunciation at the table: "Cerric is pronounced SEH-rick"."""
+
+    async def lookup(self, table: Any) -> Any:
+        from dmbot.memory.lookup import CampaignLookup
+
+        table.name_lookup = CampaignLookup.build(
+            await self.memory.lookup_data(GUILD, self.campaign.id)
+        )
+        self.bot.tables[GUILD] = table
+        return table
+
+    async def said(self, *lines: tuple[int, str]) -> Any:
+        table = await self.lookup(make_table(self.campaign.id))
+        for speaker, line in lines:
+            self.bot._note_pronounced(table, speaker, line)
+        return table
+
+    async def test_the_name_and_its_sound_are_kept_as_words_only(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced SEH-rick by the way"))
+        self.assertEqual(table.pronounced, {self.cerric.id: ("Seh-rick", SPEAKER)})
+
+    async def test_the_name_said_a_moment_before_by_someone_else(self) -> None:
+        table = await self.said((8, "we ask Cerric"), (SPEAKER, "it's pronounced SEH-rick"))
+        self.assertEqual(table.pronounced, {self.cerric.id: ("Seh-rick", SPEAKER)})
+
+    async def test_a_line_with_no_name_nearby_is_nothing(self) -> None:
+        table = await self.said((SPEAKER, "it's pronounced SEH-rick"))
+        self.assertEqual(table.pronounced, {})
+
+    async def test_the_first_one_said_stays(self) -> None:
+        table = await self.said(
+            (SPEAKER, "Cerric is pronounced Seh-rick"), (SPEAKER, "Cerric is pronounced Kerrick")
+        )
+        self.assertEqual(table.pronounced[self.cerric.id][0], "Seh-rick")
+
+    async def test_an_other_name_says_nothing_about_the_main_name(self) -> None:
+        from dmbot.ui import names as ui
+
+        await ui.save_name(self.memory, self.campaign, "Ser Cerric", "npc", ["Old Ced"], [])
+        table = await self.said((SPEAKER, "Old Ced is pronounced Sed"))
+        self.assertEqual(table.pronounced, {})
+
+    async def test_stopping_recording_forgets_what_that_person_said(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.bot.stop_recording(GUILD, SPEAKER)
+        self.assertEqual(table.pronounced, {})
+
+    async def offered(self, table: Any) -> list[Any]:  # type: ignore[override]
+        await self.bot.suggest_pronounced(table)
+        return await self.waiting()
+
+    async def test_after_the_session_it_is_offered_not_changed(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        (one,) = await self.offered(table)
+        self.assertEqual((one.name, one.heard), ("Cerric", "Seh-rick"))
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id))
+        self.assertEqual(table.pronounced, {})  # nothing is kept past the session
+
+    async def test_only_a_person_who_still_agrees_counts(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.consent.stop_now(GUILD, SPEAKER)
+        self.assertEqual(await self.offered(table), [])
+
+    async def test_nothing_is_offered_without_spoken_recaps(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.bot.plan_allows = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        self.assertEqual(await self.offered(table), [])
+
+    async def test_a_secret_name_is_never_noted_or_offered(self) -> None:
+        async with self.db.guild(GUILD) as conn:  # (the store refuses to make a main name secret)
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = %s",
+                (GUILD, self.campaign.id, self.cerric.id),
+            )
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.assertEqual(table.pronounced, {})
+        table.pronounced = {self.cerric.id: ("Seh-rick", SPEAKER)}  # even if one got in
+        self.assertEqual(await self.offered(table), [])
