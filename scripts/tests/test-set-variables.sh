@@ -423,7 +423,7 @@ real_out=$(printf '\n' | DMBOT_ENV_FILE="$work/real.env" DMBOT_ENV_EXAMPLE="$rea
 listed_names=$(sed -nE 's/^ +[0-9]+\) ([A-Z][A-Z0-9_]*) .*/\1/p' <<<"$real_out")
 missing=""
 for name in $listed_names; do
-  grep -q "^$name|[^|]\+|[^|]\+" "$real_root/scripts/setting-descriptions" || missing+=" $name"
+  grep -q "^$name|[^|]\+|[^|]\+$" "$real_root/scripts/setting-descriptions" || missing+=" $name"
 done
 code=0
 out="no description for:$missing"
