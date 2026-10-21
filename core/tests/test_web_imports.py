@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -13,6 +14,7 @@ import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
+from dmbot.transcript import import_link
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import sessions as web_sessions
@@ -69,6 +71,162 @@ class WithImports(Base):
         return await imports.confirm(
             self.web, self.session, self.ref_c, files(*pairs), plan, **self.kw
         )
+
+
+class TheLinks(WithImports):
+    """Google Doc links next to uploads (#2140): each becomes a file, then follows the same path."""
+
+    DOC = "https://docs.google.com/document/d/" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+    def reader(self, texts: dict[str, str | import_link.DocError]) -> Any:
+        async def read(link: object) -> str:
+            got = texts[str(link)]
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        return unittest.mock.patch.object(import_link, "read_doc", read)
+
+    async def test_a_shared_doc_previews_and_imports_like_a_file(self) -> None:
+        with self.reader({self.DOC: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+            (one,) = got["files"]
+            self.assertEqual(
+                (one["name"], one["format"], one["lineCount"]), ("Google Doc 1.txt", "plain", 3)
+            )
+            done = await imports.confirm(
+                self.web, self.session, self.ref_c, None,
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "Google Doc 1.txt", "date": "2026-09-14"}],
+                },
+                links=[self.DOC], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(done["sessions"], [{"file": "Google Doc 1.txt", "state": "waiting"}])
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
+        err = import_link.DocError
+        other = self.DOC + "x"
+        with self.reader({self.DOC: err("doc_not_shared"), other: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                links=[self.DOC, other], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("a.txt", None), ("Google Doc 1.txt", "doc_not_shared"), ("Google Doc 2.txt", None)],
+        )
+
+    async def test_a_link_that_is_not_a_google_doc_is_marked(self) -> None:
+        got = await imports.preview(
+            self.web, self.session, self.ref_c, None, links=["https://example.com/x"], **self.kw
+        )
+        self.assertEqual(got["files"][0]["error"], "not_a_google_doc")
+
+    async def test_links_and_files_count_together_toward_the_limit(self) -> None:
+        many = [(f"{n}.txt", CRAIG) for n in range(imports.MAX_FILES)]
+        with self.assertRaises(RecapError) as refused:
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(*many), links=[self.DOC], **self.kw
+            )
+        self.assertEqual(refused.exception.code, "too_many_files")
+        with self.assertRaises(RecapError):
+            await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC] * 21, **self.kw
+            )
+
+    async def test_nothing_at_all_is_refused_and_a_bad_links_value_too(self) -> None:
+        for files_, links in ((None, None), ([], []), (None, "https://x"), (None, {"a": 1})):
+            with self.assertRaises(RecapError):
+                await imports.preview(
+                    self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                )
+
+    async def test_a_bad_request_fetches_nothing(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        bad = (
+            ("x", [self.DOC]),  # files is not a list
+            ([{"name": "Google Doc 1.txt", "text": CRAIG}], [self.DOC]),  # a name taken
+            ([{"name": "a.txt", "text": ""}, {"name": "a.txt", "text": ""}], [self.DOC]),
+            ([{"text": "no name"}], [self.DOC]),
+        )
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            for files_, links in bad:
+                with self.assertRaises(RecapError):
+                    await imports.preview(
+                        self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                    )
+        fake.assert_not_awaited()
+
+    async def test_the_same_doc_twice_is_read_once_and_the_repeat_is_refused(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        spelled = self.DOC + "/edit?usp=sharing"  # another spelling of the same document
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC, spelled], **self.kw
+            )
+        self.assertEqual(fake.await_count, 1)
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("Google Doc 1.txt", None), ("Google Doc 2.txt", "repeated_link")],
+        )
+
+    async def test_a_cancelled_request_cancels_the_reads_still_running(self) -> None:
+        started = asyncio.Event()
+        cancelled: list[bool] = []
+
+        async def slow(_link: object) -> str:
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return CRAIG
+
+        with unittest.mock.patch.object(import_link, "read_doc", slow):
+            task = asyncio.ensure_future(
+                imports.preview(
+                    self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+                )
+            )
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(0.05)
+        self.assertEqual(cancelled, [True])
+
+    async def test_a_slow_google_marks_the_unfinished_docs_unreachable(self) -> None:
+        async def slow(_link: object) -> str:
+            await asyncio.sleep(5)
+            return CRAIG
+
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", slow),
+            unittest.mock.patch.object(imports, "LINKS_DEADLINE_S", 0.05),
+        ):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+        self.assertEqual(got["files"][0]["error"], "doc_unreachable")
+
+    async def test_a_non_dm_reads_no_doc(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", fake),
+            self.assertRaises(RecapError),
+        ):
+            await imports.preview(self.web, bob, self.ref_c, None, links=[self.DOC], **self.kw)
+        fake.assert_not_awaited()
 
 
 class ThePreviewAndCheck(WithImports):
@@ -642,3 +800,119 @@ if __name__ == "__main__":
     import unittest
 
     unittest.main()
+
+
+class TheMemberDirectory(WithImports):
+    """The server's recorded members who never signed in to the website (#2141)."""
+
+    async def find(self, q: str) -> list[tuple[str, bool]]:
+        got = await imports.search_members(self.web, self.session, self.ref_c, q, **self.kw)
+        return [(m["name"], m["agreed"]) for m in got["members"]]
+
+    async def test_a_recorded_member_who_never_signed_in_can_be_found_by_name_or_username(
+        self,
+    ) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9201
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        self.assertEqual(await self.find("_a"), [("Quill Ardent", True)])  # the username too
+        self.assertEqual(await self.find("nobody"), [])
+
+    async def test_a_member_who_withdrew_or_has_old_consent_is_not_offered(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9202
+        directory = MemberDirectory(self.db)
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await directory.remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION - 1,))
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s", (TERMS_VERSION, MIRA)
+            )
+        self.assertEqual(await self.find("quill"), [])  # a stale row is never offered
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE consent SET terms_version = %s", (TERMS_VERSION,))
+        self.assertEqual(await self.find("quill"), [("Quill Ardent", True)])
+        await directory.forget(THURSDAY.id, who)
+        self.assertEqual(await self.find("quill"), [])
+
+    async def test_another_servers_members_never_show(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9203
+        await ConsentStore(self.db).grant(555, who)
+        await MemberDirectory(self.db).remember(555, who, "Quill Ardent", "quill_a")
+        self.assertEqual(await self.find("quill"), [])
+        async with self.db.guild(THURSDAY.id) as conn:  # and the table itself is per server
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_the_campaigns_own_person_comes_first_and_is_not_listed_twice(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
+        for q in ("", "mira_v", "real", "player 0"):  # whichever of her names is searched
+            names = [n for n, _ in await self.find(q)]
+            self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
+            self.assertNotIn("Mira Real", names, q)
+
+    async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        for who in (9301, 9302):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+            await directory.remember(THURSDAY.id, who, f"Name {who}", f"u{who}")
+        async with self.db.guild(THURSDAY.id) as conn:  # 9301 stopped on the website, bot down
+            await conn.execute("DELETE FROM consent WHERE user_id = 9301")
+        await directory.forget(THURSDAY.id, 9999)  # any stop in the server tidies the rest
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id FROM member_directory")
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [9302])
+
+    async def test_nothing_is_kept_for_someone_with_no_consent_row(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, 9206, "Ghost", "ghost")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_consent_for_another_outside_company_hides_the_member(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        who = 9207
+        await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await MemberDirectory(self.db).remember(THURSDAY.id, who, "Quill Ardent", "quill_a")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET outside_to = 'deepgram' WHERE user_id = %s", (who,)
+            )
+        kw = {**self.kw, "outside": "other-company"}
+        got = await imports.search_members(self.web, self.session, self.ref_c, "quill", **kw)
+        self.assertEqual(
+            got["members"], [{"userId": str(who), "name": "Quill Ardent", "agreed": False}][:0]
+        )
+
+    async def test_empty_names_keep_no_row_and_a_name_is_cut_to_a_sane_length(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        directory = MemberDirectory(self.db)
+        for who in (9204, 9205):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+        await directory.remember(THURSDAY.id, 9204, "", None)
+        await directory.remember(THURSDAY.id, 9205, "x" * 500, "  ")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, char_length(display_name) AS n FROM member_directory"
+            )
+            rows = await cur.fetchall()
+        self.assertEqual([(r["user_id"], r["n"]) for r in rows], [(9205, 100)])
