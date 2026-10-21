@@ -118,6 +118,18 @@ class TheStore(DatabaseTest):
         assert got is not None
         self.assertFalse(got.reminded)
 
+    async def test_a_real_hold_older_than_the_cap_is_released_by_a_round(self) -> None:
+        await self.hold_it()
+        self.now += hold.HOLD_MAX_S + 60  # three days pass, by the store's clock
+        bot = fake_bot(holds=self.holds, proposed=2)
+        real = SimpleNamespace(**{**vars(campaign()), "id": self.campaign.id})
+        bot.campaigns.get = AsyncMock(return_value=real)
+        (held,) = await self.holds.held(GUILD)
+        await bot._release_one(self.holds, GUILD, held)
+        self.assertEqual(await self.jobs(), 1)  # the recap was queued
+        self.assertEqual(await self.holds.held(GUILD), [])
+        self.assertIn(hold.EXPIRED_NOTE, bot.post.await_args.args[1])
+
     async def test_an_unchanged_count_writes_no_row(self) -> None:
         await self.holds.hold(
             GUILD, self.campaign.id, AT, session_id="s1", dm_user_id=DM, channel_id=66, names_open=4
@@ -220,6 +232,7 @@ def fake_bot(
         release=AsyncMock(return_value=hold.QUEUED),
         mark_asked=AsyncMock(return_value=True),
         unmark_asked=AsyncMock(),
+        now=lambda: time.time(),
         mark_reminded=AsyncMock(return_value=True),
         unmark_reminded=AsyncMock(),
         set_names_open=AsyncMock(),
@@ -247,7 +260,7 @@ def fake_bot(
     for name in (
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
         "release_recap_holds", "_release_one", "recap_hold_write_now", "recheck_recap_hold",
-        "recap_write_anyway",
+        "recap_write_anyway", "_remind",
         "_extractor_pending", "_next_session_start",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
@@ -375,6 +388,36 @@ class TheCap(IsolatedAsyncioTestCase):
         self.assertIn("Writing a recap", text)
         bot.recap_holds.mark_reminded.assert_not_awaited()
 
+    async def test_a_reminder_that_raises_gives_the_claim_back(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.post = AsyncMock(side_effect=RuntimeError("discord"))
+        bot.recap_holds.held = AsyncMock(return_value=[self.aged(hold.HOLD_REMIND_S + 60)])
+        await bot.release_recap_holds(GUILD)  # (the round logs and goes on)
+        bot.recap_holds.unmark_reminded.assert_awaited_once_with(GUILD, "c" * 32, AT)
+
+    async def test_an_answer_a_moment_before_the_deadline_is_not_called_no_answer(self) -> None:
+        bot = fake_bot()  # nothing left open when counted
+        await self.round_with(bot, self.aged(hold.HOLD_MAX_S + 60))
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
+        text = bot.post.await_args.args[1]
+        self.assertNotIn(hold.EXPIRED_NOTE, text)  # the plain "Writing a recap" line
+        self.assertIn("Writing a recap", text)
+
+    async def test_the_cap_asks_the_plan_about_this_campaign_and_says_nothing_when_gone(
+        self,
+    ) -> None:
+        bot = fake_bot(proposed=2)
+        bot.recap_holds.release = AsyncMock(return_value=hold.GONE)  # an answer got there first
+        await self.round_with(bot, self.aged(hold.HOLD_MAX_S + 60))
+        bot.recap_allowed.assert_awaited_once_with(GUILD, "c" * 32, None)
+        bot.post.assert_not_awaited()
+
+    async def test_ages_are_measured_with_the_stores_clock(self) -> None:
+        bot = fake_bot(proposed=2)
+        bot.recap_holds.now = lambda: time.time() + hold.HOLD_MAX_S + 120  # the store's clock
+        await self.round_with(bot, self.aged(60))  # young by the bot's own clock
+        bot.recap_holds.release.assert_awaited_once()
+
     async def test_just_under_three_days_still_waits(self) -> None:
         bot = fake_bot(proposed=2)
         await self.round_with(bot, self.aged(hold.HOLD_MAX_S - 120, reminded=True))
@@ -411,10 +454,23 @@ class WhenTheDmPressesWriteARecap(IsolatedAsyncioTestCase):
         self.assertEqual(await bot.recap_write_anyway(GUILD, "c" * 32, AT, 66), "queued")
         bot.recaps.enqueue.assert_awaited_once()
 
-    async def test_a_repeat_press_says_already(self) -> None:
+    async def test_a_repeat_press_while_it_waits_says_held_and_after_a_job_says_already(
+        self,
+    ) -> None:
         bot = fake_bot(proposed=2)
-        bot.recap_holds.hold = AsyncMock(return_value=False)
+        bot.recap_holds.hold = AsyncMock(return_value=False)  # held already (get finds the hold)
+        self.assertEqual(await bot.recap_write_anyway(GUILD, "c" * 32, AT, 66), "held")
+        bot.recap_holds.get = AsyncMock(return_value=None)  # no hold: a recap job exists
         self.assertEqual(await bot.recap_write_anyway(GUILD, "c" * 32, AT, 66), "already")
+
+    async def test_a_session_that_cannot_be_found_is_written_without_a_hold_and_logged(
+        self,
+    ) -> None:
+        bot = fake_bot(proposed=2)
+        bot.transcripts.sessions = AsyncMock(return_value=[])
+        with self.assertLogs("dmbot.bot", level="WARNING"):
+            self.assertEqual(await bot.recap_write_anyway(GUILD, "c" * 32, AT, 66), "queued")
+        bot.recap_holds.hold.assert_not_awaited()
 
 
 class EachRound(IsolatedAsyncioTestCase):

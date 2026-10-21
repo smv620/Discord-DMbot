@@ -7776,7 +7776,9 @@ class DMBot(commands.AutoShardedBot):
                         gid, cid, session_at, session_id=session_id, dm_user_id=dm,
                         channel_id=channel_id, asked=waiting > 0, names_open=waiting,
                     ):  # fmt: skip
-                        return "already"  # held already, or a job exists: a repeat
+                        if await store.get(gid, cid, session_at) is not None:
+                            return "held"  # it is waiting already: a repeat of the end or press
+                        return "already"  # a recap job exists for it
                     held = True
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
@@ -7857,42 +7859,36 @@ class DMBot(commands.AutoShardedBot):
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
-            age = time.time() - held.created_at
-            if age >= recap_hold.HOLD_MAX_S:
-                # A wait nobody answers cannot go on for ever (#2174): the recap is written with
-                # the names as they are, if the plan allows it (else kept, asked again next round).
-                if not await self.recap_allowed(gid, held.campaign_id, None):
-                    return
-                if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
-                    await self._say_writing(
-                        campaign, held.channel_id, held.session_at, note=recap_hold.EXPIRED_NOTE
-                    )
-                return
-            if (
-                not held.asked
-                and not extractor_done
-                and time.time() - held.created_at < recap_hold.QUIET_WAIT_S
-            ):
+            age = store.now() - held.created_at  # the store's clock wrote created_at
+            if not held.asked and not extractor_done and age < recap_hold.QUIET_WAIT_S:
                 return  # the story extractor is still running; it counts again when done
             waiting = await self._open_name_questions(
                 gid, held.campaign_id, held.session_id, held.session_at
             )
             if waiting:
                 await store.set_names_open(gid, held.campaign_id, held.session_at, waiting)
+            if age >= recap_hold.HOLD_MAX_S:
+                # A wait nobody answers cannot go on for ever (#2174): the recap is written with
+                # the names as they are. The note is only for questions still open, counted just
+                # now (an answer a moment before the deadline is not "no answer"). The plan is
+                # still checked; when it cannot be, the hold is kept and tried again each round.
+                if not await self.recap_allowed(gid, held.campaign_id, None):
+                    log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
+                    return
+                if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                    await self._say_writing(
+                        campaign,
+                        held.channel_id,
+                        held.session_at,
+                        note=recap_hold.EXPIRED_NOTE if waiting else "",
+                    )
+                return
+            if waiting:
                 if held.asked:
                     # One reminder after a day, claimed first so the round and a restart never
-                    # send it twice; a reminder that could not be posted is tried again.
-                    if (
-                        age >= recap_hold.HOLD_REMIND_S
-                        and not held.reminded
-                        and await store.mark_reminded(gid, held.campaign_id, held.session_at)
-                        and not await self.post(
-                            held.channel_id,
-                            recap_hold.reminder_text(waiting),
-                            view=hold_view(held.campaign_id, held.session_at),
-                        )
-                    ):
-                        await store.unmark_reminded(gid, held.campaign_id, held.session_at)
+                    # send it twice; any failure to post gives the claim back for the next round.
+                    if age >= recap_hold.HOLD_REMIND_S and not held.reminded:
+                        await self._remind(store, gid, held, waiting)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -7912,6 +7908,26 @@ class DMBot(commands.AutoShardedBot):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
             if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
                 await self._say_writing(campaign, held.channel_id, held.session_at)
+
+    async def _remind(
+        self, store: recap_hold.HoldStore, gid: int, held: recap_hold.Hold, waiting: int
+    ) -> None:
+        """The one reminder of a hold (#2174). The claim comes first so two rounds never both send
+        it; a post that fails or raises gives the claim back, so the reminder is not lost."""
+        if not await store.mark_reminded(gid, held.campaign_id, held.session_at):
+            return  # another round has it
+        sent = False
+        try:
+            sent = bool(
+                await self.post(
+                    held.channel_id,
+                    recap_hold.reminder_text(waiting),
+                    view=hold_view(held.campaign_id, held.session_at),
+                )
+            )
+        finally:
+            if not sent:
+                await store.unmark_reminded(gid, held.campaign_id, held.session_at)
 
     async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
@@ -7994,6 +8010,7 @@ class DMBot(commands.AutoShardedBot):
              if x.started_at == session_at), None,
         )  # fmt: skip
         if session_id is None:
+            log.warning("Recap: the session to hold was not found; writing it without a hold")
             return (
                 "queued"
                 if await self._queue_recap(campaign, session_at, channel_id, dm)

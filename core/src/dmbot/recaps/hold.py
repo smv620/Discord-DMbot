@@ -77,6 +77,10 @@ class HoldStore:
         self._empty: set[int] = set()
         self._made: dict[int, int] = {}  # holds made per server, so a read can tell it raced one
 
+    def now(self) -> float:
+        """The store's clock, the one that wrote `created_at`: ages are measured with it."""
+        return self._now()
+
     async def hold(
         self,
         guild_id: int,
