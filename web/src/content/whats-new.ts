@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-20",
+    title: "Share a recap with a link",
+    what: "Press 📜 Share a recap on your DM screen, pick a recap, then copy its link or send it to your players in chat. Anyone with the link can read the recap, no sign-in. You can turn the link off or make a new one on your recap page. A recap you haven't posted is posted when you share it, after the same checks as Post. Only the DM sees the button.",
+    reason: "Waiting for review (#2132) and for dev1 to deploy it.",
+  },
+  {
+    date: "2026-10-20",
     title: "Your recap waits for your name answers",
     what: "If a session leaves name questions for you, DMbot waits to write the recap until you have answered them, so it uses the right names. Your DM screen says how many are left, with 📝 Check new names and Write the recap now if you would rather not wait. Nothing is written, and nothing costs anything, while it waits.",
     reason: "In review (#2169); held until dev1 deploys it.",
@@ -326,6 +332,13 @@ export const held: Held[] = [
     what: "When a recap uses a name DMbot didn't know, it asks you to check it, on your DM screen and by private message. Nothing is added to your game until you say so.",
     reason:
       "Held until dev1 deploys #2030 (#2027, #2031). When it is on, move this up and turn on RECAP_NAMES_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
+  },
+  {
+    date: "2026-10-20",
+    title: "Share a recap by a link",
+    what: "On a posted recap's page, a game master can choose Make a link to share it. Anyone who has the link can read the recap without signing in, even people outside your Discord server, and they can pass it on. You can turn the link off or make a new one whenever you like; the old link then stops opening the recap, though anyone who already read it may keep a copy. Treat the link like a password.",
+    reason:
+      "Waits for the link API (#2118) to deploy and for the page (#2119). When it is live, move this up and turn on RECAP_SHARE_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },
   {
     date: "2026-10-20",
