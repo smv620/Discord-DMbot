@@ -11,6 +11,7 @@ reads and writes go through `Database.guild`, so Postgres only shows that server
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
@@ -21,7 +22,9 @@ from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
 
 RECENT_SESSIONS = 25  # Discord's limit for a menu
-MAX_RESPELLED = 5000  # lines one fixed spelling rewrites; the rest stay as they were
+MAX_RESPELLED = 5000  # lines one run of a fixed spelling rewrites; Finish does the rest
+PAGE = 2000  # candidate lines read at a time
+MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,7 +344,9 @@ class TranscriptStore:
         inside a longer name in `longer` is left alone, and so is a line the change would make say
         a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
         places older than `forget_before` are dropped."""
-        longest = max(old.split(), key=len, default="")
+        # The longest run of letters and digits: an apostrophe or dash in the name may be written
+        # with a look-alike (a curly one), so a prefilter on a whole word would miss it.
+        longest = max(re.findall(r"\w+", old), key=len, default="")
         if not longest or old == new:
             return PastRespell(0, 0, 0, 0)
         updates: list[tuple[int, str]] = []
@@ -349,6 +354,10 @@ class TranscriptStore:
         sessions: set[str] = set()
         remaining = 0
         async with self._db.guild(guild_id) as conn:
+            # Two presses of Finish at once take turns, so no two runs share a number.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{campaign_id}:{batch}",)
+            )
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND campaign_id = %s"
                 " AND made_at < %s",
@@ -360,41 +369,54 @@ class TranscriptStore:
                 (campaign_id, batch),
             )
             run = int((await cur.fetchone() or {"run": 1})["run"])
-            cur = await conn.execute(
-                "SELECT l.id, l.session_id, l.user_id,"
-                " coalesce(l.text, l.heard) AS cleaned"
-                " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
-                " AND l.sidebar IS NULL AND NOT l.typed"
-                " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
-                " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                (guild_id, campaign_id, longest, MAX_RESPELLED * 4),
-            )
-            for row in await cur.fetchall():
-                found = respell(str(row["cleaned"]), old, new, longer, hidden)
-                if found is None:
-                    continue
-                if len(updates) >= MAX_RESPELLED:
-                    remaining += 1
-                    continue
-                updates.append((int(row["id"]), found.text))
-                rows.append(
-                    (
-                        guild_id,
-                        campaign_id,
-                        batch,
-                        run,
-                        row["session_id"],
-                        row["id"],
-                        row["user_id"],
-                        old,
-                        new,
-                        list(found.offsets),
-                        list(found.was),
-                        now,
-                    )
+            last = 0
+            scanned = 0
+            while scanned < MAX_SCANNED:
+                # Pages of lines that may say the name, in session order, not yet done by this fix:
+                # lines that never change (inside a longer name) cannot starve the window.
+                cur = await conn.execute(
+                    "SELECT l.id, l.session_id, l.user_id, coalesce(l.text, l.heard) AS cleaned"
+                    " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
+                    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
+                    " AND l.sidebar IS NULL AND NOT l.typed AND l.id > %s"
+                    " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
+                    " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
+                    "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
+                    " ORDER BY l.id LIMIT %s FOR UPDATE OF l",
+                    (guild_id, campaign_id, last, longest, campaign_id, batch, PAGE),
                 )
-                sessions.add(str(row["session_id"]))
+                page = await cur.fetchall()
+                if not page:
+                    break
+                last = int(page[-1]["id"])
+                scanned += len(page)
+                # (ids run in the order the lines were saved, which is session order for
+                # sessions that have ended)
+                for row in page:
+                    found = respell(str(row["cleaned"]), old, new, longer, hidden)
+                    if found is None:
+                        continue
+                    if len(updates) >= MAX_RESPELLED:
+                        remaining += 1
+                        continue
+                    updates.append((int(row["id"]), found.text))
+                    rows.append(
+                        (
+                            guild_id,
+                            campaign_id,
+                            batch,
+                            run,
+                            row["session_id"],
+                            row["id"],
+                            row["user_id"],
+                            old,
+                            new,
+                            list(found.offsets),
+                            list(found.was),
+                            now,
+                        )
+                    )
+                    sessions.add(str(row["session_id"]))
             if updates:
                 await conn.execute(
                     "UPDATE transcript_lines t SET text = NULLIF(v.text, t.heard)"
