@@ -640,6 +640,36 @@ class Choices(Base):
         await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0, next_at=0)
         self.fake.calls.clear()
 
+    async def test_a_recap_posted_while_its_audio_is_queued_still_gets_that_audio(self) -> None:
+        """The audio was asked for before the post; posting does not drop it (#2183)."""
+        self.assertEqual((await self.job()).audio, "queued")
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+        self.assertEqual(await self.store.audio_due(1), [(self.one.id, 100)])
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.audio), ("posted", "ready"))
+        self.assertTrue(self.fake.paths("text-to-speech"))
+
+    async def test_a_failed_posted_remake_keeps_the_last_ready_hash_and_can_be_asked_again(
+        self,
+    ) -> None:
+        await self.worker().run(1, self.one.id, 100)
+        made_from = (await self.job()).audio_text_hash
+        async with self.db.guild(1) as conn:  # a spelling fix changed the text of a posted recap
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted', summary = summary || ' More.',"
+                " approved_hash = encode(sha256(convert_to(title || E'\\n' || summary"
+                " || ' More.', 'UTF8')), 'hex')"
+            )  # (and the DM approved the new text)
+        await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0, next_at=0)
+        self.fake.fail["text-to-speech"] = 401  # refused for good, as the worker sees it
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.audio), ("posted", "failed"))
+        self.assertEqual(job.audio_text_hash, made_from)  # the last ready audio's hash
+        self.assertNotEqual(job.audio_text_hash, text_hash(job.title, job.summary))
+
     async def test_a_posted_remake_over_the_months_allowance_fails_and_spends_nothing(self) -> None:
         await self.posted_and_queued_again()
         before = (await self.job()).audio_credits  # what the first making cost

@@ -2290,7 +2290,8 @@ RECAP_AUDIO_AGAIN_POSTED = """
     -- the DM approved with a choice that makes audio, once every 10 minutes (the database's own
     -- clock). The plan and the month's allowance are checked by the API and again by the audio
     -- step before any paid call. The Discord message already posted keeps its old attachment.
-    -- A posted recap whose remake failed may be tried again (its audio_text_hash is empty then).
+    -- A posted recap whose remake failed may be tried again: a failed making keeps the hash of the
+    -- last audio that was ready, which is still not the text's hash now.
     -- A new making starts its own credit count: the cap is for one making, not for all of them.
     CREATE OR REPLACE FUNCTION dmbot_recap_audio_again(g BIGINT, c TEXT, at_ BIGINT)
     RETURNS TEXT
@@ -2350,7 +2351,9 @@ RECAP_AUDIO_AGAIN_POSTED = """
     -- marked failed instead; the DM may ask again from the recap page. Migrations run with no
     -- server set, so the table is opened to this one UPDATE and closed again.
     CREATE POLICY migrate_backfill ON recap_jobs FOR ALL USING (true) WITH CHECK (true);
-    UPDATE recap_jobs SET audio = 'failed', audio_error = 'posted before it was made'
+    UPDATE recap_jobs SET audio = 'failed',
+        audio_error = 'The audio wasn''t made before this recap was posted. '
+                      'You can make it now for this page.'
         WHERE status = 'posted' AND audio = 'queued';
     DROP POLICY migrate_backfill ON recap_jobs;
 """
@@ -4802,7 +4805,8 @@ RECAP_AUDIO_JOBS = (
     --   audio         off (not wanted, or no key), queued, ready or failed
     --   audio_tries   attempts so far (one retry later, then failed)
     --   audio_next_at not before this time (the wait before the retry)
-    --   audio_credits the provider credits this recap's audio has cost, across tries (a count)
+    --   audio_credits the provider credits this making has cost, across its tries (a count);
+    --                 a remake starts again at 0 (#2183)
     --   audio_error   a short fixed reason, never a name or any text
     ALTER TABLE recap_jobs ADD COLUMN audio TEXT NOT NULL DEFAULT 'off'
         CHECK (audio IN ('off', 'queued', 'ready', 'failed'));

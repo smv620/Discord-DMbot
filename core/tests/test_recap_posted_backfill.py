@@ -46,7 +46,11 @@ class PostedQueuedBackfill(unittest.IsolatedAsyncioTestCase):
             got_draft = await store.get(GUILD, draft.id, 100)
             assert got_posted is not None and got_draft is not None
             self.assertEqual((got_posted.status, got_posted.audio), ("posted", "failed"))
-            self.assertEqual(got_posted.audio_error, "posted before it was made")
+            self.assertEqual(
+                got_posted.audio_error,
+                "The audio wasn't made before this recap was posted. "
+                "You can make it now for this page.",
+            )
             self.assertEqual((got_draft.status, got_draft.audio), ("draft", "queued"))
             self.assertEqual(await store.audio_due(GUILD), [(draft.id, 100)])
         finally:
