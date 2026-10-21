@@ -514,7 +514,8 @@ CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
 SECRET_QUESTION_WAITING = (
-    "🤫 DMbot has a question for you about a secret name. Open your private messages."
+    "🤫 DMbot couldn't send you a question about a secret name. Turn on Direct Messages in this "
+    "server's Privacy Settings (tap the server name) and it will ask next session."
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
@@ -4689,8 +4690,11 @@ class DMBot(commands.AutoShardedBot):
                     if alone:  # players may peek at the screen: the DM's own messages, not there
                         sent = await self.sidebar_send_dm(speaker, text, view)
                         posted = sent == "sent"
-                        if not posted:  # no way to ask privately: say so on the screen, no name
-                            await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
+                        if not posted and not reveal.told_waiting:
+                            # no way to ask privately: say so on the screen, no name, once
+                            reveal.told_waiting = await self.post(
+                                table.screen_channel_id, SECRET_QUESTION_WAITING
+                            )
                         # Their private messages are closed: the key stays claimed, so each later
                         # line naming it doesn't fetch, send and log again for the whole session.
                         closed = sent == "forbidden"
