@@ -457,7 +457,10 @@ SCENE_FRESH_S = 600.0  # a changed piece older than this doesn't put its names i
 PIECE_WORDS_MAX = 3000  # pieces whose words the helpers' copies can be brought up to date for
 SPELLED_MAX = 20  # names spelled out and kept in one session (#2168)
 PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
-SOUND_CLOSE = 0.6  # how alike a plain word and the name must be to count as how it is said
+# A plain word counts as how a name is said only when it is more alike than this to the name ...
+SOUND_CLOSE = 0.6
+# ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
+SOUND_LENGTH_GAP = 1
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
@@ -9400,10 +9403,12 @@ class DMBot(commands.AutoShardedBot):
         if any(c in wanted for w in re.split(r"[\s-]+", phrase) if w for c in sound_codes(w)):
             return True
         # (the codes miss "Kerrick" for "Cerric": a soft c); close in its letters is close enough
-        close = SequenceMatcher(
-            None, pronounced_aloud.sound_key(phrase), pronounced_aloud.sound_key(entity.name)
-        ).ratio()
-        return close >= SOUND_CLOSE
+        said, written = pronounced_aloud.sound_key(phrase), pronounced_aloud.sound_key(entity.name)
+        # A short name sits inside a longer word ("Aron" in "Baron", "Fin" in "Final"), which
+        # scores high without sounding alike, so the lengths must be near and the score over.
+        if abs(len(said) - len(written)) > SOUND_LENGTH_GAP:
+            return False
+        return SequenceMatcher(None, said, written).ratio() > SOUND_CLOSE
 
     async def suggest_pronounced(self, table: Table) -> None:
         """After a session: a name someone said with its pronunciation is offered for the
