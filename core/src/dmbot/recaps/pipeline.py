@@ -30,6 +30,9 @@ from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
+from dmbot.recaps import significance as sg
+from dmbot.recaps import split as sp
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
@@ -38,13 +41,16 @@ from dmbot.transcript.models import Line
 log = logging.getLogger(__name__)
 
 # AI calls for one recap: three stages, a retry each (two for the prose), the checks, and since
-# #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4.
-MAX_CALLS = 17
+# #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4,
+# and since #2253 the one call that splits the opening (talk, catch-up, last time's recap, play):
+# and the one careful-tier call where PlotBot marks what matters (#2254): 19 for a run with no
+# restarts; each restart (at most two) makes those calls again.
+MAX_CALLS = 19
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
-# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is six
-# calls now (beats, write, format, facts, grade, title), so 50 keeps the eight a day that 40 gave
-# five-call recaps (#2074).
-DAILY_CALLS = 50
+# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is eight
+# calls now (split, beats, notes, write, format, facts, grade, title; the first only for a session
+# with an earlier one), so 56 keeps the seven a day that 40 gave five-call recaps (#2074).
+DAILY_CALLS = 56
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
@@ -91,6 +97,13 @@ class Inputs:
     notes: Sequence[str] = ()  # the DM's standing style notes, oldest first (#2076)
     # What the DM corrected in this one recap (#2076): confirmed facts for it alone, never style.
     corrections: Sequence[str] = ()
+    # The campaign's display name, for the recap's fixed opening and closing lines (#2253).
+    campaign_name: str = ""
+    ending: int = 0  # which of the ten closing lines this recap takes (fixed_lines.ENDINGS)
+    # What the campaign's previous session was about, to find a retelling of it at the start of
+    # this one (#2253). None when there is no earlier session (the first, or the first imported):
+    # then nothing is a recap and the split stage makes no call.
+    earlier: sp.Earlier | None = None
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -99,6 +112,11 @@ SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and 
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
+SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
+SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
+SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
+SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
+SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 
 
 def more_room(tokens: int, attempt: int) -> int:
@@ -133,6 +151,8 @@ class Client(Protocol):
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
 Consenting = Callable[[], Awaitable[Collection[int]]]
+# (server, campaign, job, names in the beats) -> the confirmed story memory around them (#2254)
+Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -154,10 +174,12 @@ class RecapWorker:
         on_call: Callable[[cl.CallEvent], None] | None = None,
         creative: Client | None = None,
         formatting: Client | None = None,
+        story: Story | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
         # structured call of before writes and shapes it at once (tests and small tools).
+        self._story = story
         self._creative = creative
         self._formatting = formatting
         self._two = creative is not None and formatting is not None
@@ -239,6 +261,7 @@ class RecapWorker:
             job.restarts,
             job.problems,
             job.window_done,
+            job.split is None,
         )
 
     async def _tell(self, gid: int, cid: str, job: Job) -> None:
@@ -277,13 +300,14 @@ class RecapWorker:
                 gid, cid, job.session_at, calls=0, emailed_at=None, summary="", original="",
                 title="", housekeeping=[], music=[], beats=[], speakers=[], grade={},
                 attempt=0, errors=0, restarts=0, next_at=0, problems=[], last_error="",
-                window_done=0, window_count=0, to_confirm=[], names_state=0,
+                window_done=0, window_count=0, to_confirm=[], names_state=0, split=None,
             )  # fmt: skip
             await self._store.reset_audio(gid, cid, job.session_at)  # a new recap, new audio
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
-        if self._allowance is not None and job.state == "queued" and job.calls == 0:
+        first = job.state == "queued" and job.calls == 0 and job.split is None
+        if self._allowance is not None and first:
             # The monthly allowance (#1428), before the first paid call of this recap. A count
             # that can't be read spends nothing: the job waits, and fails if it keeps failing.
             try:
@@ -420,14 +444,21 @@ class RecapWorker:
         said = [s for s in readable(inputs.lines) if s.user_id in agreed]
         if not said:
             return await self._fail(gid, cid, job, NOTHING)
+        if job.split is None and job.window_done == 0:
+            return await self._split(gid, cid, job, inputs, said, consenting)
+        split = sp.from_json(job.split) or sp.all_play(said)  # (a job begun before #2253: all play)
+        # The beats come from the play alone; the table's retelling of earlier sessions goes with
+        # them as labelled context, and the talk is left out (#2253).
+        play = sp.pick(said, split, sp.PLAY) or said
         rows = [
-            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in said
+            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in play
         ]
+        retold = " ".join(s.text for s in sp.pick(said, split, sp.RECAP))
         parts = bt.windows(rows, inputs.window_chars)
         k = job.window_done
         if k >= len(parts):  # the transcript is shorter than when this began: begin again
             return await self._restart(gid, cid, job)
-        text = bt.message(parts[k], inputs.allowed_names)
+        text = bt.message(parts[k], inputs.allowed_names, retold)
         if job.problems:
             text += (
                 "\nYour last sheet was rejected: " + "; ".join(job.problems) + ". Write it again."
@@ -437,7 +468,9 @@ class RecapWorker:
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
-        sent = {s.user_id for s in said}
+        # (everyone whose words went to an AI for this recap: the play, the retelling, and the
+        # catching up the housekeeping step reads; the talk went nowhere)
+        sent = {s.user_id for s in sp.pick(said, split, sp.PLAY, sp.RECAP, sp.CATCHUP)}
         if not sent <= set(await consenting()):  # again, after the answer
             return await self._restart(gid, cid, job)
         parsed = bt.parse(raw.text)
@@ -460,14 +493,77 @@ class RecapWorker:
         )
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _split(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        said: Sequence[Said],
+        consenting: Consenting,
+    ) -> Job | None:
+        """Mark the opening's parts: talk, catching up, last time's retelling and play (#2253).
+        With no earlier session there is nothing to retell, so no call and all play. Otherwise one
+        fast-tier call labels the opening and code checks the answer against the earlier session's
+        words; an answer it cannot read falls back to strong evidence only, else all play, and a
+        line is never dropped on a guess."""
+        split = sp.all_play(said)
+        earlier = inputs.earlier
+        if earlier is not None and job.errors >= SPLIT_ERRORS_MAX:
+            # The labelling is optional: after repeated service errors the recap goes on with
+            # what code alone can tell, rather than fail for it.
+            split = sp.without_ai(said, earlier, inputs.previous)
+        elif earlier is not None:
+            region = sp.opening_of(said)
+            rows = [
+                (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text)
+                for s in region
+            ]
+            raw = await self._call(
+                gid,
+                cid,
+                job,
+                self._fast,
+                sp.system(),
+                sp.message(rows, earlier, inputs.previous),
+                SPLIT_TOKENS,
+                schema=sp.SCHEMA,
+                stage="split",
+            )
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
+            if not {s.user_id for s in region} <= set(await consenting()):  # after it
+                return await self._restart(gid, cid, job)
+            labelled = None if unusable(raw) else sp.parse(raw.text)
+            if labelled is None:
+                split = sp.without_ai(said, earlier, inputs.previous)
+            else:
+                split = sp.build(said, labelled, earlier, inputs.previous)
+            self._annotate(gid, cid, job, "split", checks=[] if labelled is not None else ["shape"])
+        # Counts only: how many lines went to each part, never a word of them.
+        log.info(
+            "Recap: split by %s into %s%s",
+            split.method,
+            {label: len(sp.pick(said, split, label)) for label in sp.LABELS},
+            ", the retelling unsure" if split.unsure else "",
+        )
+        # (stored with a clean error count: the split's service errors are not the beats' budget)
+        await self._store.update(
+            gid, cid, job.session_at, split=split.to_json(), errors=0, next_at=0, last_error=""
+        )
+        return await self._store.get(gid, cid, job.session_at)
+
     async def _check_beats(
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
         said = self._said(inputs, set(job.speakers))
+        # A beat may rest only on play lines: one citing only the table's retelling, catching up or
+        # talk has no real line and is cut here (#2253). Names are known from every line.
+        play = self._parts(job, said)[0]
         kept, problems = bt.check(
             [b for b in (job.beats or []) if isinstance(b, dict)],
-            lines={s.number: s.text for s in said},
-            speakers={s.number: s.user_id for s in said},
+            lines={s.number: s.text for s in play},
+            speakers={s.number: s.user_id for s in play},
             allowed_names=inputs.allowed_names,
             secret_names=inputs.secret_names,
             dm_ids=inputs.dm_ids,
@@ -481,6 +577,12 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, TOO_LITTLE)
             return await self._back_to_start(gid, cid, job, problems)
         log.info("Recap: %d beat(s) kept, %d problem(s)", len(kept), len(problems))  # counts only
+        marked = await self._significance(gid, cid, job, inputs, kept, consenting)
+        if not isinstance(marked, list):
+            return (
+                marked  # the call failed or the speakers changed: the job is waiting or begun again
+            )
+        kept = marked
         await self._store.update(
             gid,
             cid,
@@ -493,9 +595,91 @@ class RecapWorker:
         )
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _significance(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        kept: list[bt.Beat],
+        consenting: Consenting,
+    ) -> list[bt.Beat] | Job | None:
+        """PlotBot marks which beats matter and adds the few left-out details that tie to the story
+        so far (#2254). Optional: with nothing to tie to, no way to read the memory, a service that
+        keeps failing, or an answer that cannot be read, the recap goes on with the beats as they
+        are. Returns the beats to store, or the job when the step must stop (waiting, restarted)."""
+        if self._story is None or job.errors >= SIG_ERRORS_MAX:
+            return kept
+        if (
+            job.calls >= self._ceiling(job) - SIG_RESERVE
+        ):  # optional: never spend what the rest needs
+            return kept
+        said = self._said(inputs, set(job.speakers))
+        play, retold, _ = self._parts(job, said)
+        seeds = sorted({n for b in kept for n in (*b.who, b.where) if n})[:40]
+        try:
+            memory = list(await self._story(gid, cid, job, seeds))
+        except Exception as exc:  # the memory is optional context: the type, never the text
+            log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
+            memory = []
+        if not sg.worth_asking(memory, inputs.previous):
+            return kept
+        rows = [
+            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in play
+        ]
+        raw = await self._call(
+            gid,
+            cid,
+            job,
+            self._careful,
+            sg.system(),
+            sg.message(kept, memory, inputs.previous, rows, retold),
+            SIG_TOKENS,
+            schema=sg.SCHEMA,
+            stage="significance",
+        )
+        if raw is None:
+            return await self._store.get(gid, cid, job.session_at)
+        # (the people whose words were in the call: the play lines sent, and the retelling shown)
+        split = sp.from_json(job.split) or sp.all_play(said)
+        sent = {s.user_id for s in play} | {s.user_id for s in sp.pick(said, split, sp.RECAP)}
+        if not sent <= set(await consenting()):  # again, after the answer
+            return await self._restart(gid, cid, job)
+        parsed = None if unusable(raw) else sg.parse(raw.text)
+        if parsed is None:
+            self._annotate(gid, cid, job, "significance", checks=["shape"])
+            return kept
+        play_lines = {s.number: s.text for s in play}
+        vocabulary = sg.known_words(
+            kept, memory, inputs.previous, list(play_lines.values()), retold
+        )
+        notes, details, cut = sg.check(
+            *parsed,
+            beats=kept,
+            memory=memory,
+            has_recap=bool(inputs.previous.strip()),
+            play_lines=play_lines,
+            known_words=vocabulary,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+        )
+        self._annotate(gid, cid, job, "significance", checks=lambda: cl.kinds(cut))
+        log.info("Recap: %d note(s), %d detail(s), %d cut", len(notes), len(details), len(cut))
+        return sg.apply(kept, notes, details)
+
     @staticmethod
     def _said(inputs: Inputs, speakers: set[int]) -> list[Said]:
         return [s for s in readable(inputs.lines) if s.user_id in speakers]
+
+    @staticmethod
+    def _parts(job: Job, said: Sequence[Said]) -> tuple[list[Said], str, str]:
+        """(the play lines, the table's retelling, its catching up) from the stored split. A job
+        with none (begun before #2253) is all play."""
+        split = sp.from_json(job.split) or sp.all_play(said)
+        play = sp.pick(said, split, sp.PLAY) or list(said)
+        retold = " ".join(s.text for s in sp.pick(said, split, sp.RECAP))
+        catchup = " ".join(s.text for s in sp.pick(said, split, sp.CATCHUP))
+        return play, retold, catchup
 
     async def _back_to_start(
         self, gid: int, cid: str, job: Job, problems: Sequence[str]
@@ -529,9 +713,15 @@ class RecapWorker:
         # `length.beats` of a long sheet; the checks still use all of it, so a name from any beat
         # is known.
         said = self._said(inputs, set(job.speakers))
-        length = rd.length_for(rd.session_hours(said, inputs.hours))
+        play, retold, _ = self._parts(job, said)
+        # (the hours are the play's: the talk and the retelling are not session time)
+        length = rd.length_for(rd.session_hours(play, inputs.hours))
         message = rd.prose_message(
-            rd.pick_beats(sheet, length.beats), inputs.previous, inputs.allowed_names, inputs.day
+            rd.pick_beats(sheet, length.beats),
+            inputs.previous,
+            inputs.allowed_names,
+            inputs.day,
+            retold,
         )
         if job.problems:
             message += rd.prose_retry(
@@ -1000,7 +1190,9 @@ class RecapWorker:
     ) -> Job | None:
         sheet = bt.from_json(job.beats)
         key = (gid, cid, job.session_at)
-        message = rd.housekeeping_message(sheet, job.summary)
+        # The table's own catching up before play goes to the housekeeping alone (#2253).
+        catchup = self._parts(job, self._said(inputs, set(job.speakers)))[2]
+        message = rd.housekeeping_message(sheet, job.summary, catchup)
         if job.problems:
             message += rd.finish_retry(job.problems, self._rejected_finish.get(key))
         raw = await self._call(
@@ -1063,6 +1255,15 @@ class RecapWorker:
             cid,
             job.session_at,
             state="ready",
+            # The fixed opening and closing lines go on last (#2253), after every check, so they
+            # are never counted or checked as story; the stored original has them too, so the
+            # DM's edit is compared with the text they were shown.
+            summary=(
+                wrapped := fixed_lines.wrap(
+                    job.summary, inputs.campaign_name, inputs.secret_names, inputs.ending
+                )
+            ),
+            original=wrapped,
             title=finish.title,
             housekeeping=list(finish.housekeeping),
             to_confirm=un.to_confirm(
@@ -1160,7 +1361,17 @@ class RecapWorker:
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))
         self._written.pop((gid, cid, job.session_at), None)
-        for stage in ("beats", "prose", "write", "format", "facts", "grade", "title"):
+        for stage in (
+            "split",
+            "beats",
+            "significance",
+            "prose",
+            "write",
+            "format",
+            "facts",
+            "grade",
+            "title",
+        ):
             self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
@@ -1176,6 +1387,7 @@ class RecapWorker:
             job.session_at,
             state="queued",
             beats=[],
+            split=None,  # the split is made again from whoever is still recorded
             window_done=0,
             window_count=0,
             speakers=[],

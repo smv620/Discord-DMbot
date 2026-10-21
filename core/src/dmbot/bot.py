@@ -93,6 +93,7 @@ from dmbot.dm_screen import (
     dm_bot_buttons,
     ensure_dm_screen,
     house_sync,
+    import_button,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -136,6 +137,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
@@ -250,7 +252,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import Tally
 from dmbot.memory.presession import PreSession
-from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
+from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -283,6 +285,7 @@ from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
+from dmbot.recaps.significance import Memory
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret, strip_cues
@@ -387,6 +390,7 @@ from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.import_command import dmbot_import  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import (
     MORE_WAITING,
     WAITING_SHOWN,
@@ -525,6 +529,7 @@ IDLE_CHECK_S = 60  # how often a running session is checked for being empty or q
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+RECAP_RECALL_BUDGET = 3500  # characters of story memory PlotBot reads for one recap (#2254)
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
@@ -1223,6 +1228,7 @@ class DMBot(commands.AutoShardedBot):
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
+                story=self.recap_story,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -1451,6 +1457,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         # how long transcripts are kept (#1533); named one by one so the registration test sees them
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
+        self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
+        import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
@@ -8481,9 +8489,35 @@ class DMBot(commands.AutoShardedBot):
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            # The earlier session is read for the split stage only, at the start of a try.
+            with_earlier=job.split is None and job.window_done == 0,
         )
         # What the DM corrected in this one recap, for this try only (#2076).
         return None if found is None else dataclasses.replace(found, corrections=job.corrections)
+
+    async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
+        """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
+        reads of one campaign: everything the DM confirmed (the DM screen's view), and what the
+        players' view of it holds; an item is `known` only if it is in both. That is the gate
+        between "keep this" and "this may be explained"; it is made here, in code."""
+        if self.memory is None or not seeds:
+            return []
+        service = RecallService(self.memory)
+        everything = await service.recall(
+            gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
+            confirmed_only=True,
+        )  # fmt: skip
+        players = await service.recall(
+            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET
+        )
+        # What the writer's side may be told about an item the players know is the players' own
+        # text for it (no DM note, no condition); the DM-screen text is only for items they do
+        # not know, which are never explained.
+        theirs = {i.id: i.text for i in players.items}
+        return [
+            Memory(i.id, theirs[i.id], True) if i.id in theirs else Memory(i.id, i.text, False)
+            for i in everything.items
+        ]
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""

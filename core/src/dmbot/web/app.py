@@ -544,6 +544,7 @@ def create_app(
             session,
             now=clock(),
             recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
+            imports_for=settings.imports_enabled_for,
         )
 
     @app.get("/me/improvement")
@@ -991,10 +992,15 @@ def create_app(
     # Importing is the heaviest thing the API does: a few a minute for a person is plenty.
     import_limit = RateLimit(60, count=6)
 
-    async def imports_enabled() -> None:
+    async def imports_enabled(ref: str) -> None:
         """Off by default (DMBOT_IMPORTS): the routes do not exist for anyone until dev1 has
-        checked a real import."""
-        if not settings.imports_on:
+        checked a real import. DMBOT_IMPORTS_SERVERS turns them on for chosen servers alone
+        (#2259); the server comes from the address, so a server that is off costs no lookup."""
+        try:
+            guild_id, _ = imports.ref_parts(ref)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+        if not settings.imports_enabled_for(guild_id):
             raise HTTPException(status_code=404, detail="not_found")
 
     async def import_body(request: Request, session: Session) -> dict[str, Any]:
