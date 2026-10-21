@@ -20,6 +20,10 @@
 # scripts/update-env does; set-key keeps no copy. The new .env replaces the old file, so a
 # symlinked .env becomes a plain file owned by whoever runs this.
 #
+# What each setting does is in scripts/setting-descriptions (NAME|short line|detail): the short
+# line shows in the list, the detail when a setting is picked, before the value is asked for. A
+# test checks that every setting in the menu has a line there (#2181).
+#
 # Tests point DMBOT_ENV_FILE, DMBOT_ENV_EXAMPLE and DMBOT_DOCKER at stand-ins, and set
 # DMBOT_TEST_NO_TERMINAL to pipe the answers in; DMBOT_CONFIG_SOURCE points at the file that
 # stands in for core/src/dmbot/config.py.
@@ -30,6 +34,7 @@ env_file=${DMBOT_ENV_FILE:-$root/.env}
 example=${DMBOT_ENV_EXAMPLE:-$root/.env.example}
 docker=${DMBOT_DOCKER:-docker}
 config_source=${DMBOT_CONFIG_SOURCE:-$root/core/src/dmbot/config.py}
+descriptions=${DMBOT_SETTING_DESCRIPTIONS:-$root/scripts/setting-descriptions}
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -69,6 +74,13 @@ for k in "${listed[@]}"; do
     is_commented_only[$k]=1
   fi
 done
+
+# The short line, or the detail, written for a setting ("" when it has none). Field 1 is the name;
+# the text is everything after it, so a description may not hold the field separator.
+describe() {
+  [[ -f $descriptions ]] || return 0
+  awk -F'|' -v name="$1" -v field="$2" '$1 == name { print $field; exit }' "$descriptions"
+}
 
 is_choice() {
   local k
@@ -113,7 +125,8 @@ else
     if [[ -n ${is_commented_only[${choices[$i]}]:-} ]] && ! in_env "${choices[$i]}"; then
       status="not in .env"
     fi
-    printf '  %d) %s (%s)\n' "$((i + 1))" "${choices[$i]}" "$status"
+    short=$(describe "${choices[$i]}" 2)
+    printf '  %d) %s (%s)%s\n' "$((i + 1))" "${choices[$i]}" "$status" "${short:+ - $short}"
   done
   pick=""
   read -r -p "Type a number and press Enter (just Enter cancels): " pick || true
@@ -148,6 +161,12 @@ For anything else, edit .env: nano $root/.env"
 old=$(current_value "$name")
 default=$(default_value "$name")
 echo "$name"
+detail=$(describe "$name" 3)
+if [[ -n $detail ]]; then
+  # Wrapped for a phone's width; the current value is not part of it (it is shown below).
+  fold -s -w 76 <<<"$detail" | sed 's/ *$//; s/^/  /'
+  echo
+fi
 if [[ -n $old ]]; then
   echo "  Now: $old"
 elif [[ -n $default ]]; then
