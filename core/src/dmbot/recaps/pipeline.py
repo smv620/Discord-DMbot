@@ -1291,9 +1291,7 @@ class RecapWorker:
             asked = mo.candidates(sentences)
             found: list[cr.Change] = []
             batches = mo.batches(asked)
-            if waiting and len(batches) + 1 > cr.WAIT_CALLS:
-                # The motive check and PlotBot would not fit the waiting budget: wait again.
-                return await self._hold(gid, cid, job, loop, STOP_ERRORS)
+            # (a waiting try's budget covers its batches and PlotBot: `cr.wait_budget`)
             for batch in batches:
                 raw = await self._call(
                     gid, cid, job, self._fast, mo.SYSTEM, mo.message(batch, lines, inputs.previous),
@@ -1518,9 +1516,9 @@ class RecapWorker:
         """No draft could be read (the service, or the day's tally): the recap waits for its check
         and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
         hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
-        (`cr.WAIT_CALLS`, kept out of the job's calls). After 3 days the DM is told once that
-        DMbot couldn't finish checking it, and may read and approve it themselves; players never
-        see an unchecked draft unless the DM approves it."""
+        (`cr.wait_budget`, kept out of the job's calls). After 3 days the DM is told once that
+        DMbot hasn't been able to finish checking it and keeps trying; players never see an
+        unchecked draft."""
         now = int(self._now())
         since = loop.since or now
         delay = cr.wait_for(loop.waits)

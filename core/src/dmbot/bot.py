@@ -8401,8 +8401,7 @@ class DMBot(commands.AutoShardedBot):
 
     async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
         """A recap that DMbot could not finish checking for three days (#2255): said once on the
-        DM screen, with the link to the recap page where the DM may read and approve it. Nothing
-        goes to the table. Fixed words only."""
+        DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or campaign.dm_screen_channel_id is None:
             return

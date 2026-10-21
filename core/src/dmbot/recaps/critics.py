@@ -49,8 +49,8 @@ CHECK_WAIT = (
 )  # on a recap whose draft could not be read yet (the service, or the day's tally): it waits
 # How long a recap that cannot be checked waits between tries: 15 minutes, 1 hour, 4 hours, then
 # every 12 hours. It never fails for waiting. After 3 days the DM is told once that DMbot could
-# not finish checking it and may read and approve it on the recap page (the bot advises, the DM
-# decides).
+# not finish checking it, and that it keeps trying (reading and approving an unchecked draft on the
+# recap page is #2305; the bot advises, the DM decides).
 WAIT_SCHEDULE_S = (900, 3600, 14400)
 WAIT_LONG_S = 43200
 UNCHECKED_AFTER_S = 3 * 86400
@@ -58,9 +58,15 @@ WAIT_CALLS = (
     2  # AI calls a waiting try may make: not counted against the job's own, but in the day's
 )
 UNCHECKED_TOLD = (
-    "📜 Your recap is written but DMbot couldn't finish checking it. You can read it and approve "
-    "it yourself on the recap page."
+    "📜 Your recap is written, but DMbot hasn't been able to finish checking it for 3 days. It "
+    "keeps trying, and you'll be told when it's ready."
 )
+
+
+def wait_budget(batches: int) -> int:
+    """Calls a waiting try may make: one for each batch of sentences, one for PlotBot, and never
+    fewer than `WAIT_CALLS`, so a long recap is checked as surely as a short one."""
+    return max(WAIT_CALLS, batches + 1)
 
 
 def wait_for(waits: int) -> int:

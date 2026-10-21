@@ -410,9 +410,7 @@ class Criticising(WorkerHarness):
             job = await self.worker.run(1, self.one.id, 100) or job
         return job
 
-    async def test_an_outage_of_two_days_waits_without_failing_or_spending_the_jobs_calls(
-        self,
-    ) -> None:
+    async def test_an_outage_waits_without_failing_or_spending_the_jobs_calls(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.down = True
         await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
@@ -421,25 +419,51 @@ class Criticising(WorkerHarness):
         job = await self.drive(await self.go(), 6)  # the first holds
         calls_at_first_hold, started = job.calls, self.clock.now
         self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        first = cr.loop_from_json(job.critics)
         spent_then = job.spent
-        job = await self.drive(job, 30)  # well past two simulated days
-        self.assertGreater(self.clock.now - started, 2 * 86400)
+        # not told before three days: drive until just short of them
+        while self.clock.now - started < 2.5 * 86400:
+            job = await self.drive(job, 1)
+        told.assert_not_awaited()
         self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))  # still waiting
         self.assertEqual(job.calls, calls_at_first_hold)  # not the job's own calls: no CAP
         loop = cr.loop_from_json(job.critics)
-        # the waiting tries had their own budget: at most WAIT_CALLS a try, and a try is one wait
-        self.assertLessEqual(job.spent - spent_then, cr.WAIT_CALLS * 3 * (loop.waits + 1))
+        # the waiting tries had their own budget: two calls for each wait, no more
+        self.assertLessEqual(job.spent - spent_then, cr.WAIT_CALLS * (loop.waits - first.waits))
         self.assertIn("avenge", job.summary)  # nothing cut, nothing shipped
         # the backoff: 15 minutes, 1 hour, 4 hours, then every 12 hours
         self.assertEqual([cr.wait_for(n) for n in range(5)], [900, 3600, 14400, 43200, 43200])
-        # after three days unchecked the DM is told, once
-        self.assertTrue(loop.told)
-        job = await self.drive(job, 10)
+        # after three days unchecked the DM is told, once, in the fixed words
+        while self.clock.now - started < 3.5 * 86400:
+            job = await self.drive(job, 1)
+        job = await self.drive(job, 6)
         told.assert_awaited_once()
-        # the service answers: the check reads the draft, and the invented motive is fixed
+        self.assertTrue(cr.loop_from_json(job.critics).told)
+        self.assertIn("3 days", cr.UNCHECKED_TOLD)
+        self.assertIn("you'll be told when it's ready", cr.UNCHECKED_TOLD)
+        # the service answers: the check reads the draft, the invented motive is fixed, and the
+        # waiting state is cleared
         fast.down = False
         job = await self.drive(job, 6)
         self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertNotIn("avenge", job.summary)
+        done = cr.loop_from_json(job.critics)
+        self.assertEqual((done.waits, done.since, done.told), (0, 0, False))
+        told.assert_awaited_once()
+
+    async def test_a_long_recap_is_checked_in_every_waiting_try_too(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        with patch.object(mo, "MAX_ASKED", 10):  # three batches for this recap
+            job = await self.drive(await self.go(), 6)
+            self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+            self.assertEqual(cr.wait_budget(3), 4)  # the batches and PlotBot
+            fast.down = False
+            before = len(fast.motive_sent)
+            job = await self.drive(job, 6)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertGreaterEqual(len(fast.motive_sent) - before, 3)  # every batch was read
         self.assertNotIn("avenge", job.summary)
 
     async def test_answers_that_keep_coming_back_incomplete_wait_within_their_budget(self) -> None:
