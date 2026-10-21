@@ -25,13 +25,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot import plan_rules
+from dmbot import fetch, plan_rules
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
+from dmbot.transcript import import_link, importer
 from dmbot.transcript import import_plan as ip
-from dmbot.transcript import importer
 from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -94,26 +94,103 @@ def read_file(name: str, text: object) -> File:
     return File(name, transcript, None, _suggested_date(name, text))
 
 
-def read_files(raw: object) -> list[File]:
-    """The request's `files`: a list of {name, text}, at most `MAX_FILES`."""
-    if not isinstance(raw, list) or not raw:
+def read_files(
+    raw: object, from_links: Sequence[tuple[str, str | None, str | None]] = ()
+) -> list[File]:
+    """The request's `files` (a list of {name, text}) and the docs read from its `links`
+    ((name, text, error code) each), together at most `MAX_FILES`."""
+    if raw is None and from_links:
+        raw = []
+    if not isinstance(raw, list) or not (raw or from_links):
         raise RecapError("bad_files")
-    if len(raw) > MAX_FILES:
+    if len(raw) + len(from_links) > MAX_FILES:
         raise RecapError("too_many_files")
     out: list[File] = []
     for item in raw:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
             raise RecapError("bad_files")
         out.append(read_file(item["name"], item.get("text")))
+    for name, text, error in from_links:  # a doc then follows exactly the uploaded-file path
+        out.append(File(name, None, error, None) if error else read_file(name, text))
     if len({f.name for f in out}) != len(out):
         raise RecapError("bad_files")  # two files with one name can't be told apart in a plan
     return out
 
 
-async def read_files_off_loop(raw: object) -> list[File]:
+LINKS_DEADLINE_S = 45  # all the links of one request together, under any proxy's timeout
+_links_open = asyncio.Semaphore(2)  # of the reader's 3 places, at most 2 for imports at once
+
+
+async def read_links(
+    raw_files: object, raw_links: object
+) -> list[tuple[str, str | None, str | None]]:
+    """Each Google Doc link read once, in order, named "Google Doc N.txt" (the export has no
+    title). A doc that can't be read carries its error code instead of text; nothing is kept
+    and the link is never logged. Links count with the files toward the 20. The uploads are
+    checked first (a bad request fetches nothing), the same link is read once, and the whole
+    batch has one deadline, so one request can't hold the reader's places for minutes."""
+    if raw_links is None:
+        return []
+    if not isinstance(raw_links, list):
+        raise RecapError("bad_files")
+    uploads = raw_files if isinstance(raw_files, list) else []
+    if raw_files is not None and not isinstance(raw_files, list):
+        raise RecapError("bad_files")
+    if len(uploads) + len(raw_links) > MAX_FILES:
+        raise RecapError("too_many_files")
+    names = [i.get("name") if isinstance(i, dict) else None for i in uploads]
+    if not all(isinstance(n, str) for n in names) or len(set(names)) != len(names):
+        raise RecapError("bad_files")
+    named = [f"Google Doc {n}.txt" for n in range(1, len(raw_links) + 1)]
+    if set(named) & set(names):
+        raise RecapError("bad_files")  # an upload already has a doc's name
+
+    async def one(link: object) -> tuple[str | None, str | None]:
+        try:
+            async with _links_open:
+                return await import_link.read_doc(link), None
+        except import_link.DocError as err:
+            return None, err.code
+
+    # The same document twice (in any spelling of its address) is read once and the repeat is
+    # refused by name, so a copy-paste slip never imports one session twice.
+    first: dict[str, int] = {}
+    repeated: set[int] = set()
+    for n, link in enumerate(raw_links):
+        export = fetch.google_doc_export(link) if isinstance(link, str) else None
+        key = str(export) if export is not None else None
+        if key is None:
+            continue
+        if key in first:
+            repeated.add(n)
+        else:
+            first[key] = n
+    tasks: dict[int, asyncio.Future[tuple[str | None, str | None]]] = {}
+    got: dict[int, tuple[str | None, str | None]] = {}
+    try:
+        for n, link in enumerate(raw_links):
+            if n not in repeated:
+                tasks[n] = asyncio.ensure_future(one(link))
+        if tasks:
+            await asyncio.wait(tasks.values(), timeout=LINKS_DEADLINE_S)
+        for n, task in tasks.items():
+            try:
+                got[n] = task.result() if task.done() else (None, import_link.UNREACHABLE)
+            except Exception:  # never a 500 from one doc; the link is not logged
+                got[n] = (None, import_link.UNREACHABLE)
+    finally:
+        for task in tasks.values():  # also on a cancelled request: nothing keeps reading
+            if not task.done():
+                task.cancel()
+    return [(name, *got.get(n, (None, import_link.REPEATED_LINK))) for n, name in enumerate(named)]
+
+
+async def read_files_off_loop(raw: object, raw_links: object = None) -> list[File]:
     """`read_files` on a worker thread: parsing up to 40 MB must not hold up the API's other
-    requests. Only after the caller is known to be a DM of the campaign on a paid plan."""
-    files = await asyncio.to_thread(read_files, raw)
+    requests. Only after the caller is known to be a DM of the campaign on a paid plan. Google
+    Doc links are read first (up to three at a time, the reader's own limit)."""
+    from_links = await read_links(raw, raw_links)
+    files = await asyncio.to_thread(read_files, raw, from_links)
     total = sum(len(f.transcript.utterances) for f in files if f.transcript)
     if total > MAX_LINES_ALL:
         raise RecapError("too_many_lines")
@@ -257,6 +334,7 @@ async def preview(
     ref: str,
     raw_files: object,
     *,
+    links: object = None,
     outside: str | None,
     now: int,
     enforce_plans: bool,
@@ -266,7 +344,7 @@ async def preview(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
-    files = await read_files_off_loop(raw_files)
+    files = await read_files_off_loop(raw_files, links)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         remembered = await _remembered(conn, c, None, outside)
@@ -343,6 +421,7 @@ async def check(
     raw_files: object,
     raw_mapping: object,
     *,
+    links: object = None,
     outside: str | None,
     now: int,
     enforce_plans: bool,
@@ -353,7 +432,7 @@ async def check(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
-    files = await read_files_off_loop(raw_files)
+    files = await read_files_off_loop(raw_files, links)
     plans = _plans(files, mapping, c)
     return {
         "files": [
@@ -397,6 +476,7 @@ async def confirm(
     raw_files: object,
     raw_plan: object,
     *,
+    links: object = None,
     outside: str | None,
     now: int,
     enforce_plans: bool,
@@ -412,7 +492,7 @@ async def confirm(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
-    files = await read_files_off_loop(raw_files)
+    files = await read_files_off_loop(raw_files, links)
     if len(entries) > len(files):
         raise RecapError("bad_files")  # one session for each file, no more
     by_name = {f.name: f for f in files}
