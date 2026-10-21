@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { text } from "../content/transcripts";
 import { httpApi, type AccountApi } from "./api";
+import SignedInLine from "./SignedInLine";
 import Transcripts from "./Transcripts";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
@@ -25,5 +26,10 @@ export default function TranscriptsIsland() {
         {text.loading}
       </p>
     );
-  return <Transcripts api={api} path={window.location.pathname} />;
+  return (
+    <>
+      <SignedInLine api={api} />
+      <Transcripts api={api} path={window.location.pathname} />
+    </>
+  );
 }

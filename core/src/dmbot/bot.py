@@ -518,6 +518,7 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
@@ -1008,6 +1009,10 @@ class DMBot(commands.AutoShardedBot):
         # The DM's answers to a recap's names to check, from its page (#2113).
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
+        self._voice_tasks: dict[
+            int, asyncio.Task[None]
+        ] = {}  # a spoken note being written down, by server (#2161)
+        self._voice_next = 0  # where the next voice round starts looking, so servers take turns
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
@@ -1525,7 +1530,10 @@ class DMBot(commands.AutoShardedBot):
                 else []
             ),
             *(
-                [self._watched(self._recap_request_loop(), "recap-requests")]
+                [
+                    self._watched(self._recap_request_loop(), "recap-requests"),
+                    self._watched(self._recap_voice_loop(), "recap-voice"),
+                ]
                 if self.recap_requests is not None
                 else []
             ),
@@ -1594,8 +1602,17 @@ class DMBot(commands.AutoShardedBot):
         await self.sidebar.close()
         for task in [*self._background, *self._asking, *self._loops, *lookups]:
             task.cancel()
+        # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
+        clips = list(self._voice_tasks.values())
+        for task in clips:
+            task.cancel()
         await asyncio.gather(
-            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+            *self._background,
+            *self._asking,
+            *self._loops,
+            *lookups,
+            *clips,
+            return_exceptions=True,
         )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
@@ -10098,21 +10115,9 @@ class DMBot(commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(RECAP_REQUESTS_PER_ROUND):
-                request = await store.claim_next(guild.id)
+                request = await store.claim_next(guild.id, voice=False)
                 if request is None:
                     break
-                if request.kind == "voice":
-                    with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
-                        outcome = await recap_requests.run_voice(
-                            store,
-                            guild.id,
-                            request,
-                            gate=lambda req, gid=guild.id: self._voice_gate(gid, req),  # type: ignore[misc]
-                            write=lambda req, gid=guild.id: self.recap_voice_text(gid, req),  # type: ignore[misc]
-                            meter=lambda req, secs, gid=guild.id: self._meter_voice(gid, req, secs),  # type: ignore[misc]
-                        )
-                        log.info("Recap voice request: %s", outcome)  # the word only
-                    continue
 
                 async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
                     campaign = await self.campaigns.get(gid, req.campaign_id)
@@ -10141,6 +10146,63 @@ class DMBot(commands.AutoShardedBot):
                         store, guild.id, request, gate=gate, sort=sort
                     )
                     log.info("Recap request: %s", outcome)  # the word only, never the text
+
+    async def _recap_voice_loop(self) -> None:
+        """Spoken notes (#2113) are worked apart from typed ones (#2161): a clip near two minutes
+        takes a minute of decoding and speech-to-text, and must not hold up a typed note behind it
+        in any server. At most `RECAP_VOICE_AT_ONCE` at a time overall and one for each server;
+        each runs as a task of its own, which keeps the claim, deletes the clip with the outcome
+        and adds the meter once the claim has finished the row."""
+        while True:
+            try:
+                await self.run_recap_voice()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The recap voice requests failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_recap_voice(self) -> None:
+        """One round of `_recap_voice_loop`: start a voice task for each server that has a waiting
+        clip and none running, while there is room."""
+        store = self.recap_requests
+        if store is None or self.recaps is None or not self.settings.recaps_on:
+            return
+        guilds = list(self.guilds)
+        # Start after the server served last, so a busy server cannot keep the later ones waiting.
+        start = self._voice_next % len(guilds) if guilds else 0
+        for guild in guilds[start:] + guilds[:start]:
+            if len(self._voice_tasks) >= RECAP_VOICE_AT_ONCE:
+                return
+            if guild.id in self._voice_tasks:
+                continue
+            request = await store.claim_next(guild.id, voice=True)
+            if request is None:
+                continue
+            task = asyncio.create_task(
+                self._run_voice_request(guild.id, request), name=f"recap-voice-{guild.id}"
+            )
+            self._voice_tasks[guild.id] = task
+            self._voice_next = guilds.index(guild) + 1
+            task.add_done_callback(partial(self._voice_done, guild.id))
+
+    def _voice_done(self, guild_id: int, _task: asyncio.Task[None]) -> None:
+        self._voice_tasks.pop(guild_id, None)  # the slot is free again, however it ended
+
+    async def _run_voice_request(self, guild_id: int, request: RecapRequest) -> None:
+        store = self.recap_requests
+        assert store is not None
+        try:
+            with log_context(guild_id=guild_id, campaign_id=request.campaign_id):
+                outcome = await recap_requests.run_voice(
+                    store,
+                    guild_id,
+                    request,
+                    gate=lambda req: self._voice_gate(guild_id, req),
+                    write=lambda req: self.recap_voice_text(guild_id, req),
+                    meter=lambda req, secs: self._meter_voice(guild_id, req, secs),
+                )
+                log.info("Recap voice request: %s", outcome)  # the word only
+        except Exception as exc:  # the type only; the claim is taken back after a while
+            log.warning("A recap voice request failed: %s", type(exc).__name__)
 
     async def _voice_gate(self, guild_id: int, request: RecapRequest) -> str | None:
         """Why a spoken note is not written down, or None: the sender is still a DM of the
