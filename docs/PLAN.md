@@ -4139,11 +4139,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - **Step 1: split the session (before the beats).** DMbot finds where each part begins and ends.
     - **The opening and closing lines,** matched loosely, since speech-to-text garbles names.
       The closing line is often not read, so it is a strong sign, never required.
-    - **Lines that retell earlier sessions,** compared with the previous accepted recap and that
-      session's beats.
+    - **Lines that retell earlier sessions,** compared with the **previous session's own transcript**
+      (its play part) and its beats, and with the previous recap when there is one. This is the main
+      signal, not the fixed lines (owner, 2026-10-21): a table may skip the ending, skip DMbot's recap
+      entirely, or tell its own recap in its own words, and DMbot must still tell the recap from the
+      new story. Fixed lines and an accepted recap only make it surer.
     - **One fast-tier call** labels the opening lines as table talk, catch-up, recap or play. Code
       checks that the parts are in order, and that the "recap" part really overlaps the earlier
-      recap. When it does not, the split is kept but marked unsure.
+      session (its transcript, beats or recap). When it does not, the split is kept but marked unsure.
     - **Backstory is never the recap** (owner, 2026-10-21). "Recap" means only a retelling of
       **earlier sessions of this campaign**, so it needs an earlier session to retell. A first
       session has no recap part. A character's backstory, a flashback, or a player telling where
