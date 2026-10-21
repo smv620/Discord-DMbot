@@ -176,17 +176,20 @@ from dmbot.dm_screen.rules_channel import (
 from dmbot.dm_screen.rules_channel import forget_campaign as rules_forget_campaign
 from dmbot.dm_screen.rules_channel import prune_locks as rules_prune_locks
 from dmbot.dm_screen.settings import (
+    BackToSettingsButton,
     FeaturesButton,
     HomebrewButton,
     HouseFileButton,
     InviteButton,
     LevelButton,
+    ManagementMenuButton,
     QuietStopButton,
     RuleLookupButton,
     RulesCardsButton,
     SettingsButton,
     SettingsVisibilityButton,
     SharedRulesButton,
+    VisibilityMenuButton,
 )
 from dmbot.dm_screen.site_offers import SiteOffers
 from dmbot.dm_screen.speaker_question import SpeakerQuestionButton
@@ -1393,6 +1396,9 @@ class DMBot(commands.AutoShardedBot):
             LevelButton,
             QuietStopButton,
             SettingsVisibilityButton,
+            VisibilityMenuButton,
+            ManagementMenuButton,
+            BackToSettingsButton,
             RuleLookupButton,
             RulesCardsButton,
             HouseFileButton,
