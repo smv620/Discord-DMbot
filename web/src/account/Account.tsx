@@ -12,6 +12,7 @@ import { text as recapText } from "../content/recaps";
 import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { keepFocus } from "./focus";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
@@ -21,6 +22,7 @@ import {
   type Campaign,
   type Character,
   type Me,
+  type MyPlan,
   type Offer,
   type Person,
   type RecordingEntry,
@@ -526,6 +528,27 @@ function PlanList({ choose }: { choose: (id: PlanId) => JSX.Element }) {
   );
 }
 
+/** What a paid plan is doing. An API older than #2165 gives no state: a cancel date means ending. */
+function planState(plan: MyPlan): NonNullable<MyPlan["state"]> {
+  if (plan.state) return plan.state;
+  if (plan.status === "lapsed") return "expired";
+  return plan.endsOn ? "ending" : "active";
+}
+
+/** The plan line (#2165): the name, and what the plan is doing, in the site's date words. Try It
+ * and a payment still being fixed keep the plain name. */
+function planLine(plan: MyPlan): string {
+  const name = planName(plan.id);
+  if (plan.id === "try-it" || plan.status === "grace") return name;
+  const state = planState(plan);
+  if (state === "expired")
+    return plan.endedOn ? text.planExpired(name, plan.endedOn) : text.planExpiredNoDate(name);
+  if (state === "ending" && plan.endsOn) return text.planEndsLine(name, plan.endsOn);
+  if (state === "changing" && plan.nextPlan && plan.nextPlanOn)
+    return text.planChanging(name, planName(plan.nextPlan), plan.nextPlanOn);
+  return plan.renewsOn ? text.planRenews(name, plan.renewsOn) : name;
+}
+
 function PlanSection({ me }: { me: Me }) {
   const { api, go, refresh } = useShared();
   const { busy, notice, run } = useAction();
@@ -556,10 +579,40 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
-  const portalUrl = portalLoginUrl();
-  const portal = (): void =>
+  // Renew (#2165): undo a cancellation, after one plain question.
+  const [renewAsk, setRenewAsk] = useState(false);
+  const [renewed, setRenewed] = useState(false);
+  const askRef = useRef<HTMLParagraphElement>(null);
+  const renewBoxRef = useRef<HTMLDivElement>(null);
+  const renewedRef = useRef<HTMLParagraphElement>(null);
+  // The question takes focus when it opens, so a keyboard or screen-reader user lands on it.
+  useEffect(() => {
+    if (renewAsk) askRef.current?.focus();
+  }, [renewAsk]);
+  const renew = (): void =>
     void run(
-      async () => go(await api.billingPortalUrl()),
+      async () => {
+        if (!api.renewPlan) throw new ApiError("server");
+        await api.renewPlan();
+        setRenewAsk(false);
+        setRenewed(true);
+        await refresh();
+        keepFocus(() => renewedRef.current);
+      },
+      (error) => {
+        // Already renewed elsewhere, or the paid time ran out: show what's true now.
+        if (error.kind === "not-ending") {
+          setRenewAsk(false);
+          void refresh();
+        }
+        return null;
+      },
+    );
+  const portalUrl = portalLoginUrl();
+  // Change plan opens on the plans to choose from; Fix my payment and Stop paying want the ordinary page.
+  const portal = (flow?: "plans"): void =>
+    void run(
+      async () => go(await api.billingPortalUrl(flow)),
       (error) => {
         // The page is out of date (the plan stopped, or was never paid through the
         // company): show what's true now, with the plans to pick from.
@@ -626,7 +679,7 @@ function PlanSection({ me }: { me: Me }) {
         {access.stillPaying && (
           <>
             <p>{text.stillPaying(paying, plan?.renewsOn ?? null)}</p>
-            <ActionButton busy={busy} kind="secondary" onClick={portal}>
+            <ActionButton busy={busy} kind="secondary" onClick={() => portal()}>
               {text.stopPaying}
             </ActionButton>
             {portalUrl && (
@@ -668,11 +721,15 @@ function PlanSection({ me }: { me: Me }) {
         </>
       ) : (
         <>
-          <p class="plan-name">{planName(plan.id)}</p>
+          <p class="plan-name">{planLine(plan)}</p>
+          {/* Always on the page, so the news is announced when it is filled in. */}
+          <p role="status" tabIndex={-1} ref={renewedRef} class="small">
+            {renewed ? text.renewed(planName(plan.id), plan.renewsOn) : ""}
+          </p>
           {plan.status === "grace" && (
             <div class="warn-box" role="alert">
               <p>{text.grace(plan.graceEndsOn)}</p>
-              <ActionButton busy={busy} onClick={portal}>
+              <ActionButton busy={busy} onClick={() => portal()}>
                 {text.fixPayment}
               </ActionButton>
             </div>
@@ -693,9 +750,15 @@ function PlanSection({ me }: { me: Me }) {
                 />
               )}
               <p class="muted small">
-                {hoursLeftLine(plan.hoursUsed, plan.hoursCap, plan.renewsOn, plan.id)}
+                {hoursLeftLine(
+                  plan.hoursUsed,
+                  plan.hoursCap,
+                  // The hours don't start again on a plan that is ending.
+                  planState(plan) === "ending" ? null : plan.renewsOn,
+                  plan.id,
+                )}
               </p>
-              {plan.endsOn && <p>{text.planEnds(planName(plan.id), plan.endsOn)}</p>}
+              {planState(plan) === "ending" && <p class="muted small">{text.endingNote}</p>}
               {plan.id === "try-it" ? (
                 choices(text.pickPlan)
               ) : (
@@ -706,9 +769,52 @@ function PlanSection({ me }: { me: Me }) {
                     {text.addHours}
                   </ActionButton>
                   <p class="muted small">{text.addHoursNote}</p>
-                  <ActionButton busy={busy} kind="secondary" onClick={portal}>
+                  <ActionButton busy={busy} kind="secondary" onClick={() => portal("plans")}>
                     {text.changePlan}
                   </ActionButton>
+                  <p class="muted small">{text.changePlanNote}</p>
+                  {/* A cancelled plan that still works can be renewed (#2165): one question, then
+                      the cancellation is undone and nothing is charged before the renewal date. */}
+                  {plan.state === "ending" && api.renewPlan && (
+                    <div ref={renewBoxRef}>
+                      {renewAsk ? (
+                        <div role="group" aria-label={text.renew} aria-describedby="renew-ask">
+                          <p id="renew-ask" tabIndex={-1} ref={askRef}>
+                            {plan.endsOn
+                              ? text.renewAsk(planName(plan.id), plan.endsOn)
+                              : text.renewAskNoDate(planName(plan.id))}
+                          </p>
+                          <ActionButton busy={busy} onClick={renew}>
+                            {text.renewYes}
+                          </ActionButton>
+                          <ActionButton
+                            busy={busy}
+                            kind="secondary"
+                            onClick={() => {
+                              setRenewAsk(false);
+                              // The question goes away, so focus goes back to Renew.
+                              requestAnimationFrame(() =>
+                                renewBoxRef.current?.querySelector("button")?.focus(),
+                              );
+                            }}
+                          >
+                            {text.renewNo}
+                          </ActionButton>
+                        </div>
+                      ) : (
+                        <ActionButton
+                          busy={busy}
+                          kind="secondary"
+                          onClick={() => {
+                            setRenewed(false);
+                            setRenewAsk(true);
+                          }}
+                        >
+                          {text.renew}
+                        </ActionButton>
+                      )}
+                    </div>
+                  )}
                   {RECAP_AUDIO_LIVE && me.recapAudio && (
                     <div class="addon" aria-labelledby="recap-audio-heading">
                       <h3 id="recap-audio-heading">{audioWords.heading}</h3>

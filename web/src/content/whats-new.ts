@@ -274,6 +274,13 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "See what your plan is doing",
+    what: "My Account now shows when your plan renews, ends or changes. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
+    reason:
+      "Waits for the website's API change (#2165) to deploy and for the owner to check it in Stripe's test mode. When it is live, move this up.",
+  },
+  {
+    date: "2026-10-20",
     title: "Names spelled out at the table",
     what: "When someone at the table spells a name out loud, like B-R-A-N-N-O-C-H after \"how do you spell that?\", DMbot notes it, using only players who agreed to be recorded. After the session it shows up in 📝 Check new names, marked \"spelled out at the table\". If it sounds like a name you already have, you can correct that name's spelling with one button. DMbot only suggests. Nothing changes until you press a button, and the suggestion goes only to you.",
     reason: "In review (#2168); held until dev1 deploys it.",
