@@ -625,6 +625,25 @@ async def add_reply(
         return Added(int(inserted["id"]), before, after)
 
 
+async def mail_ids(db: Database, ticket_id: int) -> list[str]:
+    """The Message-IDs of the emails already sent for the ticket, oldest first (#2192)."""
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT message_id FROM support_mail_ids WHERE ticket_id = %s ORDER BY id",
+            (ticket_id,),
+        )
+        return [str(r["message_id"]) for r in await cur.fetchall()]
+
+
+async def keep_mail_id(db: Database, ticket_id: int, message_id: str, *, now: int) -> None:
+    """Keep the Message-ID of an email just sent for the ticket. Nothing else about the email."""
+    async with db.support_admin() as conn:
+        await conn.execute(
+            "INSERT INTO support_mail_ids (ticket_id, message_id, created_at) VALUES (%s, %s, %s)",
+            (ticket_id, message_id, now),
+        )
+
+
 async def release(db: Database, ticket_id: int) -> None:
     """Give a ticket back to the helper at once (what it read was out of date)."""
     async with db.support_admin() as conn:

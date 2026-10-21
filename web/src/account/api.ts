@@ -472,9 +472,16 @@ export interface ImportPreviewFile {
   leftOut: number;
   speakers: ImportSpeaker[];
 }
+/** Why a recap can't be written for this campaign (#2229); absent when it can, or when the API
+ * could not tell. `off` is a switch for the whole server, which the DM can't change. */
+export type RecapsWhy = "off" | "campaign_off" | "plan";
 export interface ImportPreview {
   files: ImportPreviewFile[];
   estimate: { sessions: number; fastCalls: number };
+  /** Whether the bot would write a recap for this campaign; missing from an API older than #2227,
+   * which the page reads as "no" so it never offers a tick the bot would refuse. */
+  recapsPossible?: boolean;
+  recapsWhy?: RecapsWhy;
 }
 export interface ImportMember {
   userId: string;
@@ -511,6 +518,9 @@ export interface ImportStarted {
   importId: string;
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
   estimate: { sessions: number; fastCalls: number };
+  /** Asked again at the moment of starting, since the setting can change after Preview. */
+  recapsPossible?: boolean;
+  recapsWhy?: RecapsWhy;
 }
 /** Where one imported session has got to (#2230); an older API sends none and the page falls back
  * to the plain `state`. */

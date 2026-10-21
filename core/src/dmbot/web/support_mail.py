@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from email.utils import parseaddr
 
 log = logging.getLogger(__name__)
@@ -79,19 +79,66 @@ _QUOTE_START = re.compile(
     r"^\s*(>|On .{5,120} wrote:\s*$|-{2,}\s*Original Message|From:\s.+|Sent from my "
     # DMbot's own closing line, which asks for the word PERSON: below it everything is quoted from
     # our email even if the mail program left no ">" (it would hand every ticket over, #1518).
-    r"|Want to talk to a person instead\?|Want a person instead\?|Didn't help\? Reply)",
+    r"|Want to talk to a person instead\?|Want a person instead\?|Didn't help\? Reply"
+    # The line that opens the conversation DMbot's emails carry (#2192).
+    r"|Earlier in this conversation:\s*$)",
     re.IGNORECASE,
 )
 
 
-def fresh_words(text: str, limit: int = 4000) -> str:
+def _squash(text: str) -> str:
+    """Words only, single-spaced, so a re-wrapped copy of an email still matches the original."""
+    return " ".join(text.split())
+
+
+def _long_enough(text: str) -> bool:
+    """Unlikely to be the same by chance: at least 25 characters and 4 words. A short common
+    opening or answer ("Hi,", "Yes.", "Thanks!") is as likely to be the person's own."""
+    return len(text) >= 25 and len(text.split()) >= 4
+
+
+def _is_sent_back(lines: Sequence[str], sent: Sequence[str]) -> bool:
+    """Whether the lines from here on are a copy of one of the emails DMbot or the team sent.
+    Whole lines only: from this line, lines are joined (single-spaced, so a copy the mail program
+    re-wrapped still matches) while the join is still the start of the email, and it is a copy
+    once the join reaches the email's first 80 characters (or all of a shorter email), and those
+    are long enough to prove it (`_long_enough`). A line with the person's own words after the
+    email's text is never part of a copy, so "Please restart it. Did that, still red." is theirs.
+    Known limit: a person who retypes a whole stored team reply of 25 to 80 characters on a line
+    of its own, with their words on the next line, is cut too; that can't be told from a copy."""
+    for email in sent:
+        whole = _squash(email)
+        target = whole[:80]
+        if not _long_enough(target):
+            continue
+        joined = ""
+        for line in lines:
+            words = _squash(line)
+            if not words:
+                continue
+            joined = f"{joined} {words}".strip()
+            if not whole.startswith(joined):
+                break
+            if len(joined) >= len(target):
+                return True
+    return False
+
+
+def fresh_words(text: str, limit: int = 4000, sent: Sequence[str] = ()) -> str:
     """What the person wrote, without the email they replied to: cut at the first quoted line or
-    "On ... wrote:" line, tidied and shortened. Empty when nothing is left."""
+    "On ... wrote:" line, tidied and shortened. `sent` are the emails they may be answering
+    (DMbot's or the team's newest words): a mail program that adds no ">" sends those back too,
+    and they must not be kept as the person's. New words sit above any quote, so the first
+    non-empty line is never cut as a copy. Empty when nothing is left."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     kept: list[str] = []
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if _QUOTE_START.match(line):
+    for number, line in enumerate(lines):
+        if _QUOTE_START.match(line) or (kept and _is_sent_back(lines[number:], sent)):
             break
-        kept.append(line.rstrip())
+        if line.strip():
+            kept.append(line.rstrip())
+        elif kept:
+            kept.append("")
     words = "\n".join(kept).strip()
     words = "".join(c for c in words if c == "\n" or c == "\t" or c.isprintable())
     return words[:limit].strip()

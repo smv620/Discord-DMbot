@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Support emails show the whole chat",
+    what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
+    reason: "In review (#2192); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "DMbot offers how to say a name",
     what: "When your table says a name differently from how it's spelled, or says out loud how it is said (\"it's pronounced Kay-el\"), DMbot offers to teach the recap narrator that sound. Look for the 🔊 Check how to say button in the names panel. It lets you answer yes, no, or type your own. Nothing changes until you answer. It shows only to DMs, and only when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
@@ -265,6 +271,12 @@ export const held: Held[] = [
     title: "Say a name your way, from its card",
     what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name. Leave it empty to have it said as written. It matches the field on the website's Names page, and it only shows when spoken recaps are on for your campaign.",
     reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Names from your own story",
+    what: "In ⚙️ Settings, Names, then Add many, press 📜 From my story. Paste your campaign background, upload it, or send a link, and DMbot suggests the names in it, each with the line it came from. You say yes or no to each one, or yes to a whole group, such as every place, in one press. DMbot does not keep your text, only a short line beside each name until you answer it. This is for your own writing, not a published book.",
+    reason: "In review (#2167); held until dev1 deploys it.",
   },
   {
     date: "2026-10-20",

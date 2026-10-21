@@ -279,7 +279,7 @@ from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs
-from dmbot.recaps.notify import page_link, tell_the_dm
+from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
@@ -1136,6 +1136,12 @@ class DMBot(commands.AutoShardedBot):
         # AI text calls (a document into a names list).
         self.ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            if self.ai_client
+            else None
+        )
+        # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
+        self.background_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
             if self.ai_client
             else None
         )
@@ -7886,10 +7892,13 @@ class DMBot(commands.AutoShardedBot):
             else:
                 since, until = began, await self._next_session_start(gid, cid, began)
             proposed = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            later = await self.memory.deferred_names(gid, cid)  # "Later": asked, but not waited on
             total += sum(
                 1
                 for e in proposed
-                if e.created_at >= since and (until is None or e.created_at < until)
+                if e.created_at >= since
+                and (until is None or e.created_at < until)
+                and e.id not in later
             )
         if self.heard_questions is not None:
             total += await self.heard_questions.count_for_session(gid, session_id)
@@ -8091,6 +8100,8 @@ class DMBot(commands.AutoShardedBot):
                                     gid, m.campaign_id, m.session_id, m.session_at
                                 )
                         await self._remind(store, gid, held, waiting, age, members)
+                    if lead and age >= recap_hold.HOLD_REMIND_S:
+                        await self._email_hold(campaign, gid, held, members, age)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -8195,6 +8206,46 @@ class DMBot(commands.AutoShardedBot):
             if not sent:
                 for m in group:
                     await store.unmark_reminded(gid, m.campaign_id, m.session_at)
+
+    async def _email_hold(
+        self,
+        campaign: Campaign,
+        gid: int,
+        held: recap_hold.Hold,
+        members: list[recap_hold.Hold],
+        age: float,
+    ) -> None:
+        """A held recap also emails the DM, at most once a day, when the campaign's recap emails
+        are on (#2174). The mailer's once-per-kind record is the daily limit, so rounds and
+        restarts never double it; a failure is logged and the next round tries again. The count
+        is the whole import's open questions, the same on every day."""
+        if not campaign.recaps_email or self.mailer is None or self.recaps is None:
+            return
+        try:
+            waiting = 0
+            for m in members:
+                waiting += await self._open_name_questions(
+                    gid, m.campaign_id, m.session_id, m.session_at
+                )
+        except Exception:
+            log.exception("Recap: couldn't count the questions for the email")
+            return
+        for user_id in sorted(campaign.dm_user_ids):
+            try:
+                await remind_the_dm(
+                    self.mailer,
+                    self.recaps,
+                    self.settings.site_url,
+                    gid,
+                    held.campaign_id,
+                    user_id,
+                    held.session_at,
+                    waiting,
+                    int(age // 86400),
+                    held.group_id,
+                )
+            except Exception:
+                log.exception("Recap: couldn't email the reminder")
 
     async def recap_hold_write_now(
         self,

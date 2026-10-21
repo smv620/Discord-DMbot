@@ -22,7 +22,16 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, DM, PROPOSED, REJECTED, Entity, MemoryRuleError, name_key
+from dmbot.memory.models import (
+    BACKGROUND_SOURCE,
+    CONFIRMED,
+    DM,
+    PROPOSED,
+    REJECTED,
+    Entity,
+    MemoryRuleError,
+    name_key,
+)
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import logic
@@ -852,6 +861,34 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
+def background_kind(entity: Entity) -> str:
+    """The kind a suggestion read from the DM's background was given (npc, place…), or "" when
+    it has none to confirm as (an idea, or not from a background)."""
+    if entity.source != BACKGROUND_SOURCE:  # marked by where it came from, not by its words
+        return ""
+    if entity.type == "character":
+        return {"god": "deity", "npc": "npc"}.get(entity.role or "", "")
+    return entity.type if entity.type in ("place", "faction", "item", "event") else ""
+
+
+def a_kind(kind: str) -> str:
+    """ "a place", "an item": the kind with its article."""
+    word = kind_label(kind)
+    return f"{'an' if word[:1] in 'aeiou' else 'a'} {word}"
+
+
+def kind_label(kind: str) -> str:
+    """ "person", "place"…: a kind in plain words (the same ones the background reader uses)."""
+    from dmbot.memory.background import LABELS
+
+    return LABELS.get(kind, (kind, kind))[0]
+
+
+def _bold_kind(kind: str) -> str:
+    article, _, word = a_kind(kind).partition(" ")
+    return f"{article} **{word}**"
+
+
 def spelled_fix(entity: Entity) -> str:
     """How someone spelled a pending suggestion at the table, when that differs from how it was
     heard (the note reads "Spelled out at the table: Brannoch"), else ""."""
@@ -868,11 +905,14 @@ def suggestion_text(
     *,
     also: list[str] | None = None,
     match: Match | None = None,
+    kind: str = "",
     spelled: bool = False,
     fix_to: str = "",
 ) -> str:
+    # A name read from the DM's writing was read, not heard.
+    verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
     others = (
-        f"\nAlso heard as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
+        f"\nAlso {verb} as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
         if also
         else ""
     )
@@ -894,7 +934,8 @@ def suggestion_text(
     heard = (
         "" if fix_to else _heard(entity)
     )  # the note is the spelling: shown once, in the question
-    return f"📝 **{_md(entity.name)}**{heard}{others}\n{question}{more}"
+    read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
+    return f"📝 **{_md(entity.name)}**{heard}{others}{read}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -952,6 +993,7 @@ class SuggestionReview(_Menu):
         self.queue = entity_ids
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
+        self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
@@ -971,6 +1013,8 @@ class SuggestionReview(_Menu):
     ) -> str:
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
+        # A name read from the DM's background already has its kind; "Yes" confirms it as that.
+        self.known_kind = background_kind(entity)
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
@@ -987,6 +1031,7 @@ class SuggestionReview(_Menu):
             match=self.match,
             spelled=bool(self.spelled),
             fix_to=self.fix_to,
+            kind=self.known_kind,
         )
 
     def _buttons(self) -> None:
@@ -1012,6 +1057,16 @@ class SuggestionReview(_Menu):
                         discord.ButtonStyle.primary,
                     ),
                 )
+        elif self.known_kind:  # read with a kind: say it, and let the DM change it (#2167)
+            buttons = [
+                (
+                    self._yes,
+                    logic.shorten(f"✅ Yes, {a_kind(self.known_kind)}", REVIEW_LABEL_MAX),
+                    discord.ButtonStyle.success,
+                ),
+                (self._pick_kind, "✏️ Something else", discord.ButtonStyle.primary),
+                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
+            ]
         else:
             buttons = [
                 (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
@@ -1087,7 +1142,27 @@ class SuggestionReview(_Menu):
         current = await self._current(interaction)
         if current is None:
             return
-        _, _, entity = current
+        campaign, memory, entity = current
+        if self.known_kind:  # it was read with its kind: one press (#2167)
+            try:
+                await memory.confirm_entity(
+                    campaign.guild_id, campaign.id, entity.id, self.known_kind, source=DM
+                )
+            except MemoryRuleError:
+                await _tell(interaction, GONE)
+                return
+            changed(interaction, campaign)
+            await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
+            return
+        await self._ask_kind(interaction, entity)
+
+    async def _pick_kind(self, interaction: discord.Interaction) -> None:
+        """ "✏️ Something else": the kind picker, for a name that was read with another kind."""
+        current = await self._current(interaction)
+        if current is not None:
+            await self._ask_kind(interaction, current[2])
+
+    async def _ask_kind(self, interaction: discord.Interaction, entity: Entity) -> None:
         self.clear_items()
         self.kind = _Select(
             self._kind_picked,
@@ -1299,9 +1374,13 @@ class SuggestionReview(_Menu):
         current = await self._current(interaction)
         if current is None:
             return
-        campaign, memory, _ = current
+        campaign, memory, entity = current
         self.later += 1
         self.queue.pop(0)  # this round only; it's still waiting next time
+        try:  # and remembered, so it no longer holds a recap back (#2174)
+            await memory.defer_name(campaign.guild_id, campaign.id, entity.id)
+        except Exception:
+            log.exception("Couldn't remember a name left for later")
         await self._next(interaction, campaign, memory, note=None)
 
     async def _back(self, interaction: discord.Interaction) -> None:

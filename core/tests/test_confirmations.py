@@ -4,7 +4,7 @@ import re
 import unittest
 
 from dmbot.campaigns.models import CONFIRMATION_PURPOSES, fingerprint
-from dmbot.schema import SHARED_CONFIRMATIONS
+from dmbot.schema import MIGRATIONS, SHARED_CONFIRMATIONS
 
 
 class ConfirmationsTest(unittest.TestCase):
@@ -15,9 +15,14 @@ class ConfirmationsTest(unittest.TestCase):
         self.assertRegex(fingerprint("Ulfgar ünd Kesh"), r"^[0-9a-f]{64}$")
 
     def test_the_database_checks_the_same_purposes(self) -> None:
-        found = re.search(r"purpose IN \(([^)]*)\)", SHARED_CONFIRMATIONS)
-        assert found is not None
-        in_sql = tuple(p.strip(" '") for p in found.group(1).split(","))
+        # The newest definition of the check: the last `purpose IN (...)` in the migrations, so a
+        # purpose added without a migration is still caught.
+        newest = [
+            m
+            for sql in (SHARED_CONFIRMATIONS, *(sql for _, sql in MIGRATIONS))
+            for m in re.findall(r"purpose IN \(([^)]*)\)", sql)
+        ][-1]
+        in_sql = tuple(p.strip(" '") for p in newest.split(","))
         self.assertEqual(in_sql, CONFIRMATION_PURPOSES)  # a new purpose needs a migration
 
 

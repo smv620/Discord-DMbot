@@ -352,6 +352,9 @@ class AddMany(_Menu):
         self.add_item(_Button(self._upload, label="📎 Upload a file", style=grey))
         # On its own row, so four buttons never get squeezed on a phone.
         self.add_item(_Button(self._template, label="📄 Get the template", style=grey, row=1))
+        self.add_item(
+            _Button(self._background, label="📜 From my story", style=grey, row=1)
+        )  # (#2167)
 
     async def _paste(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -370,6 +373,24 @@ class AddMany(_Menu):
         if await _campaign_for(interaction, self.campaign_id):
             self.origin = None
             await interaction.response.send_modal(UploadForm(self.campaign_id))
+
+    async def _background(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_background import ONLY_DMS, BackgroundMenu, rights_text
+
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, ONLY_DMS)
+            return
+        self.origin = None
+        await _send(
+            interaction,
+            "📜 **Names from your story.** Give DMbot your campaign's background and it "
+            "suggests the names in it for you to check. It keeps only the names you say yes "
+            f"to.\n{rights_text()}",
+            BackgroundMenu(self.campaign_id),
+        )
 
     async def _template(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
