@@ -51,7 +51,7 @@ Unlocks: #1771
 
 ### 3. The DMbot channel with the buttons
 **You'll do:**
-1. Look for the channel **dmb-dm-bot**. Press 👤 My buttons.
+1. Look for the channel **dmb-dm-bot**. Press 👤 DMbot Main Menu.
 2. Press 📖 Look up a rule and look up any rule.
 3. Press ⚙️ Settings, then back out.
 

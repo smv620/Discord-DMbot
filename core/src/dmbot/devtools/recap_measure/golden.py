@@ -1,4 +1,4 @@
-"""Reads the invented golden set for the recap (#1382): core/tests/golden/recap/*.json.
+"""Reads the invented golden set for the recap (#1382): dmbot/devtools/golden/recap/*.json.
 
 Each file is one invented session: its lines (`dm`, or a player letter), the confirmed names, a
 secret name that must never appear, and the beats a good sheet holds, each as a few key words.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from dmbot.transcript.models import Line
 
-GOLDEN = Path(__file__).resolve().parents[4] / "tests" / "golden" / "recap"
+GOLDEN = Path(__file__).resolve().parents[1] / "golden" / "recap"
 DM_ID = 1
 PLAYER_IDS = {"a": 2, "b": 3, "c": 4}
 MIN_LINES, MAX_LINES = 8, 30
@@ -67,7 +67,17 @@ def parse(name: str, raw: object) -> Session:
     return Session(name, title, tuple(lines), names, secret, beats, size)
 
 
+def missing(folder: Path) -> str:
+    """Plain words for a golden folder that is not there (it ships inside the package)."""
+    return (
+        f"The golden data folder isn't there: {folder}. It is part of DMbot's package "
+        "(dmbot/devtools/golden); install DMbot again."
+    )
+
+
 def load_golden(folder: Path = GOLDEN) -> list[Session]:
+    if not folder.is_dir():
+        raise GoldenError(missing(folder))
     files = sorted(folder.glob("*.json"))
     if not files:
         raise GoldenError(f"{folder}: no sessions")

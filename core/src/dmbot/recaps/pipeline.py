@@ -31,6 +31,7 @@ from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
+from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
@@ -42,13 +43,14 @@ log = logging.getLogger(__name__)
 # AI calls for one recap: three stages, a retry each (two for the prose), the checks, and since
 # #2074 the formatting call after each prose try (up to 3, and one re-run of the formatter): 13 + 4,
 # and since #2253 the one call that splits the opening (talk, catch-up, last time's recap, play):
-# 18 for a run with no restarts; each restart (at most two) makes that call again.
-MAX_CALLS = 18
+# and the one careful-tier call where PlotBot marks what matters (#2254): 19 for a run with no
+# restarts; each restart (at most two) makes those calls again.
+MAX_CALLS = 19
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
-# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is seven
-# calls now (split, beats, write, format, facts, grade, title; the first only for a session with an
-# earlier one), so 51 keeps the seven a day that 40 gave five-call recaps (#2074).
-DAILY_CALLS = 51
+# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is eight
+# calls now (split, beats, notes, write, format, facts, grade, title; the first only for a session
+# with an earlier one), so 56 keeps the seven a day that 40 gave five-call recaps (#2074).
+DAILY_CALLS = 56
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
 DAY_S = 86400
@@ -111,6 +113,9 @@ FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
+SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
+SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
+SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
 SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 
 
@@ -146,6 +151,8 @@ class Client(Protocol):
 
 Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
 Consenting = Callable[[], Awaitable[Collection[int]]]
+# (server, campaign, job, names in the beats) -> the confirmed story memory around them (#2254)
+Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -167,10 +174,12 @@ class RecapWorker:
         on_call: Callable[[cl.CallEvent], None] | None = None,
         creative: Client | None = None,
         formatting: Client | None = None,
+        story: Story | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
         # structured call of before writes and shapes it at once (tests and small tools).
+        self._story = story
         self._creative = creative
         self._formatting = formatting
         self._two = creative is not None and formatting is not None
@@ -568,6 +577,12 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, TOO_LITTLE)
             return await self._back_to_start(gid, cid, job, problems)
         log.info("Recap: %d beat(s) kept, %d problem(s)", len(kept), len(problems))  # counts only
+        marked = await self._significance(gid, cid, job, inputs, kept, consenting)
+        if not isinstance(marked, list):
+            return (
+                marked  # the call failed or the speakers changed: the job is waiting or begun again
+            )
+        kept = marked
         await self._store.update(
             gid,
             cid,
@@ -579,6 +594,78 @@ class RecapWorker:
             problems=[],
         )
         return await self._store.get(gid, cid, job.session_at)
+
+    async def _significance(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        inputs: Inputs,
+        kept: list[bt.Beat],
+        consenting: Consenting,
+    ) -> list[bt.Beat] | Job | None:
+        """PlotBot marks which beats matter and adds the few left-out details that tie to the story
+        so far (#2254). Optional: with nothing to tie to, no way to read the memory, a service that
+        keeps failing, or an answer that cannot be read, the recap goes on with the beats as they
+        are. Returns the beats to store, or the job when the step must stop (waiting, restarted)."""
+        if self._story is None or job.errors >= SIG_ERRORS_MAX:
+            return kept
+        if (
+            job.calls >= self._ceiling(job) - SIG_RESERVE
+        ):  # optional: never spend what the rest needs
+            return kept
+        said = self._said(inputs, set(job.speakers))
+        play, retold, _ = self._parts(job, said)
+        seeds = sorted({n for b in kept for n in (*b.who, b.where) if n})[:40]
+        try:
+            memory = list(await self._story(gid, cid, job, seeds))
+        except Exception as exc:  # the memory is optional context: the type, never the text
+            log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
+            memory = []
+        if not sg.worth_asking(memory, inputs.previous):
+            return kept
+        rows = [
+            (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text) for s in play
+        ]
+        raw = await self._call(
+            gid,
+            cid,
+            job,
+            self._careful,
+            sg.system(),
+            sg.message(kept, memory, inputs.previous, rows, retold),
+            SIG_TOKENS,
+            schema=sg.SCHEMA,
+            stage="significance",
+        )
+        if raw is None:
+            return await self._store.get(gid, cid, job.session_at)
+        # (the people whose words were in the call: the play lines sent, and the retelling shown)
+        split = sp.from_json(job.split) or sp.all_play(said)
+        sent = {s.user_id for s in play} | {s.user_id for s in sp.pick(said, split, sp.RECAP)}
+        if not sent <= set(await consenting()):  # again, after the answer
+            return await self._restart(gid, cid, job)
+        parsed = None if unusable(raw) else sg.parse(raw.text)
+        if parsed is None:
+            self._annotate(gid, cid, job, "significance", checks=["shape"])
+            return kept
+        play_lines = {s.number: s.text for s in play}
+        vocabulary = sg.known_words(
+            kept, memory, inputs.previous, list(play_lines.values()), retold
+        )
+        notes, details, cut = sg.check(
+            *parsed,
+            beats=kept,
+            memory=memory,
+            has_recap=bool(inputs.previous.strip()),
+            play_lines=play_lines,
+            known_words=vocabulary,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+        )
+        self._annotate(gid, cid, job, "significance", checks=lambda: cl.kinds(cut))
+        log.info("Recap: %d note(s), %d detail(s), %d cut", len(notes), len(details), len(cut))
+        return sg.apply(kept, notes, details)
 
     @staticmethod
     def _said(inputs: Inputs, speakers: set[int]) -> list[Said]:

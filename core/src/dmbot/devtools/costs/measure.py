@@ -47,7 +47,7 @@ PAIRS = {  # recording -> its script
     "dm-and-player.m4a": "dm-and-player.md",
 }
 SCRIPTS_WITHOUT_RECORDING = ("two-voices.md", "bakeoff-story.md")
-CASES = REPO / "core" / "tests" / "sidebar_brevity_cases.py"
+CASES = REPO / "core" / "src" / "dmbot" / "devtools" / "sidebar_cases.py"
 SAMPLE_SCENE = (
     "Mia: I draw my bow and step behind the pillar.\nSam: The goblin chief snarls and points.\n"
     "Dee: Can I try to calm it down?\nSam: Make a Persuasion check."
