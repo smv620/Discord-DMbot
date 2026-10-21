@@ -653,7 +653,11 @@ def create_app(
         """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
         session, _token = signed
         try:
-            return await audio_again(db, session, ref)
+            facts = await read_choices(
+                db, session, ref.rsplit(".", 1)[0], now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+            return await audio_again(db, session, ref, audio_in_plan=bool(facts["canAudio"]))
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

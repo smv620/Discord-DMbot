@@ -618,6 +618,21 @@ class Choices(Base):
         )
         self.assertGreaterEqual(len(sections), 2)  # the text's moods share it
 
+    async def test_a_posted_recap_gets_its_audio_made_again_for_the_page(self) -> None:
+        """#2183: the audio of a posted recap is made again after its text changed (a spelling
+        fix); the files replace the old ones, and the recap stays posted."""
+        await self.worker().run(1, self.one.id, 100)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+        await self.store.set_audio(1, self.one.id, 100, audio="queued", tries=0, next_at=0)
+        self.assertEqual(await self.store.audio_due(1), [(self.one.id, 100)])
+        self.fake.calls.clear()
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual((job.status, job.audio), ("posted", "ready"))
+        self.assertTrue(self.fake.paths("text-to-speech"))  # it was really made again
+        self.assertEqual(job.audio_text_hash, text_hash(job.title, job.summary))
+
     async def test_text_only_queues_nothing_and_makes_nothing(self) -> None:
         await self.store.set_audio(1, self.one.id, 100, audio="off")
         job = await self.job()

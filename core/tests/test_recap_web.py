@@ -537,6 +537,77 @@ class TheAudio(Base):
                 "convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
             )
 
+    async def posted_with_old_audio(self, *, current: bool = False) -> None:
+        """A posted recap, approved with both tracks, whose audio is (or is not) from this text."""
+        await self.approved_with_audio()
+        await self.make(self.one.id, current=current)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+
+    async def test_a_posted_recap_with_stale_audio_can_be_narrated_again(self) -> None:
+        await self.posted_with_old_audio()
+        page = (await self.client.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual(page["status"], "posted")
+        self.assertTrue(page["audio"]["canAskAgain"])
+        self.assertFalse(page["audio"]["current"])
+        done = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual(done.status_code, 200, done.text)
+        self.assertEqual(done.json()["audio"]["state"], "queued")
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.audio, job.audio_tries), ("posted", "queued", 0))
+        # The audio step may take it now, and its files are for the page and the shared link.
+        self.assertIn((self.one.id, 100), await self.store.audio_due(THURSDAY.id))
+        self.assertTrue(await self.store.audio_lease(THURSDAY.id, self.one.id, 100))
+        self.assertTrue(
+            await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready", text_hash="a")
+        )
+
+    async def test_a_posted_recap_whose_audio_is_current_is_refused(self) -> None:
+        await self.posted_with_old_audio(current=True)
+        page = (await self.client.get(f"/me/recaps/{self.ref}")).json()
+        self.assertFalse(page["audio"]["canAskAgain"])
+        refused = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, "not_allowed"))
+        self.assertEqual((await self.state(self.one.id)).audio, "ready")
+
+    async def test_a_posted_recap_with_failed_or_no_audio_is_not_offered_again(self) -> None:
+        await self.posted_with_old_audio()
+        for state in ("failed", "off", "queued"):
+            with self.subTest(state):
+                await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio=state)
+                refused = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+                self.assertEqual(refused.status_code, 409)
+
+    async def test_a_posted_recap_needs_the_plan_the_approval_and_the_ten_minutes(self) -> None:
+        await self.posted_with_old_audio()
+        with self.assertRaises(RecapError) as plan:  # the owner's plan has no narration
+            await audio_again(self.web, self.session, self.ref, audio_in_plan=False)
+        self.assertEqual(plan.exception.code, "not_in_plan")
+        self.assertEqual((await self.state(self.one.id)).audio, "ready")  # nothing queued
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET summary = summary || ' More.'")
+        changed = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((changed.status_code, changed.json()["error"]), (409, "needs_approval"))
+        await self.approved_with_audio()  # approved again
+        first = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual(first.status_code, 200, first.text)
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready", text_hash="0" * 64)
+        soon = await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        self.assertEqual((soon.status_code, soon.json()["error"]), (429, "too_soon"))
+
+    async def test_only_the_campaigns_dm_may_narrate_a_posted_recap_again(self) -> None:
+        await self.posted_with_old_audio()
+        got = await self.client.post(f"/me/recaps/{self.other}/audio/again")  # Bob's campaign
+        self.assertEqual(got.status_code, 404)
+
+    async def test_narrating_again_does_not_count_a_second_narrated_recap(self) -> None:
+        await self.posted_with_old_audio()
+        before = await self.store.used_in_month(THURSDAY.id, self.one.id, NOW)
+        await self.client.post(f"/me/recaps/{self.ref}/audio/again")
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready", text_hash="0" * 64)
+        after = await self.store.used_in_month(THURSDAY.id, self.one.id, NOW)
+        self.assertEqual(before.narrated, after.narrated)  # the meter charged once
+
     async def test_asking_again_after_the_text_changed_needs_a_new_approval(self) -> None:
         await self.approved_with_audio()
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
