@@ -6,7 +6,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { signedInLine as words } from "../content/signed-in-words";
-import type { AccountApi } from "./api";
+import { SIGNED_OUT_EVENT, type AccountApi } from "./api";
 
 type Who = { kind: "asking" } | { kind: "in"; name: string } | { kind: "out" } | { kind: "unknown" };
 
@@ -26,6 +26,14 @@ export default function SignedInLine({ api }: { api: AccountApi }) {
       current = false;
     };
   }, [api]);
+
+  // The sign-in can end after the page opened (it expired, or was ended elsewhere): any call that
+  // learns so tells this line, so it offers the one Sign in button.
+  useEffect(() => {
+    const ended = (): void => setWho({ kind: "out" });
+    window.addEventListener(SIGNED_OUT_EVENT, ended);
+    return () => window.removeEventListener(SIGNED_OUT_EVENT, ended);
+  }, []);
 
   const signOut = async (): Promise<void> => {
     setLeaving(true);

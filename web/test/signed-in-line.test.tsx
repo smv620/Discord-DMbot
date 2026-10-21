@@ -5,6 +5,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The importer shows only while IMPORT_LIVE is on (it is off today), so this file switches it on.
+vi.mock("../src/content/import-words", async (original) => {
+  const real = await original<typeof import("../src/content/import-words")>();
+  return { ...real, IMPORT_LIVE: true };
+});
+
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import SignedInLine from "../src/account/SignedInLine";
@@ -15,6 +21,12 @@ import Names from "../src/account/Names";
 import Recaps from "../src/account/Recaps";
 import Transcripts from "../src/account/Transcripts";
 import TranscriptsIsland from "../src/account/TranscriptsIsland";
+import { text as houseRulesWords } from "../src/content/house-rules";
+import { text as homebrewWords } from "../src/content/homebrew";
+import { text as recapsWords } from "../src/content/recaps";
+import { text as transcriptsWords } from "../src/content/transcripts";
+import { importPage as importWords } from "../src/content/import-words";
+import { namesPage as namesWords } from "../src/content/names-words";
 import { signedInLine as w } from "../src/content/signed-in-words";
 
 afterEach(() => {
@@ -122,13 +134,13 @@ describe("every signed-in page has it", () => {
 describe("signed out, a page has exactly one Sign in with Discord button", () => {
   // The page's own panel keeps its sentence; the button is the shared line's, so there is one to press.
   it.each([
-    ["Recaps", (api: AccountApi) => <Recaps api={api} path="/account/recaps" />],
-    ["Transcripts", (api: AccountApi) => <Transcripts api={api} path="/account/transcripts/100.cmp1" />],
-    ["HouseRules", (api: AccountApi) => <HouseRules api={api} path="/account/house-rules/100.cmp1" />],
-    ["Homebrew", (api: AccountApi) => <Homebrew api={api} path="/account/homebrew/100.cmp1" />],
-    ["Names", (api: AccountApi) => <Names api={api} path="/account/names/100.cmp1" />],
-    ["Import", (api: AccountApi) => <Import api={api} path="/account/import/100.cmp1" />],
-  ])("%s", async (_name, page) => {
+    ["Recaps", recapsWords.signedOut, (api: AccountApi) => <Recaps api={api} path="/account/recaps" />],
+    ["Transcripts", transcriptsWords.signedOut, (api: AccountApi) => <Transcripts api={api} path="/account/transcripts/100.cmp1" />],
+    ["HouseRules", houseRulesWords.signedOut, (api: AccountApi) => <HouseRules api={api} path="/account/house-rules/100.cmp1" />],
+    ["Homebrew", homebrewWords.signedOut, (api: AccountApi) => <Homebrew api={api} path="/account/homebrew/100.cmp1" />],
+    ["Names", namesWords.signedOut, (api: AccountApi) => <Names api={api} path="/account/names/100.cmp1" />],
+    ["Import", importWords.pickLabel, (api: AccountApi) => <Import api={api} path="/account/import/100.cmp1" />],
+  ])("%s", async (_name, sentence, page) => {
     const api = mockApi("signed-out");
     render(
       <>
@@ -137,7 +149,7 @@ describe("signed out, a page has exactly one Sign in with Discord button", () =>
       </>,
     );
     await screen.findByText(w.notSignedIn, { exact: false });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await screen.findByText(sentence);
     expect(screen.getAllByRole("link", { name: w.signIn })).toHaveLength(1);
   });
 });
