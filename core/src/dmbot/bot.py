@@ -980,6 +980,9 @@ class DMBot(commands.AutoShardedBot):
         self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
+        # One lock for each import: release + record + pop of its "writing" line are one step, so
+        # a press, a round and an expiry never each tell the group (#2174).
+        self._group_locks: dict[str, asyncio.Lock] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
         self.house_syncs = house_sync.Pendings()
         # The rules archive channel (#1752) hears about every change to a campaign's house rules
@@ -7986,15 +7989,16 @@ class DMBot(commands.AutoShardedBot):
                         return  # the oldest of the import ends them all, with one line
                     ended: list[recap_hold.Hold] = []
                     made = []
-                    for m in members:
-                        result = await store.release(gid, m.campaign_id, m.session_at)
-                        if result != recap_hold.GONE:  # (over all the same: a job existed)
-                            ended.append(m)
-                        if result == recap_hold.QUEUED:
-                            made.append(m.session_at)
-                    await self._close_hold_lines(gid, ended, recap_hold.LINE_EXPIRED)
-                    # Recaps answers released earlier were not told: they are told here too.
-                    made += self._group_made.pop(held.group_id, [])
+                    async with self._group_lock(held.group_id):
+                        for m in members:
+                            result = await store.release(gid, m.campaign_id, m.session_at)
+                            if result != recap_hold.GONE:  # (over all the same: a job existed)
+                                ended.append(m)
+                            if result == recap_hold.QUEUED:
+                                made.append(m.session_at)
+                        await self._close_hold_lines(gid, ended, recap_hold.LINE_EXPIRED)
+                        # Recaps answers released earlier were not told: they are told here too.
+                        made += self._group_made.pop(held.group_id, [])
                     if made:
                         await self._say_group_writing(
                             campaign, held.channel_id, len(made), note=note, session_at=made[-1]
@@ -8041,25 +8045,30 @@ class DMBot(commands.AutoShardedBot):
                 await store.unmark_asked(gid, held.campaign_id, held.session_at)
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
-            result = await store.release(gid, held.campaign_id, held.session_at)
-            if result != recap_hold.GONE:
-                await self._close_hold_lines(gid, [held], recap_hold.LINE_ANSWERED)
-            if result == recap_hold.QUEUED:
-                if held.group_id:  # an import's recaps start one by one: the last says so, once
+            told: list[int] = []
+            async with self._group_lock(held.group_id):
+                result = await store.release(gid, held.campaign_id, held.session_at)
+                if result != recap_hold.GONE:
+                    await self._close_hold_lines(gid, [held], recap_hold.LINE_ANSWERED)
+                if result == recap_hold.QUEUED and held.group_id:
+                    # An import's recaps start one by one: the last says so, once. Recording and
+                    # claiming (the pop) are under the import's lock with the release, so no press
+                    # or expiry can pop the list between them.
                     self._group_made.setdefault(held.group_id, []).append(held.session_at)
-                    if recap_hold.group_of(await store.held(gid), held):
-                        return
-                    # The claim: popping the list is one step with no await, so a press that
-                    # wrote the rest of the import meanwhile (and told all of it, this list
-                    # included) leaves nothing here, and the DM gets one line, not two.
-                    made = self._group_made.pop(held.group_id, [])
-                    if not made:
-                        return
-                    await self._say_group_writing(
-                        campaign, held.channel_id, len(made), session_at=made[-1]
-                    )
-                    return
+                    if not recap_hold.group_of(await store.held(gid), held):
+                        told = self._group_made.pop(held.group_id, [])
+            if told:
+                await self._say_group_writing(
+                    campaign, held.channel_id, len(told), session_at=told[-1]
+                )
+            elif result == recap_hold.QUEUED and not held.group_id:
                 await self._say_writing(campaign, held.channel_id, held.session_at)
+
+    def _group_lock(self, group_id: str) -> contextlib.AbstractAsyncContextManager[object]:
+        """The import's lock; a hold with no import needs none."""
+        if not group_id:
+            return contextlib.nullcontext()
+        return self._group_locks.setdefault(group_id, asyncio.Lock())
 
     async def _close_hold_lines(
         self,
@@ -8163,15 +8172,16 @@ class DMBot(commands.AutoShardedBot):
                 group = recap_hold.group_of(await self.recap_holds.held(gid), held)
         ended: list[recap_hold.Hold] = []
         made = []
-        for h in group:
-            result = await self.recap_holds.release(gid, cid, h.session_at)
-            if result != recap_hold.GONE:
-                ended.append(h)
-            if result == recap_hold.QUEUED:
-                made.append(h.session_at)
-        await self._close_hold_lines(gid, ended, recap_hold.LINE_WRITING, pressed_id=pressed_id)
-        if held.group_id:  # the ones answers released earlier were not told: tell them too
-            made += self._group_made.pop(held.group_id, [])
+        async with self._group_lock(held.group_id):
+            for h in group:
+                result = await self.recap_holds.release(gid, cid, h.session_at)
+                if result != recap_hold.GONE:
+                    ended.append(h)
+                if result == recap_hold.QUEUED:
+                    made.append(h.session_at)
+            await self._close_hold_lines(gid, ended, recap_hold.LINE_WRITING, pressed_id=pressed_id)
+            if held.group_id:  # the ones answers released earlier were not told: tell them too
+                made += self._group_made.pop(held.group_id, [])
         if not made:
             return "already"
         await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])
