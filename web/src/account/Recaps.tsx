@@ -549,7 +549,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <h2 tabIndex={-1} ref={headingRef}>
           {heading}
         </h2>
-        <span class="tag">{statusLine(recap)}</span>
+        <span class="tag">{statusLine(recap, sawWaiting.current)}</span>
       </div>
       <p class="small">
         {[recap.campaign, recap.serverName, sessionDay(recap.sessionAt)]

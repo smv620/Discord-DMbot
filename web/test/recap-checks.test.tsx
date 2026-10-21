@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountApi, Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
-import { statusLine, text } from "../src/content/recaps";
+import { againLabel, statusLine, text } from "../src/content/recaps";
 
 afterEach(() => {
   cleanup();
@@ -57,6 +57,9 @@ describe("a recap waiting for its last check", () => {
       });
       expect(screen.getByText(text.waitingForCheck)).toBeTruthy();
       expect(screen.queryByText(text.working)).toBeNull();
+      // The tag at the top agrees with the line below it, through the gap too.
+      expect(screen.queryByText("Being made")).toBeNull();
+      expect(screen.getByText("Waiting for a last check")).toBeTruthy();
     }
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);
@@ -81,6 +84,28 @@ describe("a recap waiting for its last check", () => {
     });
     expect(await screen.findByText(text.failed)).toBeTruthy();
     expect(screen.queryByText(text.waitingForCheck)).toBeNull();
+  });
+
+  it("forgets the wait after a failure: Try again and 'still writing' shows the plain line", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const failed = waitingRecap({ waitingForCheck: false, working: false, state: "failed", canTryAgain: true, triesLeft: 2 });
+    const again = waitingRecap({ waitingForCheck: false, error: "" });
+    const api = pageWith([waitingRecap(), failed]);
+    api.decideRecap = async () => again;
+    render(<Recaps api={api} path={path} />);
+    expect(await screen.findByText(text.waitingForCheck)).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(await screen.findByText(text.failed)).toBeTruthy();
+    expect(screen.queryByText(text.waitingForCheck)).toBeNull();
+    // Try again: the recap is being made again, and nothing says it is waiting for a check.
+    await act(async () => {
+      screen.getByRole("button", { name: againLabel(2) }).click();
+    });
+    expect(await screen.findByText(text.working)).toBeTruthy();
+    expect(screen.queryByText(text.waitingForCheck)).toBeNull();
+    expect(screen.getByText("Being made")).toBeTruthy();
   });
 
   it("is named in the list", () => {
