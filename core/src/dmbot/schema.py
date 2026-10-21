@@ -339,7 +339,9 @@ CAMPAIGN_MEMORY = f"""
         WHERE other_id IS NOT NULL;
 
     -- Append-only log of every change, so any operation can be undone. One operation
-    -- (a "batch") may change several rows. Not part of backups.
+    -- (a "batch") may change several rows. Not part of backups. The one exception: the quote
+    -- kept with a name read from the DM's story (#2167) is blanked here too once the DM decides
+    -- on the name, so none of the DM's text outlives the decision.
     CREATE TABLE memory_changes (
         {_memory_scope()}
         version    BIGINT NOT NULL,
@@ -7210,6 +7212,15 @@ MORE_HOMEBREW_KINDS = """
 """
 
 
+OWN_WRITING = """
+    -- A DM's own background, read by DMbot for names (#2167), is a different thing from a list of
+    -- names (names_list) or a published adventure (shared_story): its own purpose, so the record
+    -- of who confirmed what can tell them apart. No row changes.
+    ALTER TABLE shared_confirmations DROP CONSTRAINT shared_confirmations_purpose_check;
+    ALTER TABLE shared_confirmations ADD CONSTRAINT shared_confirmations_purpose_check
+        CHECK (purpose IN ('names_list', 'shared_story', 'rulebook', 'own_writing'));
+    """
+
 RECAP_SHARE = (
     _setting("dmbot_recap_share_tok", "dmbot.recap_share_tok", "TEXT")
     + _setting("dmbot_recap_share_guild", "dmbot.recap_share_guild", "BIGINT")
@@ -8587,6 +8598,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
     ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
+    ("0146_own_writing", OWN_WRITING),  # a DM's own background is its own purpose (#2167)
     ("0147_said_as_suggestions", SAID_AS_SUGGESTIONS),  # say it this way? (#2171)
     ("0148_support_mail_ids", SUPPORT_MAIL_IDS),  # email threading (#2192)
     (

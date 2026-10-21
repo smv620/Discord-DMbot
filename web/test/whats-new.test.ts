@@ -75,6 +75,7 @@ describe("What's new", () => {
       "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
       "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
+      "Names from your own story", // until dev1 deploys it (#2167)
       "Link a server you added with a plain link", // until dev1 deploys it (#2163)
       "See what your plan is doing", // until the web API change deploys and the owner checks it in test mode (#2165)
       "Names spelled out at the table", // until dev1 deploys it (#2168)

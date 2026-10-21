@@ -1139,6 +1139,12 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
+        self.background_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
+            if self.ai_client
+            else None
+        )
         # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
         self.plan_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)

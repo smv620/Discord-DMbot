@@ -70,6 +70,7 @@ class Feature(enum.StrEnum):
     listed ahead of their first use, so each already has its tier."""
 
     NAMES = "names"  # Find names: a document into a names list
+    NAMES_BACKGROUND = "names_background"  # the names in a DM's own campaign background (#2167)
     TOPIC = "topic"  # the off-topic filter
     AUDIO_CHECK = "audio_check"  # is the audio bad, or just quiet talk
     SIDEBAR = "sidebar"  # quick answers for the DM
@@ -94,6 +95,8 @@ class Feature(enum.StrEnum):
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
 FEATURE_TIERS = {
     Feature.NAMES: AIModelTier.CAREFUL,  # its proposals go into the campaign's memory
+    # Suggestions only, each checked against the text, and the DM answers every one (#2167).
+    Feature.NAMES_BACKGROUND: AIModelTier.FAST,
     Feature.TOPIC: AIModelTier.FAST,
     Feature.AUDIO_CHECK: AIModelTier.FAST,
     Feature.SIDEBAR: AIModelTier.FAST,
