@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from dmbot import imports_switch
 from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
@@ -109,9 +110,16 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
+    # logged or shown.
+    imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
     # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
     # again" is refused instead of promising it (#2183).
     recaps_on: bool = False
+
+    def imports_enabled_for(self, guild_id: int) -> bool:
+        """Whether importing is on for this server (#2259)."""
+        return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
 
     @property
     def site_origin(self) -> str:
@@ -272,6 +280,10 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
     if imports_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_IMPORTS must be 1 (on) or 0 (off), got "{imports_raw}".')
+    try:
+        imports_servers = imports_switch.parse_servers(get("DMBOT_IMPORTS_SERVERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
@@ -280,6 +292,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         recaps_on=recaps_raw in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
+        imports_servers=imports_servers,
         discord_client_id=get("DISCORD_CLIENT_ID"),
         discord_client_secret=get("DISCORD_CLIENT_SECRET"),
         secret_key=secret.encode("utf-8"),
