@@ -274,3 +274,11 @@ class HoldStore:
                 (guild_id, campaign_id, session_at, int(row["dm_user_id"]), now, now),
             )
             return QUEUED if made.rowcount else ALREADY
+
+
+def group_of(holds: list[Hold], held: Hold) -> list[Hold]:
+    """The holds that go together with `held` (an import's, #2106): the same import in the same
+    campaign. The campaign is checked too, so isolation never rests on ids being unique."""
+    if not held.group_id:
+        return [held]
+    return [h for h in holds if h.group_id == held.group_id and h.campaign_id == held.campaign_id]

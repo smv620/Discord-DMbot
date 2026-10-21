@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import time
 from types import SimpleNamespace
@@ -244,6 +245,8 @@ def fake_bot(
         get=AsyncMock(return_value=hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()))),
     )
     bot = SimpleNamespace(
+        _group_made={},
+        _import_queued={},
         settings=SimpleNamespace(site_url="", recaps_on=True, story_extractor_on=extractor),
         extractor_ai=object() if extractor else None,
         transcripts=SimpleNamespace(
@@ -489,8 +492,21 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         bot = fake_bot(proposed=2)
         bot.recap_holds.held = AsyncMock(return_value=self.group(hold.HOLD_REMIND_S + 60))
         await bot.release_recap_holds(GUILD)
-        bot.recap_holds.mark_reminded.assert_awaited_once_with(GUILD, "c" * 32, AT)  # the oldest
+        claimed = [c.args[2] for c in bot.recap_holds.mark_reminded.await_args_list]
+        self.assertEqual(claimed, [AT, AT + 1, AT + 2])  # the oldest, then the rest of the group
         self.assertEqual(bot.post.await_count, 1)
+        self.assertIn("6 name questions", bot.post.await_args.args[1])  # the group's, not one's
+
+    async def test_a_released_lead_does_not_hand_the_group_a_second_reminder(self) -> None:
+        bot = fake_bot(proposed=2)
+        left = self.group(hold.HOLD_REMIND_S + 60)[1:]  # the oldest was answered and released
+        # What the first reminder stored: every member of the group was claimed with it.
+        bot.recap_holds.held = AsyncMock(
+            return_value=[dataclasses.replace(m, reminded=True) for m in left]
+        )
+        await bot.release_recap_holds(GUILD)
+        bot.recap_holds.mark_reminded.assert_not_awaited()
+        bot.post.assert_not_awaited()
 
     async def test_a_live_holds_reminder_is_its_own_even_beside_an_import(self) -> None:
         bot = fake_bot(proposed=2)
@@ -501,9 +517,8 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
             return_value=[*self.group(hold.HOLD_REMIND_S + 60, 2), live]
         )
         await bot.release_recap_holds(GUILD)
-        self.assertEqual(
-            bot.recap_holds.mark_reminded.await_count, 2
-        )  # the import's, and the live one
+        self.assertEqual(bot.post.await_count, 2)  # the import's reminder, and the live one's
+        self.assertIn(AT - 1, [c.args[2] for c in bot.recap_holds.mark_reminded.await_args_list])
 
     async def test_one_expiry_line_and_all_of_them_released(self) -> None:
         bot = fake_bot(proposed=2)
@@ -539,6 +554,34 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         for m in members:
             await bot._release_one(bot.recap_holds, GUILD, m, group=members)
         self.assertEqual(bot.post.await_count, 1)  # three recaps started, one line
+        self.assertIn("Writing 3 recaps", bot.post.await_args.args[1])
+
+    async def test_one_recap_made_is_never_told_as_one_recaps(self) -> None:
+        bot = fake_bot(proposed=2)
+        members = self.group(hold.HOLD_MAX_S + 60, 2)
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        bot.recap_holds.release = AsyncMock(side_effect=[hold.QUEUED, hold.ALREADY])
+        await bot.release_recap_holds(GUILD)
+        text = bot.post.await_args.args[1]
+        self.assertIn("Writing a recap of this session", text)
+        self.assertNotIn("1 recaps", text)
+        bot.post.reset_mock()
+        bot.recap_holds.release = AsyncMock(side_effect=[hold.ALREADY, hold.QUEUED])
+        bot.recap_holds.get = AsyncMock(return_value=members[0])
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        await bot.recap_hold_write_now(GUILD, "c" * 32, AT)  # the press, too
+        self.assertIn("Writing a recap of this session", bot.post.await_args.args[1])
+
+    async def test_two_live_recaps_each_keep_their_own_line(self) -> None:
+        bot = fake_bot()
+        await bot._say_writing(campaign(), 66, AT)
+        await bot._say_writing(campaign(), 66, AT + 5)
+        self.assertEqual(bot.post.await_count, 2)  # no debounce: each is told, with its own page
+
+    async def test_a_group_never_takes_in_another_campaigns_hold(self) -> None:
+        mine = self.group(100, 2)
+        other = dataclasses.replace(mine[0], campaign_id="d" * 32)
+        self.assertEqual(hold.group_of([*mine, other], mine[0]), mine)
 
     async def test_a_quiet_hold_is_made_without_asking_again(self) -> None:
         bot = fake_bot(proposed=2)

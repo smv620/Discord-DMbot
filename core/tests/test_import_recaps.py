@@ -142,6 +142,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         post=AsyncMock(return_value=True),
         _import_names={},
         _import_unhonoured={},
+        _import_queued={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         _hold_or_queue=AsyncMock(return_value="held"),
         **kw,
@@ -152,6 +153,8 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_import_recap",
         "_start_import_recap",
         "_tell_import_news",
+        "_say_group_writing",
+        "_say_writing",
     ):
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot, campaign
@@ -287,6 +290,32 @@ class TheCrashAndTheNews(WithImports):
         one.campaigns.get = AsyncMock(return_value=campaign)
         await one._tell_import_news(GUILD, self.store)
         self.assertIn("1 recap you asked for", one.post.await_args.args[1])
+
+    async def test_different_reasons_all_appear(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._import_unhonoured[campaign.id] = [
+            "recaps are switched off",
+            "your plan doesn't include recaps",
+        ]
+        await bot._tell_import_news(GUILD, self.store)
+        text = bot.post.await_args.args[1]
+        self.assertIn("recaps are switched off", text)
+        self.assertIn("your plan doesn't include recaps", text)
+
+    async def test_sessions_with_nothing_open_give_one_line_for_the_whole_import(self) -> None:
+        for day in (1, 2, 3):
+            await self.imported(day, recap=True)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._propose_new_names = AsyncMock(return_value=[])
+        bot._hold_or_queue = AsyncMock(return_value="queued")  # nothing open: queued at once
+        await rounds(bot, 4)
+        for call in bot._hold_or_queue.await_args_list:
+            self.assertFalse(call.kwargs["say"])  # no line of their own
+        lines = [c.args[1] for c in bot.post.await_args_list if "Writing" in c.args[1]]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Writing 3 recaps", lines[0])
 
     async def test_the_names_message_says_it_is_about_the_imported_sessions(self) -> None:
         from dmbot.ui.names import after_session_text
