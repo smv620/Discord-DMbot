@@ -928,7 +928,7 @@ class TheButton(IsolatedAsyncioTestCase):
         bot = fake_bot(proposed=3)
         bot.recap_holds.get = AsyncMock(return_value=None)  # no hold: written or decided before
         reminder = SimpleNamespace(id=8, content="📝 reminder", edit=AsyncMock())
-        bot.decision_lines.remember(hold_line_key("c" * 32, AT), reminder)
+        bot.decision_lines.remember(hold_line_key(GUILD, "c" * 32, AT), reminder)
         button, i = press(bot)
         await button.callback(i)
         reminder.edit.assert_awaited_once()
@@ -937,7 +937,7 @@ class TheButton(IsolatedAsyncioTestCase):
     async def test_a_press_takes_the_buttons_off_the_other_copy_too(self) -> None:
         bot = fake_bot(proposed=3)
         reminder = SimpleNamespace(id=8, content="📝 reminder", edit=AsyncMock())
-        bot.decision_lines.remember(hold_line_key("c" * 32, AT), reminder)
+        bot.decision_lines.remember(hold_line_key(GUILD, "c" * 32, AT), reminder)
         button, i = press(bot)
         await button.callback(i)
         reminder.edit.assert_awaited_once()
@@ -959,15 +959,15 @@ class TheButton(IsolatedAsyncioTestCase):
         bot.recap_holds.release.assert_not_awaited()
         self.assertEqual(i.response.send_message.await_args.args[0], screen.NOT_YOURS)
 
-    async def test_a_second_press_says_it_is_already_being_written(self) -> None:
+    async def test_a_second_press_says_it_is_being_written(self) -> None:
         bot = fake_bot()
         bot.recap_holds.release = AsyncMock(return_value=hold.GONE)
         button, i = press(bot)
         await button.callback(i)
         bot.post.assert_not_awaited()
         self.assertIn(
-            "Already being written.", i.edit_original_response.await_args.kwargs["content"]
-        )
+            hold.LINE_WRITING, i.edit_original_response.await_args.kwargs["content"]
+        )  # (one wording: it is being written)
 
     async def test_a_plan_that_lost_recaps_refuses_and_keeps_the_hold(self) -> None:
         bot = fake_bot()
@@ -1004,14 +1004,26 @@ class TheCount(IsolatedAsyncioTestCase):
 class TheOldLines(IsolatedAsyncioTestCase):
     """The question and the reminder of a hold lose their buttons once the hold is over (#2174)."""
 
-    def keep_lines(self, bot: Any, *at: int) -> dict[int, Any]:
-        """Stand-in messages the bot "posted" for each held session."""
+    def keep_lines(self, bot: Any, *at: int, group: str = "") -> dict[int, Any]:
+        """Stand-in messages the bot "posted" for each held session (an import's sessions share
+        one line, under the group's key)."""
         kept = {}
         for n in at:
             message = SimpleNamespace(id=n, content=f"Questions {n}", edit=AsyncMock())
             kept[n] = message
-            bot.decision_lines.remember(hold_line_key("c" * 32, n), message)
+            bot.decision_lines.remember(hold_line_key(GUILD, "c" * 32, n, group), message)
         return kept
+
+    def track(self, bot: Any, members: list[Any]) -> None:
+        """The store forgets a hold once it is released, as the real one does."""
+        remaining = list(members)
+
+        async def release(gid: int, cid: str, at: int, **kw: Any) -> str:
+            remaining[:] = [m for m in remaining if m.session_at != at]
+            return hold.QUEUED
+
+        bot.recap_holds.release = release
+        bot.recap_holds.held = AsyncMock(side_effect=lambda gid: list(remaining))
 
     def edited(self, message: Any) -> str:
         message.edit.assert_awaited_once()
@@ -1034,18 +1046,54 @@ class TheOldLines(IsolatedAsyncioTestCase):
         await bot.release_recap_holds(GUILD)
         self.assertIn(hold.LINE_EXPIRED, self.edited(line))
 
-    async def test_write_it_now_closes_every_copy_of_every_held_session_of_an_import(self) -> None:
+    async def test_write_it_now_closes_the_one_line_of_an_import(self) -> None:
         bot = fake_bot(proposed=2)
-        lines = self.keep_lines(bot, AT, AT + 1)
+        (line,) = self.keep_lines(bot, AT, group="imp").values()
         members = [
             hold.Hold("c" * 32, AT + n, f"s{n}", DM, 66, int(time.time()) - 100, group_id="imp")
             for n in (0, 1)
         ]
-        bot.recap_holds.held = AsyncMock(return_value=members)
+        self.track(bot, members)
         bot.recap_holds.get = AsyncMock(return_value=members[0])
         await bot.recap_hold_write_now(GUILD, "c" * 32, AT)
-        for line in lines.values():
-            self.assertIn(hold.LINE_WRITING, self.edited(line))
+        self.assertIn(hold.LINE_WRITING, self.edited(line))
+
+    async def test_an_imports_line_stays_while_any_of_its_sessions_still_waits(self) -> None:
+        bot = fake_bot()  # nothing left to answer, so each is released by its own answers
+        (line,) = self.keep_lines(bot, AT, group="imp").values()
+        members = [
+            hold.Hold("c" * 32, AT + n, f"s{n}", DM, 66, int(time.time()) - 100, group_id="imp")
+            for n in (0, 1)
+        ]
+        self.track(bot, members)
+        await bot._release_one(bot.recap_holds, GUILD, members[0], group=list(members))
+        line.edit.assert_not_awaited()  # the other session's questions are still open
+        await bot._release_one(bot.recap_holds, GUILD, members[1], group=[members[1]])
+        self.assertIn(hold.LINE_ANSWERED, self.edited(line))  # now it is over, once
+
+    async def test_the_reminder_of_another_member_is_the_same_line_of_the_import(self) -> None:
+        bot = fake_bot()
+        first = SimpleNamespace(id=1, content="question", edit=AsyncMock())
+        reminder = SimpleNamespace(id=2, content="reminder", edit=AsyncMock())
+        key = hold_line_key(GUILD, "c" * 32, AT, "imp")
+        bot.decision_lines.remember(key, first)
+        bot.decision_lines.remember(
+            hold_line_key(GUILD, "c" * 32, AT + 1, "imp"), reminder
+        )  # posted under whichever member was the oldest then: still the group's key
+        members = [
+            hold.Hold("c" * 32, AT + n, f"s{n}", DM, 66, int(time.time()) - 100, group_id="imp")
+            for n in (0, 1)
+        ]
+        self.track(bot, members)
+        await bot._release_one(bot.recap_holds, GUILD, members[0], group=list(members))
+        await bot._release_one(bot.recap_holds, GUILD, members[1], group=[members[1]])
+        for line in (first, reminder):
+            self.edited(line)
+
+    async def test_lines_are_kept_per_server(self) -> None:
+        self.assertNotEqual(
+            hold_line_key(1, "c" * 32, AT), hold_line_key(2, "c" * 32, AT)
+        )  # the same campaign id on another server is another item
 
     async def test_a_campaign_with_recaps_off_closes_its_line(self) -> None:
         bot = fake_bot(proposed=2)
@@ -1066,9 +1114,9 @@ class TheOldLines(IsolatedAsyncioTestCase):
         self.assertIn(hold.LINE_ANSWERED, self.edited(line))
         bot.post.assert_not_awaited()  # nothing is said about a recap that was made before
 
-    async def test_an_import_that_ran_out_closes_the_lines_of_every_session(self) -> None:
+    async def test_an_import_that_ran_out_closes_its_line_once(self) -> None:
         bot = fake_bot(proposed=2)
-        lines = self.keep_lines(bot, AT, AT + 1, AT + 2)
+        (line,) = self.keep_lines(bot, AT, group="imp").values()
         members = [
             hold.Hold(
                 "c" * 32,
@@ -1081,10 +1129,9 @@ class TheOldLines(IsolatedAsyncioTestCase):
             )
             for n in range(3)
         ]
-        bot.recap_holds.held = AsyncMock(return_value=members)
+        self.track(bot, members)
         await bot.release_recap_holds(GUILD)
-        for line in lines.values():
-            self.assertIn(hold.LINE_EXPIRED, self.edited(line))
+        self.assertIn(hold.LINE_EXPIRED, self.edited(line))
 
     async def test_a_hold_still_waiting_keeps_its_buttons(self) -> None:
         bot = fake_bot(proposed=2)
@@ -1109,6 +1156,6 @@ class TheOldLines(IsolatedAsyncioTestCase):
         bot.recap_holds.held = AsyncMock(return_value=[old])
         await bot.release_recap_holds(GUILD)  # the reminder
         await bot._hold_or_queue(campaign(), "s2", AT + 5, 66, DM)  # and at the end of a session
-        key = hold_line_key("c" * 32, AT)
+        key = hold_line_key(GUILD, "c" * 32, AT)
         self.assertEqual(posted[:2], [key, key])
-        self.assertEqual(posted[2], hold_line_key("c" * 32, AT + 5))
+        self.assertEqual(posted[2], hold_line_key(GUILD, "c" * 32, AT + 5))

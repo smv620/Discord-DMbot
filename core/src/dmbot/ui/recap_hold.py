@@ -23,7 +23,7 @@ GONE = "I can't find this campaign any more. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
 OFF_EVERYWHERE = "Recaps are switched off for all of DMbot right now. No recap was written."
 WRITING = LINE_WRITING  # (one wording, the same under every line)
-ALREADY = "Already being written."
+ALREADY = WRITING  # (one wording for both: it is being written)
 
 _TEMPLATE = r"dmbot:rhold:go:(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
 
@@ -61,9 +61,12 @@ class WriteNowButton(
             return
         await interaction.response.defer()  # the checks below make several calls and a post
         # The line pressed is kept too, so the other copy (the reminder) comes off with it.
-        bot.decision_lines.remember_pressed(
-            hold_line_key(campaign.id, self.session_at), interaction
+        holds = bot.recap_holds
+        held = await holds.get(guild.id, campaign.id, self.session_at) if holds else None
+        key = hold_line_key(
+            guild.id, campaign.id, self.session_at, held.group_id if held is not None else ""
         )
+        bot.decision_lines.remember_pressed(key, interaction)
         pressed = interaction.message.id if interaction.message is not None else None
         result = await bot.recap_hold_write_now(
             guild.id, campaign.id, self.session_at, pressed_id=pressed
@@ -76,9 +79,7 @@ class WriteNowButton(
             return
         outcome = WRITING if result == "queued" else ALREADY
         if result != "queued":  # no hold to release: the other copies come off here instead
-            await bot.decision_lines.close(
-                hold_line_key(campaign.id, self.session_at), outcome, pressed_id=pressed
-            )
+            await bot.decision_lines.close(key, outcome, pressed_id=pressed)
         message = interaction.message
         await interaction.edit_original_response(
             content=with_outcome(message.content, outcome) if message is not None else outcome,
@@ -87,10 +88,16 @@ class WriteNowButton(
         )
 
 
-def hold_line_key(campaign_id: str, session_at: int) -> tuple[str, str, int]:
+def hold_line_key(
+    guild_id: int, campaign_id: str, session_at: int, group_id: str = ""
+) -> tuple[object, ...]:
     """What the bot calls the question and reminder lines of one held recap, so their buttons can
-    come off when the hold is over (`DecisionLines`, #2174)."""
-    return ("hold", campaign_id, session_at)
+    come off when the hold is over (`DecisionLines`, #2174). An import asks once for all its
+    sessions, so its lines are one item (its group); the server is part of the key so isolation
+    never rests on campaign ids being unique."""
+    if group_id:
+        return ("hold", guild_id, campaign_id, "group", group_id)
+    return ("hold", guild_id, campaign_id, session_at)
 
 
 def hold_view(campaign_id: str, session_at: int) -> discord.ui.View:

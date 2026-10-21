@@ -288,4 +288,4 @@ def group_of(holds: list[Hold], held: Hold) -> list[Hold]:
 LINE_ANSWERED = "Answered: writing the recap."
 LINE_EXPIRED = "No answer in time: writing the recap as it is."
 LINE_WRITING = "Writing the recap."
-LINE_NO_RECAP = "No recap will be written."
+LINE_NO_RECAP = "Recaps are off for this campaign."
