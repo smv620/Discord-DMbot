@@ -94,7 +94,7 @@ The sentences never hold a key, a ticket or a player's words.
 |---|---|
 | `OWNER_ALERT_EMAIL` | the owner's private address, set in the server's `.env` at the terminal only. Empty: no alert emails, and the log says so once. |
 | `MAIL_ALERTS_REPLY_TO` | optional Reply-To on alerts (for example an ops address). Empty: none. |
-| `MAIL_ALERTS_FROM` | the From on alerts (jarvis@). Never `admin@getdmbot.com`: DMbot refuses it for every From setting (#1425). |
+| `MAIL_ALERTS_FROM` | the From on alerts (the `<dmbot private>` email). Never `admin@getdmbot.com`: DMbot refuses it for every From setting (#1425). |
 
 ## Rules
 - No key, password or private inbox address goes in this repository, an issue or a chat.
