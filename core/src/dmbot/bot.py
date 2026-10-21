@@ -969,6 +969,9 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._import_queued: dict[str, list[int]] = {}
+        # campaign -> how many of its import's sessions had their name check given up (told once;
+        # best effort across a restart, the website's progress reads the saved flag)
+        self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
@@ -7970,7 +7973,7 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
                     return
                 note = recap_hold.EXPIRED_NOTE if waiting and held.asked else ""
-                if len(members) > 1:
+                if held.group_id:
                     if not lead:
                         return  # the oldest of the import ends them all, with one line
                     made = [
@@ -7979,6 +7982,8 @@ class DMBot(commands.AutoShardedBot):
                         if await store.release(gid, m.campaign_id, m.session_at)
                         == recap_hold.QUEUED
                     ]
+                    # Recaps answers released earlier were not told: they are told here too.
+                    made += self._group_made.pop(held.group_id, [])
                     if made:
                         await self._say_group_writing(
                             campaign, held.channel_id, len(made), note=note, session_at=made[-1]
@@ -8089,6 +8094,8 @@ class DMBot(commands.AutoShardedBot):
             for h in group
             if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED
         ]
+        if held.group_id:  # the ones answers released earlier were not told: tell them too
+            made += self._group_made.pop(held.group_id, [])
         if not made:
             return "already"
         await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])
@@ -9235,6 +9242,9 @@ class DMBot(commands.AutoShardedBot):
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
                         log.warning("Import: giving up on a session's name scan")
                         await store.give_up_scan(gid, ready.session_id)
+                        self._import_unchecked[ready.campaign_id] = (
+                            self._import_unchecked.get(ready.campaign_id, 0) + 1
+                        )
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
@@ -9262,18 +9272,34 @@ class DMBot(commands.AutoShardedBot):
                 )
 
     async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
-        """Say once, on the DM screen, what an import found: the new names (when its last session
-        has been scanned), and the recaps that were asked for and could not be written."""
-        for cid in list(self._import_names):
+        """Say once, on the DM screen, what an import found: the new names and the sessions whose
+        name check was given up, in one 📝 line when the import's last session has been scanned
+        (the given-up note stands alone only when no names were found), and the recaps that were
+        asked for and could not be written."""
+        for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            names = self._import_names.pop(cid)
+            names = self._import_names.pop(cid, [])
+            skipped = self._import_unchecked.pop(cid, 0)
             campaign = await self.campaigns.get(gid, cid)
-            if names and campaign is not None and campaign.dm_screen_channel_id is not None:
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                continue
+            text = after_session_text(names, where="your imported sessions") if names else ""
+            if skipped:
+                one = skipped == 1
+                more = " more" if names else ""
+                what = (
+                    f"one{more} imported session" if one else f"{skipped}{more} imported sessions"
+                )
+                note = (
+                    f"I couldn't check {what} for new names, so names from "
+                    f"{'it' if one else 'them'} may be missing. Add any with ➕ Add a name "
+                    "on the names panel."
+                )
+                text = f"{text}\n{note}" if text else f"📝 {note}"
+            if text:
                 await self.post(
-                    campaign.dm_screen_channel_id,
-                    after_session_text(names, where="your imported sessions"),
-                    view=review_view(cid),
+                    campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
                 )
         for cid in list(self._import_queued):
             if await store.pending_scans(gid, cid):

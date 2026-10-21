@@ -811,10 +811,137 @@ class TheProgress(WithImports):
                     "date": "2026-09-14",
                     "state": "waiting",
                     "reason": None,
+                    "stage": "cleaning",
+                    "namesToAnswer": 0,
+                    "namesUnchecked": False,
                     "recap": None,
                 }
             ],
         )
+
+    async def stage(self, imp_id: str) -> dict[str, Any]:
+        got = await imports.progress(self.web, self.session, self.ref_c, imp_id, outside=None)
+        return cast(dict[str, Any], got["sessions"][0])
+
+    async def one_import(self, recap: bool) -> tuple[str, str, int]:
+        done = await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [{"file": "a.txt", "date": "2026-09-14", "writeRecap": recap}],
+            },
+            ("a.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT i.session_id, t.started_at FROM session_imports i"
+                " JOIN transcript_sessions t ON t.id = i.session_id AND t.guild_id = i.guild_id"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return done["importId"], row["session_id"], int(row["started_at"])
+
+    async def set_import(self, **cols: Any) -> None:
+        sets = ", ".join(f"{k} = %s" for k in cols)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(f"UPDATE session_imports SET {sets}", tuple(cols.values()))
+
+    async def test_a_session_goes_through_its_stages_in_order(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+        from dmbot.recaps.store import RecapStore
+
+        imp, _, at = await self.one_import(True)
+        self.assertEqual((await self.stage(imp))["stage"], "cleaning")
+        await self.set_import(state="done")
+        self.assertEqual((await self.stage(imp))["stage"], "checking_names")
+        await self.set_import(scanned=True, scan_finished=True)
+        self.assertEqual((await self.stage(imp))["stage"], "starting_recap")
+        await self.set_import(recap_started=True)
+        self.assertEqual((await self.stage(imp))["stage"], "recap_not_written")
+        holds = HoldStore(self.db)
+        await holds.hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id,
+            channel_id=66, names_open=3,
+        )  # fmt: skip
+        waiting = await self.stage(imp)
+        self.assertEqual((waiting["stage"], waiting["namesToAnswer"]), ("waiting_for_names", 3))
+        await holds.release(THURSDAY.id, self.one.id, at, queue=False)
+        recaps = RecapStore(self.db)
+        await recaps.enqueue(THURSDAY.id, self.one.id, at, dm_user_id=ALICE.id)
+        self.assertEqual((await self.stage(imp))["stage"], "writing_recap")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
+        self.assertEqual((await self.stage(imp))["stage"], "recap_ready")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+        self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
+
+    async def test_the_door_answers_only_a_dm_of_the_campaign_on_a_listed_server(self) -> None:
+        imp, _, _ = await self.one_import(True)
+
+        async def ask(user: Any, token_hash: str, guild: int) -> Any:
+            async with self.web.user(user.id, session=token_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(guild),))
+                cur = await conn.execute(
+                    "SELECT dmbot_import_progress(%s, %s, %s) AS r", (guild, self.one.id, imp)
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            return row["r"]
+
+        self.assertEqual(len(await ask(ALICE, self.session.id_hash, THURSDAY.id)), 1)  # the DM
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        self.assertIsNone(await ask(BOB, bob.id_hash, THURSDAY.id))  # same server, not a DM
+        self.assertIsNone(await ask(ALICE, self.session.id_hash, 999))  # a server not on her list
+
+    async def test_a_hold_or_job_of_another_campaign_changes_nothing_here(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+        from dmbot.recaps.store import RecapStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        other = self.two.id  # same start time, another campaign
+        await HoldStore(self.db).hold(
+            THURSDAY.id, other, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            names_open=4,
+        )  # fmt: skip
+        await RecapStore(self.db).enqueue(THURSDAY.id, other, at, dm_user_id=ALICE.id)
+        got = await self.stage(imp)
+        self.assertEqual((got["stage"], got["namesToAnswer"]), ("starting_recap", 0))
+
+    async def test_a_silent_hold_is_not_waiting_on_the_dm(self) -> None:
+        from dmbot.recaps.hold import HoldStore
+
+        imp, _, at = await self.one_import(True)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        await HoldStore(self.db).hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id, channel_id=66,
+            asked=False,
+        )  # fmt: skip
+        self.assertEqual((await self.stage(imp))["stage"], "finding_names")
+
+    async def test_a_session_without_a_recap_is_done_once_its_names_are_checked(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        self.assertEqual((await self.stage(imp))["stage"], "done")
+
+    async def test_a_failed_session_says_so(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        await self.set_import(state="failed", reason="it could not be read")
+        got = await self.stage(imp)
+        self.assertEqual((got["stage"], got["reason"]), ("failed", "it could not be read"))
+
+    async def test_a_name_check_that_was_given_up_is_shown(self) -> None:
+        from dmbot.transcript.import_job import ImportStore
+
+        imp, sid, _ = await self.one_import(False)
+        await self.set_import(state="done")
+        self.assertFalse((await self.stage(imp))["namesUnchecked"])
+        await ImportStore(self.db).give_up_scan(THURSDAY.id, sid)
+        got = await self.stage(imp)
+        self.assertTrue(got["namesUnchecked"])
+        self.assertEqual(got["stage"], "done")  # it moves on, but the DM is told it was skipped
 
     async def test_an_unknown_import_is_not_found(self) -> None:
         with self.assertRaises(RecapError):

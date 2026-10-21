@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Make the audio again for a recap you already posted",
+    what: "If you fix a name's spelling after a recap was posted, the recap page offers Make the audio again. The new audio is used on the recap page and its link. The message already in Discord keeps its old audio. Only the DM sees the button, and audio has to be part of your plan.",
+    reason: "In review (#2203); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Recaps for the older sessions you bring in",
     what: "When you bring in older sessions on the website, you can ask for a recap of each one. DMbot first looks for new names in each session, in date order, then asks you about them on your DM screen the usual way. A recap waits for your answers about its names, like a recap of a live session, and counts toward your monthly recaps. Only you, the DM, can ask for it, and it only uses the words of people who agreed to be recorded.",
     reason: "In review (#2106); held until dev1 deploys it and the import page offers the choice (IMPORT_LIVE).",

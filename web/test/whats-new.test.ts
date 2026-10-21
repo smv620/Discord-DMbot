@@ -61,6 +61,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Make the audio again for a recap you already posted", // until dev1 deploys it (#2203)
       "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
       "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
       "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
