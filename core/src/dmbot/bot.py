@@ -5560,6 +5560,20 @@ class DMBot(commands.AutoShardedBot):
                 self._track(  # game talk by a DM: now it may be offered a time suggestion (#1758)
                     self._suggest_after_label(table, waiting.speaker, said), "time-suggest"
                 )
+            try:
+                if (
+                    topic != OFF_TOPIC
+                    and said is not None
+                    and self.settings.secret_reveal_ask
+                    and table.is_dm(waiting.speaker)
+                ):
+                    # A held DM line that turned out to be game talk is asked about like any
+                    # other (#2101); `_reveal_ask` checks consent and the table again itself.
+                    # A line labelled after the session has ended is not asked, on purpose: the
+                    # after-session question covers it, and `_reveal_ask` finds no table then.
+                    self._track(self._reveal_ask(table, waiting.speaker, said), "secret-reveal-ask")
+            except Exception:  # never costs the rest of the window its labels
+                log.exception("Secret reveal: couldn't look at a held line")
             if topic != OFF_TOPIC and said is not None:
                 # Game talk: its words count now. A window the filter couldn't judge (a slow
                 # or failed call, a resting filter) arrives here as game talk, as everywhere.
