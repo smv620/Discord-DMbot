@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ImportProgress } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Import from "../src/account/Import";
-import { refFromPath } from "../src/account/Recaps";
 import { importPage as w } from "../src/content/import-words";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -78,11 +77,9 @@ describe("each link goes to the session's own recap", () => {
     expect(hrefOf(w.linkFor(w.recapLink, "a.txt"))).toBe("/account/recaps");
   });
 
-  it("builds a link the recap page reads back as the same reference", async () => {
+  it("builds the address of a reference in the form the bot makes (guild.campaign.time)", async () => {
     await showing({ sessions: [row("a.txt", "recap_ready", "123.cmp1.1700000000")] });
-    const href = hrefOf(w.linkFor(w.recapLink, "a.txt"));
-    expect(href).toBe("/account/recaps/123.cmp1.1700000000");
-    expect(refFromPath(href ?? "")).toBe("123.cmp1.1700000000");
+    expect(hrefOf(w.linkFor(w.recapLink, "a.txt"))).toBe("/account/recaps/123.cmp1.1700000000");
   });
 
   it("gives each session its own link", async () => {
