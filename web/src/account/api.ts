@@ -460,12 +460,31 @@ export interface ImportStarted {
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
   estimate: { sessions: number; fastCalls: number };
 }
+/** Where one imported session has got to (#2230); an older API sends none and the page falls back
+ * to the plain `state`. */
+export type ImportStage =
+  | "cleaning"
+  | "checking_names"
+  | "finding_names"
+  | "waiting_for_names"
+  | "starting_recap"
+  | "writing_recap"
+  | "recap_ready"
+  | "recap_failed"
+  | "recap_not_written"
+  | "done"
+  | "failed";
 export interface ImportProgress {
   sessions: {
     file: string;
     date: string;
     state: ImportState;
     reason: string | null;
+    stage?: ImportStage;
+    /** The name questions its recap waits on. */
+    namesToAnswer?: number;
+    /** True when the name check for this session was given up. */
+    namesUnchecked?: boolean;
   }[];
 }
 

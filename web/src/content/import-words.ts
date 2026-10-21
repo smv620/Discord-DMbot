@@ -146,6 +146,27 @@ export const importPage = {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
     partly_labelled: "Some lines couldn't be sorted, so they count as game talk.",
   } as Record<string, string>,
+  // Where each session has got to (#2230). Simple words: what DMbot is doing, or what it needs.
+  stage: {
+    cleaning: "Tidying the transcript",
+    checking_names: "Looking for names",
+    finding_names: "Looking for names",
+    starting_recap: "Writing the recap",
+    writing_recap: "Writing the recap",
+    recap_ready: "Recap ready",
+    recap_failed: "The recap couldn't be written. You can try again from the recap list.",
+    recap_not_written: "Imported (no recap)",
+    done: "Imported",
+    failed: "Couldn't import this one",
+  } as Record<string, string>,
+  waitingForNames: (n: number): string =>
+    n > 0
+      ? `Waiting for your answers about ${n} ${n === 1 ? "name" : "names"}`
+      : "Waiting for your answers about names",
+  recapLink: "Open the recaps",
+  namesLink: "Answer them",
+  namesUnchecked:
+    "DMbot couldn't check every imported session for new names, so some may be missing. Add any with ➕ Add a name on the names panel.",
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
   allDone: "All done. The sessions are in your transcripts.",
