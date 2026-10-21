@@ -262,7 +262,7 @@ class ThePreviewAndCheck(WithImports):
         got = await self.preview(
             ("notes.md", CRAIG), ("a.txt", "just prose\nwith no speakers\n"), ("b.txt", "   ")
         )
-        self.assertEqual([f["error"] for f in got["files"]], ["not_txt", "unreadable", "empty"])
+        self.assertEqual([f["error"] for f in got["files"]], ["not_txt", "unknown_format", "empty"])
         self.assertNotIn("rusty", json.dumps(got))
 
     async def test_the_limits_are_enforced(self) -> None:
@@ -440,6 +440,107 @@ class TheSuggestions(WithImports):
         # the character they play: the same rules
         self.assertIsNone(await self.played(512, secret_name=True))
         self.assertIsNone(await self.played(513, audience_limited=True))
+
+    async def plays_waiting(self) -> list[tuple[int, str]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT user_id, character_id FROM import_plays ORDER BY 1")
+            return [(r["user_id"], r["character_id"]) for r in await cur.fetchall()]
+
+    async def confirm_plays(self, plays: object) -> dict[str, Any]:
+        return await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 1}],
+                "plays": plays,
+            },
+            ("a.txt", CRAIG),
+        )
+
+    async def test_a_chosen_character_waits_for_the_bot_to_make_it_a_link(self) -> None:
+        cerric = await self.character(550, "Cerric")
+        await self.confirm_plays({"Mira (mira_v)": "cerric"})  # (the name, however it is cased)
+        self.assertEqual(await self.plays_waiting(), [(MIRA, cerric)])
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_choice_for_a_label_that_is_not_mapped_or_a_member_not_recorded_is_ignored(
+        self,
+    ) -> None:
+        await self.character(551, "Cerric")
+        await self.character(552, "Brann")
+        # Tomas has not agreed; "Stranger" is not a label of this import's mapping
+        await self.confirm_plays({"Tomas (tomas#1)": "Brann", "Stranger": "Cerric", "x": 5})
+        self.assertEqual(await self.plays_waiting(), [])
+
+    async def test_only_a_character_nobody_plays_and_everybody_may_know_is_kept(self) -> None:
+        await self.character(553, "Veyra", secret_name=True)
+        await self.character(554, "Brannock", audience_limited=True)
+        await self.character(555, "Taken", played_by=TOMAS)
+        await self.character(556, "Waterdeep", type_="location")
+        await self.character(557, "Twin")
+        await self.character(558, "Twin")
+        for name in ("Veyra", "Brannock", "Taken", "Waterdeep", "Twin", "Nobody", ""):
+            self.assertEqual(await self.plays_of_one(name), [], name)
+
+    async def plays_of_one(self, name: str) -> list[tuple[int, str]]:
+        await self.confirm_plays({"Mira (mira_v)": name})
+        got = await self.plays_waiting()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM import_plays")
+            await conn.execute("DELETE FROM session_imports")
+            await conn.execute("DELETE FROM transcript_sessions")
+        return got
+
+    async def test_a_name_shared_with_a_character_someone_plays_stores_nothing(self) -> None:
+        await self.character(570, "Twin", played_by=TOMAS)
+        await self.character(571, "Twin")  # the free one is not guessed
+        self.assertEqual(await self.plays_of_one("Twin"), [])
+
+    async def test_a_proposed_character_is_never_stored(self) -> None:
+        eid = await self.character(572, "Maybe")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (eid,)
+            )
+        self.assertEqual(await self.plays_of_one("Maybe"), [])
+
+    async def test_someone_who_is_not_a_dm_of_the_campaign_stores_nothing(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        await self.character(573, "Cerric")
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        async with self.web.user(BOB.id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_plays(%s, %s, %s::jsonb, 6, NULL) AS r",
+                (THURSDAY.id, self.one.id, json.dumps([{"user": str(MIRA), "name": "Cerric"}])),
+            )
+            self.assertIsNone((await cur.fetchone() or {})["r"])
+        self.assertEqual(await self.plays_waiting(), [])
+
+    async def test_a_failed_import_stores_no_choice(self) -> None:
+        await self.character(574, "Cerric")
+        with self.assertRaises(RecapError):
+            await self.confirm(
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "missing.txt", "date": "2026-09-14"}],
+                    "plays": {"Mira (mira_v)": "Cerric"},
+                },
+                ("a.txt", CRAIG),
+            )
+        self.assertEqual(await self.plays_waiting(), [])
+
+    async def test_a_second_choice_for_a_member_replaces_the_first(self) -> None:
+        await self.character(559, "Cerric")
+        brann = await self.character(560, "Brann")
+        await self.confirm_plays({"Mira (mira_v)": "Cerric"})
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM session_imports")
+            await conn.execute("DELETE FROM transcript_sessions")
+        await self.confirm_plays({"Mira (mira_v)": "Brann"})
+        self.assertEqual(await self.plays_waiting(), [(MIRA, brann)])
 
     async def test_a_nickname_match_never_shows_a_secret_own_name(self) -> None:
         # "Lord Vex" is the person's name and it is secret; "The Stranger" is a public nickname.

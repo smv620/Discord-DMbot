@@ -237,9 +237,21 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "Import reads more transcripts",
+    what: "When you bring in older sessions, DMbot now also reads a Google Doc transcript that writes each name in [square brackets], and a caption file (a .vtt or .srt) that says who is speaking. If it still can't read a file, it now says why: the format is one it doesn't know, or the captions don't say who is speaking.",
+    reason: "In review (#2302); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Settings has two small menus",
     what: "Settings is now in the DM Bot channel, under DMbot Main Menu. The choices you use least are grouped: Who can see the DM screen, and Campaign management (hand over, pause, how long transcripts are kept, game masters and delete). Each has a Back button.",
     reason: "In review (#2281); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "See and fix every name online",
+    what: "From Discord you can open a page with every name DMbot remembers in your campaign. Search them, filter by kind, and if you are the DM, fix a spelling, change what a name is, add other names, make one secret, merge two names or remove one. ↩️ Undo on the name's card in Discord still works.",
+    reason: "In review (#2295); held until its API (#2294) is deployed and dev1 has seen it on the test server; the NPC link on each name needs the NPC pages (#2266).",
   },
   {
     date: "2026-10-21",
