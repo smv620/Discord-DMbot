@@ -869,7 +869,7 @@ class TicketTimesMigration(DatabaseTest):
     """The migration moves tickets that already share a time apart, then adds the index."""
 
     async def test_planted_duplicates_are_moved_apart_by_the_later_id(self) -> None:
-        before = [m for m in MIGRATIONS if m[0] < "0154"]
+        before = [m for m in MIGRATIONS if m[0] < "0155"]
         await self.db.close()
         await drop_schema(TEST_URL, self.schema)
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
