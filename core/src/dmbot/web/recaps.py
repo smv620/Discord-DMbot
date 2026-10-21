@@ -77,7 +77,16 @@ def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> 
         "error": row["audio_error"] if state == "failed" else "",
         "current": current,
         # only for a text the DM approved with audio chosen (the database's door is the rule)
-        "canAskAgain": ready and state in ("ready", "failed") and approved and audio_chosen,
+        # A posted recap may be narrated again only when its audio no longer matches its text
+        # (#2183, a spelling fix, or a remake that failed); a draft or a posting one, whenever it
+        # is made or failed.
+        "canAskAgain": ready
+        and state in ("ready", "failed")
+        and approved
+        and audio_chosen
+        and (row["status"] != "posted" or not current),
+        # The page says what the new narration is for: the Discord message keeps the old one.
+        "postedNote": row["status"] == "posted",
     }
 
 
@@ -129,7 +138,7 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "canDrop": status == "draft",
         "audio": _audio_view(
             row,
-            ready=status in ("draft", "posting") and state == "ready",
+            ready=status in ("draft", "posting", "posted") and state == "ready",
             approved=_approved(row),
         ),
         # The DM's approval of the text (#2083). It counts only while the text is what they
@@ -496,11 +505,20 @@ async def share_recap(
     return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
-async def audio_again(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def audio_again(
+    db: Database, session: Session, ref: str, *, audio_in_plan: bool = True
+) -> dict[str, Any]:
     """ "Make the audio again" (#1418): only through the database's door, which holds it to a DM of
-    the campaign, a recap that is ready and not yet decided, and once every 10 minutes."""
+    the campaign, a recap that is ready, and once every 10 minutes. It is also for a posted recap
+    whose narration no longer matches its text (#2183). The campaign owner's plan must include
+    narration (`audio_in_plan`, from the API as for Approve; checked for every status, since a
+    recap may be posted while the request runs), and the audio step checks the plan and the
+    month's allowance again before any paid call. The recap page and its shared link get the new
+    files; the Discord message already posted keeps its old attachment."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        gid, cid, at, row = await _one(conn, ref, session, marks=False)
+        if not audio_in_plan:
+            raise RecapError("not_in_plan")
         cur = await conn.execute("SELECT dmbot_recap_audio_again(%s, %s, %s) AS r", (gid, cid, at))
         found = await cur.fetchone()
         outcome = found["r"] if found else "not_allowed"

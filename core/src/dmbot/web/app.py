@@ -31,6 +31,7 @@ from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
+from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     email_signin,
@@ -71,7 +72,14 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import PaymentError, PaymentProvider, paid_plan_ids
 from dmbot.web.recap_choices import read_choices, set_choice
-from dmbot.web.recap_requests import STATUS, read_instructions, rewrite, send_instructions
+from dmbot.web.recap_requests import (
+    STATUS,
+    read_instructions,
+    read_voice,
+    rewrite,
+    send_instructions,
+    send_voice,
+)
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
@@ -578,6 +586,7 @@ def create_app(
         "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
+        "audio_off": (409, "audio_off"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
@@ -639,6 +648,8 @@ def create_app(
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
     request_status = STATUS
+    voice_types = voice.TYPES
+    voice_max = voice.MAX_CLIP_BYTES
 
     async def bounded_json(request: Request, limit: int = 8 * 1024) -> Any:
         """A small JSON body, read with a running cap (a declared length is not trusted)."""
@@ -680,6 +691,43 @@ def create_app(
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    # A short spoken note (#2113): the clip is held in memory and in the request row only until the
+    # bot has written it down. The web side has no speech key either.
+    voice_limit = RateLimit(60, count=6)
+
+    @app.post("/me/recaps/{ref}/voice", status_code=202)
+    async def me_recap_voice(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        session, _token = signed
+        if voice_limit.take(f"voice:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        kind = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if kind not in voice_types:
+            raise HTTPException(status_code=415, detail="bad_type")
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > voice_max:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():  # a running cap: a declared length is not trusted
+            data += chunk
+            if len(data) > voice_max:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            return await send_voice(
+                db, session, ref, bytes(data), kind, outside=settings.outside_engine
+            )
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/voice/{request_id}")
+    async def me_recap_voice_state(ref: str, request_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_voice(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/rewrite")
     async def me_recap_rewrite(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         session, _token = signed
@@ -711,8 +759,14 @@ def create_app(
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
         """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
         session, _token = signed
+        if not settings.recaps_on:  # DMBOT_RECAPS is off: nothing would make it
+            raise HTTPException(status_code=409, detail="audio_off")
         try:
-            return await audio_again(db, session, ref)
+            facts = await read_choices(
+                db, session, ref.rsplit(".", 1)[0], now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+            return await audio_again(db, session, ref, audio_in_plan=bool(facts["canAudio"]))
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -951,7 +1005,7 @@ def create_app(
             return await imports.preview(
                 db, session, ref, body.get("files"), links=body.get("links"),
                 outside=settings.outside_engine, now=int(clock()),
-                enforce_plans=settings.enforce_plans,
+                enforce_plans=settings.enforce_plans, site_recaps_on=settings.recaps_on,
             )  # fmt: skip
         except RecapError as err:
             raise import_refusal(err) from None
@@ -1004,7 +1058,7 @@ def create_app(
             return await imports.confirm(
                 db, session, ref, body.get("files"), body.get("plan"),
                 links=body.get("links"), outside=settings.outside_engine, now=int(clock()),
-                enforce_plans=settings.enforce_plans,
+                enforce_plans=settings.enforce_plans, site_recaps_on=settings.recaps_on,
             )  # fmt: skip
         except RecapError as err:
             raise import_refusal(err) from None
