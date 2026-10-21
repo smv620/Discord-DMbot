@@ -3945,15 +3945,22 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     Others are added on request.
   - **Or a Google Doc link** (owner, 2026-10-20): instead of uploading, the DM may paste the share
     link of a Google Doc that holds a transcript, one link per session.
-    - **How it's read:** DMbot reads it once, through the guarded link reader `dmbot.fetch` that
-      house rules and name lists already use: Google Docs only, the plain-text export, the same
-      size limit and time-out.
+    - **How it's read:** DMbot reads it through the guarded link reader `dmbot.fetch` that house
+      rules and name lists already use: Google Docs only, the plain-text export, the same size
+      limit and time-out. It reads the doc again at Preview, Check and Import (Supervisor,
+      2026-10-20, #2143), so the DM keeps it shared until Import has started, and the page says
+      why a doc that stopped opening between steps failed. Pinning the text read at Preview is a
+      follow-up.
     - **From there,** it is exactly like an uploaded file: the same formats, consent mapping and
       checks, and the text isn't kept.
     - **Who can read the doc:** it must be shared as "Anyone with the link can view". DMbot never
       asks for access to the DM's Google account for this. If the doc isn't shared that way, the
       page says so plainly and how to change it. Reading private docs through Google's narrowest
       `drive.file` access waits for Phase 7.
+  - **From Discord** (owner, 2026-10-20, #2154): an **📥 Import sessions** button under the DM
+    screen's ⚙️ Settings, and `/dmbot import`, both open the website's Import sessions page with a
+    link button, for the campaign's DMs only. Nothing is imported in Discord: matching speakers,
+    dates and checks need the page.
   - **Consent is the hard rule, as everywhere.** Before anything is stored, the DM matches each
     speaker name in a file to a member of the server.
     - A speaker who matches a member who has agreed to be recorded (the current consent wording)
@@ -4010,8 +4017,16 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
        box, "Here's what I heard", for the DM to read, correct and send. It's the typed path from
        then on.
      - **Privacy:** the clip is the DM's own voice, given by pressing. It is transcribed and thrown
-       away, never stored, never in any transcript, and only the campaign's DMs can use it. A clip
-       is at most 2 minutes.
+       away, never kept, never in any transcript, and only the campaign's DMs can use it.
+       - **Consent first** (Supervisor, 2026-10-20, #2159): the DM must have agreed to recording
+         (the current terms, and the speech company in use) before the website accepts a clip. A
+         clip waits in the database only until the bot turns it into words, and at most about 10
+         minutes, swept across every server.
+       - **Length:** the page records up to **a minute** (Supervisor, 2026-10-20, #2160), because
+         the note box holds 1,000 letters. The server accepts up to 2 minutes as a ceiling.
+       - **Listening time** counts the clip's real length; a clip never costs a minute it didn't
+         use.
+       - The privacy page names the speech company.
      - **The security header** `Permissions-Policy: microphone=()` changes to `microphone=(self)`
        for the recap page only.
      - **Names help, as in a live session** (owner, 2026-10-20): the clip is transcribed with the
@@ -4279,8 +4294,26 @@ months.
   come on any day of that week.
 - **What the person sees** on their account page: subject, date, status ("Answered by DMbot's AI
   helper", "Answered by the team", "With the team") and the first line of the last answer, never
-  anyone else's and never their own words back (#1458). The privacy page says all of this; the
+  anyone else's (#1458). **Opening a ticket shows its whole conversation** (owner, 2026-10-21,
+  replacing #1458's "never their own words back"): their question, each of the helper's answers,
+  each of their emailed replies and each of the team's replies, oldest first, each labelled
+  "You", "DMbot's helper (a program)" or "DMbot team" with its date. Only the ticket's own account
+  sees it. The privacy page says all of this; the
   site's words show only when `SUPPORT_AI_LIVE` is on (`support-words.ts`).
+- **The email chain is kept** (owner, 2026-10-21). A ticket's history is the conversation: the
+  question, the helper's answers, the person's emailed replies and the team's replies, all kept
+  in `support_tickets` and `support_replies` for the ticket's life (12 months), never trimmed to
+  the latest. Every email about a ticket to the person (the helper's answer, the team's reply, the
+  "a person will reply" note) carries the conversation so far below the new message, newest first,
+  each part labelled and dated as on the account page, like an ordinary email reply. The history
+  starts with one fixed line ("Earlier in this conversation:") that `support_mail` cuts at, so a
+  reply from a mail program that adds no ">" still stores only the new words. All of a
+  ticket's emails share the subject `Re: <subject>` and thread together in the person's mail
+  (`In-Reply-To` and `References` naming the ticket's earlier emails), and the team's "Needs the
+  team" email carries the whole conversation too. An emailed reply is stored without the quoted
+  text below it (`support_mail`), since the earlier parts are already kept; a reply that is only
+  quoted text is not stored. The 30-reply flood limit per ticket stays. Mail the team answers
+  straight from the team inbox, outside the admin page, is not part of the ticket.
 - **Spend** is bounded by the 5 answers per ticket, the Try It limit of three tickets a day and
   one waiting, and the owner's spend limit on the Anthropic console. The web API holds
   `ANTHROPIC_API_KEY` for this one use (a compose pass-through, never a web setting).

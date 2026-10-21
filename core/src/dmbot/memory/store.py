@@ -1728,14 +1728,38 @@ class MemoryStore:
             elif clash:
                 # The right spelling was already one of its other names: that becomes
                 # its name, and the misspelling stops being listened for.
-                await w.update(ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED})
+                # kind too: it may have been an "old spelling" (a rename back, #2170).
+                await w.update(
+                    ALIASES, clash[0]["id"], {"text": name, "status": CONFIRMED, "kind": "full"}
+                )
                 if own:
                     await w.update(ALIASES, own[0]["id"], {"status": REJECTED})
             else:
                 await w.insert(
                     ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
                 )
+            await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
             return Written(_entity(row), w.batch)
+
+    async def _keep_old_spelling(
+        self, w: Changes, entity_id: str, old_name: str, old_key: str, new_key: str
+    ) -> None:
+        """The spelling a fixed name had becomes an "old spelling" other name (#2170): matched, so
+        a line that says it is fixed to the new spelling and a search finds the entry, but never
+        listened for. Dropped, as the old spelling always was, when it is only the new one
+        written differently, when another entry has it as a name (the cleaner would turn that
+        entry's lines into this one), when any secret name has it, or when it is a word the DM
+        screen uses."""
+        if old_key == new_key or is_dm_word(old_name):
+            return
+        others = await w.select(ALIASES, " AND key = %s AND entity_id <> %s", [old_key, entity_id])
+        if any(o["status"] in LIVE or o["secret"] for o in others):
+            return
+        mine = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
+        if mine:  # it was rejected on the way (the new spelling was already another name)
+            await w.update(ALIASES, mine[0]["id"], {"kind": "old", "status": CONFIRMED})
+            return
+        await w.insert(ALIASES, _new_alias(w, entity_id, old_name, "old", CONFIRMED, False, None))
 
     async def set_main_name(
         self, guild_id: int, campaign_id: str, entity_id: str, alias_id: str, *, source: str
@@ -1763,7 +1787,22 @@ class MemoryStore:
                 )
             elif kept[0]["status"] != CONFIRMED:
                 await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
+            if alias["kind"] == "old":  # an old spelling made the name is listened for again
+                await w.update(ALIASES, alias_id, {"kind": "full"})
             row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
+            return Written(_entity(row), w.batch)
+
+    async def set_note(
+        self, guild_id: int, campaign_id: str, entity_id: str, note: str, *, source: str
+    ) -> Written[Entity]:
+        """The note shown with a suggestion (how it was heard, or spelled out at the table). Only
+        a suggestion still waiting for the DM has one that can change."""
+        note = " ".join(note.split())[:200]
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if current["status"] != PROPOSED:
+                raise MemoryRuleError(NOT_FOUND)
+            row = await w.update(ENTITIES, entity_id, {"description": note})
             return Written(_entity(row), w.batch)
 
     async def confirm_entity(
@@ -1919,6 +1958,8 @@ class MemoryStore:
             if existing:
                 old = existing[0]
                 upgrade = _upgrade(old, status, secret, source)
+                if old["kind"] == "old" and kind != "old":
+                    upgrade = {**upgrade, "kind": kind}  # asked for by name: listened for again
                 row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
                 return Written(_alias(row), w.batch)
             row = await w.insert(

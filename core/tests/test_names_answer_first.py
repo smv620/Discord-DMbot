@@ -229,7 +229,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
-        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL], batch=None))
         memory.add_relation = self.slow(SimpleNamespace(value=(SimpleNamespace(secret=False), [])))
         knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
                          None, None, None, None, False, 0)  # fmt: skip
