@@ -282,6 +282,19 @@ class SupportRoute(SupportBase):
         answer = await self.send(client)  # (still one waiting at a time)
         self.assertEqual((answer.status_code, answer.json()), (429, {"error": "one_waiting"}))
 
+    async def test_an_access_grant_without_a_plan_row_may_write_too(self) -> None:
+        await self.no_plan_row()
+        async with self.db.grant_writer() as conn:
+            await conn.execute(
+                "INSERT INTO access_grants (discord_user_id, level, granted_by, granted_at)"
+                " VALUES (%s, 'guild', 'someone', 0)",
+                (ALICE.id,),
+            )
+        client = await self.client()
+        self.assertIs((await client.get("/me")).json()["canSupport"], True)
+        self.assertEqual((await self.send(client)).status_code, 201)
+        self.assertEqual([t["plan"] for t in await self.tickets()], ["grant"])
+
     async def test_an_account_with_no_plan_row_and_no_free_access_still_may_not(self) -> None:
         await self.no_plan_row()
         client = await self.client()
