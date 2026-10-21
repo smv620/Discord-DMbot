@@ -282,3 +282,10 @@ def group_of(holds: list[Hold], held: Hold) -> list[Hold]:
     if not held.group_id:
         return [held]
     return [h for h in holds if h.group_id == held.group_id and h.campaign_id == held.campaign_id]
+
+
+# How a hold's question line ends, said under it when its buttons come off (#2174).
+LINE_ANSWERED = "Answered: writing the recap."
+LINE_EXPIRED = "No answer in time: writing the recap as it is."
+LINE_WRITING = "Writing the recap."
+LINE_NO_RECAP = "Recaps are off for this campaign."
