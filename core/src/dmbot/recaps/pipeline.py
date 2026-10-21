@@ -47,9 +47,9 @@ log = logging.getLogger(__name__)
 # restarts; each restart (at most two) makes those calls again.
 MAX_CALLS = 19
 PROSE_LAST_ATTEMPT = 2  # the prose stage has tries 0, 1 and 2: a long real session needs the third
-# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is six
-# calls now (beats, write, format, facts, grade, title), so 50 keeps the eight a day that 40 gave
-# five-call recaps (#2074).
+# AI calls for one campaign's recaps in a day (a Try again is a new recap). A clean recap is eight
+# calls now (split, beats, notes, write, format, facts, grade, title; the first only for a session
+# with an earlier one), so 52 keeps the seven a day that 40 gave five-call recaps (#2074).
 DAILY_CALLS = 52
 BACKOFF_S = (60, 240, 960)
 MAX_RESTARTS = 2  # a stopped player restarts the work; not for ever
@@ -306,7 +306,8 @@ class RecapWorker:
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
-        if self._allowance is not None and job.state == "queued" and job.calls == 0:
+        first = job.state == "queued" and job.calls == 0 and job.split is None
+        if self._allowance is not None and first:
             # The monthly allowance (#1428), before the first paid call of this recap. A count
             # that can't be read spends nothing: the job waits, and fails if it keeps failing.
             try:
@@ -546,7 +547,10 @@ class RecapWorker:
             {label: len(sp.pick(said, split, label)) for label in sp.LABELS},
             ", the retelling unsure" if split.unsure else "",
         )
-        await self._store.update(gid, cid, job.session_at, split=split.to_json())
+        # (stored with a clean error count: the split's service errors are not the beats' budget)
+        await self._store.update(
+            gid, cid, job.session_at, split=split.to_json(), errors=0, next_at=0, last_error=""
+        )
         return await self._store.get(gid, cid, job.session_at)
 
     async def _check_beats(
@@ -1358,7 +1362,17 @@ class RecapWorker:
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))
         self._written.pop((gid, cid, job.session_at), None)
-        for stage in ("beats", "prose", "write", "format", "facts", "grade", "title"):
+        for stage in (
+            "split",
+            "beats",
+            "significance",
+            "prose",
+            "write",
+            "format",
+            "facts",
+            "grade",
+            "title",
+        ):
             self._last.pop((gid, cid, job.session_at, stage), None)
 
     async def _restart(self, gid: int, cid: str, job: Job) -> Job | None:
