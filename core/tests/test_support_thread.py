@@ -10,7 +10,7 @@ import re
 from dmbot.web import support
 from dmbot.web import support_ai as ai
 from dmbot.web import support_mail as sm
-from tests.test_support import MESSAGE, SUBJECT
+from tests.test_support import MESSAGE, SUBJECT, TEAM
 from tests.test_support_helper import ALICE_EMAIL, HelperBase, answer, new_words
 
 
@@ -111,6 +111,42 @@ class TheHistory(HelperBase):
         self.assertLess(len(text), 3000 + 600)
         whole = ai.conversation(first, replies[:2])
         self.assertNotIn(ai.HISTORY_OLDER, whole)
+
+
+class TheLimits(HelperBase):
+    async def test_the_default_cut_holds_even_for_one_huge_message(self) -> None:
+        number = await self.ticket("w" * 3000)
+        first = await support.one(self.web, number)
+        assert first is not None
+        huge = [support.Reply(i, "ai", "y" * 7900, 1_800_000_000) for i in range(1, 6)]
+        text = ai.conversation(first, huge)
+        self.assertLessEqual(
+            len(text), ai.HISTORY_MAX + len(ai.HISTORY_HEADING) + len(ai.HISTORY_OLDER) + 400
+        )
+        self.assertTrue(text.endswith(ai.HISTORY_OLDER))
+        one = ai.conversation(first, [support.Reply(1, "ai", "z" * 30_000, 1_800_000_000)])
+        self.assertLessEqual(len(one), ai.HISTORY_MAX + len(ai.HISTORY_HEADING) + 400)
+
+    async def test_the_team_is_pointed_to_its_own_page_for_older_messages(self) -> None:
+        number = await self.ticket("first")
+        first = await support.one(self.web, number)
+        assert first is not None
+        many = [support.Reply(i, "customer", "q" * 900, 1_800_000_000) for i in range(1, 30)]
+        text = ai.conversation(
+            first, many, speakers=ai.TEAM_SPEAKERS, limit=3000, older=ai.HISTORY_OLDER_TEAM
+        )
+        self.assertTrue(text.endswith(ai.HISTORY_OLDER_TEAM))
+
+    async def test_the_history_goes_only_to_the_tickets_person(self) -> None:
+        await self.ticket()
+        self.fake.answers.append(answer("Open the menu."))
+        await self.helper.run_once()
+        await self.helper.team_reply(1, "Hello.")
+        for mail in self.mails():
+            if str(mail["To"]) not in (ALICE_EMAIL, TEAM):
+                self.fail(f"an email went to {mail['To']}")
+            if ai.HISTORY_HEADING in mail.get_content():
+                self.assertEqual(str(mail["To"]), ALICE_EMAIL)
 
 
 class TheThreading(HelperBase):

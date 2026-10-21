@@ -92,7 +92,6 @@ WHY: dict[support.Reason, str] = {
     "helper-down": "the AI was down for a day and could not answer.",
 }
 
-ACK_SUBJECT = "We got your question"
 WEEKLY_SUBJECT = "DMbot support this week"
 # What the thank-you says happens next: the helper answers first only if it is switched on
 # here (a model and key are configured); otherwise saying so would promise what won't come.
@@ -143,6 +142,7 @@ LABELS = {"customer": "Customer", "ai": "Helper (AI)", "person": "Team"}
 HISTORY_HEADING = "Earlier in this conversation:"
 HISTORY_MAX = 20_000  # characters: the newest parts that fit
 HISTORY_OLDER = "Older messages are on your account page."
+HISTORY_OLDER_TEAM = "Older messages are on the admin page."
 SPEAKERS = {"customer": "You", "ai": "DMbot's helper (a program)", "person": "DMbot team"}
 TEAM_SPEAKERS = {**SPEAKERS, "customer": "The customer"}
 MAX_REFERENCES = 20  # earlier Message-IDs named in a new email's References header
@@ -160,6 +160,7 @@ def conversation(
     *,
     speakers: dict[str, str] = SPEAKERS,
     limit: int = HISTORY_MAX,
+    older: str = HISTORY_OLDER,
 ) -> str:
     """The ticket's conversation so far, newest first, each part labelled and dated, starting with
     the fixed line. When it is long, the newest parts that fit in `limit` characters, then a line
@@ -171,7 +172,7 @@ def conversation(
     for label, stamp, text in reversed(parts):
         block = f"{label}, {when(stamp)}:\n{text.strip()}"
         if kept and size + len(block) > limit:
-            kept.append(HISTORY_OLDER)
+            kept.append(older)
             break
         kept.append(block[:limit])
         size += len(block)
@@ -501,7 +502,7 @@ class SupportHelper:
             f"Ticket {ticket.id}: {ticket.subject}",
             f"Plan: {ticket.plan}",
             "",
-            conversation(ticket, replies, speakers=TEAM_SPEAKERS),
+            conversation(ticket, replies, speakers=TEAM_SPEAKERS, older=HISTORY_OLDER_TEAM),
         ]
         await self._alert_team(
             f"Support ticket {ticket.id} needs you: {ticket.subject}"[:150], "\n".join(lines)

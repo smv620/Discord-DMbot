@@ -231,8 +231,8 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
-    title: "Support emails keep the whole conversation",
-    what: "When you write to DMbot support, every email back to you now carries the conversation so far below the new message, with who said what and when. The emails also line up as one conversation in your mail program, and when you reply, only your new words are kept.",
+    title: "Support emails show the whole chat",
+    what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
     reason: "In review (#2192); held until dev1 deploys it.",
   },
   {
