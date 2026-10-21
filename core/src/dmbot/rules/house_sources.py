@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from dmbot.rules import house_file
 from dmbot.rules.house import HouseRule
 
-LINKED_TITLE = "The linked house-rules file"
+LINKED_TITLE = "Linked file"
 DISCORD_TITLE = "Added in Discord"
 UPLOAD_TITLE = "An uploaded file"
 MAX_SOURCES = 25  # what one Discord menu can hold
@@ -34,8 +34,9 @@ class Source:
     def line(self) -> str:
         """The list's line for this source: its title, what it is, and how many rules."""
         count = f"{len(self.rules)} rule{'s' if len(self.rules) != 1 else ''}"
-        by = f", by {self.publisher}" if self.publisher else ""
-        return f"{self.title}{by}: {count}"
+        by = f" (by {self.publisher})" if self.publisher else ""
+        kind = {"upload": "File: ", "followed": "Set: "}.get(self.kind, "")
+        return f"{count} · {kind}{self.title}{by}"
 
 
 def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = None) -> list[Source]:

@@ -30,17 +30,17 @@ from dmbot.ui.dmbot_commands import (
 log = logging.getLogger(__name__)
 
 SOURCES_LABEL = "📂 Sources"
-OPEN_LABEL = "🔗 Open the file"
-NONE_YET = "No house rules yet, so there are no sources to show."
-NOT_READY = "Sources aren't available right now. Please try again in a moment."
-COULDNT = "Couldn't make that file just now. Try again in a moment."
-GONE = "That source has no rules any more. Press 📂 Sources again to see the list."
+OPEN_LABEL = "🔗 Open file"
+NONE_YET = "No house rules yet. Add one and its source shows up here."
+NOT_READY = "Couldn't load sources. Press 📂 Sources to try again."
+COULDNT = "Couldn't make that file. Pick it again to retry."
+GONE = "That source is empty now. Press 📂 Sources for the new list."
 INTRO = "📂 **Where your house rules came from**"
-OUTRO = (
-    "Pick one below to download its rules as a text file. Only you can see this message. "
-    "An uploaded file itself isn't kept: the rules come from DMbot's copy."
-)
-PICK_PLACEHOLDER = "📥 Download the rules from…"
+OUTRO = "Pick one below to get its rules as a text file. Only you can see this."
+UPLOAD_NOTE = "Uploaded files aren't stored. You get DMbot's copy of the rules."
+CUT_NOTE = "Showing the first 25 sources."
+LABEL_MAX = 25  # a phone cuts a longer menu label
+PICK_PLACEHOLDER = "📥 Get rules from…"
 LINK_BUTTON_MAX = 512  # what Discord allows in a link button
 
 
@@ -75,7 +75,12 @@ async def _load(interaction: discord.Interaction, campaign: Campaign) -> tuple[l
 
 def _text(sources: list[Source]) -> str:
     lines = [f"• {discord.utils.escape_markdown(s.line)}" for s in sources]
-    return "\n".join([INTRO, *lines, "", OUTRO])
+    notes = [OUTRO]
+    if any(s.kind == "upload" for s in sources):
+        notes.append(UPLOAD_NOTE)
+    if len(sources) >= house_sources.MAX_SOURCES:
+        notes.append(CUT_NOTE)
+    return "\n".join([INTRO, *lines, "", *notes])
 
 
 class SourcesView(_Menu):
@@ -84,9 +89,10 @@ class SourcesView(_Menu):
         self.campaign = campaign
         options = [
             discord.SelectOption(
-                label=s.title[:100],
+                label=s.title if len(s.title) <= LABEL_MAX else s.title[: LABEL_MAX - 1] + "…",
                 value=s.key[:100],
-                description=f"{len(s.rules)} rule{'s' if len(s.rules) != 1 else ''}",
+                description=f"{s.kind.capitalize()} · {len(s.rules)} "
+                f"rule{'s' if len(s.rules) != 1 else ''}",
             )
             for s in sources
         ]
@@ -106,7 +112,7 @@ class SourcesView(_Menu):
         try:
             await interaction.followup.send(
                 f"📥 **{discord.utils.escape_markdown(source.title)}**: {len(source.rules)} "
-                f"rule{'s' if len(source.rules) != 1 else ''}.",
+                f"rule{'s' if len(source.rules) != 1 else ''}. Open it in any text app.",
                 file=discord.File(io.BytesIO(text.encode()), filename=name),
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,

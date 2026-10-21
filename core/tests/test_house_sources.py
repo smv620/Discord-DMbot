@@ -61,7 +61,7 @@ class Grouping(unittest.TestCase):
             ],
         )
         self.assertEqual(out[-1].publisher, "Sam")
-        self.assertIn("by Sam", out[-1].line)
+        self.assertEqual(out[-1].line, "1 rule · Set: Red Table (by Sam)")
 
     def test_old_rules_read_as_added_in_discord(self) -> None:
         (only,) = house_sources.group([rule(1)])
@@ -145,7 +145,7 @@ class TheList(UITest):
         self.bot.rule_sets = SimpleNamespace(following=AsyncMock(return_value=[follow]))
         it = self.it()
         await ui.open_sources(it, campaign())
-        self.assertIn("Red Table, by Sam: 1 rule", it.followup.send.await_args.args[0])
+        self.assertIn("1 rule · Set: Red Table (by Sam)", it.followup.send.await_args.args[0])
 
     async def test_no_rules_say_so(self) -> None:
         self.store.rules["c1"] = []
