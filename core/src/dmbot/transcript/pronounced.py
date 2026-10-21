@@ -42,7 +42,9 @@ _NOT_A_PRONUNCIATION = frozenset(
         "strange", "funny", "different", "same", "tomorrow", "today", "tonight", "king",
         "queen", "whatever", "whichever", "sir", "lord", "lady", "dame", "prince", "princess",
         "emperor", "empress", "hero", "mister", "mr", "mrs", "ms", "dr", "saint", "captain",
-        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "baron", "baroness", "count", "countess", "duke", "duchess", "champion", "traitor",
+        "knight", "victor", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+        "sunday",
     )
 )  # fmt: skip
 # What follows a person's name in "say it like Gandalf would".

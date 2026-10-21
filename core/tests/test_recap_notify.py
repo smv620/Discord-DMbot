@@ -64,3 +64,53 @@ class TheDailyKind(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len({one, two, imp_a}), 3)
         self.assertEqual(imp_a, imp_b)  # an import's sessions share one email a day
+
+
+class TheReadyEmail(IsolatedAsyncioTestCase):
+    """The recap-ready email goes to the same people as the waiting one: every DM (#2237)."""
+
+    async def test_every_dm_of_the_campaign_gets_it_once_the_jobs_own_first(self) -> None:
+        from dmbot.recaps.notify import tell_the_dm
+
+        mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
+        store: Any = SimpleNamespace(
+            address=AsyncMock(side_effect=lambda guild, user: f"dm{user}@example.org")
+        )
+        job: Any = SimpleNamespace(
+            state="ready", title="The Gate", dm_user_id=9, session_at=1000, tries=0, last_error=""
+        )
+        result = await tell_the_dm(mailer, store, SITE, 5, CID, job, {7, 8, 9})
+        self.assertEqual(result, "sent")
+        calls = [c.kwargs for c in mailer.send.await_args_list]
+        self.assertEqual([c["user_id"] for c in calls], [9, 7, 8])  # the job's own DM first
+        self.assertEqual([c["to"] for c in calls], [f"dm{u}@example.org" for u in (9, 7, 8)])
+        self.assertEqual(len({c["kind"] for c in calls}), 1)  # one kind, so once for each person
+
+    async def test_one_failed_address_lookup_does_not_stop_the_other_dms(self) -> None:
+        from dmbot.recaps.notify import tell_the_dm
+
+        mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
+
+        async def address(guild: int, user: int) -> str:
+            if user == 7:
+                raise RuntimeError("down")
+            return f"dm{user}@example.org"
+
+        store: Any = SimpleNamespace(address=address)
+        job: Any = SimpleNamespace(
+            state="failed", title="", dm_user_id=9, session_at=1000, tries=1, last_error="x"
+        )
+        await tell_the_dm(mailer, store, SITE, 5, CID, job, {7, 8, 9})
+        calls = {c.kwargs["user_id"]: c.kwargs["to"] for c in mailer.send.await_args_list}
+        self.assertEqual(calls, {9: "dm9@example.org", 7: None, 8: "dm8@example.org"})
+
+    async def test_with_no_other_dms_only_the_jobs_dm_is_emailed(self) -> None:
+        from dmbot.recaps.notify import tell_the_dm
+
+        mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
+        store: Any = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
+        job: Any = SimpleNamespace(
+            state="failed", title="", dm_user_id=9, session_at=1000, tries=1, last_error="x"
+        )
+        await tell_the_dm(mailer, store, SITE, 5, CID, job)
+        self.assertEqual([c.kwargs["user_id"] for c in mailer.send.await_args_list], [9])
