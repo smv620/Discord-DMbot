@@ -205,6 +205,10 @@ class RecapStore:
         self._db = db
         self._now = clock
 
+    @property
+    def db(self) -> Database:
+        return self._db
+
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
