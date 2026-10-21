@@ -490,6 +490,48 @@ class TheSuggestions(WithImports):
             await conn.execute("DELETE FROM transcript_sessions")
         return got
 
+    async def test_a_name_shared_with_a_character_someone_plays_stores_nothing(self) -> None:
+        await self.character(570, "Twin", played_by=TOMAS)
+        await self.character(571, "Twin")  # the free one is not guessed
+        self.assertEqual(await self.plays_of_one("Twin"), [])
+
+    async def test_a_proposed_character_is_never_stored(self) -> None:
+        eid = await self.character(572, "Maybe")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (eid,)
+            )
+        self.assertEqual(await self.plays_of_one("Maybe"), [])
+
+    async def test_someone_who_is_not_a_dm_of_the_campaign_stores_nothing(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        await self.character(573, "Cerric")
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        async with self.web.user(BOB.id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_plays(%s, %s, %s::jsonb, 6, NULL) AS r",
+                (THURSDAY.id, self.one.id, json.dumps([{"user": str(MIRA), "name": "Cerric"}])),
+            )
+            self.assertIsNone((await cur.fetchone() or {})["r"])
+        self.assertEqual(await self.plays_waiting(), [])
+
+    async def test_a_failed_import_stores_no_choice(self) -> None:
+        await self.character(574, "Cerric")
+        with self.assertRaises(RecapError):
+            await self.confirm(
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "missing.txt", "date": "2026-09-14"}],
+                    "plays": {"Mira (mira_v)": "Cerric"},
+                },
+                ("a.txt", CRAIG),
+            )
+        self.assertEqual(await self.plays_waiting(), [])
+
     async def test_a_second_choice_for_a_member_replaces_the_first(self) -> None:
         await self.character(559, "Cerric")
         brann = await self.character(560, "Brann")

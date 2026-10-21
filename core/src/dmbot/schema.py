@@ -8048,6 +8048,14 @@ IMPORT_PLAYS = (
                              AND (outside IS NULL OR x.outside_to = outside)) THEN
                 CONTINUE;
             END IF;
+            -- A name shared by two live characters (played, limited or not) is the DM's to pick
+            -- in Discord: the free one is not guessed.
+            IF (SELECT count(*) FROM memory_entities t
+                WHERE t.guild_id = g AND t.campaign_id = c AND t.type = 'character'
+                  AND t.status IN ('proposed', 'confirmed')
+                  AND lower(t.name) = lower(btrim(left(w->>'name', 100)))) <> 1 THEN
+                CONTINUE;
+            END IF;
             SELECT array_agg(ch.id) INTO found FROM memory_entities ch
                 WHERE ch.guild_id = g AND ch.campaign_id = c AND ch.type = 'character'
                   AND ch.status = 'confirmed' AND ch.played_by IS NULL

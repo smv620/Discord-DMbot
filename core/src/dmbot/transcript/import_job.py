@@ -55,6 +55,16 @@ class Ready:
 
 
 @dataclass(frozen=True, slots=True)
+class WaitingPlay:
+    """A "plays which character" choice from the import page that waits for the bot."""
+
+    campaign_id: str
+    user_id: int
+    character_id: str
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class Row:
     id: int
     user_id: int
@@ -65,26 +75,30 @@ class ImportStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def waiting_plays(self, guild_id: int, limit: int = 50) -> list[tuple[str, int, str]]:
-        """(campaign, member, character) choices the DM made on the import page, oldest first,
-        that the bot has not made links of yet (#2135)."""
+    async def waiting_plays(self, guild_id: int, limit: int = 50) -> list[WaitingPlay]:
+        """The choices the DM made on the import page, oldest first, that the bot has not made
+        links of yet (#2135)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT campaign_id, user_id, character_id FROM import_plays"
+                "SELECT campaign_id, user_id, character_id, created_at FROM import_plays"
                 " ORDER BY created_at, user_id LIMIT %s",
                 (limit,),
             )
             return [
-                (r["campaign_id"], int(r["user_id"]), r["character_id"])
+                WaitingPlay(
+                    r["campaign_id"], int(r["user_id"]), r["character_id"], int(r["created_at"])
+                )
                 for r in await cur.fetchall()
             ]
 
-    async def done_plays(self, guild_id: int, campaign_id: str, user_id: int) -> None:
-        """A choice has been made a link, or can no longer be: it stops waiting."""
+    async def done_plays(self, guild_id: int, play: WaitingPlay) -> None:
+        """A choice has been made a link, or can no longer be: it stops waiting. Only this very
+        choice: one the DM saved again since it was read stays."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "DELETE FROM import_plays WHERE campaign_id = %s AND user_id = %s",
-                (campaign_id, user_id),
+                "DELETE FROM import_plays WHERE campaign_id = %s AND user_id = %s"
+                " AND character_id = %s AND created_at = %s",
+                (play.campaign_id, play.user_id, play.character_id, play.created_at),
             )
 
     async def waiting(self, guild_id: int, limit: int = PER_ROUND) -> list[tuple[str, str]]:

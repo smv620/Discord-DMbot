@@ -244,7 +244,6 @@ from dmbot.memory.models import (
     DM,
     FIX,
     KEEP,
-    PLAYER_CHARACTER,
     PROPOSED,
     Heard,
     MemoryRuleError,
@@ -9781,26 +9780,31 @@ class DMBot(commands.AutoShardedBot):
         return done
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
-        """The DM's "plays which character" choices from the import page become links, through
-        the same call the names panel uses (the DM's own decision, so DM-confirmed). One that no
-        longer holds (the character is taken, gone, or its player stopped being recorded) is
-        dropped, never forced; one that fails for another reason stays for the next round."""
-        if self.memory is None:
+        """The DM's "plays which character" choices from the import page become links, through a
+        store call that judges each again (the DM may have changed things since). One that no
+        longer holds, or whose member is no longer recorded, is dropped, never forced; one that
+        fails for another reason stays for the next round. Counts only in the log."""
+        waiting = await store.waiting_plays(gid)
+        if self.memory is None or not waiting:
             return
-        for campaign_id, user_id, character_id in await store.waiting_plays(gid):
-            with log_context(guild_id=gid, campaign_id=campaign_id):
+        recorded = await self.consent.consenting(gid)
+        made = dropped = 0
+        for play in waiting:
+            with log_context(guild_id=gid, campaign_id=play.campaign_id):
                 try:
-                    if user_id in await self.consent.consenting(gid):
-                        await self.memory.confirm_entity(
-                            gid, campaign_id, character_id, "character",
-                            source=DM, played_by=user_id, role=PLAYER_CHARACTER,
-                        )  # fmt: skip
-                except MemoryRuleError:
-                    pass  # not a character nobody plays any more: nothing to apply
+                    if play.user_id in recorded:
+                        applied = await self.memory.apply_import_plays(
+                            gid, play.campaign_id, play.character_id, play.user_id
+                        )
+                        made += bool(applied.value)
+                        dropped += not applied.value
+                    else:
+                        dropped += 1
                 except Exception:
                     log.exception("Import: a 'plays' choice could not be applied")
                     continue
-                await store.done_plays(gid, campaign_id, user_id)
+                await store.done_plays(gid, play)
+        log.info("Import: %d 'plays' choice(s) made, %d dropped", made, dropped)
 
     async def _start_import_recap(self, gid: int, store: ImportStore, ready: Ready) -> None:
         """Start the recap of one scanned import. One that cannot be started is tried again next

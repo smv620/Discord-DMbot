@@ -4,6 +4,7 @@ names and ids throughout."""
 
 from __future__ import annotations
 
+import json
 import time
 import unittest
 from collections.abc import Callable
@@ -14,7 +15,9 @@ from unittest.mock import AsyncMock
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.store import MemoryStore
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -168,48 +171,137 @@ async def rounds(bot: Any, n: int = 4) -> None:
 
 
 class ThePlaysChoices(WithImports):
-    """The DM's "plays which character" choices from the import page (#2135 part B)."""
+    """The DM's "plays which character" choices from the import page (#2135 part B), judged
+    again by the real store when the bot applies them."""
 
-    async def wait(self, user: int = MIRA, character: str = "c" * 32) -> None:
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.memory = MemoryStore(self.db)
+
+    async def character(self, name: str = "Cerric", *, status: str = CONFIRMED) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name=name, source=DM_SOURCE, status=status
+        )
+        return made.value.id
+
+    async def wait(self, character: str, user: int = MIRA) -> None:
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
                 "INSERT INTO import_plays (guild_id, campaign_id, user_id, character_id,"
-                " created_at) VALUES (%s, %s, %s, %s, 1)",
+                " created_at) VALUES (%s, %s, %s, %s, 1)"
+                " ON CONFLICT (guild_id, campaign_id, user_id)"
+                " DO UPDATE SET character_id = EXCLUDED.character_id",
                 (GUILD, self.campaign.id, user, character),
             )
 
-    async def test_a_choice_becomes_a_dm_confirmed_link_once_and_stops_waiting(self) -> None:
-        await self.wait()
-        memory = SimpleNamespace(confirm_entity=AsyncMock())
-        bot, _ = fake_bot(self.store, memory=memory)
+    async def row(self, character: str) -> dict[str, Any]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT played_by, role, status, audience_limited FROM memory_entities"
+                " WHERE id = %s",
+                (character,),
+            )
+            return dict(await cur.fetchone() or {})
+
+    async def round(self, **kw: Any) -> None:
+        bot, _ = fake_bot(self.store, memory=self.memory, **kw)
         await bot.run_import_followups(GUILD)
-        memory.confirm_entity.assert_awaited_once_with(
-            GUILD, self.campaign.id, "c" * 32, "character",
-            source="dm", played_by=MIRA, role="player_character",
-        )  # fmt: skip
+
+    async def test_a_choice_becomes_a_link_once_and_stops_waiting(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        await self.round()
+        got = await self.row(cerric)
+        self.assertEqual((got["played_by"], got["role"]), (MIRA, "player_character"))
         self.assertEqual(await self.store.waiting_plays(GUILD), [])
+        idle = SimpleNamespace(apply_import_plays=AsyncMock())
+        bot, _ = fake_bot(self.store, memory=idle)
         await bot.run_import_followups(GUILD)  # a second round does nothing
-        memory.confirm_entity.assert_awaited_once()
+        idle.apply_import_plays.assert_not_awaited()
 
-    async def test_a_choice_that_no_longer_holds_is_dropped_and_a_failure_is_kept(self) -> None:
-        await self.wait()
-        memory = SimpleNamespace(confirm_entity=AsyncMock(side_effect=MemoryRuleError("taken")))
-        bot, _ = fake_bot(self.store, memory=memory)
-        await bot.run_import_followups(GUILD)
-        self.assertEqual(await self.store.waiting_plays(GUILD), [])  # taken since: let go
-        await self.wait()
-        memory = SimpleNamespace(confirm_entity=AsyncMock(side_effect=RuntimeError("down")))
-        bot, _ = fake_bot(self.store, memory=memory)
-        await bot.run_import_followups(GUILD)
-        self.assertEqual(len(await self.store.waiting_plays(GUILD)), 1)  # tried again next round
-
-    async def test_nothing_is_applied_for_a_member_who_is_not_recorded_now(self) -> None:
-        await self.wait(user=MIRA + 1)  # (the stand-in consent lists only MIRA)
-        memory = SimpleNamespace(confirm_entity=AsyncMock())
-        bot, _ = fake_bot(self.store, memory=memory)
-        await bot.run_import_followups(GUILD)
-        memory.confirm_entity.assert_not_awaited()
+    async def test_a_character_given_to_someone_else_since_is_not_taken_back(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = %s, role = 'player_character'"
+                " WHERE id = %s",
+                (MIRA + 5, cerric),
+            )
+        await self.round()
+        self.assertEqual((await self.row(cerric))["played_by"], MIRA + 5)
         self.assertEqual(await self.store.waiting_plays(GUILD), [])
+
+    async def test_a_character_that_became_limited_secret_proposed_or_rejected_is_dropped(
+        self,
+    ) -> None:
+        for change in (
+            "UPDATE memory_entities SET audience_limited = true WHERE id = %s",
+            "UPDATE memory_aliases SET secret = true WHERE entity_id = %s",
+            "UPDATE memory_entities SET status = 'proposed' WHERE id = %s",
+            "UPDATE memory_entities SET status = 'rejected' WHERE id = %s",
+        ):
+            with self.subTest(change):
+                cerric = await self.character(f"Cerric{abs(hash(change)) % 1000}")
+                await self.wait(cerric)
+                async with self.db.guild(GUILD) as conn:
+                    await conn.execute(change, (cerric,))
+                await self.round()
+                self.assertIsNone((await self.row(cerric))["played_by"])
+                self.assertEqual(await self.store.waiting_plays(GUILD), [])
+
+    async def test_a_name_still_waiting_for_the_dm_stays_waiting(self) -> None:
+        cerric = await self.character()
+        nick = await self.memory.add_alias(
+            GUILD, self.campaign.id, cerric, "Ricky", kind="nickname", source="scan"
+        )
+        await self.wait(cerric)
+        await self.round()
+        self.assertEqual((await self.row(cerric))["played_by"], MIRA)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT status FROM memory_aliases WHERE id = %s", (nick.value.id,)
+            )
+            self.assertEqual((await cur.fetchone() or {})["status"], "proposed")
+
+    async def test_a_member_who_is_not_recorded_now_is_skipped_and_the_choice_dropped(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric, user=MIRA + 1)  # (the stand-in consent lists only MIRA)
+        await self.round()
+        self.assertIsNone((await self.row(cerric))["played_by"])
+        self.assertEqual(await self.store.waiting_plays(GUILD), [])
+
+    async def test_a_failure_keeps_the_choice_for_the_next_round(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        memory = SimpleNamespace(apply_import_plays=AsyncMock(side_effect=RuntimeError("down")))
+        bot, _ = fake_bot(self.store, memory=memory)
+        await bot.run_import_followups(GUILD)
+        self.assertEqual(len(await self.store.waiting_plays(GUILD)), 1)
+
+    async def test_a_choice_saved_again_while_the_bot_works_is_not_deleted(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        (old,) = await self.store.waiting_plays(GUILD)
+        async with self.db.guild(GUILD) as conn:  # the DM saved it again (a later time)
+            await conn.execute("UPDATE import_plays SET created_at = created_at + 5")
+        await self.store.done_plays(GUILD, old)
+        self.assertEqual(len(await self.store.waiting_plays(GUILD)), 1)
+
+    async def test_deleting_the_campaign_removes_what_waits(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        await self.campaigns.delete(GUILD, self.campaign.id)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM import_plays")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_a_backup_never_holds_what_waits(self) -> None:
+        cerric = await self.character()
+        await self.wait(cerric)
+        backup = await self.campaigns.export(GUILD, self.campaign.id)
+        self.assertNotIn("import_plays", json.dumps(backup, default=str))
+        self.assertNotIn(str(MIRA), json.dumps(backup.get("import_plays", "")))
 
 
 class TheCrashAndTheNews(WithImports):
