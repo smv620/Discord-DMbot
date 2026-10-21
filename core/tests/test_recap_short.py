@@ -236,7 +236,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     async def test_pressing_write_a_recap_waits_for_the_name_answers_like_any_session(self) -> None:
         bot = fake_bot([said(0, 10)])
-        bot.recap_write_anyway = AsyncMock(return_value="held")  # type: ignore[method-assign]
+        bot.recap_write_anyway = AsyncMock(return_value="held")
         button, i = press_on(bot, "go")
         await button.callback(i)
         self.assertIn(screen.HELD, i.edit_original_response.await_args.kwargs["content"])

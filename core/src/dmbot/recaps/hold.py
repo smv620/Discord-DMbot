@@ -50,15 +50,17 @@ def question_text(count: int) -> str:
     return f"📝 {count} {noun} from tonight. Answer them and DMbot writes the recap."
 
 
-def reminder_text(count: int) -> str:
+def reminder_text(count: int, left_s: float = HOLD_MAX_S - HOLD_REMIND_S) -> str:
     """The one reminder after a day: what is open, what to press, and what happens if nothing is
-    done."""
+    done, with the time left worked out from the hold's age (a late reminder says less)."""
     noun = "name question" if count == 1 else "name questions"
     verb = "is" if count == 1 else "are"
+    days = max(1, round(left_s / 86400))
+    when = "about a day" if days <= 1 else f"about {days} days"
     return (
         f"📝 {count} {noun} from your last session {verb} still open. Press 📝 Check new names to "
-        "answer, or Write the recap now. If you do nothing, DMbot writes the recap in about two "
-        "days with the names as it heard them."
+        f"answer, or Write the recap now. If you do nothing, DMbot writes the recap in {when} "
+        "with the names as it heard them."
     )
 
 
@@ -139,15 +141,17 @@ class HoldStore:
 
     async def set_names_open(
         self, guild_id: int, campaign_id: str, session_at: int, count: int
-    ) -> None:
+    ) -> bool:
         """The latest count of name questions the hold waits on, for the website (#2174). Counts
-        only. Written when it changes, so a round that finds the same number writes nothing."""
+        only. Written when it changes, so a round that finds the same number writes nothing:
+        True when a row was changed."""
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE recap_holds SET names_open = %s WHERE campaign_id = %s AND session_at = %s"
                 " AND names_open <> %s",
                 (max(0, count), campaign_id, session_at, max(0, count)),
             )
+            return bool(cur.rowcount)
 
     async def mark_reminded(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """Claim the one reminder. False when it was claimed already (or the hold is gone)."""
