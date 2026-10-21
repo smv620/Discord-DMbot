@@ -182,9 +182,9 @@ for (const width of [360, 390]) {
     try {
       await page.goto(origin + address, { waitUntil: "load" });
       await page.locator("main").first().waitFor();
-      // PHONE_PROOF=<px> adds a block that wide to every page, to prove the check can fail.
-      if (process.env.PHONE_PROOF) await page.evaluate((px) => { const d = document.createElement("div"); d.style.cssText = `width:${px}px;height:10px`; (document.querySelector("main") ?? document.body).append(d); }, Number(process.env.PHONE_PROOF));
       if (steps) await steps(page);
+      // PHONE_PROOF=<px> adds a block that wide to every page once its steps are done, to prove the check can fail.
+      if (process.env.PHONE_PROOF) await page.evaluate((px) => { const d = document.createElement("div"); d.style.cssText = `width:${px}px;height:10px`; (document.querySelector("main") ?? document.body).append(d); }, Number(process.env.PHONE_PROOF));
       await page.waitForTimeout(500);
       const m = await page.evaluate(measure, width);
       if (m.sw > m.vw) problems.push(`the page scrolls sideways (${m.sw} px in a ${m.vw} px window)`);
