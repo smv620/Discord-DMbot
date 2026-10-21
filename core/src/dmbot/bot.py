@@ -7750,6 +7750,7 @@ class DMBot(commands.AutoShardedBot):
             # (#2106). Another proposal made in the same seconds (a live scan) is counted too:
             # an over-count only makes the DM answer a little more, and the 3-day cap bounds it.
             scan = await self.import_job.store.window(gid, session_id) if self.import_job else None
+            until: int | None
             if scan is not None:
                 since, until = scan[0], scan[1] + 1  # (the scan's own seconds, both ends)
             else:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -192,22 +193,30 @@ class TheFollowUp(WithImports):
             order.append("consent")
             return {MIRA}
 
-        self.store.scan_lines = lines  # type: ignore[method-assign]
+        self.store.scan_lines = lines  # type: ignore[assignment]
         bot.consent.consenting = agreed
         await rounds(bot, 1)
         self.assertEqual(order, ["lines", "consent"])  # a stop during the read is not missed
 
     async def test_each_gate_stops_the_recap_on_its_own(self) -> None:
-        cases = {
-            "recaps off": lambda b, c: setattr(b.settings, "recaps_on", False),
-            "the DM chose none": lambda b, c: setattr(c, "recaps_text", False),
-            "the plan lacks it": lambda b, c: setattr(
-                b, "plan_allows", AsyncMock(return_value=False)
-            ),
-            "no DM": lambda b, c: (
-                setattr(c, "owner_user_id", 0),
-                setattr(c, "dm_user_ids", frozenset()),
-            ),
+        def recaps_off(b: Any, c: Any) -> None:
+            b.settings.recaps_on = False
+
+        def dm_chose_none(b: Any, c: Any) -> None:
+            c.recaps_text = False
+
+        def plan_lacks_it(b: Any, c: Any) -> None:
+            b.plan_allows = AsyncMock(return_value=False)
+
+        def no_dm(b: Any, c: Any) -> None:
+            c.owner_user_id = 0
+            c.dm_user_ids = frozenset()
+
+        cases: dict[str, Callable[[Any, Any], None]] = {
+            "recaps off": recaps_off,
+            "the DM chose none": dm_chose_none,
+            "the plan lacks it": plan_lacks_it,
+            "no DM": no_dm,
         }
         for name, change in cases.items():
             with self.subTest(name):
