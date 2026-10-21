@@ -4690,8 +4690,10 @@ class DMBot(commands.AutoShardedBot):
                     if alone:  # players may peek at the screen: the DM's own messages, not there
                         sent = await self.sidebar_send_dm(speaker, text, view)
                         posted = sent == "sent"
-                        if not posted and not reveal.told_waiting:
-                            # no way to ask privately: say so on the screen, no name, once
+                        if sent == "forbidden" and not reveal.told_waiting:
+                            # Their private messages are closed (not a send that merely failed,
+                            # which may work next time and needs no setting changed): say so on
+                            # the screen, no name, once.
                             reveal.told_waiting = await self.post(
                                 table.screen_channel_id, SECRET_QUESTION_WAITING
                             )
@@ -9042,6 +9044,7 @@ class DMBot(commands.AutoShardedBot):
             found = every[:MAX_ASKED]
             alone = campaign.dm_screen_visibility != "private"
             reached = 0  # DMs who got the question privately
+            closed_dms = 0  # DMs whose private messages are closed
             for said in found:
                 if alone:  # players may look at the screen: the name goes to the DMs only
                     for dm_id in sorted(campaign.dm_user_ids):
@@ -9056,6 +9059,7 @@ class DMBot(commands.AutoShardedBot):
                             secret_aloud_view(cid, said.alias_id, gid),
                         )
                         reached += sent == "sent"
+                        closed_dms += sent == "forbidden"
                     continue
                 await self.post(
                     table.screen_channel_id,
@@ -9065,7 +9069,9 @@ class DMBot(commands.AutoShardedBot):
                 )
             if alone and found:
                 log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
-                if not reached:  # no one can be asked privately: say so, with no name
+                if not reached and closed_dms:
+                    # Nobody could be asked because their private messages are closed (a send that
+                    # merely failed is not that): say so, with no name.
                     await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
             if len(every) > len(found):  # the DM should know the rest exist
                 await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
