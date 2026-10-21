@@ -33,7 +33,7 @@ import discord
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.db import Database
 from dmbot.discord_limits import fit_message
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import messages, npc_pages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
     CACHE_WAIT_STEPS,
@@ -300,14 +300,22 @@ async def sync_roster(
     guild_id: int,
     campaign_id: str,
     reorder: bool = False,
+    site_url: str = "",
 ) -> SyncResult:
     """Make the channel show exactly these entries. Looks at DMbot's own messages only (found by
     the message map, never by their text); edits rather than reposts; the rest is picked up next
     time (`left_for_next_time`). A new entry goes at the end. With `reorder` the list is put in
     order again, but only when `REORDER_MIN` or more messages are out of place: whatever follows
-    the first message out of place is deleted (in bulk) and posted again. Idempotent."""
+    the first message out of place is deleted (in bulk) and posted again. Idempotent. With a
+    `site_url` each entry's message carries a 📖 Open link button to its page (#2265); a message
+    gains, changes or loses it by an edit, like its text, within the same limits."""
     result = SyncResult()
     wanted = wanted_messages(entries)
+    links = {
+        key: npc_pages.page_url(site_url, guild_id, campaign_id, key)
+        for key, _ in wanted
+        if key != _MORE
+    }
     wanted_text = dict(wanted)
     mapped = await mapping.load(guild_id, campaign_id)
     key_of = {message_id: key for key, message_id in mapped.items()}
@@ -347,7 +355,11 @@ async def sync_roster(
         result.left_for_next_time += left
         deletes_left = left > 0 or stopped
         await mapping.forget(guild_id, campaign_id, [k for k, m in key_of_messages(mapped, gone)])
-    changes = [(k, m) for k, m in have.items() if m.content != wanted_text[k]]
+    changes = [
+        (k, m)
+        for k, m in have.items()
+        if m.content != wanted_text[k] or npc_pages.message_link(m) != links.get(k, "")
+    ]
     changes.sort(key=lambda km: not _removes_text(km[1].content, wanted_text[km[0]]))
     edits = 0
     for key, message in changes:
@@ -356,7 +368,11 @@ async def sync_roster(
             continue
         edits += 1
         try:
-            await message.edit(content=wanted_text[key], allowed_mentions=NO_PINGS)
+            await message.edit(
+                content=wanted_text[key],
+                view=npc_pages.open_view(links.get(key, "")),
+                allowed_mentions=NO_PINGS,
+            )
         except discord.HTTPException as exc:
             log.warning("NPC channel: couldn't edit a message: %s", exc)
             result.left_for_next_time += 1
@@ -372,7 +388,13 @@ async def sync_roster(
             result.left_for_next_time += 1
             continue
         try:
-            sent = await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
+            view = npc_pages.open_view(links.get(key, ""))
+            if view is not None:
+                sent = await channel.send(
+                    wanted_text[key], allowed_mentions=NO_PINGS, silent=True, view=view
+                )
+            else:
+                sent = await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
         except discord.HTTPException as exc:
             log.warning("NPC channel: couldn't post a message: %s", exc)
             result.left_for_next_time += 1
@@ -547,6 +569,9 @@ async def sync_campaign(
     mapping: MessageMap,
     *,
     reorder: bool = False,
+    site_url: str = "",
+    roster: npc_pages.NpcRosterStore | None = None,
+    now: int = 0,
 ) -> SyncResult | None:
     """Bring the campaign's NPC channel up to date from what the players may know. None if the
     campaign has no NPC channel or it is gone (the next start makes it again). Raises on a
@@ -557,7 +582,14 @@ async def sync_campaign(
         if channel is None or me is None:
             return None
         entries = await recall.roster(guild.id, campaign.id)
-        return await sync_roster(
+        saved = True
+        if roster is not None:  # the page the buttons open shows what this pass lists (#2265)
+            try:
+                await roster.save(guild.id, campaign.id, entries, now)
+            except Exception:
+                log.warning("NPC channel: couldn't save the pages' view", exc_info=True)
+                saved = False
+        done = await sync_roster(
             channel,
             me.id,
             entries,
@@ -565,4 +597,8 @@ async def sync_campaign(
             guild_id=guild.id,
             campaign_id=campaign.id,
             reorder=reorder,
+            site_url=site_url,
         )
+        if not saved:  # run again soon: the page must not keep showing what the list no longer does
+            done.left_for_next_time += 1
+        return done

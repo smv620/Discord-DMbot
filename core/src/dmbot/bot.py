@@ -147,6 +147,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.names_button import NamesButton
+from dmbot.dm_screen.npc_pages import NpcRosterStore
 from dmbot.dm_screen.npcs_channel import (
     MessageMap,
     NpcMessageStore,
@@ -273,7 +274,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, name_answers, short, voice
+from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -918,6 +919,9 @@ class DMBot(commands.AutoShardedBot):
     so nothing runs twice when several processes split the shards between them.
     """
 
+    # A class-level default so tests that build a bot without __init__ still see "no pages" (#2265).
+    _npcs_roster: NpcRosterStore | None = None
+
     def __init__(
         self,
         settings: Settings,
@@ -945,6 +949,7 @@ class DMBot(commands.AutoShardedBot):
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
         npcs_messages: MessageMap | None = None,
+        npcs_roster: NpcRosterStore | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
         installs: InstallStore | None = None,
@@ -1062,6 +1067,7 @@ class DMBot(commands.AutoShardedBot):
         self._npcs_guilds: dict[str, int] = {}
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
+        self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
         for store in (house_rules, rule_sets):
             if store is not None:
                 store.on_change = self._rules_archive_changed
@@ -1240,10 +1246,12 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda gid: lambda: self.consent.consenting(gid),
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
+                unchecked=self.recap_unchecked,
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
+                critics=True,  # the critics read each draft until they agree (#2255)
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -2888,6 +2896,13 @@ class DMBot(commands.AutoShardedBot):
                 await self.keep_job.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily keep-transcripts job failed")
+        if self._npcs_roster is not None:  # notes on names unlisted for 30 days (#2265)
+            try:
+                await self._npcs_roster.sweep(
+                    await self.campaigns.guilds_with_campaigns(), int(time.time())
+                )
+            except Exception:
+                log.exception("The daily NPC-notes clean-up failed")
         if self.sources is not None:  # pages nothing uses any more (#1646)
             try:
                 await self.sources.sweep_pages(await self.campaigns.guilds_with_campaigns())
@@ -8414,6 +8429,16 @@ class DMBot(commands.AutoShardedBot):
             await self._say_writing(campaign, channel_id, session_at)
         return True
 
+    async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
+        """A recap that DMbot could not finish checking for three days (#2255): said once on the
+        DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        link = page_link(self.settings.site_url, gid, cid, job.session_at)
+        where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+        await self.post(campaign.dm_screen_channel_id, f"{critics.UNCHECKED_TOLD}{where}")
+
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
     ) -> None:
@@ -10947,7 +10972,12 @@ class DMBot(commands.AutoShardedBot):
             if fresh is not None and self.memory is not None and self._npcs_messages is not None:
                 # (a session is starting, so this is the moment to put the list in order)
                 done = await sync_npcs(
-                    guild, fresh, self._npcs_service(), self._npcs_messages, reorder=True
+                    guild,
+                    fresh,
+                    self._npcs_service(),
+                    self._npcs_messages,
+                    reorder=True,
+                    **self._npcs_pages(),
                 )
                 self._npcs_last[campaign.id] = time.monotonic()
                 if done is not None and done.left_for_next_time:
@@ -11001,6 +11031,15 @@ class DMBot(commands.AutoShardedBot):
             if late:
                 self._npcs_changed(campaign_id)  # a change came in during the last pass
 
+    def _npcs_pages(self) -> dict[str, Any]:
+        """What the NPC list needs for the pages its 📖 Open buttons open (#2265): the website's
+        address, where the pages' view is kept, and the time."""
+        return {
+            "site_url": self.settings.site_url,
+            "roster": self._npcs_roster,
+            "now": int(time.time()),
+        }
+
     async def _sync_npcs(self, campaign_id: str) -> NpcsSyncResult | None:
         guild_id = self._npcs_guilds.get(campaign_id)
         guild = self.get_guild(guild_id) if guild_id is not None else None
@@ -11015,7 +11054,12 @@ class DMBot(commands.AutoShardedBot):
         # Finish a rebuild that was cut short, but never while a session runs for the campaign.
         reorder = campaign_id in self._npcs_reorder and not self._session_running(campaign_id)
         done = await sync_npcs(
-            guild, campaign, self._npcs_service(), self._npcs_messages, reorder=reorder
+            guild,
+            campaign,
+            self._npcs_service(),
+            self._npcs_messages,
+            reorder=reorder,
+            **self._npcs_pages(),
         )
         if reorder and (done is None or not done.left_for_next_time):
             self._npcs_reorder.discard(campaign_id)
@@ -11078,6 +11122,7 @@ class DMBot(commands.AutoShardedBot):
                         self._npcs_service(),
                         self._npcs_messages,
                         reorder=not self._session_running(campaign.id),
+                        **self._npcs_pages(),
                     )
                     self._npcs_last[campaign.id] = time.monotonic()
                     if done is not None and done.left_for_next_time:
@@ -11546,6 +11591,32 @@ def _attachable(
     return out
 
 
+def register_backup_sections(
+    campaigns: CampaignStore,
+    *,
+    forget_audio: Callable[[int, str], None],
+    consenting: Callable[[int], Awaitable[frozenset[int]]],
+) -> None:
+    """Everything a campaign's backup holds (and so what a backup test must export): one list, used
+    by the running bot and by the tests, so a test exports exactly what production does."""
+    campaigns.register_section(MemorySection())  # campaign memory goes in backups
+    campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+    campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+    campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
+    campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
+    campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
+    campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
+    campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
+    campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
+    campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
+    campaigns.register_section(ClockSection())  # and the game clock (#965)
+    campaigns.register_section(EffectsSection())  # and its timed effects (#998)
+    # and its session recaps (#1382), whose audio files go with the campaign (#1383)
+    campaigns.register_section(RecapSection(forget_audio=forget_audio))
+    # And how often names were said, kept only for who is recorded now (#1747).
+    campaigns.register_section(HeardSection(consenting))
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     alerter = alerts.Alerter(settings.mail)
@@ -11570,27 +11641,13 @@ async def run(settings: Settings) -> None:
             else CampaignStore(db)
         )
         homebrew_store, sources = HomebrewStore(db), SourceStore(db)
-        campaigns.register_section(MemorySection())  # campaign memory goes in backups
-        campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
-        campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
-        campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
-        campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
-        campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
-        campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
-        campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
-        campaigns.register_section(
-            ImportSpeakersSection()
-        )  # and who its import labels were (#2105)
-        campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
-        campaigns.register_section(ClockSection())  # and the game clock (#965)
-        campaigns.register_section(EffectsSection())  # and its timed effects (#998)
-        # and its session recaps (#1382), whose audio files go with the campaign (#1383)
-        recap_audio_forgetter = AudioFiles(settings.data_dir / "recap-audio").forget_campaign
-        campaigns.register_section(RecapSection(forget_audio=recap_audio_forgetter))
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
-        # And how often names were said, kept only for who is recorded now (#1747).
-        campaigns.register_section(HeardSection(consent.consenting))
+        register_backup_sections(
+            campaigns,
+            forget_audio=AudioFiles(settings.data_dir / "recap-audio").forget_campaign,
+            consenting=consent.consenting,
+        )
         bot = DMBot(
             settings,
             consent,
@@ -11617,6 +11674,7 @@ async def run(settings: Settings) -> None:
             AdventureStore(db),
             PlanStore(db),
             npcs_messages=NpcMessageStore(db),
+            npcs_roster=NpcRosterStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
             installs=InstallStore(db),

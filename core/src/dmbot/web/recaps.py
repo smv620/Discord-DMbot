@@ -16,11 +16,12 @@ website's role cannot read the campaign's names.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from typing import Any
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
-from dmbot.recaps import cues
+from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
@@ -37,7 +38,7 @@ _COLUMNS = (
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
-    " r.respelled_at"
+    " r.respelled_at, r.critics"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -112,6 +113,23 @@ def _share_view(row: dict[str, Any]) -> dict[str, Any]:
     return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
+def _unchecked_since(row: Mapping[str, Any], ready: bool) -> int:
+    loop = critics.loop_from_json(row.get("critics"))
+    return 0 if ready or loop.waits == 0 else loop.since
+
+
+def _unchecked_sentences(row: Mapping[str, Any], ready: bool) -> list[int]:
+    if _unchecked_since(row, ready) == 0:
+        return []
+    from dmbot.recaps import draft, motives
+
+    return [
+        n
+        for n, text in enumerate(draft.sentences_of(strip_cues(row["summary"])), start=1)
+        if motives.states_purpose(text)
+    ]
+
+
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     state, status = row["state"], row["status"]
     ready = state == "ready" and status == "draft"
@@ -128,7 +146,20 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "summary": row["summary"],
         "housekeeping": list(row["housekeeping"]),
         "toConfirm": list(row["to_confirm"]),  # the DM's copy only (#2027): never posted
+        # What the recap's critics still asked when they could not agree (#2255): the DM's copy
+        # only, never in a posted recap or on a shared link. Soft notes in fixed wording
+        # ("Check: ..."): things for the DM to look at, never orders.
+        "criticNotes": list(critics.loop_from_json(row.get("critics")).notes),
         "error": row["last_error"],
+        # The recap is written and waits for its last check (#2255): a note for the DM's card
+        # (the words are `error`); not a failure and nothing to do.
+        "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
+        # While it waits for its check: since when (Unix seconds, 0 before the first wait), and the
+        # sentences the word list marks as likely to state a reason or a plan (their numbers, from
+        # 1), which no check has read: for the DM's page, where they may read it and approve it
+        # themselves. Players never see an unchecked draft unless the DM approves it.
+        "uncheckedSince": _unchecked_since(row, ready),
+        "uncheckedSentences": _unchecked_sentences(row, ready),
         "canEdit": ready,
         "canPost": ready,
         "canTryAgain": status == "draft"
@@ -184,6 +215,7 @@ def _held_view(
         "summary": "",
         "housekeeping": [],
         "toConfirm": [],
+        "criticNotes": [],
         "error": "",
         "canEdit": False,
         "canPost": False,
