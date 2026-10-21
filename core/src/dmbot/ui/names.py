@@ -878,7 +878,10 @@ def suggestion_text(
         question = f"Sounds like **{_md(match.name)}**. The same, or new?"
     else:
         question = "Is this a name in your game?"
-    return f"📝 **{_md(entity.name)}**{_heard(entity)}{others}\n{question}{more}"
+    heard = (
+        "" if fix_to else _heard(entity)
+    )  # the note is the spelling: shown once, in the question
+    return f"📝 **{_md(entity.name)}**{heard}{others}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:

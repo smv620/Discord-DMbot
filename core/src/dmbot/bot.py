@@ -588,6 +588,9 @@ class Table:
     spelling: spelled_out.SpellingWatcher = field(default_factory=spelled_out.SpellingWatcher)
     spelled: list[tuple[str, int, str]] = field(default_factory=list)
     spelled_hints: tuple[str, ...] = ()
+    held_spelled: dict[tuple[int, int], list[spelled_out.SpelledOut]] = field(
+        default_factory=dict
+    )  # spellings found in lines the off-topic filter holds, until they are labelled
     sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
     # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
     # last read, the schedule, and the loop that runs it (cancelled at the end).
@@ -4293,12 +4296,16 @@ class DMBot(commands.AutoShardedBot):
             names_said = 0
         # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
         # filter holds for a label is left out, as for the word list.
-        if (
-            text
-            and self.tables.get(table.guild_id) is table
-            and not self._topic_holds(table, cleaned or text, names_said)
-        ):
-            self._note_spelling(table, utterance.user_id, str(cleaned or text))
+        if text and self.tables.get(table.guild_id) is table:
+            # Every line goes to the watcher (memory only); what it finds waits with a held line.
+            self._note_spelling(
+                table,
+                utterance.user_id,
+                str(cleaned or text),
+                held_key=(utterance.user_id, utterance.start_ms)
+                if self._topic_holds(table, cleaned or text, names_said)
+                else None,
+            )
         if text and not self._topic_holds(table, cleaned or text, names_said):
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
@@ -5420,6 +5427,7 @@ class DMBot(commands.AutoShardedBot):
         stopped = [w for w in lines if not self.consent.has_consent(table.guild_id, w.speaker)]
         for waiting in stopped:
             table.held.pop((waiting.speaker, waiting.started_ms), None)
+            table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
         lines = [w for w in lines if w not in stopped]
         if not lines:
             return
@@ -5443,8 +5451,11 @@ class DMBot(commands.AutoShardedBot):
         hide: list[Waiting] = []
         for waiting, topic in zip(lines, topics, strict=True):
             said = table.held.pop((waiting.speaker, waiting.started_ms), None)
+            spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
+            if topic != OFF_TOPIC and spelling:
+                self._record_spelled(table, waiting.speaker, spelling)
             if topic != OFF_TOPIC and said is not None and len(table.heard) < HEARD_MAX:
                 table.heard.append((waiting.speaker, said))
             if topic != OFF_TOPIC and said is not None and waiting.speaker in table.dm_user_ids:
@@ -8404,7 +8415,14 @@ class DMBot(commands.AutoShardedBot):
             dms = {table.dm_user_id, *table.dm_user_ids}
             await self.memory.check_people(gid, cid, dms)
 
-    def _note_spelling(self, table: Table, user_id: int, line: str) -> None:
+    def _note_spelling(
+        self,
+        table: Table,
+        user_id: int,
+        line: str,
+        *,
+        held_key: tuple[int, int] | None = None,
+    ) -> None:
         """A name spelled out at the table (#2168): the word becomes a speech hint at once (a hint
         only, nothing says it is a name) and is kept for the end-of-session suggestion. The line is
         from someone who agreed (the pipeline has just re-checked) and is not kept: only the word,
@@ -8413,6 +8431,16 @@ class DMBot(commands.AutoShardedBot):
         found = table.spelling.note(user_id, line, time.monotonic())
         if not found:
             return
+        if held_key is not None:
+            # The off-topic filter has this line: its finds count only if it is labelled game
+            # talk (`_label_topics`), never for talk about something else (#1748).
+            table.held_spelled[held_key] = found
+            return
+        self._record_spelled(table, user_id, found)
+
+    def _record_spelled(
+        self, table: Table, user_id: int, found: list[spelled_out.SpelledOut]
+    ) -> None:
         secret = table.hint_parts.secret if table.hint_parts is not None else frozenset()
         for hit in found:
             key = name_key(hit.word)
@@ -8456,6 +8484,8 @@ class DMBot(commands.AutoShardedBot):
                     (e for e in waiting if near and name_key(e.name) == name_key(near)), None
                 )
                 if target is not None and name_key(target.name) != key:
+                    if target.description.startswith(SPELLED_OUT):
+                        continue  # the first spelling stays; a second never silently wins
                     try:
                         await self.memory.set_note(
                             gid, cid, target.id, f"{SPELLED_OUT}: {word}", source="scan"

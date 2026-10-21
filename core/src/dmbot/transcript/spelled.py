@@ -41,6 +41,8 @@ NOT_NAMES = frozenset(
     {
         *("npc", "pc", "pcs", "npcs", "bbeg", "tpk", "aoe", "dnd", "phb", "dmg", "xp", "hp"),
         *("ac", "dc", "dm", "gm", "ooc", "lfg", "ttrpg"),
+        *("brb", "lol", "omg", "wtf", "tbh", "btw", "idk", "afk", "gg", "irl"),
+        *("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
     }
 )
 # Lead-ins and fillers before an answer: they do not count against "mostly letters".
@@ -75,6 +77,7 @@ _BARE = re.compile(  # "Cael with a K", with no lead-in (only believed after an 
     r"\s+(?P<letter>[A-Za-z])'?s?\b"
 )
 _COUNTS = {"two": 2, "double": 2, "2": 2}
+_DIGRAPHS = frozenset({"ph", "ch", "sh", "gh", "th", "ck"})
 _SOUND_ALIKE = {"k": "c", "c": "k", "s": "c", "z": "s", "f": "p", "j": "g", "g": "j"}
 
 
@@ -286,9 +289,12 @@ def _with_letter(word: str, letter: str, times: int) -> str | None:
     if letter in low:
         return word  # "with a K": it already has one
     other = _SOUND_ALIKE.get(letter)
-    if other is None or other not in low:
-        return None
+    if other is None or low.count(other) != 1:
+        return None  # which letter is meant is a guess: never offer a spelling made by guessing
     at = low.find(other)
+    pairs = {low[at : at + 2], low[max(at - 1, 0) : at + 1]}
+    if pairs & _DIGRAPHS:
+        return None  # "ph", "ch", "sh", "gh" sound as one letter
     swapped = letter.upper() if word[at].isupper() else letter
     return word[:at] + swapped + word[at + 1 :]
 

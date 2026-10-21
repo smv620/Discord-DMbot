@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import SPELLED_MAX, DMBot
 from dmbot.memory.models import MemoryRuleError
@@ -93,6 +93,24 @@ class TheParser(unittest.TestCase):
         self.assertEqual(said_spelling("it's Brannoch with two Ns"), "Brannoch")  # already so
         self.assertIsNone(said_spelling("that's Zorgul with a K"))  # nothing to swap: never guess
         self.assertIsNone(said_spelling("that's Borgul with two Ns"))  # no N to double
+        for said in (
+            "It's Phil with an F",  # "ph" is one sound: which letter is meant is a guess
+            "Cecil with a K",  # two Cs
+            "Sasha with a Z",  # two Ss
+            "Gigi with a J",  # two Gs
+        ):
+            with self.subTest(said=said):
+                self.assertIsNone(said_spelling(said))
+
+    def test_capitalised_lead_ins_count(self) -> None:
+        self.assertEqual(said_spelling("It's Brannoch"), "Brannoch")
+        self.assertEqual(said_spelling("That's Branoch with two Ns"), "Brannoch")
+        self.assertEqual(said_spelling("It's spelled Brannoch"), "Brannoch")
+
+    def test_chat_acronyms_and_number_words_are_not_names(self) -> None:
+        for said in ("B R B", "L O L", "T B H", "W T F", "F I V E", "O M G", "G G"):
+            with self.subTest(said=said):
+                self.assertEqual(parse(said, asked=True), [])
 
     def test_asks(self) -> None:
         for said in (
@@ -151,6 +169,18 @@ class TheWatcher(unittest.TestCase):
         (hit,) = w.note(2, "B R A N N O C H", 5.0)
         self.assertIn("Brenoch", hit.near)
 
+    def test_an_answer_with_a_lead_in_counts(self) -> None:
+        w = SpellingWatcher()
+        w.note(1, "how do you spell that", 0.0)
+        (hit,) = w.note(2, "Uh, it's K-A-E-L", 4.0)
+        self.assertEqual(hit.word, "Kael")
+
+    def test_a_spelling_after_a_capitalised_line_counts(self) -> None:
+        w = SpellingWatcher()
+        w.note(1, "We were sent by Brannoch", 0.0)
+        (hit,) = w.note(1, "It's B R A N N O C H", 3.0)
+        self.assertEqual(hit.word, "Brannoch")
+
     def test_an_answered_ask_is_used_once(self) -> None:
         w = SpellingWatcher()
         w.note(1, "how do you spell that", 0.0)
@@ -169,7 +199,7 @@ def table_bot(*, consenting: set[int] | None = None, waiting: list[Any] | None =
         memory=memory,
         consent=SimpleNamespace(consenting=AsyncMock(return_value=consenting or {2})),
     )
-    for name in ("_note_spelling", "suggest_spelled"):
+    for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
 
@@ -179,10 +209,57 @@ def a_table(secret: frozenset[str] = frozenset()) -> Any:
         spelling=SpellingWatcher(),
         spelled=[],
         spelled_hints=(),
+        held_spelled={},
         hint_parts=SimpleNamespace(secret=secret),
         guild_id=1,
         campaign_id="c" * 32,
     )
+
+
+class TheGate(unittest.IsolatedAsyncioTestCase):
+    """With the off-topic filter on, a spelled line waits for its label (#1748): game talk gives
+    its hint once labelled, off-topic talk gives nothing."""
+
+    async def label(self, topic: str, *, consenting: bool = True) -> Any:
+        from dmbot import bot as bot_module
+        from dmbot.transcript.topics import Waiting
+
+        fake = table_bot()
+        fake.consent.has_consent = lambda _g, _u: consenting
+        fake.topic_ai = object()
+        fake._track = lambda *_a, **_k: None
+        fake._save_topic = AsyncMock()
+        fake._hide_lines = AsyncMock()
+        for name in ("_label_topics", "_record_spelled"):
+            setattr(fake, name, getattr(DMBot, name).__get__(fake))
+        table = a_table()
+        table.held_spelled = {}
+        table.held = {(2, 100): "B R A N N O C H"}
+        table.dm_user_ids = set()
+        table.topic_calls = 0
+        table.topic_tokens = [0, 0]
+        table.topic_failures = 0
+        table.heard = []
+        table.vocabulary = SimpleNamespace(note=lambda *_a: None)
+        fake._note_spelling(table, 1, "how do you spell that")
+        fake._note_spelling(table, 2, "B R A N N O C H", held_key=(2, 100))
+        self.assertEqual((table.spelled, table.spelled_hints), ([], ()))  # held with the line
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        with patch.object(bot_module, "classify", AsyncMock(return_value=([topic], reply))):
+            await fake._label_topics(table, [Waiting(2, 100, "B R A N N O C H")])
+        return table
+
+    async def test_game_talk_gives_its_hint_once_labelled(self) -> None:
+        table = await self.label("game")
+        self.assertEqual(table.spelled_hints, ("Brannoch",))
+
+    async def test_off_topic_talk_gives_nothing(self) -> None:
+        table = await self.label("off_topic")
+        self.assertEqual((table.spelled, table.spelled_hints, table.held_spelled), ([], (), {}))
+
+    async def test_someone_who_stopped_agreeing_gives_nothing(self) -> None:
+        table = await self.label("game", consenting=False)
+        self.assertEqual((table.spelled, table.spelled_hints), ([], ()))
 
 
 class TheBot(unittest.IsolatedAsyncioTestCase):
@@ -235,7 +312,7 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
     async def test_a_spelling_said_next_to_a_pending_suggestion_goes_to_that_suggestion(
         self,
     ) -> None:
-        pending = SimpleNamespace(id="e" * 32, name="Brenoch")
+        pending = SimpleNamespace(id="e" * 32, name="Brenoch", description="Heard 3 times")
         bot, table = table_bot(waiting=[pending]), a_table()
         said = [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N N O C H")]
         self.say(bot, table, said)

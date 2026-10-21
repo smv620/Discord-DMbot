@@ -2456,6 +2456,52 @@ class Review(NamesTest):
         assert entity is not None
         self.assertEqual((entity.name, entity.status), ("Brannoch", PROPOSED))  # still the DM's
 
+    async def test_a_spelling_said_at_the_table_reaches_the_pending_suggestion(self) -> None:
+        from dmbot.transcript.spelled import SpellingWatcher
+
+        brenoch = await self.suggest("Brenoch")
+        speller = 7
+        bot: Any = SimpleNamespace(
+            memory=self.memory,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+        )
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+            setattr(bot, name, getattr(DMBot, name).__get__(bot))
+        table = SimpleNamespace(
+            spelling=SpellingWatcher(),
+            spelled=[],
+            spelled_hints=(),
+            held_spelled={},
+            hint_parts=None,
+            guild_id=GUILD,
+            campaign_id=self.campaign.id,
+        )
+        for who, line in (
+            (1, "ask Brenoch"),
+            (1, "how do you spell that"),
+            (speller, "B R A N N O C H"),
+        ):
+            bot._note_spelling(table, who, line)
+        await bot.suggest_spelled(table)
+        waiting = await self.memory.entities(GUILD, self.campaign.id, statuses=[PROPOSED])
+        names = [e.name for e in waiting]
+        self.assertEqual(names, ["Brenoch"])  # no second entry
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Someone spelled it out: **Brannoch**", text)
+        self.assertEqual(text.count("Brannoch"), 1)  # shown once, not also as a "heard" note
+        self.assertEqual(kw["view"].children[0].label, "✏️ Fix spelling")
+        self.assertEqual(brenoch, waiting[0].id)
+
+    async def test_a_note_cannot_be_set_on_a_confirmed_name(self) -> None:
+        saved = await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        entity_id = saved.id
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_note(
+                GUILD, self.campaign.id, entity_id, "Spelled out at the table: X", source="scan"
+            )
+
     async def test_a_spelled_out_name_that_sounds_like_nothing_has_no_fix_button(self) -> None:
         await self.spelled("Zorgul")
         it = self.it()
