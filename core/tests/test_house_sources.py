@@ -63,6 +63,16 @@ class Grouping(unittest.TestCase):
         self.assertEqual(out[-1].publisher, "Sam")
         self.assertEqual(out[-1].line, "1 rule · Set: Red Table (by Sam)")
 
+    def test_an_upload_line_has_its_name_and_date(self) -> None:
+        (only,) = house_sources.group([rule(6, "upload", "our-rules.txt")])
+        self.assertEqual(only.line, "1 rule · File: our-rules.txt (14 Nov)")
+
+    def test_rules_copied_from_a_set_are_not_a_follow(self) -> None:
+        copied = rule(3, from_set="Red Table house rules, v4")
+        (only,) = house_sources.group([copied])
+        self.assertEqual(only.kind, "copied")
+        self.assertEqual(only.line, "1 rule · Copied from Red Table house rules, v4")
+
     def test_old_rules_read_as_added_in_discord(self) -> None:
         (only,) = house_sources.group([rule(1)])
         self.assertEqual(only.title, "Added in Discord")
@@ -181,6 +191,16 @@ class TheList(UITest):
         it = self.it()
         await ui.open_sources(it, campaign())
         self.assertIn("1 rule · Set: Red Table (by Sam)", it.followup.send.await_args.args[0])
+
+    async def test_a_campaign_that_only_follows_a_set_still_has_sources(self) -> None:
+        self.store.rules["c1"] = []
+        follow = SimpleNamespace(
+            name="Red Table", publisher="Sam", kind="house_rules", updating=True
+        )
+        self.bot.rule_sets = SimpleNamespace(following=AsyncMock(return_value=[follow]))
+        it = await self.command(DM)
+        _, view = self.opened(it)
+        self.assertIn(ui.SOURCES_LABEL, [str(c.label) for c in view.children])
 
     async def test_no_rules_say_so(self) -> None:
         self.store.rules["c1"] = []

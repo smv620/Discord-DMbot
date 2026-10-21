@@ -308,6 +308,7 @@ class Pressing(TableTest):
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertRegex(added["scenario"], r"^Said at the table, \d{4}-\d{2}-\d{2}$")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")
         content, new_view = it.response.edited[0]
         self.assertIsNone(new_view)
         self.assertIn("✅ Saved as house rule 1.", content)
@@ -339,6 +340,7 @@ class Pressing(TableTest):
         (added,) = self.store.added
         self.assertEqual(added["rule"].rule, "Potions are a free action")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")  # the edit form too
         self.assertIn("✅ Saved as house rule 1.", submit.response.edited[0][0])
         self.assertIsNone(submit.response.edited[0][1])
 

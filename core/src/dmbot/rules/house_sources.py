@@ -10,6 +10,7 @@ DMbot's own copy: an uploaded file itself is never kept.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -35,8 +36,15 @@ class Source:
         """The list's line for this source: its title, what it is, and how many rules."""
         count = f"{len(self.rules)} rule{'s' if len(self.rules) != 1 else ''}"
         by = f" (by {self.publisher})" if self.publisher else ""
-        kind = {"upload": "File: ", "followed": "Set: "}.get(self.kind, "")
-        return f"{count} · {kind}{self.title}{by}"
+        kind = {"upload": "File: ", "followed": "Set: ", "copied": "Copied from "}.get(
+            self.kind, ""
+        )
+        # An upload says when (its newest rule was added): PLAN, "by its name and date".
+        when = ""
+        if self.kind == "upload" and self.rules:
+            newest = max(r.created_at for r in self.rules)
+            when = f" ({time.strftime('%-d %b', time.gmtime(newest))})"
+        return f"{count} · {kind}{self.title}{by}{when}"
 
 
 def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = None) -> list[Source]:
@@ -48,10 +56,13 @@ def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = Non
     uploads: dict[str, list[HouseRule]] = {}
     discord_rules: list[HouseRule] = []
     sets: dict[str, list[HouseRule]] = {}
+    copied: dict[str, list[HouseRule]] = {}
     for rule in rules:
-        followed = getattr(rule, "set_name", None) or rule.from_set
+        followed = getattr(rule, "set_name", None)
         if followed:
             sets.setdefault(followed, []).append(rule)
+        elif rule.from_set:  # cherry-picked into the campaign's own rules: a copy, not a follow
+            copied.setdefault(rule.from_set, []).append(rule)
         elif rule.source == "linked":
             linked.append(rule)
         elif rule.source == "upload":
@@ -67,6 +78,8 @@ def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = Non
         out.append(Source(f"upload:{name}", "upload", name, tuple(group_rules)))
     if discord_rules:
         out.append(Source("discord", "discord", DISCORD_TITLE, tuple(discord_rules)))
+    for name, group_rules in copied.items():
+        out.append(Source(f"copied:{name}", "copied", name, tuple(group_rules)))
     for name, group_rules in sets.items():
         out.append(
             Source(f"set:{name}", "followed", name, tuple(group_rules), publishers.get(name))

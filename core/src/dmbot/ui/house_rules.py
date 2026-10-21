@@ -187,6 +187,7 @@ async def show_list(
         page,
         is_dm=is_dm,
         suggest_to=await _suggest_target(interaction, campaign, is_dm),
+        follows=await _follows_a_set(interaction, campaign),
     )
     view = menu if menu.children else None
     if first:
@@ -208,6 +209,20 @@ async def _suggest_target(
         log.warning("Couldn't look up the followed set for the house rules list", exc_info=True)
         return None
     return next((f.name for f in follows if f.kind == "house_rules" and f.updating), None)
+
+
+async def _follows_a_set(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Does the campaign follow a set of house rules? Its rules are a source too (#2285), so
+    📂 Sources is offered even before the campaign has a rule of its own."""
+    sets = getattr(_bot(interaction), "rule_sets", None)
+    if sets is None:
+        return False
+    try:
+        follows = await sets.following(campaign.guild_id, campaign.id)
+    except Exception:
+        log.warning("Couldn't look up the followed sets for the house rules list", exc_info=True)
+        return False
+    return any(f.kind == "house_rules" for f in follows)
 
 
 async def _show(interaction: discord.Interaction, text: str, view: _Menu | None) -> None:
@@ -245,6 +260,7 @@ class ListMenu(_Menu):
         *,
         is_dm: bool,
         suggest_to: str | None = None,
+        follows: bool = False,
     ) -> None:
         super().__init__()
         self.campaign, self.rules, self.page = campaign, rules, page
@@ -258,7 +274,7 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if rules:  # nothing to download before the first rule
             self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
-        if rules:  # where they came from (#2285): anyone who may read the list
+        if rules or follows:  # where they came from (#2285): anyone who may read the list
             self.add_item(_Button(self._sources, label=house_sources.SOURCES_LABEL))
         if is_dm:
             self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))

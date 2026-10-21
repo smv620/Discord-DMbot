@@ -658,6 +658,14 @@ class Uploading(SyncTest):
         self.assertEqual(self.sent, [])  # not on the DM screen
         self.assertEqual(len(self.store.rules), 3)
 
+    async def test_the_uploads_name_reaches_the_rules_it_adds(self) -> None:
+        form = self.form(FILE.encode())
+        it = self.interaction()
+        await form.on_submit(it)
+        view = it.followup.send.await_args.kwargs["view"]
+        await self.button(view, "Accept all").callback(self.interaction())
+        self.assertEqual(self.store.sources, [("upload", "our-rules.txt")])
+
     async def test_a_player_is_refused_before_anything_is_read(self) -> None:
         form = self.form(FILE.encode())
         it = self.interaction(PLAYER)
