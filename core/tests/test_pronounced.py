@@ -22,6 +22,8 @@ class WhatCounts(TestCase):
             ("you pronounce it like Kale", "Kale"),
             ("pronounce it as Kay el", "Kay el"),
             ("say it like Kay-el, okay", "Kay-el"),
+            ("Kael, pronounced Kay-el", "Kay-el"),
+            ("it's pronounced kay-el", "Kay-el"),
         ]:
             self.assertEqual(self.phrases(line), [want], line)
 
@@ -39,6 +41,20 @@ class WhatCounts(TestCase):
             "say it like you mean it",
             "he said it like Mira would",
             "it's pronounced he did",
+            "I can't pronounce that name",
+            "say it as loud as you can",
+            "say it as quickly as you can",
+            "say it like Gandalf would",
+            "that's pronounced weird",
+            "she was pronounced queen",
+            "he was pronounced king of the hill",
+            "the treaty was pronounced void",
+            "the verdict is pronounced tomorrow",
+            "pronounce it slowly",
+            "pronounce it however you want",
+            "it's pronounced similar to Kael",
+            "the spell is pronounced fireball not firebowl",
+            "it's pronounced kay el",
         ]:
             self.assertEqual(self.phrases(line), [], line)
 

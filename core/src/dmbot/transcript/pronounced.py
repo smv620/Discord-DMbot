@@ -22,8 +22,8 @@ MAX_PHRASE = 30  # characters of the pronunciation kept
 # Only a cue that is about saying a name counts: "is pronounced X", "pronounce it X", "say it like
 # X". A bare "pronounced" is also what a judge does ("pronounced him dead"), so it is not enough.
 _BARE = re.compile(
-    r"\b(?:(?:is|was|are|be|been|it's|that's)\s+pronounced"
-    r"|pronounce\s+(?:it|that|his name|her name|their name|the name))\s+(?:(?:like|as)\s+)?",
+    r"(?:\b(?:is|was|are|be|been|it's|that's)\s+pronounced|,\s*pronounced"
+    r"|\bpronounce\s+(?:it|that|his name|her name|their name|the name))\s+(?:(?:like|as)\s+)?",
     re.I,
 )
 _LIKE = re.compile(
@@ -36,8 +36,16 @@ _NOT_A_PRONUNCIATION = frozenset(
         "differently", "how", "like", "as", "with", "in", "to", "is", "and", "but", "so",
         "because", "or", "if", "when", "then", "yes", "no", "you", "he", "she", "they", "we",
         "i", "me", "him", "her", "them", "my", "his", "their", "our", "dead", "guilty",
-        "judgement", "judgment", "wrongly", "properly", "again", "twice", "once",
+        "judgement", "judgment", "wrongly", "properly", "again", "twice", "once", "however",
+        "over", "just", "kind", "similar", "exactly", "weird", "void", "name", "word", "loud",
+        "louder", "quickly", "slowly", "loudly", "quietly", "softly", "clearly", "fast", "slow",
+        "strange", "funny", "different", "same", "tomorrow", "today", "tonight", "king",
+        "queen", "no", "whatever", "whichever", "however",
     )
+)  # fmt: skip
+# What follows a person's name in "say it like Gandalf would".
+_COMPARING = frozenset(
+    ("would", "could", "should", "might", "does", "did", "do", "can", "will", "is", "was", "says")
 )  # fmt: skip
 # Words that follow a pronunciation in a sentence: never the second syllable of one.
 _FUNCTION = frozenset(
@@ -55,6 +63,11 @@ class Pronounced:
     phrase: str
 
 
+def sound_key(phrase: str) -> str:
+    """What two writings of one sound share: "Kay el", "Kay-el" and "KAY-el" are one sound."""
+    return re.sub(r"[^a-z']+", "", phrase.lower())
+
+
 def mentions_pronunciation(text: str) -> bool:
     """A cheap check, so most lines never pay for looking names up."""
     return bool(_BARE.search(text) or _LIKE.search(text))
@@ -66,6 +79,13 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
     first = _WORD.match(text, start)
     if first is None or first.group().lower() in _NOT_A_PRONUNCIATION:
         return None
+    # It has to look like a sound being spelled out: capitalised, or hyphenated, or in capitals
+    # ("Kay el", "KAY-el", "kay-el"); a plain lower-case word is ordinary talk ("pronounce it
+    # slowly", "it's pronounced similar to…").
+    if not (first.group()[0].isupper() or "-" in first.group()):
+        return None
+    if first.group().lower().endswith("ly") and "-" not in first.group():
+        return None  # an adverb, not a sound
     words, end = [first.group()], first.end()
     second = re.match(r"[ \t]+([A-Za-z]{1,4})\b(?![-'’])", text[end:])
     if (
@@ -77,6 +97,10 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
     ):
         words.append(second.group(1))
         end += second.end()
+    gap = re.match(r"[ \t]*", text[end:])
+    follow = _WORD.match(text, end + (gap.end() if gap else 0))
+    if follow is not None and follow.group().lower() in _COMPARING:
+        return None  # "say it like Gandalf would": a comparison, not a sound
     pieces = [
         "-".join(p.capitalize() if p.isupper() and len(p) > 1 else p for p in w.split("-"))
         for w in words
@@ -105,26 +129,29 @@ class PronunciationWatcher:
     def __init__(self) -> None:
         self._recent: deque[tuple[float, int, str]] = deque(maxlen=12)  # (time, speaker, name)
 
-    def note(
-        self,
-        user_id: int,
-        text: str,
-        names: Sequence[tuple[str, int]],
-        now: float,
-        raw: str | None = None,
-    ) -> list[Pronounced]:
-        """`names`: (entity id, where in the line) of each name said in its main spelling. A
-        pronunciation belongs to the one name said before it in the same line, else to the one
-        name said in the last few seconds; never to a guess between two. `text` is the cleaned
-        line (the names are found in it); `raw` is the line as heard: the cleaner turns a
-        misheard "Kale" into the name "Kael", so the sound is read from the raw line when it has
-        the same number of finds."""
-        found: list[Pronounced] = []
-        hits = find(text) if names or self._recent else []
+    def parse(self, text: str, raw: str | None = None) -> list[tuple[str, int]]:
+        """The pronunciations in a line and where each cue starts. `text` is the cleaned line
+        (the names are found in it); `raw` is the line as heard: the cleaner turns a misheard
+        "Kale" into the name "Kael", so the sound is read from the raw line when it has the same
+        number of finds."""
+        hits = find(text)
         if raw is not None and hits:
             heard = find(raw)
             if len(heard) == len(hits):
                 hits = [(h[0], at) for h, (_, at) in zip(heard, hits, strict=True)]
+        return hits
+
+    def attach(
+        self,
+        user_id: int,
+        hits: Sequence[tuple[str, int]],
+        names: Sequence[tuple[str, int]],
+        now: float,
+    ) -> list[Pronounced]:
+        """`names`: (entity id, where in the line) of each name said in its main spelling. A
+        pronunciation belongs to the one name said before it in the same line, else to the one
+        name said in the last few seconds; never to a guess between two."""
+        found: list[Pronounced] = []
         for phrase, at in hits:
             before = {eid for eid, where in names if where < at}
             if len(before) > 1:
@@ -140,6 +167,19 @@ class PronunciationWatcher:
         for eid, _ in names:
             self._recent.append((now, user_id, eid))
         return found
+
+    def note(
+        self,
+        user_id: int,
+        text: str,
+        names: Sequence[tuple[str, int]],
+        now: float,
+        raw: str | None = None,
+    ) -> list[Pronounced]:
+        """`parse` and `attach` in one."""
+        return self.attach(
+            user_id, self.parse(text, raw) if names or self._recent else [], names, now
+        )
 
     def forget(self, user_id: int) -> None:
         kept = [x for x in self._recent if x[1] != user_id]

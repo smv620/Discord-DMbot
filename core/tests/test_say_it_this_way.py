@@ -3,6 +3,7 @@ threshold), the store's rules, and the DM's review. Invented names throughout.""
 
 from __future__ import annotations
 
+from collections import deque
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -348,34 +349,56 @@ class TheSpokenWay(SaidAsTest):
         self.bot.tables[GUILD] = table
         return table
 
+    def hear(self, table: Any, speaker: int, line: str, raw: str | None = None, **kw: Any) -> None:
+        found = find_mentions(table.name_lookup, line)
+        self.bot._note_pronounced(table, speaker, line, found, raw or line, **kw)
+
     async def said(self, *lines: tuple[int, str]) -> Any:
         table = await self.lookup(make_table(self.campaign.id))
         for speaker, line in lines:
-            found = find_mentions(table.name_lookup, line)
-            self.bot._note_pronounced(table, speaker, line, found, line)
+            self.hear(table, speaker, line)
         return table
+
+    async def offered_spoken(self, table: Any) -> list[Any]:
+        await self.bot.suggest_pronounced(table)
+        return await self.waiting()
+
+    def sound(self, key: str, writing: str, speaker: int = SPEAKER, times: int = 1) -> Any:
+        return {(self.cerric.id, key, speaker): {writing: times}}
 
     async def test_the_name_and_its_sound_are_kept_as_words_only(self) -> None:
         table = await self.said((SPEAKER, "Cerric is pronounced SEH-rick by the way"))
-        self.assertEqual(table.pronounced, {(self.cerric.id, "Seh-rick", SPEAKER): 1})
+        self.assertEqual(table.pronounced, self.sound("sehrick", "Seh-rick"))
 
     async def test_the_name_said_a_moment_before_by_someone_else(self) -> None:
         table = await self.said((8, "we ask Cerric"), (SPEAKER, "it's pronounced SEH-rick"))
-        self.assertEqual(table.pronounced, {(self.cerric.id, "Seh-rick", SPEAKER): 1})
+        self.assertEqual(table.pronounced, self.sound("sehrick", "Seh-rick"))
 
     async def test_a_line_with_no_name_nearby_is_nothing(self) -> None:
         table = await self.said((SPEAKER, "it's pronounced SEH-rick"))
         self.assertEqual(table.pronounced, {})
 
-    async def test_the_one_said_most_often_is_offered(self) -> None:
+    async def test_the_sound_said_most_often_is_offered_not_the_first_or_the_last(self) -> None:
+        await self.consent.grant(GUILD, 8)
         table = await self.said(
             (SPEAKER, "Cerric is pronounced Sarick"),
             (SPEAKER, "Cerric is pronounced Seh-rick"),
             (8, "Cerric is pronounced Seh-rick"),
+            (8, "Cerric is pronounced Serik"),
         )
-        await self.consent.grant(GUILD, 8)
-        (one,) = await self.offered(table)
+        (one,) = await self.offered_spoken(table)
         self.assertEqual((one.heard, one.times), ("Seh-rick", 2))
+
+    async def test_two_ways_of_writing_one_sound_vote_together(self) -> None:
+        table = await self.said(
+            (SPEAKER, "Cerric is pronounced Seh rick"),
+            (SPEAKER, "Cerric is pronounced Seh-rick"),
+            (SPEAKER, "Cerric is pronounced Seh-rick"),
+            (SPEAKER, "Cerric is pronounced Sarick"),
+            (SPEAKER, "Cerric is pronounced Sarick"),
+        )
+        (one,) = await self.offered_spoken(table)
+        self.assertEqual((one.heard, one.times), ("Seh-rick", 3))  # (as most often written)
 
     async def test_an_other_name_says_nothing_about_the_main_name(self) -> None:
         from dmbot.ui import names as ui
@@ -384,6 +407,29 @@ class TheSpokenWay(SaidAsTest):
         table = await self.said((SPEAKER, "Old Ced is pronounced Sed"))
         self.assertEqual(table.pronounced, {})
 
+    async def test_a_known_name_of_another_entry_is_not_a_sound(self) -> None:
+        from dmbot.ui import names as ui
+
+        await ui.save_name(self.memory, self.campaign, "Kael", "npc", [], [])
+        table = await self.said((SPEAKER, "No the other one, Cerric is pronounced Kael"))
+        self.assertEqual(table.pronounced, {})
+        table = await self.said((SPEAKER, "Cerric is pronounced Cerric"))  # its own, fine to keep
+        self.assertEqual(len(table.pronounced), 1)
+
+    async def test_a_secret_name_is_never_the_sound_nor_a_word_of_it(self) -> None:
+        from dmbot.ui import names as ui
+
+        queen = await ui.save_name(self.memory, self.campaign, "The Raven Queen", "npc", [], [])
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = %s",
+                (GUILD, self.campaign.id, queen.id),
+            )
+        for sound in ("Raven", "Raven Queen", "Queen"):
+            table = await self.said((SPEAKER, f"Cerric is pronounced {sound}"))
+            self.assertEqual(table.pronounced, {}, sound)
+
     async def test_stopping_recording_forgets_what_that_person_said_and_the_name_they_said(
         self,
     ) -> None:
@@ -391,23 +437,16 @@ class TheSpokenWay(SaidAsTest):
         self.bot.stop_recording(GUILD, SPEAKER)
         self.assertEqual(table.pronounced, {})
         table = await self.said((SPEAKER, "we ask Cerric"))
-        self.bot.stop_recording(GUILD, SPEAKER)  # the name they had just said goes too
-        self.bot._note_pronounced(
-            table, 8, "it's pronounced Seh-rick", [], "it's pronounced Seh-rick"
-        )
+        self.bot.stop_recording(GUILD, SPEAKER)  # the name they had just said can't be attached to
+        self.hear(table, 8, "it's pronounced Seh-rick")
         self.assertEqual(table.pronounced, {})
 
     async def test_the_sound_is_read_from_the_line_as_heard(self) -> None:
         table = await self.lookup(make_table(self.campaign.id))
-        line = "Cerric is pronounced Cerric"  # the cleaner turned "Kerrick" into the name
-        self.bot._note_pronounced(
-            table,
-            SPEAKER,
-            line,
-            find_mentions(table.name_lookup, line),
-            "Cerric is pronounced Kerrick",
-        )
-        self.assertEqual(table.pronounced, {(self.cerric.id, "Kerrick", SPEAKER): 1})
+        self.hear(
+            table, SPEAKER, "Cerric is pronounced Cerric", "Cerric is pronounced Kerrick"
+        )  # the cleaner turned "Kerrick" into the name
+        self.assertEqual(table.pronounced, self.sound("kerrick", "Kerrick"))
 
     async def test_the_log_says_only_how_long_it_was(self) -> None:
         with self.assertLogs("dmbot.bot", level="INFO") as logs:
@@ -417,41 +456,92 @@ class TheSpokenWay(SaidAsTest):
         self.assertNotIn("Seh-rick", said[0])
         self.assertNotIn("Cerric", said[0])
 
-    async def test_a_plan_that_says_no_still_forgets_the_session(self) -> None:
-        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
-        self.bot.plan_allows = AsyncMock(return_value=False)  # type: ignore[method-assign]
-        await self.bot.suggest_pronounced(table)
-        self.assertEqual((table.pronounced, await self.waiting()), ({}, []))
+    async def test_at_most_forty_sounds_are_kept(self) -> None:
+        table = await self.lookup(make_table(self.campaign.id))
+        table.pronounced = {(self.cerric.id, f"k{n}", SPEAKER): {f"K{n}": 1} for n in range(40)}
+        self.hear(table, SPEAKER, "Cerric is pronounced Seh-rick")
+        self.assertEqual(len(table.pronounced), 40)
+        self.assertNotIn((self.cerric.id, "sehrick", SPEAKER), table.pronounced)
 
-    async def offered(self, table: Any) -> list[Any]:  # type: ignore[override]
-        await self.bot.suggest_pronounced(table)
-        return await self.waiting()
-
-    async def test_after_the_session_it_is_offered_not_changed(self) -> None:
+    async def test_after_the_session_it_is_offered_not_changed_and_nothing_is_kept(self) -> None:
         table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
-        (one,) = await self.offered(table)
+        (one,) = await self.offered_spoken(table)
         self.assertEqual((one.name, one.heard), ("Cerric", "Seh-rick"))
         self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.cerric.id))
-        self.assertEqual(table.pronounced, {})  # nothing is kept past the session
+        self.assertEqual(table.pronounced, {})
+        self.assertEqual(table.pronouncing._recent, deque())
 
     async def test_only_a_person_who_still_agrees_counts(self) -> None:
         table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
         self.consent.stop_now(GUILD, SPEAKER)
-        self.assertEqual(await self.offered(table), [])
+        self.assertEqual(await self.offered_spoken(table), [])
 
-    async def test_nothing_is_offered_without_spoken_recaps(self) -> None:
+    async def test_nothing_is_offered_when_the_plan_says_no_but_the_session_is_forgotten(
+        self,
+    ) -> None:
         table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
         self.bot.plan_allows = AsyncMock(return_value=False)  # type: ignore[method-assign]
-        self.assertEqual(await self.offered(table), [])
-
-    async def test_a_secret_name_is_never_noted_or_offered(self) -> None:
-        async with self.db.guild(GUILD) as conn:  # (the store refuses to make a main name secret)
-            await conn.execute(
-                "UPDATE memory_aliases SET secret = true WHERE guild_id = %s"
-                " AND campaign_id = %s AND entity_id = %s",
-                (GUILD, self.campaign.id, self.cerric.id),
-            )
-        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.assertEqual(await self.offered_spoken(table), [])
         self.assertEqual(table.pronounced, {})
-        table.pronounced = {(self.cerric.id, "Seh-rick", SPEAKER): 1}  # even if one got in
-        self.assertEqual(await self.offered(table), [])
+
+    async def test_nothing_is_offered_with_spoken_recaps_switched_off(self) -> None:
+        table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))
+        self.bot.settings = SimpleNamespace(recap_audio_on=False, enforce_plans=False)  # type: ignore[assignment]
+        self.assertEqual(await self.offered_spoken(table), [])
+        self.assertEqual(table.pronounced, {})  # forgotten all the same
+
+    async def test_a_name_said_aloud_beats_the_cleaners_count(self) -> None:
+        table = self.table(self.heard(times=5))  # the cleaner heard it as "kerrick" five times
+        await self.lookup(table)
+        self.hear(table, SPEAKER, "Cerric is pronounced Seh-rick")
+        # the end-of-session order is part of the rule: said aloud first, counted second
+        order = [name for name, _ in self.bot_end_steps(table)]
+        self.assertLess(order.index("said aloud"), order.index("say it this way"))
+
+    def bot_end_steps(self, table: Any) -> list[tuple[str, Any]]:
+        import inspect
+        import re as regex
+
+        source = inspect.getsource(type(self.bot))
+        names = regex.findall(r'\("(said aloud|say it this way)", lambda', source)
+        return [(n, None) for n in names]
+
+    async def test_a_held_line_waits_for_its_label(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot import bot as bot_module
+        from dmbot.transcript.topics import Waiting
+
+        self.bot.topic_ai = object()  # type: ignore[assignment]
+        self.bot._save_topic = AsyncMock()  # type: ignore[method-assign]
+        self.bot._hide_lines = AsyncMock()  # type: ignore[method-assign]
+        for topic, kept in (("game", 1), ("off_topic", 0)):
+            table = await self.lookup(make_table(self.campaign.id))
+            line = "Cerric is pronounced Seh-rick"
+            table.held = {(SPEAKER, 100): line}
+            self.hear(table, SPEAKER, line, held_key=(SPEAKER, 100))
+            self.assertEqual(table.pronounced, {})  # held with the line
+            reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+            with patch.object(bot_module, "classify", AsyncMock(return_value=([topic], reply))):
+                await self.bot._label_topics(table, [Waiting(SPEAKER, 100, line)])
+            self.assertEqual(len(table.pronounced), kept, topic)
+            self.assertEqual(table.held_pronounced, {})
+
+    async def test_a_held_line_of_someone_who_stopped_gives_nothing(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot import bot as bot_module
+        from dmbot.transcript.topics import Waiting
+
+        self.bot.topic_ai = object()  # type: ignore[assignment]
+        self.bot._save_topic = AsyncMock()  # type: ignore[method-assign]
+        self.bot._hide_lines = AsyncMock()  # type: ignore[method-assign]
+        table = await self.lookup(make_table(self.campaign.id))
+        line = "Cerric is pronounced Seh-rick"
+        table.held = {(SPEAKER, 100): line}
+        self.hear(table, SPEAKER, line, held_key=(SPEAKER, 100))
+        self.consent.stop_now(GUILD, SPEAKER)
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        with patch.object(bot_module, "classify", AsyncMock(return_value=(["game"], reply))):
+            await self.bot._label_topics(table, [Waiting(SPEAKER, 100, line)])
+        self.assertEqual((table.pronounced, table.held_pronounced), ({}, {}))
