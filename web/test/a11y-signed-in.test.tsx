@@ -49,7 +49,7 @@ const logEntry = (n: number): AdminLogEntry => ({
 
 const GRANTS: GrantsView = {
   free: [
-    { discordId: "100000000000000001", name: "Stormy", source: "list" } as never,
+    { discordId: "100000000000000001", name: "Stormy" },
   ],
   grants: [
     {
@@ -96,7 +96,7 @@ function adminApi(over: Partial<AdminApi> = {}): AdminApi {
     setTicketStatus: async () => undefined,
     replyToTicket: async () => undefined,
     ...over,
-  } as AdminApi;
+  };
 }
 
 describe("the admin page", () => {
