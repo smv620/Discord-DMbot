@@ -961,9 +961,8 @@ class NameCard(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, "Only a DM of this campaign can do that.")
             return
-        if not await _spoken_recaps(interaction, campaign):  # also checked on every press
-            await _tell(interaction, SAY_NOT_ON)
-            return
+        # No plan check here: a slow one would pass Discord's 3 seconds for opening a form. The
+        # card shows this button only while spoken recaps are on, and the submit checks again.
         said = await memory.said_as(campaign.guild_id, campaign.id, self.entity_id)
         self.origin = None  # the form's answer replaces this message; cancel keeps it
         await interaction.response.send_modal(SayForm(self.campaign_id, self.entity_id, name, said))
@@ -1114,7 +1113,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
-SAY_NOT_ON = (
+SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
     "Spoken recaps are off for this campaign, so there is nothing to set. Turn them on first."
 )
 
