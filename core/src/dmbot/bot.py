@@ -1017,6 +1017,9 @@ class DMBot(commands.AutoShardedBot):
         self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
+        # The earliest hold each import has had (memory only): its waiting emails count their days
+        # from it, so answering the oldest session does not start the count over (#2237).
+        self._group_started: dict[tuple[int, str, str], float] = {}
         # One lock for each import: release + record + pop of its "writing" line are one step, so
         # a press, a round and an expiry never each tell the group (#2174).
         self._group_locks: dict[str, asyncio.Lock] = {}
@@ -8008,6 +8011,9 @@ class DMBot(commands.AutoShardedBot):
         if store is None:
             return
         holds = await store.held(gid)
+        live = {(gid, h.campaign_id, h.group_id) for h in holds}
+        for key in [k for k in self._group_started if k[0] == gid and k not in live]:
+            del self._group_started[key]  # an import with nothing held here needs no start time
         for held in holds:
             # The holds of one import go together (#2106): the oldest speaks for the group (the
             # question, the reminder, the expiry line); the others only follow their own answers.
@@ -8103,8 +8109,8 @@ class DMBot(commands.AutoShardedBot):
                                     gid, m.campaign_id, m.session_id, m.session_at
                                 )
                         await self._remind(store, gid, held, waiting, age, members)
-                    if lead and age >= recap_hold.HOLD_REMIND_S:
-                        await self._email_hold(campaign, gid, held, members, age)
+                    if lead:
+                        await self._email_hold(campaign, gid, held, members)
                     return
                 # Claim first, so the round and the end of the extractor never both ask.
                 if not await store.mark_asked(gid, held.campaign_id, held.session_at):
@@ -8216,13 +8222,26 @@ class DMBot(commands.AutoShardedBot):
         gid: int,
         held: recap_hold.Hold,
         members: list[recap_hold.Hold],
-        age: float,
     ) -> None:
-        """A held recap also emails the DM, at most once a day, when the campaign's recap emails
-        are on (#2174). The mailer's once-per-kind record is the daily limit, so rounds and
-        restarts never double it; a failure is logged and the next round tries again. The count
-        is the whole import's open questions, the same on every day."""
+        """A held recap also emails the DMs of the campaign, the same people as the ready email
+        (#2237), at most once a calendar day from the first day on, when the campaign's recap
+        emails are on (#2174). The mailer's once-per-kind record is the daily limit, so rounds
+        and restarts never double it (the kind is the calendar day, so a restart changes
+        nothing); a failure is logged and the next round tries again. The count is the whole
+        import's open questions. The first day is counted from the earliest hold the import has
+        had this run, so answering its oldest session does not start the wait over; the lead only
+        sends (the oldest remaining speaks for the import)."""
         if not campaign.recaps_email or self.mailer is None or self.recaps is None:
+            return
+        if self.recap_holds is None:
+            return
+        started: float = min(m.created_at for m in members)
+        if held.group_id:
+            key = (gid, held.campaign_id, held.group_id)
+            started = min(started, self._group_started.get(key, started))
+            self._group_started[key] = started
+        now = self.recap_holds.now()  # the store's clock wrote created_at
+        if now - started < recap_hold.HOLD_REMIND_S:
             return
         try:
             waiting = 0
@@ -8244,7 +8263,7 @@ class DMBot(commands.AutoShardedBot):
                     user_id,
                     held.session_at,
                     waiting,
-                    int(age // 86400),
+                    int(now // 86400),  # the calendar day: a restart the same day sends no second
                     held.group_id,
                 )
             except Exception:
@@ -8692,7 +8711,15 @@ class DMBot(commands.AutoShardedBot):
         if campaign is not None and not campaign.recaps_email:
             return  # no email by the DM's choice
         if self.mailer is not None and self.recaps is not None:
-            await tell_the_dm(self.mailer, self.recaps, self.settings.site_url, gid, cid, job)
+            await tell_the_dm(
+                self.mailer,
+                self.recaps,
+                self.settings.site_url,
+                gid,
+                cid,
+                job,
+                campaign.dm_user_ids if campaign is not None else (),
+            )
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
         """Names the recap kept that DMbot didn't know (#2027) go into the after-session name

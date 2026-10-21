@@ -3,15 +3,18 @@
 It goes to the DM's account address through the mail DMbot already sends (dmbot.mail) and holds
 the chapter title and a link, never the recap: sent mail is logged and forwarded, and the recap
 is best read where it can be edited (the website). A failed job also emails, with the reason in
-plain words and nothing technical. A held recap that waits on name questions emails once a day
-(#2174). Each kind goes once for each session (or each day, for the held one): `Mailer.send` keeps
-the record, with a short kind built from a hash so no campaign id sits in the mail log.
+plain words and nothing technical. Both go to every DM of the campaign, since any of them can
+answer the names or read the recap (#2237). A held recap that waits on name questions emails once
+a day (#2174). Each kind goes once for each session (or each day, for the held one):
+`Mailer.send` keeps the record, with a short kind built from a hash so no campaign id sits in
+the mail log.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Iterable
 
 from dmbot.mail import Mailer
 from dmbot.recaps.allowance import is_refusal
@@ -53,13 +56,19 @@ def _kind(what: str, guild_id: int, campaign_id: str, session_at: int, tries: in
 
 
 async def tell_the_dm(
-    mailer: Mailer, store: RecapStore, site: str, guild_id: int, campaign_id: str, job: Job
+    mailer: Mailer,
+    store: RecapStore,
+    site: str,
+    guild_id: int,
+    campaign_id: str,
+    job: Job,
+    dm_user_ids: Iterable[int] = (),
 ) -> str:
-    """Email the DM that the job is ready or has failed. Returns what the mailer said
-    (`sent`, `no_address`, …); never raises."""
+    """Email the DMs that the job is ready or has failed: the job's own DM and the campaign's
+    other DMs (`dm_user_ids`), each once (#2237: the same people as the waiting email). Returns
+    what the mailer said to the job's DM (`sent`, `no_address`, …); never raises."""
     if not site:
         return "not_ready"
-    address = await store.address(guild_id, job.dm_user_id)
     link = page_link(site, guild_id, campaign_id, job.session_at)
     if job.state == "ready":
         subject = f"Your recap is ready: {job.title}"
@@ -79,10 +88,17 @@ async def tell_the_dm(
         )
         body = f"{job.last_error or 'Something went wrong.'}{again}"
         kind = _kind("failed", guild_id, campaign_id, job.session_at, job.tries)
-    result = await mailer.send(
-        user_id=job.dm_user_id, kind=kind, to=address, subject=subject, body=body
-    )
-    log.info("Recap: the email was %s", result)
+    result = "no_address"
+    for user_id in dict.fromkeys((job.dm_user_id, *sorted(dm_user_ids))):  # the job's DM first
+        try:
+            address = await store.address(guild_id, user_id)
+        except Exception:  # one DM's lookup failing must not stop the others
+            log.exception("Recap: couldn't look up a DM's address")
+            address = None
+        sent = await mailer.send(user_id=user_id, kind=kind, to=address, subject=subject, body=body)
+        log.info("Recap: the email was %s", sent)
+        if user_id == job.dm_user_id:
+            result = sent
     return result
 
 
@@ -98,7 +114,8 @@ async def remind_the_dm(
     day: int,
     group_id: str = "",
 ) -> str:
-    """Email a DM that a held recap still waits on name questions (#2174). At most one a day:
+    """Email a DM that a held recap still waits on name questions (#2174). The caller sends it to
+    every DM of the campaign, like the ready email (#2237). At most one a day:
     the kind carries the day number, so a second round the same day finds it already sent.
     It holds a count and a link, never a name or any story. Never raises."""
     if not site or waiting <= 0:
