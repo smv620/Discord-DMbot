@@ -9389,6 +9389,7 @@ class DMBot(commands.AutoShardedBot):
             if campaign is None or campaign.dm_screen_channel_id is None:
                 continue
             channel = campaign.dm_screen_channel_id
+            missed = ""
             if reasons:
                 head = (
                     "1 recap you asked for from your imported sessions wasn't written"
@@ -9399,9 +9400,12 @@ class DMBot(commands.AutoShardedBot):
                 missed = f"{head}: {'; '.join(sorted(set(reasons)))}."
             if queued:  # one line for what is being written and what is not
                 await self._say_group_writing(
-                    campaign, channel, len(queued), session_at=queued[-1],
-                    also=missed if reasons else "",
-                )  # fmt: skip
+                    campaign,
+                    channel,
+                    len(queued),
+                    session_at=queued[-1],
+                    also=missed,
+                )
             elif reasons:
                 await self.post(channel, f"📜 {missed}")
 

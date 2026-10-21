@@ -349,6 +349,17 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("1 recap you asked for from your imported sessions wasn't written", told[0])
         self.assertIn("your plan doesn't include recaps", told[0])
 
+    async def test_none_written_gives_the_reasons_alone_and_nothing_gives_nothing(self) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._import_unhonoured[campaign.id] = ["recaps are switched off"]
+        await bot._tell_import_news(GUILD, self.store)
+        self.assertNotIn("Writing", bot.post.await_args.args[1])
+        self.assertIn("wasn't written", bot.post.await_args.args[1])
+        bot.post.reset_mock()
+        await bot._tell_import_news(GUILD, self.store)
+        bot.post.assert_not_awaited()
+
     async def test_one_written_and_one_not_never_reads_1_recaps(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
