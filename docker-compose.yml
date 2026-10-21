@@ -164,6 +164,8 @@ services:
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
       # Importing older sessions (#2105): off until dev1 has checked a real import.
       DMBOT_IMPORTS: ${DMBOT_IMPORTS:-0}
+      # Servers where importing is on although the line above is off (#2259): test servers only.
+      DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
       # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
