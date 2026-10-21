@@ -195,7 +195,7 @@ describe("keeping its place", () => {
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 2)));
     expect(shown()).toEqual(["Ticket 021"]);
     fireEvent.click(button(text.closeTicket));
-    await waitFor(() => expect(note()).toBe(text.pageGone));
+    await waitFor(() => expect(note()).toBe(text.ticketPageGone));
     // Page 2 is gone (stale), so page 1 is read; it is the only page now.
     expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[1]).slice(-2)).toEqual([2, 1]);
     expect(shown()).toHaveLength(20);

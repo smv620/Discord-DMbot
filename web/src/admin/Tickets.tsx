@@ -238,7 +238,7 @@ export default function Tickets({ api, csrf, onSignedOut, onOff }: Props) {
       // The page asked for is gone (the list got shorter: the last ticket on the last page was
       // closed): the page before it, and the first at the latest, is always there.
       else if (kind === "stale" && wanted > 1) {
-        return load(show, wanted - 1, notice ?? text.pageGone);
+        return load(show, wanted - 1, notice ?? text.ticketPageGone);
       }
       // A list already on screen stays (the change was saved); only a first load shows the
       // error in its place.

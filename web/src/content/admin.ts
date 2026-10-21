@@ -100,6 +100,8 @@ export const text = {
   ticketPagePrevious: "Previous",
   ticketPageNext: "Next",
   ticketPageLast: "Last",
+  // When the page the team was on has gone (its last ticket left): it shows the last page there is.
+  ticketPageGone: "That page isn't there any more, so here is the last one that is.",
   pageNewest: "Newest",
   pageNewer: "Newer",
   pageOlder: "Older",
