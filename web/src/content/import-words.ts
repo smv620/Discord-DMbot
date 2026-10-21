@@ -154,7 +154,7 @@ export const importPage = {
     starting_recap: "Writing the recap",
     writing_recap: "Writing the recap",
     recap_ready: "Recap ready",
-    recap_failed: "The recap couldn't be written. You can try again from the recaps.",
+    recap_failed: "The recap couldn't be written. You can try again from the recap list.",
     recap_not_written: "Imported (no recap)",
     done: "Imported",
     failed: "Couldn't import this one",
