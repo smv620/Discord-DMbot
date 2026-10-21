@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "See and fix every name online",
+    what: "From Discord you can open a page with every name DMbot remembers in your campaign. Search them, filter by kind, and if you are the DM, fix a spelling, change what a name is, add other names, make one secret, merge two names or remove one. ↩️ Undo on the name's card in Discord still works.",
+    reason: "In review (#2295); held until its API (#2294) is deployed and dev1 has seen it on the test server; the NPC link on each name needs the NPC pages (#2266).",
+  },
+  {
+    date: "2026-10-21",
     title: "Support emails show the whole chat",
     what: "Emails from DMbot support now show the whole chat so far under the new message, with who wrote each part and the date. They stay together as one chat in your email app, and when you reply, only your new words are kept.",
     reason: "In review (#2192); held until dev1 deploys it.",
