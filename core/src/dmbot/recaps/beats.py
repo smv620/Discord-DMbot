@@ -16,7 +16,7 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory.extractor import transcript_of
+from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.recaps.text import is_known_name, names_a_secret, proper_nouns, words
 
 WINDOW_CHARS = 40_000  # characters of transcript in one call (about 10,000 tokens)
@@ -66,6 +66,14 @@ class Beat:
     lines: tuple[int, ...]
     kind: str
     where: str = ""  # the place it happens in, from its own lines; "" when they do not say (#2064)
+    # PlotBot's note (#2254): why it matters, when the writer may be told; `keep` alone means
+    # "keep this, do not explain it" (the meaning is not known to the players).
+    note: str = ""
+    keep: bool = False
+
+    @property
+    def matters(self) -> bool:
+        return bool(self.note) or self.keep
 
 
 WHERE_MAX = 80  # characters of a place
@@ -114,9 +122,22 @@ def windows(
         size = size * 5 // 4 + 1
 
 
-def message(rows: Sequence[tuple[str, str, str]], names: Collection[str]) -> str:
-    """One window of the transcript as quoted data, and the confirmed names."""
+RETOLD_MAX = 3000  # characters of the table's retelling shown as context
+RETOLD_NOTE = (
+    "The table retold earlier sessions before play. It is context only, to know what is already "
+    "known: never make a beat from it and never cite it."
+)
+
+
+def message(rows: Sequence[tuple[str, str, str]], names: Collection[str], retold: str = "") -> str:
+    """One window of the transcript as quoted data, the confirmed names, and (when the table
+    retold earlier sessions, #2253) that retelling apart as labelled context. Its lines are not in
+    `rows`, so no beat can cite one."""
     parts = [transcript_of(rows)]
+    if retold.strip():
+        parts.append(
+            f"{RETOLD_NOTE}\n<last_time_recap>\n{quoted(retold)[:RETOLD_MAX]}\n</last_time_recap>"
+        )
     if names:
         parts.append("<names>\n" + "; ".join(sorted(names)[:200]) + "\n</names>")
     return "\n".join(parts)
@@ -288,6 +309,8 @@ def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
             "lines": list(b.lines),
             "kind": b.kind,
             "where": b.where,
+            **({"note": b.note} if b.note else {}),
+            **({"keep": True} if b.keep else {}),
         }
         for b in beats
     ]
@@ -311,6 +334,8 @@ def from_json(data: object) -> list[Beat]:
                     tuple(int(n) for n in item["lines"]),
                     str(item["kind"]),
                     str(item.get("where") or ""),
+                    str(item.get("note") or ""),
+                    item.get("keep") is True,
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -318,11 +343,15 @@ def from_json(data: object) -> list[Beat]:
     return out
 
 
-def sheet(beats: Sequence[Beat]) -> str:
-    """The beat sheet as the next stages read it: numbered, with who."""
+def sheet(beats: Sequence[Beat], *, notes: bool = False) -> str:
+    """The beat sheet as the next stages read it: numbered, with who. PlotBot's notes are for the
+    writer alone (`notes=True`): the fact check and the housekeeping read the beats as facts, and
+    a note is a pointer to what matters, not a fact."""
     return "\n".join(
         f"[{b.number}] ({b.kind}) {b.what}"
         + (f" Who: {', '.join(b.who)}." if b.who else "")
         + (f" Where: {b.where}." if b.where else "")
+        + (f" Matters: {quoted(b.note)}" if notes and b.note else "")
+        + (" Matters: keep this detail; do not explain it." if notes and b.keep else "")
         for b in beats
     )
