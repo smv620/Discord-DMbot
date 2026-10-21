@@ -102,7 +102,7 @@ describe("the pages", () => {
     await waitFor(() => expect(note()).toBe(text.pageNow(2, 3)));
     fireEvent.click(button(text.pageNewest));
     await waitFor(() => expect(note()).toBe(text.pageNow(1, 3)));
-    expect(api.tickets.mock.calls.map((c) => c[1])).toEqual([1, 2, 3, 2, 1]);
+    expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[1])).toEqual([1, 2, 3, 2, 1]);
   });
 
   it("jumps to a typed page, and refuses a number that isn't one", async () => {
@@ -174,7 +174,7 @@ describe("keeping its place", () => {
     fireEvent.click(button(text.closeTicket));
     await waitFor(() => expect(note()).toBe(text.pageGone));
     // Page 2 is gone (stale), so page 1 is read; it is the only page now.
-    expect(api.tickets.mock.calls.map((c) => c[1]).slice(-2)).toEqual([2, 1]);
+    expect((api.tickets as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[1]).slice(-2)).toEqual([2, 1]);
     expect(shown()).toHaveLength(20);
     expect(screen.queryByRole("navigation", { name: text.pagesNav })).toBeNull();
   });
@@ -245,7 +245,8 @@ describe("the API call", () => {
 describe("one bar for both lists", () => {
   it("is the same component in Recent changes and in the tickets (not a copy)", async () => {
     const { readFileSync } = await import("node:fs");
-    const read = (f: string) => readFileSync(new URL(`../src/admin/${f}`, import.meta.url), "utf8");
+    const { join } = await import("node:path");
+    const read = (f: string) => readFileSync(join(process.cwd(), "src", "admin", f), "utf8");
     expect(read("RecentChanges.tsx")).toContain('import PageBar from "./PageBar"');
     expect(read("Tickets.tsx")).toContain('import PageBar from "./PageBar"');
     // And neither carries its own jump box.
