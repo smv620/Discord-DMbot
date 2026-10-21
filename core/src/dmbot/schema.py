@@ -7679,6 +7679,13 @@ TRANSCRIPT_RESPELLS = """
     CREATE INDEX transcript_respells_batch ON transcript_respells (campaign_id, batch, run);
     """ + _isolate("transcript_respells")
 
+RECAP_RESPELLED = """
+    -- When a fixed name's spelling changed a recap's text (#2170, part C): the site shows the DM a
+    -- small "spelling updated" note on it, most of all on a posted recap, whose Discord message is
+    -- not changed. NULL: never. A new nullable column: no rows change, so no backfill policy.
+    ALTER TABLE recap_jobs ADD COLUMN respelled_at BIGINT;
+    """
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -7836,6 +7843,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0141_recap_holds", RECAP_HOLDS),  # a recap waits for the DM's name answers (#2169)
     ("0143_old_spelling", OLD_SPELLING),  # a fixed spelling keeps the old one (#2170)
     ("0144_transcript_respells", TRANSCRIPT_RESPELLS),  # where a fixed name was respelled (#2170)
+    ("0145_recap_respelled", RECAP_RESPELLED),  # a recap's text followed a fixed spelling (#2170)
     (
         "0149_audio_again_posted",
         RECAP_AUDIO_AGAIN_POSTED,

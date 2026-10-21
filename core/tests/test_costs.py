@@ -13,11 +13,12 @@ from pathlib import Path
 
 import numpy as np
 
+from dmbot.ai import DEFAULT_MODELS
 from dmbot.devtools.costs import measure, model, prices, report
 from dmbot.devtools.replay.script import parse_script
 from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
 
-HAIKU = "claude-haiku-4-5-20251001"
+HAIKU = DEFAULT_MODELS.fast  # the fast tier, whichever model it is (#2152)
 
 
 def tone(seconds: float) -> bytes:
@@ -56,7 +57,9 @@ class Arithmetic(unittest.TestCase):
         self.assertEqual(model.stt_dollars(0), 0)
 
     def test_ai_is_priced_per_million_tokens_in_and_out(self) -> None:
-        usage = model.Usage(3, 2_000_000, 1_000_000, HAIKU)
+        usage = model.Usage(
+            3, 2_000_000, 1_000_000, "claude-haiku-4-5-20251001"
+        )  # priced at 1 and 5
         self.assertAlmostEqual(model.ai_dollars(usage), 2 * 1.0 + 1 * 5.0)
 
     def test_usage_adds_and_scales(self) -> None:

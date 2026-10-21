@@ -48,7 +48,8 @@ from dmbot.transcript.topics import OFF_TOPIC
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "extractor-1"  # bump when SYSTEM changes (it is recorded with every claim)
-MAX_TOKENS = 1500  # per batch: a minute of talk gives a few dozen claims at most
+MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
+# three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
 BATCH_LINES = 10  # about 30 to 60 seconds of talk, as in the golden set (docs/costs.md)
 MIN_BATCH_LINES = 5  # a shorter tail joins the batch before it (at most 14 lines then)
 DEFAULT_MAX_CALLS = 480  # one session: the cost ceiling in docs/STORY_MEMORY.md, section 8
