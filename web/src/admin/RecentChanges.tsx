@@ -125,7 +125,7 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
             disabled={page <= 1}
             onClick={() => void go(1)}
           >
-            <span aria-hidden="true">« </span>
+            <span aria-hidden="true">«</span>
             {text.pageNewest}
           </button>
           <button
@@ -134,7 +134,7 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
             disabled={page <= 1}
             onClick={() => void go(page - 1)}
           >
-            <span aria-hidden="true">‹ </span>
+            <span aria-hidden="true">‹</span>
             {text.pageNewer}
           </button>
           <form class="page-jump" onSubmit={jump} noValidate>
@@ -163,7 +163,7 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
             onClick={() => void go(page + 1)}
           >
             {text.pageOlder}
-            <span aria-hidden="true"> ›</span>
+            <span aria-hidden="true">›</span>
           </button>
           <button
             type="button"
@@ -172,14 +172,14 @@ export default function RecentChanges({ api, first, pages, day, onSignedOut, onO
             onClick={() => void go(total)}
           >
             {text.pageOldest}
-            <span aria-hidden="true"> »</span>
+            <span aria-hidden="true">»</span>
           </button>
         </nav>
       )}
       {/* Always on the page, so a screen reader hears the page change and any refusal. */}
       <p
         id="log-page-note"
-        class={problem ? "warn small" : "muted small"}
+        class={problem ? "warn small" : "visually-hidden"}
         role={problem ? "alert" : "status"}
       >
         {problem ?? (showBar ? text.pageNow(page, total) : "")}
