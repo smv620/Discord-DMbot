@@ -428,14 +428,21 @@ def router(
     # Support tickets (#1340)
 
     @api.get("/support")
-    async def list_support(session: Admin, status: str = "all") -> dict[str, Any]:
+    async def list_support(session: Admin, status: str = "all", page: str = "1") -> dict[str, Any]:
         """Private tickets from signed-in people, newest first; `?status=new|answered|closed` keeps
         one status and `all` (the default) every one (#1375). `counts` always covers all of them,
         for the filter buttons. The words go to the signed-in admin only, and are never logged."""
         wanted = next((s for s in support.STATUSES if s == status), None)
         if status != "all" and wanted is None:
             raise HTTPException(status_code=400, detail="bad_status")
-        rows = await support.newest(db, status=wanted)
+        # `?page=N` from 1, 20 tickets a page within the filtered list (#2211). Anything that is
+        # not a plain whole number from 1 to the last page answers 400 `bad_page`.
+        number = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
+        if number < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await support.page(db, status=wanted, number=number)
+        if number > pages:
+            raise HTTPException(status_code=400, detail="bad_page")
         counts = await support.counts(db)
         this_week = await support.week(db, clock())
         # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
@@ -473,6 +480,8 @@ def router(
                 for r in rows
             ],
             "counts": counts,
+            "page": number,
+            "pages": pages,
             # How support went in the last seven days (#1480): numbers only.
             "week": {
                 "questions": this_week.questions,

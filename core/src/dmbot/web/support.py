@@ -36,6 +36,7 @@ MAX_MESSAGE = 4000
 # How many tickets the admin page lists at once, newest first. Kept short because the page looks
 # up each person's name with one query per person.
 LIST_LIMIT = 100
+PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -159,6 +160,42 @@ async def newest(
             args,
         )
         return [Row(**r) for r in await cur.fetchall()]
+
+
+async def page(
+    db: Database, *, status: Status | None, number: int, size: int = PAGE_SIZE
+) -> tuple[list[Row], int]:
+    """Page `number` (from 1) of the tickets, newest first, with the same optional status filter
+    as `newest`, and the number of pages in that filtered list (at least one). The count and the
+    rows come from one statement, so they share a snapshot; the count is joined to the page, so
+    it comes back even for a page past the end (#2211)."""
+    where, args = (
+        ("", (size, (number - 1) * size))
+        if status is None
+        else (
+            " WHERE status = %s",
+            (status, size, (number - 1) * size),
+        )
+    )
+    async with db.support_admin() as conn:
+        cur = await conn.execute(
+            "SELECT c.n, t.id, t.created_at, t.user_id, t.plan, t.subject, t.message, t.source,"
+            " t.status, t.reason, t.handed_over_at, t.email"
+            f" FROM (SELECT count(*) AS n FROM support_tickets{where}) c"
+            " LEFT JOIN LATERAL (SELECT id, created_at, user_id, plan, subject,"
+            # The words come through a door function: the website's role has no right to the column.
+            " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
+            " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
+            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC"
+            " LIMIT %s OFFSET %s) t ON true"
+            " ORDER BY t.created_at DESC NULLS LAST, t.id DESC NULLS LAST",
+            (*args[:-2], *args) if status is not None else args,
+        )
+        found = await cur.fetchall()
+    pages = max(1, -(-(int(found[0]["n"]) if found else 0) // size))
+    return [
+        Row(**{k: v for k, v in r.items() if k != "n"}) for r in found if r["id"] is not None
+    ], pages
 
 
 async def counts(db: Database) -> dict[Status, int]:

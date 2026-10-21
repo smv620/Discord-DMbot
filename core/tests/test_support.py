@@ -830,6 +830,78 @@ class SupportAdmin(SupportBase):
         body = (await self.client.get("/admin/support")).json()
         self.assertEqual(len(body["tickets"]), 4)
 
+    async def many(self, count: int, *, answered_every: int = 0) -> None:
+        """`count` tickets, one second apart, ticket 0 the oldest; every `answered_every`th is
+        answered, the rest new (invented subjects)."""
+        for n in range(count):
+            await self.add_row(ALICE.id, self.now - count + n, f"ticket {n:03d}")
+        if answered_every:
+            for t in await self.tickets():
+                if int(t["subject"].split()[1]) % answered_every == 0:
+                    await support.set_status(self.web, t["id"], "answered")
+
+    async def test_tickets_come_twenty_a_page_newest_first_with_the_page_count(self) -> None:
+        await self.many(45)
+        await self.sign_in()
+        first = (await self.client.get("/admin/support")).json()
+        self.assertEqual((len(first["tickets"]), first["page"], first["pages"]), (20, 1, 3))
+        self.assertEqual(first["tickets"][0]["subject"], "ticket 044")  # newest first
+        second = (await self.client.get("/admin/support", params={"page": 2})).json()
+        self.assertEqual((len(second["tickets"]), second["page"]), (20, 2))
+        self.assertEqual(second["tickets"][0]["subject"], "ticket 024")
+        last = (await self.client.get("/admin/support", params={"page": 3})).json()
+        self.assertEqual(len(last["tickets"]), 5)  # the remainder
+        self.assertEqual(last["tickets"][-1]["subject"], "ticket 000")
+        subjects = [t["subject"] for p in (first, second, last) for t in p["tickets"]]
+        self.assertEqual(len(subjects), len(set(subjects)))  # every ticket once
+        # The counts cover every ticket, whichever page this is.
+        self.assertEqual(last["counts"]["new"], 45)
+
+    async def test_paging_goes_within_the_filtered_list(self) -> None:
+        await self.many(45, answered_every=3)  # 15 answered, 30 new
+        await self.sign_in()
+        new = (await self.client.get("/admin/support", params={"status": "new"})).json()
+        self.assertEqual((len(new["tickets"]), new["pages"]), (20, 2))
+        answered = (await self.client.get("/admin/support", params={"status": "answered"})).json()
+        self.assertEqual((len(answered["tickets"]), answered["pages"]), (15, 1))
+        page_two = (
+            await self.client.get("/admin/support", params={"status": "new", "page": 2})
+        ).json()
+        self.assertEqual(len(page_two["tickets"]), 10)
+        self.assertEqual({t["status"] for t in page_two["tickets"]}, {"new"})
+        # A page that exists unfiltered but not in this filter is refused.
+        past = await self.client.get("/admin/support", params={"status": "answered", "page": 2})
+        self.assertEqual((past.status_code, past.json()), (400, {"error": "bad_page"}))
+
+    async def test_a_bad_page_is_refused_and_no_tickets_is_one_empty_page(self) -> None:
+        await self.sign_in()
+        empty = (await self.client.get("/admin/support")).json()
+        self.assertEqual((empty["tickets"], empty["page"], empty["pages"]), ([], 1, 1))
+        await self.many(21)  # two pages
+        for bad in (
+            "0",
+            "-1",
+            "3",
+            "abc",
+            "",
+            "1.5",
+            "+2",
+            "%202",
+            "2%0A",
+            "%D9%A2",
+            "99999999999",
+        ):
+            answer = await self.client.get(f"/admin/support?page={bad}")
+            self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
+        self.assertEqual((await self.client.get("/admin/support?page=002")).json()["page"], 2)
+
+    async def test_exactly_twenty_tickets_is_one_page(self) -> None:
+        await self.many(20)
+        await self.sign_in()
+        body = (await self.client.get("/admin/support")).json()
+        self.assertEqual((len(body["tickets"]), body["pages"]), (20, 1))
+        self.assertEqual((await self.client.get("/admin/support?page=2")).status_code, 400)
+
     async def test_the_counts_follow_a_change_and_show_zero_for_none(self) -> None:
         csrf = await self.sign_in()
         empty = (await self.client.get("/admin/support", params={"status": "new"})).json()
@@ -999,7 +1071,7 @@ class DoorBoundary(unittest.TestCase):
 
     def test_only_support_opens_the_door_and_only_the_admin_routes_use_support(self) -> None:
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
-        self.assertEqual(self.callers("support.newest("), {"web/admin_api.py"})
+        self.assertEqual(self.callers("support.page("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.set_status("), {"web/admin_api.py"})
         self.assertEqual(self.callers("support.thread("), {"web/admin_api.py", "web/support_ai.py"})
         # The reply address is read by this one query, and the SQL function only by it.
