@@ -59,6 +59,10 @@ class WriteNowButton(
             await _tell(interaction, NOT_YOURS)
             return
         await interaction.response.defer()  # the checks below make several calls and a post
+        # The line pressed is kept too, so the other copy (the reminder) comes off with it.
+        bot.decision_lines.remember_pressed(
+            hold_line_key(campaign.id, self.session_at), interaction
+        )
         result = await bot.recap_hold_write_now(guild.id, campaign.id, self.session_at)
         if result == "off":
             await _tell(interaction, OFF_EVERYWHERE)
@@ -73,6 +77,12 @@ class WriteNowButton(
             view=None,
             allowed_mentions=NO_PINGS,
         )
+
+
+def hold_line_key(campaign_id: str, session_at: int) -> tuple[str, str, int]:
+    """What the bot calls the question and reminder lines of one held recap, so their buttons can
+    come off when the hold is over (`DecisionLines`, #2174)."""
+    return ("hold", campaign_id, session_at)
 
 
 def hold_view(campaign_id: str, session_at: int) -> discord.ui.View:

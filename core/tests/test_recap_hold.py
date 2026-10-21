@@ -17,6 +17,8 @@ from dmbot.memory.models import CONFIRMED, PROPOSED
 from dmbot.recaps import hold
 from dmbot.recaps.store import RecapStore
 from dmbot.ui import recap_hold as screen
+from dmbot.ui.decision_lines import DecisionLines
+from dmbot.ui.recap_hold import hold_line_key
 from tests.pg import DatabaseTest
 
 GUILD = 5101
@@ -246,6 +248,8 @@ def fake_bot(
     )
     bot = SimpleNamespace(
         _group_made={},
+        decision_lines=DecisionLines(),
+        user=SimpleNamespace(id=1),
         _import_queued={},
         settings=SimpleNamespace(site_url="", recaps_on=True, story_extractor_on=extractor),
         extractor_ai=object() if extractor else None,
@@ -269,7 +273,7 @@ def fake_bot(
     for name in (
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
         "release_recap_holds", "_release_one", "recap_hold_write_now", "recheck_recap_hold",
-        "recap_write_anyway", "_remind", "_say_group_writing",
+        "recap_write_anyway", "_remind", "_say_group_writing", "_close_hold_lines",
         "_extractor_pending", "_next_session_start",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
@@ -890,7 +894,12 @@ def press(bot: Any, user: int = DM) -> tuple[Any, Any]:
         guild=SimpleNamespace(id=GUILD),
         user=SimpleNamespace(id=user),
         channel_id=66,
-        message=SimpleNamespace(id=9, content="📝 3 name questions from tonight."),
+        message=SimpleNamespace(
+            id=9,
+            content="📝 3 name questions from tonight.",
+            author=SimpleNamespace(id=1),  # the bot's own line
+            edit=AsyncMock(),
+        ),
         response=SimpleNamespace(
             is_done=lambda: False, send_message=AsyncMock(), defer=AsyncMock()
         ),
@@ -907,6 +916,15 @@ class TheButton(IsolatedAsyncioTestCase):
         i.channel_id = 12345  # pressed somewhere else
         await button.callback(i)
         self.assertEqual(bot.post.await_args.args[0], 66)
+
+    async def test_a_press_takes_the_buttons_off_the_other_copy_too(self) -> None:
+        bot = fake_bot(proposed=3)
+        reminder = SimpleNamespace(id=8, content="📝 reminder", edit=AsyncMock())
+        bot.decision_lines.remember(hold_line_key("c" * 32, AT), reminder)
+        button, i = press(bot)
+        await button.callback(i)
+        reminder.edit.assert_awaited_once()
+        self.assertIsNone(reminder.edit.await_args.kwargs["view"])
 
     async def test_write_the_recap_now_queues_it_and_closes_the_line(self) -> None:
         bot = fake_bot(proposed=3)
@@ -964,3 +982,86 @@ class TheCount(IsolatedAsyncioTestCase):
         bot.memory = None
         bot.heard_questions = None
         self.assertEqual(await bot._open_name_questions(GUILD, "c" * 32, "s1", AT), 0)
+
+
+class TheOldLines(IsolatedAsyncioTestCase):
+    """The question and the reminder of a hold lose their buttons once the hold is over (#2174)."""
+
+    def keep_lines(self, bot: Any, *at: int) -> dict[int, Any]:
+        """Stand-in messages the bot "posted" for each held session."""
+        kept = {}
+        for n in at:
+            message = SimpleNamespace(id=n, content=f"Questions {n}", edit=AsyncMock())
+            kept[n] = message
+            bot.decision_lines.remember(hold_line_key("c" * 32, n), message)
+        return kept
+
+    def edited(self, message: Any) -> str:
+        message.edit.assert_awaited_once()
+        self.assertIsNone(message.edit.await_args.kwargs["view"])  # the buttons come off
+        return str(message.edit.await_args.kwargs["content"])
+
+    async def test_an_answered_hold_closes_its_line(self) -> None:
+        bot = fake_bot()  # nothing left to answer
+        (line,) = self.keep_lines(bot, AT).values()
+        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - 100)
+        bot.recap_holds.held = AsyncMock(return_value=[held])
+        await bot.release_recap_holds(GUILD)
+        self.assertIn(hold.LINE_ANSWERED, self.edited(line))
+
+    async def test_a_hold_that_ran_out_closes_its_line_and_says_so(self) -> None:
+        bot = fake_bot(proposed=2)
+        (line,) = self.keep_lines(bot, AT).values()
+        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - hold.HOLD_MAX_S - 60)
+        bot.recap_holds.held = AsyncMock(return_value=[held])
+        await bot.release_recap_holds(GUILD)
+        self.assertIn(hold.LINE_EXPIRED, self.edited(line))
+
+    async def test_write_it_now_closes_every_copy_of_every_held_session_of_an_import(self) -> None:
+        bot = fake_bot(proposed=2)
+        lines = self.keep_lines(bot, AT, AT + 1)
+        members = [
+            hold.Hold("c" * 32, AT + n, f"s{n}", DM, 66, int(time.time()) - 100, group_id="imp")
+            for n in (0, 1)
+        ]
+        bot.recap_holds.held = AsyncMock(return_value=members)
+        bot.recap_holds.get = AsyncMock(return_value=members[0])
+        await bot.recap_hold_write_now(GUILD, "c" * 32, AT)
+        for line in lines.values():
+            self.assertIn(hold.LINE_WRITING, self.edited(line))
+
+    async def test_a_campaign_with_recaps_off_closes_its_line(self) -> None:
+        bot = fake_bot(proposed=2)
+        (line,) = self.keep_lines(bot, AT).values()
+        bot.campaigns.get = AsyncMock(return_value=None)  # the campaign is gone
+        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - 100)
+        bot.recap_holds.held = AsyncMock(return_value=[held])
+        await bot.release_recap_holds(GUILD)
+        self.assertIn(hold.LINE_NO_RECAP, self.edited(line))
+
+    async def test_a_hold_still_waiting_keeps_its_buttons(self) -> None:
+        bot = fake_bot(proposed=2)
+        (line,) = self.keep_lines(bot, AT).values()
+        held = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - 100)
+        bot.recap_holds.held = AsyncMock(return_value=[held])
+        await bot.release_recap_holds(GUILD)
+        line.edit.assert_not_awaited()
+
+    async def test_the_questions_and_the_reminder_are_posted_to_be_closed_later(self) -> None:
+        bot = fake_bot(proposed=2)
+        posted: list[Any] = []
+
+        async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
+            posted.append(kw.get("remember"))
+            return True
+
+        bot.post = post
+        old = hold.Hold("c" * 32, AT, "s1", DM, 66, int(time.time()) - hold.HOLD_REMIND_S - 60)
+        bot.recap_holds.held = AsyncMock(return_value=[dataclasses.replace(old, asked=False)])
+        await bot.release_recap_holds(GUILD)  # the question
+        bot.recap_holds.held = AsyncMock(return_value=[old])
+        await bot.release_recap_holds(GUILD)  # the reminder
+        await bot._hold_or_queue(campaign(), "s2", AT + 5, 66, DM)  # and at the end of a session
+        key = hold_line_key("c" * 32, AT)
+        self.assertEqual(posted[:2], [key, key])
+        self.assertEqual(posted[2], hold_line_key("c" * 32, AT + 5))
