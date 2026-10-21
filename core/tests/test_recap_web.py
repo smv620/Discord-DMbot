@@ -105,10 +105,11 @@ class TheHeldRecaps(Base):
     async def hold(
         self, campaign: str, at: int = 200, *, asked: bool = True, names: int = 3
     ) -> None:
-        await HoldStore(self.db).hold(
+        made = await HoldStore(self.db).hold(
             THURSDAY.id, campaign, at, session_id="s1", dm_user_id=ALICE.id, channel_id=5,
             asked=asked, names_open=names,
         )  # fmt: skip
+        self.assertTrue(made)  # (a hold is never written for a session that has a job)
 
     async def test_a_held_recap_is_listed_and_readable_with_how_many_answers_it_waits_on(
         self,
@@ -169,10 +170,13 @@ class TheHeldRecaps(Base):
         self.assertEqual(at_400, [("One", True), ("Three", False)])
 
     async def test_a_hold_and_a_job_for_the_same_session_are_listed_once(self) -> None:
-        await self.hold(self.one.id, 100)  # (a job exists for One at 100 already)
+        await self.hold(self.one.id, 300)  # held first ...
+        await self.store.enqueue(
+            THURSDAY.id, self.one.id, 300, dm_user_id=ALICE.id
+        )  # ... then a job
         listed = await list_recaps(self.web, self.session)
-        mine = [r for r in listed if r["campaign"] == "One" and r["sessionAt"] == 100]
-        self.assertEqual([(r["waitingForNames"], r["state"]) for r in mine], [(False, "ready")])
+        mine = [r for r in listed if r["campaign"] == "One" and r["sessionAt"] == 300]
+        self.assertEqual([(r["waitingForNames"], r["state"]) for r in mine], [(False, "queued")])
 
     async def test_a_hold_with_nothing_left_to_answer_is_not_shown_as_waiting(self) -> None:
         await self.hold(self.one.id, names=0)  # answered; the next round releases it
