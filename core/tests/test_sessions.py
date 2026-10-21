@@ -1532,7 +1532,7 @@ class SaveAndResume(SessionTests):
 
         counted: list[Any] = []
         table.name_lookup = object()
-        patcher = patch("dmbot.bot.mentions", return_value=set())
+        patcher = patch("dmbot.bot.find_mentions", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
         self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
