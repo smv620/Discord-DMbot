@@ -383,6 +383,38 @@ async def _remembered(
     return dict((await cur.fetchone() or {}).get("r") or {})
 
 
+MAX_PLAYS = 100
+
+
+def plays_of(raw: object, remembered: Mapping[str, int]) -> list[dict[str, str]]:
+    """The DM's "plays which character" choices, {label: character name}, as [{user, name}]:
+    for the labels this import maps to a member only, so a dropped label or one the request
+    never mapped is ignored. The bot makes each a link later (the website cannot write story
+    memory); a name that is not a character nobody plays is dropped by the door."""
+    if not isinstance(raw, dict):
+        return []
+    out: list[dict[str, str]] = []
+    for label, name in raw.items():
+        member = remembered.get(label) if isinstance(label, str) else None
+        if member is None or not isinstance(name, str) or not name.strip() or len(name) > 100:
+            continue
+        out.append({"user": str(member), "name": name.strip()})
+        if len(out) >= MAX_PLAYS:
+            break
+    return out
+
+
+async def _plays_chosen(
+    conn: Conn, c: Campaign, wanted: list[dict[str, str]], outside: str | None
+) -> None:
+    if not wanted:
+        return
+    await conn.execute(
+        "SELECT dmbot_import_plays(%s, %s, %s::jsonb, %s, %s) AS r",
+        (c.guild_id, c.campaign_id, json.dumps(wanted), TERMS_VERSION, outside),
+    )
+
+
 def _file_view(f: File) -> dict[str, Any]:
     return {
         "name": f.name,
@@ -668,6 +700,7 @@ async def confirm(
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered, outside)
+        await _plays_chosen(conn, c, plays_of(raw_plan.get("plays"), remembered), outside)
     return {
         "importId": batch,
         "sessions": stored,

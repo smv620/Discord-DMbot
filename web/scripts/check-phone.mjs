@@ -148,6 +148,14 @@ const pages = [
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
   ["transcripts", "/account/transcripts?demo=table"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
+  ["import: the chosen files, each with Remove", "/account/import/100.cmp1?demo=table", async (page) => {
+    await page.setInputFiles('input[type="file"]', [
+      { name: LONG_NAME, mimeType: "text/plain", buffer: Buffer.from("Cerric: hello") },
+      { name: "second-session.txt", mimeType: "text/plain", buffer: Buffer.from("Cerric: again") },
+    ]);
+    await page.getByRole("button", { name: "Remove all" }).waitFor();
+    await page.getByRole("button", { name: "Remove second-session.txt" }).waitFor();
+  }],
   ["import: with files, and ready", "/account/import/100.cmp1?demo=table", async (page) => {
     await page.setInputFiles('input[type="file"]', [
       { name: LONG_NAME, mimeType: "text/plain", buffer: Buffer.from("Cerric: hello\nAsh: hi\nMira: ok") },
