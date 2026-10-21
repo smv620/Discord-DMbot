@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -12,15 +13,14 @@ from dmbot.dm_screen import secret_posts
 G, C = 5, "c" * 32
 
 
+_numbers = itertools.count(1)
+
+
 def message(answered: bool = False) -> SimpleNamespace:
     # An open question still has its buttons (components); an answered one has none.
-    message.last += 1
     return SimpleNamespace(
-        edit=AsyncMock(), components=[] if answered else [object()], id=message.last
+        edit=AsyncMock(), components=[] if answered else [object()], id=next(_numbers)
     )
-
-
-message.last = 0  # type: ignore[attr-defined]
 
 
 class ThePulledBackQuestions(unittest.IsolatedAsyncioTestCase):
