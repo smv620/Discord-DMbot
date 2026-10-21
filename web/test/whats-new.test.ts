@@ -70,6 +70,7 @@ describe("What's new", () => {
     expect(held.map((h) => h.title)).toEqual([
       "Recaps are checked before you see them", // until dev1 deploys it (#2255)
       "Every NPC has its own page", // until dev1 deploys it and the NPC page is live (#2265)
+      "Recaps say when they wait", // until #2280 is deployed (#2297)
       "Import reads more transcripts", // until #2302 merges and dev1 deploys it
       "Every page says who you are", // until #2301 is deployed
       "Settings has two small menus", // until #2281 merges and dev1 deploys it
