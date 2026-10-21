@@ -4,6 +4,8 @@
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
 import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
+import { shareWords } from "./recap-share";
+import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "./recap-words";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -47,9 +49,9 @@ export function allowanceLines(
 
 export const text = {
   heading: "Your recaps",
-  lead: "After a session, DMbot writes a short recap for your table. Only you can see it until you post it.",
+  lead: "After a session, DMbot can write a short recap for your table (paid plans). Only you can see it until you post it.",
   loading: "Loading your recaps…",
-  empty: "No recaps yet. DMbot emails you when one is ready.",
+  empty: "No recaps yet. DMbot tells you when one is ready.",
   // While recaps are off (RECAPS_LIVE false) the page promises nothing: no email, no recap to come.
   emptyOff: "No recaps yet.",
   back: "All your recaps",
@@ -105,6 +107,7 @@ export const text = {
 
 /** "Ready to read", "Posted"… for one row of the list. */
 export function statusLine(recap: Recap): string {
+  if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
