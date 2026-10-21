@@ -393,6 +393,27 @@ class MemoryStore:
             row = await scope.get(ENTITIES, entity_id, lock=False)
             return None if row is None else _entity(row)
 
+    async def defer_name(self, guild_id: int, campaign_id: str, entity_id: str) -> None:
+        """The DM pressed "Later" on a suggested name (#2174): it stays in the list but stops
+        holding a recap back. Only a name that is still a suggestion; a repeat does nothing."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO name_later (guild_id, campaign_id, entity_id, created_at)"
+                " SELECT guild_id, campaign_id, id, %s FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = %s"
+                " ON CONFLICT DO NOTHING",
+                (int(self._clock()), guild_id, campaign_id, entity_id, PROPOSED),
+            )
+
+    async def deferred_names(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The suggested names the DM said "Later" to."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT entity_id FROM name_later WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            return {str(r["entity_id"]) for r in await cur.fetchall()}
+
     async def entities(
         self, guild_id: int, campaign_id: str, *, statuses: Sequence[str] = LIVE
     ) -> list[Entity]:

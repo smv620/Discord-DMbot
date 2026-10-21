@@ -7936,6 +7936,20 @@ RECAP_REQUESTS = (
     """
 )
 
+NAMES_LATER = f"""
+    -- A suggested name the DM pressed "Later" on (#2174): the question stays in 📝 Check new names,
+    -- but it no longer holds a recap back, so one name the DM cannot decide on does not keep
+    -- every recap waiting. One row per name, deleted with the name and with the campaign, left
+    -- out of backups (a wait, not content), isolated per server. No speaker, no line, no words.
+    CREATE TABLE name_later (
+        {_memory_scope()}
+        entity_id   TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, entity_id),
+        {_entity_link("entity_id")}
+    );
+    """ + _isolate("name_later")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -8098,6 +8112,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0151_recap_hold_names", RECAP_HOLD_NAMES),  # how many answers it waits on (#2174)
     ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
     ("0153_import_recaps", IMPORT_RECAPS),  # Write recaps for an import, its scan window (#2106)
+    ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -8132,6 +8147,7 @@ ISOLATED_TABLES = (
     "recap_jobs",
     "recap_dictionaries",
     "recap_holds",
+    "name_later",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",

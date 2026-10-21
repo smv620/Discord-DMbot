@@ -490,14 +490,17 @@ class TheQuestionCount(WithImports):
         await self.store.claim_scan(GUILD, sid, now)
         await self.store.finish_scan(GUILD, sid, now + 5)
         proposals = [
-            SimpleNamespace(created_at=now - 100),  # before this scan: another session's
-            SimpleNamespace(created_at=now + 2),  # inside it
-            SimpleNamespace(created_at=now + 5),  # at its last second
-            SimpleNamespace(created_at=now + 50),  # after it: the next session's
+            SimpleNamespace(created_at=now - 100, id="a"),  # before this scan: another session's
+            SimpleNamespace(created_at=now + 2, id="c"),  # inside it
+            SimpleNamespace(created_at=now + 5, id="b"),  # at its last second
+            SimpleNamespace(created_at=now + 50, id="d"),  # after it: the next session's
         ]
         bot = SimpleNamespace(
             import_job=SimpleNamespace(store=self.store),
-            memory=SimpleNamespace(entities=AsyncMock(return_value=proposals)),
+            memory=SimpleNamespace(
+                entities=AsyncMock(return_value=proposals),
+                deferred_names=AsyncMock(return_value=set()),
+            ),
             heard_questions=None,
             _next_session_start=AsyncMock(return_value=None),
         )
@@ -510,8 +513,9 @@ class TheQuestionCount(WithImports):
             import_job=SimpleNamespace(store=self.store),
             memory=SimpleNamespace(
                 entities=AsyncMock(
-                    return_value=[SimpleNamespace(created_at=t) for t in (50, 150, 250)]
-                )
+                    return_value=[SimpleNamespace(created_at=t, id=f"e{t}") for t in (50, 150, 250)]
+                ),
+                deferred_names=AsyncMock(return_value=set()),
             ),
             heard_questions=None,
             _next_session_start=AsyncMock(return_value=200),

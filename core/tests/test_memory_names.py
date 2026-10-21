@@ -2733,6 +2733,61 @@ class Review(NamesTest):
         self.assertTrue(view.is_finished())
         self.assertIn("Hrothgar", await self.names((PROPOSED,)))
 
+    async def test_later_is_remembered_so_the_name_stays_listed_but_stops_holding_a_recap(
+        self,
+    ) -> None:
+        await self.suggest("Hrothgar")
+        entity = next(iter(await self.names((PROPOSED,))))
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        view, _ = await self.review()
+        await view._later(self.it())
+        self.assertEqual(entity, "Hrothgar")
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+        self.assertIn("Hrothgar", await self.names((PROPOSED,)))  # still waiting in the list
+        again, _ = await self.review()  # and offered again at the next check
+        self.assertEqual(again.queue, [found.id])
+
+    async def test_a_name_left_for_later_no_longer_counts_as_a_question_a_recap_waits_on(
+        self,
+    ) -> None:
+        await self.suggest("Hrothgar")
+        await self.suggest("Belleros")
+        self.bot._next_session_start = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.import_job = None  # type: ignore[assignment]
+        self.bot.heard_questions = None  # type: ignore[assignment]
+
+        async def waiting() -> int:
+            return await self.bot._open_name_questions(GUILD, self.campaign.id, "live", 0)
+
+        self.assertEqual(await waiting(), 2)
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        self.assertEqual(await waiting(), 1)  # only the other one holds a recap back
+        self.assertEqual(len(await self.names((PROPOSED,))), 2)  # both still wait in the list
+
+    async def test_a_name_that_goes_takes_its_later_with_it(self) -> None:
+        await self.suggest("Hrothgar")
+        found = (await self.names((PROPOSED,)))["Hrothgar"]
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)
+        await self.memory.defer_name(GUILD, self.campaign.id, found.id)  # a repeat does nothing
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), {found.id})
+        async with self.db.guild(GUILD) as conn:  # the name goes (a forgotten suggestion, say)
+            await conn.execute(
+                "DELETE FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (GUILD, self.campaign.id, found.id),
+            )
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+
+    async def test_only_a_suggestion_can_be_left_for_later_and_only_in_its_own_campaign(
+        self,
+    ) -> None:
+        known = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        await self.memory.defer_name(GUILD, self.campaign.id, known.id)  # confirmed: not a wait
+        await self.memory.defer_name(GUILD, "e" * 32, known.id)  # another campaign's id
+        self.assertEqual(await self.memory.deferred_names(GUILD, self.campaign.id), set())
+        self.assertEqual(await self.memory.deferred_names(GUILD, "e" * 32), set())
+
     async def test_a_stranger_cannot_press_any_button(self) -> None:
         await self.suggest("Hrothgar")
         known = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])

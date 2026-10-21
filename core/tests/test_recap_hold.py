@@ -221,8 +221,8 @@ class TheStore(DatabaseTest):
         self.assertEqual(await self.holds.held(GUILD), [])
 
 
-def entity(created_at: int, status: str = PROPOSED) -> Any:
-    return SimpleNamespace(created_at=created_at, status=status)
+def entity(created_at: int, status: str = PROPOSED, id: str = "") -> Any:
+    return SimpleNamespace(created_at=created_at, status=status, id=id or f"e{created_at}")
 
 
 def campaign() -> Any:
@@ -261,7 +261,11 @@ def fake_bot(
         ),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
         memory=SimpleNamespace(
-            entities=AsyncMock(return_value=[entity(AT + 5)] * proposed + [entity(AT - 5)])
+            entities=AsyncMock(
+                return_value=[entity(AT + 5, id=f"p{n}") for n in range(proposed)]
+                + [entity(AT - 5)]
+            ),
+            deferred_names=AsyncMock(return_value=set()),  # no "Later" answers
         ),
         heard_questions=SimpleNamespace(count_for_session=AsyncMock(return_value=did_they_mean)),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
