@@ -1114,8 +1114,6 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 SAY_BUTTON = "🔊 How to say it"
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
-    "Spoken recaps are off for this campaign, so there is nothing to set. Turn them on first."
-)
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
