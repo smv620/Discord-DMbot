@@ -17,7 +17,8 @@ names them (`FORMATS`):
   joined line, and a placeholder at the start of an utterance is stripped (an utterance left empty
   is dropped);
 * the same with the name in square brackets, `[Name]:  words` (a Google Doc's transcript), or
-  `[Name] words` when no line of the file has a colon after a name; a bracket that holds a clock,
+  `[Name] words` when lines with a colon after the name are not most of the file; a bracket that
+  holds a clock,
   `[0:42:10]`, stays a time;
 * WebVTT and SRT whose cue text starts `Name:`, or WebVTT cues with a voice tag, `<v Name>words</v>`
   (a caption track from a recording).
@@ -65,8 +66,8 @@ _PLAIN = re.compile(
 _BRACKET_COLON = re.compile(
     rf"^(?:\[(?P<at>{_CLOCK})\]\s*)?\[(?P<who>[^\[\]{{}}<>:]{{1,60}})\]\s*:\s*(?P<text>\S.*)$"
 )
-# `[Name] words`, with no colon: tried only when no line of the file is `Name: words` or
-# `[Name]: words`, so a wrapped line that starts with a note such as `[laughs]` is not a speaker.
+# `[Name] words`, with no colon: tried only when `Name: words` and `[Name]: words` lines are not
+# most of the file, so a wrapped line that starts with a note such as `[laughs]` is not a speaker.
 _BRACKET_ONLY = re.compile(r"^\[(?P<who>[^\[\]{}<>:]{1,60})\]\s+(?P<text>\S.*)$")
 _PLAIN_STYLES = ((_PLAIN, _BRACKET_COLON), (_BRACKET_ONLY,))
 _Style = tuple[re.Pattern[str], ...]
@@ -94,7 +95,9 @@ HEADER_MAX = 10  # lines before the first utterance that a plain file may have
 JOINED_MAX_SHARE = 4  # at most one line in this many may be a wrapped line (a quarter)
 _TIMING = re.compile(r"^(?P<h>\d+:)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{3})\s+-->\s+")
 # WebVTT's voice tag, `<v Name>` or `<v.loud Name>`, with or without a closing `</v>`.
-_VOICE = re.compile(r"<v(?:\.[^\s>]*)*\s+(?P<who>[^<>]{1,60})>", re.I)
+# The class part excludes "." and "<" so the repeat cannot backtrack catastrophically: `<v` followed
+# by thousands of dots, or `<v.a` repeated, is read in linear time.
+_VOICE = re.compile(r"<v(?:\.[^\s.<>]+)*\s+(?P<who>[^\s<>][^<>]{0,59})>", re.I)
 _CUE_SPEAKER = re.compile(r"^(?P<who>[^:\[\]{}()<>]{1,60}):\s+(?P<text>\S.*)$", re.S)
 
 
@@ -256,7 +259,7 @@ def _cues(text: str, kind: str) -> Transcript:
                     out[-1].speaker, out[-1].at_ms, f"{out[-1].text} {parts[0].strip()}"
                 )
             for who, words in zip(parts[1::2], parts[2::2], strict=True):
-                spoken = re.sub(r"</?[a-z][^>]*>", "", words).strip()
+                spoken = re.sub(r"</?[a-z][^<>]*>", "", words, flags=re.I).strip()
                 if spoken:
                     out.append(Utterance(who.strip(), start, spoken))
             block = []
@@ -289,7 +292,7 @@ def _cues(text: str, kind: str) -> Transcript:
             continue  # a cue's number (SRT) or identifier (WebVTT), on the line before its timing
         elif count:
             # <v Name> is kept for `close` (it names who speaks); <i>, <b> and the like are styling
-            block.append(re.sub(r"</?(?!v[\s.>])[a-z][^>]*>", "", line, flags=re.I))
+            block.append(re.sub(r"</?(?!v[\s.>])[a-z][^<>]*>", "", line, flags=re.I))
     close()
     if not out and not unnamed:
         raise TranscriptError("the file has no cues in it")

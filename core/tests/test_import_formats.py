@@ -3,6 +3,8 @@ byte-order mark, WebVTT voice tags, and the reason a file cannot be read. Every 
 
 from __future__ import annotations
 
+import contextlib
+import time
 import unittest
 
 from dmbot.transcript import importer
@@ -107,6 +109,39 @@ class Captions(unittest.TestCase):
         self.assertEqual(caught.exception.code, importer.UNKNOWN_FORMAT)
         self.assertIn("square brackets", str(caught.exception))
         self.assertIn("captions", str(caught.exception))
+
+
+class Speed(unittest.TestCase):
+    """A made-up caption cue must never hold a worker thread: these patterns once backtracked for
+    hours on a few dozen characters."""
+
+    def took_under_a_second(self, cue: str) -> None:
+        vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n" + cue + "\n"
+        start = time.perf_counter()
+        with contextlib.suppress(importer.TranscriptError):
+            importer.parse(vtt)
+        self.assertLess(time.perf_counter() - start, 1.0)
+
+    def test_a_voice_tag_of_dots_is_read_in_linear_time(self) -> None:
+        self.took_under_a_second("<v" + "." * 5000)
+        self.took_under_a_second("<v" + "." * 40)
+
+    def test_a_repeated_partial_voice_tag_is_read_in_linear_time(self) -> None:
+        self.took_under_a_second("<v.a" * 500_000)  # about 2 MB
+
+    def test_unclosed_tags_are_stripped_in_linear_time(self) -> None:
+        self.took_under_a_second("<a" * 100_000)
+        self.took_under_a_second("<v Ann>" + "<a" * 100_000)
+
+    def test_the_voice_tags_that_are_real_still_match(self) -> None:
+        for tag, who in (
+            ("<v Ann>", "Ann"),
+            ("<v.loud Kai>", "Kai"),
+            ("<v.a.b Bo Smith>", "Bo Smith"),
+        ):
+            with self.subTest(tag):
+                vtt = f"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n{tag}Hello there.</v>\n"
+                self.assertEqual(speakers(vtt), [who])
 
 
 class Names(unittest.TestCase):
