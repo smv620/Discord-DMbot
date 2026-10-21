@@ -33,6 +33,12 @@ class WhatCounts(TestCase):
             "you pronounce it wrong",
             "it's pronounced differently",
             "pronounce it, Kay-el",
+            "the judge pronounced him dead",
+            "they pronounced them guilty",
+            "pronounced judgement on Kael",
+            "say it like you mean it",
+            "he said it like Mira would",
+            "it's pronounced he did",
         ]:
             self.assertEqual(self.phrases(line), [], line)
 
@@ -46,6 +52,14 @@ class WhatCounts(TestCase):
 
 
 class WhichName(TestCase):
+    def test_the_sound_is_read_from_the_line_as_heard_when_the_cleaner_changed_it(self) -> None:
+        w = p.PronunciationWatcher()
+        got = w.note(1, "Kael is pronounced Kael", [(KAEL, 0)], 0.0, raw="Kael is pronounced Kale")
+        self.assertEqual(got, [p.Pronounced(KAEL, "Kale")])
+        # a raw line that disagrees about how many there are is not trusted
+        got = w.note(1, "Kael is pronounced Kael", [(KAEL, 0)], 1.0, raw="Kael is a name")
+        self.assertEqual(got, [p.Pronounced(KAEL, "Kael")])
+
     def test_the_name_said_before_it_in_the_same_line(self) -> None:
         w = p.PronunciationWatcher()
         got = w.note(1, "Kael is pronounced Kay-el", [(KAEL, 0)], 0.0)

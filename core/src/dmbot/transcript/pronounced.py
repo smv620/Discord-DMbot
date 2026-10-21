@@ -19,26 +19,32 @@ from dataclasses import dataclass
 RECENT_S = 20.0  # a name said this recently is what "it" means
 MAX_PHRASE = 30  # characters of the pronunciation kept
 
-# "pronounced X", "pronounce it X"; "say it like X" must have its like/as (else "say it again").
+# Only a cue that is about saying a name counts: "is pronounced X", "pronounce it X", "say it like
+# X". A bare "pronounced" is also what a judge does ("pronounced him dead"), so it is not enough.
 _BARE = re.compile(
-    r"\b(?:pronounced|pronounce\s+(?:it|that|him|her|them))\s+(?:(?:like|as)\s+)?", re.I
+    r"\b(?:(?:is|was|are|be|been|it's|that's)\s+pronounced"
+    r"|pronounce\s+(?:it|that|his name|her name|their name|the name))\s+(?:(?:like|as)\s+)?",
+    re.I,
 )
 _LIKE = re.compile(
-    r"\b(?:say|says|said)\s+(?:it|that|his name|her name|their name)\s+(?:like|as)\s+", re.I
+    r"\b(?:say|says)\s+(?:it|that|his name|her name|their name)\s+(?:like|as)\s+", re.I
 )
 _WORD = re.compile(r"[A-Za-z][A-Za-z'’]*(?:-[A-Za-z][A-Za-z'’]*)*")
 _NOT_A_PRONUNCIATION = frozenset(
     (
         "it", "that", "this", "the", "a", "an", "not", "wrong", "right", "correctly",
         "differently", "how", "like", "as", "with", "in", "to", "is", "and", "but", "so",
-        "because", "or", "if", "when", "then", "yes", "no",
+        "because", "or", "if", "when", "then", "yes", "no", "you", "he", "she", "they", "we",
+        "i", "me", "him", "her", "them", "my", "his", "their", "our", "dead", "guilty",
+        "judgement", "judgment", "wrongly", "properly", "again", "twice", "once",
     )
 )  # fmt: skip
 # Words that follow a pronunciation in a sentence: never the second syllable of one.
 _FUNCTION = frozenset(
     (
         "by", "the", "and", "a", "to", "of", "in", "on", "is", "it", "as", "we", "he", "she",
-        "so", "my", "you", "our", "or", "but", "if", "at", "for",
+        "so", "my", "you", "our", "or", "but", "if", "at", "for", "did", "do", "does", "mean",
+        "was", "are", "am", "they", "me", "him", "her", "them", "his", "their", "not", "too",
     )
 )  # fmt: skip
 
@@ -67,6 +73,7 @@ def _phrase(text: str, start: int) -> tuple[str, int] | None:
         and "-" not in words[0]
         and len(words[0]) <= 4
         and second.group(1).lower() not in _FUNCTION
+        and re.search(r"[aeiouy]", second.group(1), re.I)
     ):
         words.append(second.group(1))
         end += second.end()
@@ -104,12 +111,21 @@ class PronunciationWatcher:
         text: str,
         names: Sequence[tuple[str, int]],
         now: float,
+        raw: str | None = None,
     ) -> list[Pronounced]:
         """`names`: (entity id, where in the line) of each name said in its main spelling. A
         pronunciation belongs to the one name said before it in the same line, else to the one
-        name said in the last few seconds; never to a guess between two."""
+        name said in the last few seconds; never to a guess between two. `text` is the cleaned
+        line (the names are found in it); `raw` is the line as heard: the cleaner turns a
+        misheard "Kale" into the name "Kael", so the sound is read from the raw line when it has
+        the same number of finds."""
         found: list[Pronounced] = []
-        for phrase, at in find(text) if names or self._recent else []:
+        hits = find(text) if names or self._recent else []
+        if raw is not None and hits:
+            heard = find(raw)
+            if len(heard) == len(hits):
+                hits = [(h[0], at) for h, (_, at) in zip(heard, hits, strict=True)]
+        for phrase, at in hits:
             before = {eid for eid, where in names if where < at}
             if len(before) > 1:
                 continue
