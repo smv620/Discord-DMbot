@@ -8787,6 +8787,16 @@ RECAP_SPLIT = """
     ALTER TABLE recap_jobs ADD COLUMN split JSONB;
     """
 
+RECAP_CRITICS = """
+    -- Where a recap's critics loop is (#2255): the readings done, what the critics last asked for,
+    -- the best draft so far and, when it stopped without agreement, the notes left for the DM's
+    -- recap page. JSON, NULL until the loop begins. Each step is saved, so a restart never repays
+    -- for one that finished. It holds the draft text and the critics' notes about it, which are
+    -- the recap's own words on a table that already isolates by server and is deleted with the
+    -- campaign; none of it is logged. A new nullable column changes no rows.
+    ALTER TABLE recap_jobs ADD COLUMN critics JSONB;
+    """
+
 NPC_NOTES = (
     f"""
     -- Every NPC opens its own page, with private notes (#2265; docs/PLAN.md, "Every NPC opens its
@@ -9417,6 +9427,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0159_npc_notes", NPC_NOTES),  # an NPC's page: its listed view and private notes (#2265)
     ("0160_installs_left_except", INSTALLS_LEFT_EXCEPT),  # servers left while offline (#2166)
     ("0161_import_suggest", IMPORT_SUGGEST),  # who a name is, and who they play (#2135)
+    ("0162_recap_critics", RECAP_CRITICS),  # the critics loop's saved state (#2255)
     ("0163_import_plays", IMPORT_PLAYS),  # the DM's "plays" choices wait for the bot (#2135)
 )
 

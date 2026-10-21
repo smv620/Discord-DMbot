@@ -224,6 +224,49 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertEqual(listed[0]["toConfirm"], ["Zarathon Keep", "Yrsa"])
 
+    async def test_the_critics_notes_are_on_the_dms_page_only(self) -> None:
+        """(#2255) What the critics still asked when they could not agree is the DM's copy: never
+        part of the text that is edited or posted, and never on a shared link."""
+        from dmbot.recaps.critics import Loop
+
+        note = "the style: keep the stakes and the mood"
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, critics=Loop(round=4, done=True, notes=(note,)).to_json()
+        )
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["criticNotes"], [note])
+        self.assertNotIn("stakes", one["summary"] + one["text"])
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(listed[0]["criticNotes"], [note])
+
+    async def test_a_recap_waiting_for_its_last_check_says_so_and_is_not_a_failure(self) -> None:
+        from dmbot.recaps.critics import CHECK_WAIT
+
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT)
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(
+            (one["waitingForCheck"], one["working"], one["error"]), (True, True, CHECK_WAIT)
+        )
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
+        again = await read_recap(self.web, self.session, self.ref)
+        self.assertFalse(again["waitingForCheck"])
+
+    async def test_a_recap_unchecked_for_days_exposes_since_when_and_the_marked_sentences(
+        self,
+    ) -> None:
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            critics=Loop(waits=3, since=1234).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["uncheckedSince"], 1234)
+        self.assertIsInstance(one["uncheckedSentences"], list)
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
+        again = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
+
     async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
         """(#2022) The recap stays; its page says the transcript went, and when, and how long the
         table keeps them. Read through the transcripts page's own door, scoped to the recap's

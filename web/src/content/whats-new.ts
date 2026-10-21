@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Recaps are checked before you see them",
+    what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
+    reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
+  },
+  {
+    date: "2026-10-21",
     title: "Every NPC has its own page",
     what: "Each name in the NPC list gets a 📖 Open button that opens that NPC's page on the website, for anyone in your Discord server. It shows what the list shows and the recaps that mention the name. There is also a My notes box on each page: only you can see your notes, you can download them or delete them, and they never go into a backup.",
     reason: "In review (#2265); held until dev1 deploys it and the website's NPC page is live (WebDev).",
