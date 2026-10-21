@@ -38,8 +38,8 @@ ANTHROPIC_PER_MILLION: dict[str, tuple[Price, Price]] = {
         Price(1.0, "per million input tokens", _ANTHROPIC, "2026-10-09"),
         Price(5.0, "per million output tokens", _ANTHROPIC, "2026-10-09"),
     ),
-    # Measured against the fast tier's model (#2055, `devtools.fast_compare`), not used live. Its
-    # prompts over 100,000 tokens pay $0.50 and $2.50; DMbot's calls are far shorter.
+    # The fast tier since #2152 (measured in #2055, `devtools.fast_compare`). Its prompts over
+    # 100,000 tokens pay $0.50 and $2.50; DMbot's calls are far shorter.
     "claude-haiku-5-5": (
         Price(0.10, "per million input tokens", _ANTHROPIC, "2026-10-19"),
         Price(0.50, "per million output tokens", _ANTHROPIC, "2026-10-19"),
