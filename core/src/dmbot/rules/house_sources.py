@@ -71,7 +71,12 @@ def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = Non
         out.append(
             Source(f"set:{name}", "followed", name, tuple(group_rules), publishers.get(name))
         )
-    return out[:MAX_SOURCES]
+    # Followed sets come last, so a long list of uploads would hide them: keep room for them.
+    if len(out) > MAX_SOURCES:
+        sets_ = [s for s in out if s.kind == "followed"]
+        rest = [s for s in out if s.kind != "followed"]
+        out = [*rest[: MAX_SOURCES - len(sets_[:5])], *sets_[:5]][:MAX_SOURCES]
+    return out
 
 
 def download(campaign_name: str, source: Source) -> tuple[str, str]:

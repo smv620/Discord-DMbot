@@ -102,6 +102,41 @@ class TheList(UITest):
             view = it.followup.send.await_args.kwargs["view"]
             self.assertEqual(len(view.pick.options), 1)
 
+    async def test_a_player_never_gets_the_linked_files_address(self) -> None:
+        get = AsyncMock(return_value=SimpleNamespace(link="https://docs.example.com/d/abc"))
+        self.bot.house_file_links = SimpleNamespace(get=get)
+        it = self.it(PLAYER)
+        await ui.open_sources(it, campaign())
+        view = it.followup.send.await_args.kwargs["view"]
+        self.assertFalse([c for c in view.children if isinstance(c, discord.ui.Button)])
+        get.assert_not_awaited()
+        self.assertNotIn("docs.example.com", str(it.followup.send.await_args))
+
+    async def test_two_long_names_that_share_their_start_get_their_own_downloads(self) -> None:
+        shared = "x" * 110
+        self.store.rules["c1"] = [
+            rule(1, "upload", shared + "-one.txt"),
+            rule(2, "upload", shared + "-two.txt"),
+        ]
+        it = self.it()
+        await ui.open_sources(it, campaign())
+        view = it.followup.send.await_args.kwargs["view"]
+        values = [o.value for o in view.pick.options]
+        self.assertEqual(len(set(values)), 2)
+        view.pick._values = [values[1]]
+        press = self.it()
+        await view.pick.callback(press)
+        text = press.followup.send.await_args.kwargs["file"].fp.read().decode()
+        self.assertEqual(len(house_file.parse(text).rules), 1)
+
+    async def test_the_message_always_fits_discord(self) -> None:
+        self.store.rules["c1"] = [rule(n, "upload", "f" * 150 + str(n)) for n in range(1, 40)]
+        it = self.it()
+        await ui.open_sources(it, campaign())
+        self.assertLessEqual(len(it.followup.send.await_args.args[0]), 2000)
+        view = it.followup.send.await_args.kwargs["view"]
+        self.assertLessEqual(len(view.pick.options), 25)
+
     async def test_the_list_has_a_sources_button_for_everyone_once_there_are_rules(self) -> None:
         it = await self.command(PLAYER)
         _, view = self.opened(it)
@@ -112,7 +147,7 @@ class TheList(UITest):
         it = self.it()
         await ui.open_sources(it, campaign())
         view = it.followup.send.await_args.kwargs["view"]
-        view.pick._values = ["linked"]
+        view.pick._values = ["0"]
         press = self.it()
         await view.pick.callback(press)
         sent = press.followup.send.await_args

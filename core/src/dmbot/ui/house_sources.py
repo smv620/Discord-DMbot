@@ -2,9 +2,10 @@
 each place, and a menu to download what came from one. Private; anyone who may read the list may
 look and download, as with the list itself. Nothing here changes a rule.
 
-The linked file also gets **🔗 Open the file** when its address fits a button. That address is
-already shown in the table's chat when an answer comes from a house rule (owner, 2026-10-14), so
-the list adds no new reveal.
+The linked file also gets **🔗 Open file** for the campaign's DMs only, when its address fits a
+button: the address is private (a share link may allow editing), and the owner's decision of
+2026-10-14 shows it to the table only in an answer that comes from a house rule. Players see the
+file's rules and can download them, but never the address.
 """
 
 from __future__ import annotations
@@ -44,9 +45,15 @@ PICK_PLACEHOLDER = "📥 Get rules from…"
 LINK_BUTTON_MAX = 512  # what Discord allows in a link button
 
 
-async def _load(interaction: discord.Interaction, campaign: Campaign) -> tuple[list[Source], str]:
-    """The sources as they are now, and the linked file's address ("" when it can't be a
-    button)."""
+def _is_dm(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    return interaction.user.id in campaign.dm_user_ids
+
+
+async def _load(
+    interaction: discord.Interaction, campaign: Campaign, *, with_link: bool
+) -> tuple[list[Source], str]:
+    """The sources as they are now, and the linked file's address ("" for anyone but a DM, or
+    when it can't be a button)."""
     bot: Any = _bot(interaction)
     rules = await bot.all_house_rules(campaign.guild_id, campaign.id)
     publishers: dict[str, str] = {}
@@ -58,7 +65,7 @@ async def _load(interaction: discord.Interaction, campaign: Campaign) -> tuple[l
             log.exception("Couldn't read the followed sets for the sources list")
     link = ""
     links = getattr(bot, "house_file_links", None)
-    if links is not None and any(r.source == "linked" for r in rules):
+    if with_link and links is not None and any(r.source == "linked" for r in rules):
         try:
             found = await links.get(campaign.guild_id, campaign.id)
         except Exception:
@@ -73,28 +80,39 @@ async def _load(interaction: discord.Interaction, campaign: Campaign) -> tuple[l
     return house_sources.group(rules, publishers), link
 
 
+TITLE_SHOWN = 60  # a long file or set name is cut in the list; the menu and file keep it
+TEXT_MAX = 1800  # Discord's message limit is 2,000
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def _text(sources: list[Source]) -> str:
-    lines = [f"• {discord.utils.escape_markdown(s.line)}" for s in sources]
+    lines = [f"• {_cut(discord.utils.escape_markdown(s.line), TITLE_SHOWN + 40)}" for s in sources]
     notes = [OUTRO]
     if any(s.kind == "upload" for s in sources):
         notes.append(UPLOAD_NOTE)
     if len(sources) >= house_sources.MAX_SOURCES:
         notes.append(CUT_NOTE)
-    return "\n".join([INTRO, *lines, "", *notes])
+    return _cut("\n".join([INTRO, *lines, "", *notes]), TEXT_MAX)
 
 
 class SourcesView(_Menu):
-    def __init__(self, campaign: Campaign, sources: list[Source], link: str) -> None:
+    def __init__(
+        self, campaign: Campaign, sources: list[Source], link: str, *, is_dm: bool = False
+    ) -> None:
         super().__init__()
-        self.campaign = campaign
+        self.campaign, self.is_dm = campaign, is_dm
+        self.keys = [s.key for s in sources]  # what each menu value stands for
         options = [
             discord.SelectOption(
                 label=s.title if len(s.title) <= LABEL_MAX else s.title[: LABEL_MAX - 1] + "…",
-                value=s.key[:100],
+                value=str(i),  # a name can be long and repeat in its first characters
                 description=f"{s.kind.capitalize()} · {len(s.rules)} "
                 f"rule{'s' if len(s.rules) != 1 else ''}",
             )
-            for s in sources
+            for i, s in enumerate(sources)
         ]
         self.pick = _Select(self._download, placeholder=PICK_PLACEHOLDER, options=options)
         self.add_item(self.pick)
@@ -103,8 +121,15 @@ class SourcesView(_Menu):
 
     async def _download(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction)  # a new private message; the list stays as it is
-        sources, _ = await _load(interaction, self.campaign)
-        source = next((s for s in sources if s.key[:100] == self.pick.values[0]), None)
+        try:
+            sources, _ = await _load(interaction, self.campaign, with_link=False)
+        except Exception:
+            log.exception("Couldn't read the house rules for a sources file")
+            await _tell(interaction, COULDNT)
+            return
+        value = int(self.pick.values[0])
+        wanted = self.keys[value] if 0 <= value < len(self.keys) else None
+        source = next((s for s in sources if s.key == wanted), None)
         if source is None:  # the last rule of it was removed meanwhile
             await _tell(interaction, GONE)
             return
@@ -126,7 +151,8 @@ async def open_sources(interaction: discord.Interaction, campaign: Campaign) -> 
     """The 📂 Sources button: a new private message, for anyone who may read the list."""
     await _answer_first(interaction)
     try:
-        sources, link = await _load(interaction, campaign)
+        is_dm = _is_dm(interaction, campaign)
+        sources, link = await _load(interaction, campaign, with_link=is_dm)
     except Exception:
         log.exception("Couldn't read the house rules for the sources list")
         await _tell(interaction, NOT_READY)
@@ -134,5 +160,5 @@ async def open_sources(interaction: discord.Interaction, campaign: Campaign) -> 
     if not sources:
         await _tell(interaction, NONE_YET)
         return
-    view = SourcesView(campaign, sources, link)
+    view = SourcesView(campaign, sources, link, is_dm=is_dm)
     await _tell(interaction, _text(sources), view=view)
