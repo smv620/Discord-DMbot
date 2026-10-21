@@ -110,12 +110,34 @@ export const text = {
     "DMbot is making it again. You will get an email when it is ready.",
 } as const;
 
+/** What a held recap says instead of its draft (#2210): it waits for the DM's answers about
+ * names, and where to give them. */
+export const heldWords = {
+  status: "Waiting for your answers about names",
+  heading: "Waiting for your answers",
+  line: (left: number | undefined): string =>
+    `DMbot will write this recap once you answer ${
+      left && left > 0
+        ? `the ${left} ${left === 1 ? "question" : "questions"}`
+        : "its questions"
+    } about names in Discord: 📝 Check new names on the DM screen.`,
+} as const;
+
+/** A recap the bot is holding until the DM answers its questions about names (#2210). The API
+ * sends a held recap as its own entry (state "waiting", #2174) and clears the flag once the real
+ * recap exists, so the flag alone says it. One test for the list and the page, so they never
+ * disagree. */
+export function isHeld(recap: Recap): boolean {
+  return recap.waitingForNames === true;
+}
+
 /** "Ready to read", "Posted"… for one row of the list. */
 export function statusLine(recap: Recap): string {
   if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
+  if (isHeld(recap)) return heldWords.status;
   if (recap.state === "failed") return "Couldn't be made";
   if (recap.working) return "Being made";
   return "Ready to read";
