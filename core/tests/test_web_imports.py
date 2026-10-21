@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -13,6 +14,7 @@ import httpx
 
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
+from dmbot.transcript import import_link
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import sessions as web_sessions
@@ -69,6 +71,162 @@ class WithImports(Base):
         return await imports.confirm(
             self.web, self.session, self.ref_c, files(*pairs), plan, **self.kw
         )
+
+
+class TheLinks(WithImports):
+    """Google Doc links next to uploads (#2140): each becomes a file, then follows the same path."""
+
+    DOC = "https://docs.google.com/document/d/" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+    def reader(self, texts: dict[str, str | import_link.DocError]) -> Any:
+        async def read(link: object) -> str:
+            got = texts[str(link)]
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        return unittest.mock.patch.object(import_link, "read_doc", read)
+
+    async def test_a_shared_doc_previews_and_imports_like_a_file(self) -> None:
+        with self.reader({self.DOC: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+            (one,) = got["files"]
+            self.assertEqual(
+                (one["name"], one["format"], one["lineCount"]), ("Google Doc 1.txt", "plain", 3)
+            )
+            done = await imports.confirm(
+                self.web, self.session, self.ref_c, None,
+                {
+                    "mapping": MAPPING,
+                    "sessions": [{"file": "Google Doc 1.txt", "date": "2026-09-14"}],
+                },
+                links=[self.DOC], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(done["sessions"], [{"file": "Google Doc 1.txt", "state": "waiting"}])
+        self.assertEqual(await self.sessions(), 1)
+
+    async def test_a_doc_that_cannot_be_read_says_why_and_the_others_still_work(self) -> None:
+        err = import_link.DocError
+        other = self.DOC + "x"
+        with self.reader({self.DOC: err("doc_not_shared"), other: CRAIG}):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, files(("a.txt", CRAIG)),
+                links=[self.DOC, other], **self.kw,
+            )  # fmt: skip
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("a.txt", None), ("Google Doc 1.txt", "doc_not_shared"), ("Google Doc 2.txt", None)],
+        )
+
+    async def test_a_link_that_is_not_a_google_doc_is_marked(self) -> None:
+        got = await imports.preview(
+            self.web, self.session, self.ref_c, None, links=["https://example.com/x"], **self.kw
+        )
+        self.assertEqual(got["files"][0]["error"], "not_a_google_doc")
+
+    async def test_links_and_files_count_together_toward_the_limit(self) -> None:
+        many = [(f"{n}.txt", CRAIG) for n in range(imports.MAX_FILES)]
+        with self.assertRaises(RecapError) as refused:
+            await imports.preview(
+                self.web, self.session, self.ref_c, files(*many), links=[self.DOC], **self.kw
+            )
+        self.assertEqual(refused.exception.code, "too_many_files")
+        with self.assertRaises(RecapError):
+            await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC] * 21, **self.kw
+            )
+
+    async def test_nothing_at_all_is_refused_and_a_bad_links_value_too(self) -> None:
+        for files_, links in ((None, None), ([], []), (None, "https://x"), (None, {"a": 1})):
+            with self.assertRaises(RecapError):
+                await imports.preview(
+                    self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                )
+
+    async def test_a_bad_request_fetches_nothing(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        bad = (
+            ("x", [self.DOC]),  # files is not a list
+            ([{"name": "Google Doc 1.txt", "text": CRAIG}], [self.DOC]),  # a name taken
+            ([{"name": "a.txt", "text": ""}, {"name": "a.txt", "text": ""}], [self.DOC]),
+            ([{"text": "no name"}], [self.DOC]),
+        )
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            for files_, links in bad:
+                with self.assertRaises(RecapError):
+                    await imports.preview(
+                        self.web, self.session, self.ref_c, files_, links=links, **self.kw
+                    )
+        fake.assert_not_awaited()
+
+    async def test_the_same_doc_twice_is_read_once_and_the_repeat_is_refused(self) -> None:
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        spelled = self.DOC + "/edit?usp=sharing"  # another spelling of the same document
+        with unittest.mock.patch.object(import_link, "read_doc", fake):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC, spelled], **self.kw
+            )
+        self.assertEqual(fake.await_count, 1)
+        self.assertEqual(
+            [(f["name"], f["error"]) for f in got["files"]],
+            [("Google Doc 1.txt", None), ("Google Doc 2.txt", "repeated_link")],
+        )
+
+    async def test_a_cancelled_request_cancels_the_reads_still_running(self) -> None:
+        started = asyncio.Event()
+        cancelled: list[bool] = []
+
+        async def slow(_link: object) -> str:
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return CRAIG
+
+        with unittest.mock.patch.object(import_link, "read_doc", slow):
+            task = asyncio.ensure_future(
+                imports.preview(
+                    self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+                )
+            )
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await asyncio.sleep(0.05)
+        self.assertEqual(cancelled, [True])
+
+    async def test_a_slow_google_marks_the_unfinished_docs_unreachable(self) -> None:
+        async def slow(_link: object) -> str:
+            await asyncio.sleep(5)
+            return CRAIG
+
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", slow),
+            unittest.mock.patch.object(imports, "LINKS_DEADLINE_S", 0.05),
+        ):
+            got = await imports.preview(
+                self.web, self.session, self.ref_c, None, links=[self.DOC], **self.kw
+            )
+        self.assertEqual(got["files"][0]["error"], "doc_unreachable")
+
+    async def test_a_non_dm_reads_no_doc(self) -> None:
+        from dmbot.web import sessions as web_sessions
+
+        token = await web_sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        bob = await web_sessions.find(self.web, token, now=NOW)
+        assert bob is not None
+        fake = unittest.mock.AsyncMock(return_value=CRAIG)
+        with (
+            unittest.mock.patch.object(import_link, "read_doc", fake),
+            self.assertRaises(RecapError),
+        ):
+            await imports.preview(self.web, bob, self.ref_c, None, links=[self.DOC], **self.kw)
+        fake.assert_not_awaited()
 
 
 class ThePreviewAndCheck(WithImports):
