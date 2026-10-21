@@ -353,6 +353,9 @@ def router(
                     "note": r.note,
                     "grantedBy": r.granted_by,
                     "grantedAt": r.granted_at,
+                    # A grant given before the person joined the server's free list: the page
+                    # shows them once, under "Always free" (#2196).
+                    "alsoFree": r.discord_user_id in settings.free_users,
                 }
                 for r in rows
             ],
@@ -428,17 +431,27 @@ def router(
     # Support tickets (#1340)
 
     @api.get("/support")
-    async def list_support(session: Admin, status: str = "all") -> dict[str, Any]:
-        """Private tickets from signed-in people, newest first; `?status=new|answered|closed` keeps
-        one status and `all` (the default) every one (#1375). `counts` always covers all of them,
-        for the filter buttons. The words go to the signed-in admin only, and are never logged."""
+    async def list_support(session: Admin, status: str = "all", page: str = "1") -> dict[str, Any]:
+        """Private tickets from signed-in people, twenty a page (`?page=N` from 1, #2211). Newest
+        first, except `?status=escalated` (Needs the team), which is longest-waiting first (#1485).
+        `?status=new|answered|closed|escalated` keeps one status and `all` (the default) every one
+        (#1375); the pages are of that filtered list. `page` and `pages` come back, and a page that
+        isn't there answers 400 `bad_page`. `counts` always covers every ticket, for the filter
+        buttons. The words go to the signed-in admin only, and are never logged."""
         wanted = next((s for s in support.STATUSES if s == status), None)
         if status != "all" and wanted is None:
             raise HTTPException(status_code=400, detail="bad_status")
-        rows = await support.newest(db, status=wanted)
+        # `?page=N` from 1, 20 tickets a page within the filtered list (#2211). Anything that is
+        # not a plain whole number from 1 to the last page answers 400 `bad_page`.
+        number = int(page) if page.isascii() and page.isdecimal() and len(page) <= 9 else 0
+        if number < 1:
+            raise HTTPException(status_code=400, detail="bad_page")
+        rows, pages = await support.page(db, status=wanted, number=number)
+        if number > pages:
+            raise HTTPException(status_code=400, detail="bad_page")
         counts = await support.counts(db)
         this_week = await support.week(db, clock())
-        # One lookup per distinct person, so the list is kept short (support.LIST_LIMIT).
+        # One lookup per distinct person, so a page is kept short (support.PAGE_SIZE).
         names = await sessions.display_names(db, sorted({r.user_id for r in rows}), now=clock())
         threads = {
             r.id: await support.thread(db, r.id) for r in rows
@@ -473,6 +486,8 @@ def router(
                 for r in rows
             ],
             "counts": counts,
+            "page": number,
+            "pages": pages,
             # How support went in the last seven days (#1480): numbers only.
             "week": {
                 "questions": this_week.questions,
