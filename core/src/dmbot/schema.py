@@ -3002,6 +3002,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_mine_thread", "dmbot_support_mine_thread(BIGINT)"),
     # The DM's recap choices, read and written on the recap page (#1468): DM only.
     ("dmbot_web_recap_choices", "dmbot_web_recap_choices(BIGINT, TEXT)"),
+    # The signed-in DM's recaps still waiting for their name answers (#2174).
+    ("dmbot_web_recap_holds", "dmbot_web_recap_holds(BIGINT)"),
     ("dmbot_web_set_recap_choice", "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"),
     # A campaign's house rules, read by any member of the server (#1521).
     ("dmbot_web_house_rules", "dmbot_web_house_rules(BIGINT, TEXT)"),
@@ -7627,6 +7629,57 @@ RECAP_HOLDS = f"""
     );
     """ + _isolate("recap_holds")
 
+RECAP_HOLD_NAMES = """
+    -- How many name questions a held recap waits on (#2174), written by the bot each time it counts
+    -- (at the hold and in every round), so the website can say "N answers to give" without
+    -- reading memory. A defaulted column changes no rows, so no row-level-security policy is
+    -- needed. The website reads it only through the door below.
+    ALTER TABLE recap_holds ADD COLUMN names_open INTEGER NOT NULL DEFAULT 0
+        CHECK (names_open >= 0);
+
+    -- The signed-in person's held recaps in one server: only campaigns they are a DM of, only
+    -- holds the DM was told about and that still wait on an answer (a silent hold is waiting for
+    -- the story extractor, and one with nothing left is released by the next round). Counts and
+    -- times only; no name or text. The server must be one of the session's, as for the other
+    -- website doors (a second layer: forced row-level security already holds the same line).
+    CREATE FUNCTION dmbot_web_recap_holds(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN '[]'::jsonb;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'campaignId', h.campaign_id, 'campaign', c.name,
+                       'sessionAt', h.session_at, 'namesOpen', h.names_open)
+                   ORDER BY h.session_at DESC)
+            FROM recap_holds h
+            JOIN campaigns c ON c.guild_id = h.guild_id AND c.id = h.campaign_id
+            WHERE h.guild_id = g AND h.asked AND h.names_open > 0
+              AND EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = h.guild_id AND d.campaign_id = h.campaign_id
+                            AND d.user_id = dmbot_current_user())), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_recap_holds(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_recap_holds(BIGINT) FROM PUBLIC;
+"""
+
+RECAP_HOLD_REMINDED = """
+    -- The one reminder a held recap gets after a day (#2174): set when it is claimed, so the
+    -- round and a restart never send it twice. A defaulted column changes no rows, so no
+    -- row-level-security policy is needed.
+    ALTER TABLE recap_holds ADD COLUMN reminded BOOLEAN NOT NULL DEFAULT FALSE;
+"""
+
 OLD_SPELLING = """
     -- A fixed spelling keeps the old one as an "old spelling" other name (#2170): the cleaner
     -- still matches it, so a line that says it is fixed to the new spelling and a search finds
@@ -8050,6 +8103,8 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0150_support_mine_thread",
         SUPPORT_MINE_THREAD,
     ),  # a person reads their own ticket's thread (#2193)
+    ("0151_recap_hold_names", RECAP_HOLD_NAMES),  # how many answers it waits on (#2174)
+    ("0152_recap_hold_reminded", RECAP_HOLD_REMINDED),  # the one reminder it gets (#2174)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
