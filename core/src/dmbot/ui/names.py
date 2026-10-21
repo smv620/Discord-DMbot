@@ -840,7 +840,12 @@ def _heard(entity: Entity) -> str:
 
 
 def suggestion_text(
-    entity: Entity, left: int, *, also: list[str] | None = None, match: Match | None = None
+    entity: Entity,
+    left: int,
+    *,
+    also: list[str] | None = None,
+    match: Match | None = None,
+    spelled: bool = False,
 ) -> str:
     others = (
         f"\nAlso heard as {', '.join(f'**{_md(a)}**' for a in also)}: saved with it."
@@ -848,11 +853,17 @@ def suggestion_text(
         else ""
     )
     more = f"\n_{_plural(left - 1, 'more name')} after this one._" if left > 1 else ""
-    question = (
-        f"Sounds like **{_md(match.name)}**. The same, or new?"
-        if match is not None
-        else "Is this a name in your game?"
-    )
+    if (
+        match is not None and spelled
+    ):  # someone spelled it out (#2168): say what the extra button does
+        question = (
+            f"Sounds like **{_md(match.name)}**. Same name, spelled **{_md(entity.name)}**? "
+            "Or a new name?"
+        )
+    elif match is not None:
+        question = f"Sounds like **{_md(match.name)}**. The same, or new?"
+    else:
+        question = "Is this a name in your game?"
     return f"📝 **{_md(entity.name)}**{_heard(entity)}{others}\n{question}{more}"
 
 
@@ -937,7 +948,9 @@ class SuggestionReview(_Menu):
             if a.key != own
         ]
         self._buttons()
-        return suggestion_text(entity, len(self.queue), also=self.also, match=self.match)
+        return suggestion_text(
+            entity, len(self.queue), also=self.also, match=self.match, spelled=bool(self.spelled)
+        )
 
     def _buttons(self) -> None:
         self.clear_items()
@@ -952,7 +965,7 @@ class SuggestionReview(_Menu):
                     1,
                     (
                         self._fix_spelling,
-                        logic.shorten(f"✏️ Spell it {self.spelled}", REVIEW_LABEL_MAX),
+                        logic.shorten(f"✏️ Respell as {self.spelled}", REVIEW_LABEL_MAX),
                         discord.ButtonStyle.primary,
                     ),
                 )
@@ -1130,27 +1143,15 @@ class SuggestionReview(_Menu):
     async def _fix_spelling(self, interaction: discord.Interaction) -> None:
         """Someone spelled the name out at the table (#2168) and it sounds like a known name with
         another spelling: the known name takes this spelling as its main name and keeps the old
-        spelling as another name (never listened for as a hint is #2170's rule for a fix; here it
-        stays an ordinary other name, as ⭐ does). Merging keeps its guards and can be undone."""
-        current = await self._current(interaction)
-        if current is None or self.match is None:
+        spelling as another name, as ⭐ does. Merging keeps its guards."""
+        if self.match is None:
+            await _tell(interaction, GONE)
             return
-        campaign, memory, entity = current
-        keep_id = self.match.entity_id
-        spelling = entity.name
-        await self._same_as(interaction, keep_id)
-        try:  # the merged-in spelling becomes the main name
-            for alias in await memory.aliases(campaign.guild_id, campaign.id, entity_id=keep_id):
-                if alias.key == name_key(spelling) and alias.status == CONFIRMED:
-                    await memory.set_main_name(
-                        campaign.guild_id, campaign.id, keep_id, alias.id, source=DM
-                    )
-                    changed(interaction, campaign)
-                    break
-        except MemoryRuleError:
-            log.info("Couldn't make a spelled-out name the main name")
+        await self._same_as(interaction, self.match.entity_id, main=True)
 
-    async def _same_as(self, interaction: discord.Interaction, keep_id: str) -> None:
+    async def _same_as(
+        self, interaction: discord.Interaction, keep_id: str, *, main: bool = False
+    ) -> None:
         """The DM said the suggestion is the same as a known entry: its names (and any
         heard with it) become that entry's other names. Merging keeps its guards
         (secret names, player characters) and can be undone."""
@@ -1183,11 +1184,32 @@ class SuggestionReview(_Menu):
         except MemoryRuleError:
             await self._next(interaction, campaign, memory, note=NOT_JOINED)  # back in place
             return
-        changed(interaction, campaign)
         shown = _and([f"**{_md(n)}**" for n in names])
         verb = "are now names" if len(names) > 1 else "is now a name"
         note = f"✅ Got it: {shown} {verb} for **{_md(keep.name)}**."
+        if main:  # the spelled-out one becomes the main name; the old spelling stays (#2168)
+            note = await self._respelled(memory, campaign, keep, entity.name, note)
+        changed(interaction, campaign)
         await self._saved(interaction, campaign, memory, note)
+
+    async def _respelled(
+        self, memory: MemoryStore, campaign: Campaign, keep: Entity, spelling: str, note: str
+    ) -> str:
+        """Make the merged-in spelling the main name, before the DM is answered. A failure leaves
+        the merge as it is and says so."""
+        try:
+            for alias in await memory.aliases(campaign.guild_id, campaign.id, entity_id=keep.id):
+                if alias.key == name_key(spelling) and alias.status == CONFIRMED:
+                    await memory.set_main_name(
+                        campaign.guild_id, campaign.id, keep.id, alias.id, source=DM
+                    )
+                    return (
+                        f"✅ Got it: **{_md(keep.name)}** is now spelled **{_md(spelling)}**. "
+                        f"The old spelling is still one of its names."
+                    )
+        except Exception:
+            log.exception("Couldn't make a spelled-out name the main name")
+        return f"{note} (Its spelling is unchanged: use ⭐ on its card to change it.)"
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)

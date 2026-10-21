@@ -2420,8 +2420,9 @@ class Review(NamesTest):
         await ui.start_review(it, self.campaign.id)
         text, kw = it.response.sent[0]
         self.assertIn("· spelled out at the table", text)
+        self.assertIn("Same name, spelled **Rothgar**? Or a new name?", text)
         labels = [b.label for b in kw["view"].children]
-        self.assertIn("✏️ Spell it Rothgar", labels)
+        self.assertIn("✏️ Respell as Rothgar", labels)
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
 
     async def test_fixing_the_spelling_makes_the_spelled_name_the_main_name(self) -> None:
@@ -2442,7 +2443,7 @@ class Review(NamesTest):
         it = self.it()
         await ui.start_review(it, self.campaign.id)
         labels = [b.label for b in it.response.sent[0][1]["view"].children]
-        self.assertFalse(any("Spell it" in label for label in labels))
+        self.assertFalse(any("Respell as" in label for label in labels))
 
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:
         # #394: "Rothgar" sounds like the known Hrothgar

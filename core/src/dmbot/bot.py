@@ -8429,6 +8429,9 @@ class DMBot(commands.AutoShardedBot):
         spelling is suggested all the same: the review shows which known name it sounds like."""
         spelled = table.spelled
         table.spelled = []
+        table.spelling = (
+            spelled_out.SpellingWatcher()
+        )  # the recent lines are not kept past the session
         if self.memory is None or table.campaign_id is None or not spelled:
             return
         gid, cid = table.guild_id, table.campaign_id

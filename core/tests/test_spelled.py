@@ -42,6 +42,20 @@ class TheParser(unittest.TestCase):
                 got = parse(said, asked=True)
                 self.assertEqual([g.word for g in got], [word])
 
+    def test_stutters_and_capital_i_and_a_are_not_letters(self) -> None:
+        for said in ("Then Gary said I I I think so", "We told Gary A B C", "a a a a"):
+            with self.subTest(said=said):
+                self.assertEqual(SpellingWatcher().note(1, said, 0.0), [])
+                self.assertEqual(parse(said), [])
+
+    def test_double_you_is_w(self) -> None:
+        for said in ("double you A Y N E", "double u a y n e", "W A Y N E"):
+            with self.subTest(said=said):
+                self.assertEqual([g.word for g in parse(said, asked=True)], ["Wayne"])
+
+    def test_an_answer_is_mostly_letters_not_a_sentence_with_a_few(self) -> None:
+        self.assertEqual(parse("No idea, I see a bee ex", asked=True), [])
+
     def test_ordinary_sentences_are_never_a_spelling(self) -> None:
         for said in (
             "are you a man or what",
@@ -197,6 +211,12 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
 
     async def test_someone_who_stopped_agreeing_is_not_suggested(self) -> None:
         bot, table = table_bot(consenting={9}), a_table()
+        self.say(bot, table, [(1, "how do you spell that"), (2, "B R A N N O C H")])
+        await bot.suggest_spelled(table)
+        bot.memory.add_entity.assert_not_awaited()
+
+    async def test_a_secret_name_spelled_out_is_never_suggested(self) -> None:
+        bot, table = table_bot(), a_table(frozenset({"brannoch"}))
         self.say(bot, table, [(1, "how do you spell that"), (2, "B R A N N O C H")])
         await bot.suggest_spelled(table)
         bot.memory.add_entity.assert_not_awaited()

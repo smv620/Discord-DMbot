@@ -97,7 +97,7 @@ def _classify(toks: list[_Tok], text: str) -> None:
         if len(low) == 1 and low.isalpha():
             t.letter = low
             # "B", "R" are unmistakable; "a" and "i" are words unless hyphen-joined or capital.
-            t.strong = low not in "ai" or t.text.isupper() or joined_next
+            t.strong = low not in "ai" or joined_next  # a lone "I" or "A" is a word
             t.joined = joined_next
         elif low in STRONG_NAMES:
             t.letter, t.strong = STRONG_NAMES[low], True
@@ -107,6 +107,18 @@ def _classify(toks: list[_Tok], text: str) -> None:
             t.letter, t.strong = SYMBOLS[low], True
         elif low in NUMBERS or low == "capital" or low == "double":
             t.letter, t.strong = "", True  # modifiers, handled in the run
+
+
+def _double_u(toks: list[_Tok]) -> list[_Tok]:
+    """ "double u" and "double you" are the letter W, not a doubled U."""
+    out: list[_Tok] = []
+    for t in toks:
+        if out and out[-1].text.lower() == "double" and t.text.lower() in ("u", "you"):
+            before = out.pop()
+            out.append(_Tok(f"{before.text} {t.text}", before.start, t.end, "w", True))
+            continue
+        out.append(t)
+    return out
 
 
 def _runs(toks: list[_Tok]) -> list[list[_Tok]]:
@@ -165,10 +177,19 @@ def _word_of(run: list[_Tok]) -> tuple[str, int, int, int] | None:
     count = sum(len(x) for x in letters)
     if count < MIN_LETTERS or count > MAX_LETTERS:
         return None
+    if any(
+        len(a) == 1 and a == b == c
+        for a, b, c in zip(letters, letters[1:], letters[2:], strict=False)
+    ):
+        return None  # "I I I", "a a a": stuttering, unless "double" or "triple" was said
     word = "".join(letters)
     # Title case, but keep a capital the speaker asked for ("capital b" inside a word).
     word = word[0].upper() + word[1:] if word[0].islower() else word
     return word, first.start, last.end, strong
+
+
+def run_tokens(run: list[_Tok]) -> list[_Tok]:
+    return [t for t in run if t.text not in ",.;:!?-"]
 
 
 def parse(text: str, *, asked: bool = False) -> list[Spelling]:
@@ -176,6 +197,7 @@ def parse(text: str, *, asked: bool = False) -> list[Spelling]:
     run with fewer unmistakable letters is believed."""
     toks = _tokens(text)
     _classify(toks, text)
+    toks = _double_u(toks)
     out: list[Spelling] = []
     for run in _runs(toks):
         found = _word_of(run)
@@ -185,6 +207,9 @@ def parse(text: str, *, asked: bool = False) -> list[Spelling]:
         need = 2 if asked else 3
         if strong < need or len(word) > MAX_WORD:
             continue
+        spoken = len([t for t in toks if t.text not in ",.;:!?-"])
+        if asked and len(run_tokens(run)) * 10 < spoken * 8:
+            continue  # an answer is mostly letters, not a sentence with a few in it
         out.append(Spelling(word, start, end))
     return out
 
