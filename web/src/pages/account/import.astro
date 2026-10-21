@@ -1,6 +1,6 @@
 ---
 import ImportIsland from "../../account/ImportIsland";
-import { IMPORT_LIVE, importPage } from "../../content/import-words";
+import { importPage } from "../../content/import-words";
 import Base from "../../layouts/Base.astro";
 import "../../styles/account.css";
 ---
@@ -12,7 +12,8 @@ import "../../styles/account.css";
 >
   <div class="account">
     <h1>{importPage.heading}</h1>
-    {IMPORT_LIVE ? <ImportIsland client:load /> : <p>This page isn't open yet.</p>}
+    {/* Whether it is open is decided in the page: the site switch, or the campaign's server (#2260). */}
+    <ImportIsland client:load />
     <noscript>
       <p>This page needs JavaScript to import sessions. Turn it on, then reload the page.</p>
     </noscript>

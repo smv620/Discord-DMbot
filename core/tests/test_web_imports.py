@@ -56,6 +56,15 @@ class WithImports(Base):
                     " VALUES (%s, %s, %s, 'person', %s, '', 'confirmed', 'dm', 0, %s)",
                     (THURSDAY.id, self.one.id, f"{n:032x}", f"Player {n}", who),
                 )
+                await conn.execute(  # the name as the name list holds it
+                    "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                    " kind, secret, status, sound_codes, source, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, 'full', false, 'confirmed', '{}', 'dm', 1)",
+                    (
+                        THURSDAY.id, self.one.id, f"{n + 20_000:032x}", f"{n:032x}",
+                        f"Player {n}", f"player {n}",
+                    ),
+                )  # fmt: skip
         self.transcripts = TranscriptStore(self.db)
         self.kw: dict[str, Any] = {"outside": None, "now": NOW, "enforce_plans": False}
 
@@ -283,8 +292,255 @@ class ThePreviewAndCheck(WithImports):
         got = await self.preview(("b.txt", SECOND.replace("Mira:", "Mira (mira_v):")))
         suggested = {s["label"]: s["suggested"] for s in got["files"][0]["speakers"]}
         self.assertEqual(
-            suggested["Mira (mira_v)"], {"userId": str(MIRA), "name": "", "why": "remembered"}
+            suggested["Mira (mira_v)"],
+            {"userId": str(MIRA), "name": "", "why": "remembered", "agreed": True},
         )
+
+
+class TheSuggestions(WithImports):
+    """Who a name probably is, and who they play (#2135): suggestions only, the DM confirms."""
+
+    async def directory(self, user: int, shown: str, handle: str, guild: int = THURSDAY.id) -> None:
+        async with self.db.guild(guild) as conn:
+            await conn.execute(
+                "INSERT INTO member_directory (guild_id, user_id, display_name, username,"
+                " updated_at) VALUES (%s, %s, %s, %s, 1)",
+                (guild, user, shown, handle),
+            )
+
+    async def character(
+        self,
+        ident: int,
+        name: str,
+        *,
+        played_by: int | None = None,
+        type_: str = "character",
+        secret_name: bool = False,
+        audience_limited: bool = False,
+    ) -> str:
+        eid = f"{ident:032x}"
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by, role, audience_limited)"
+                " VALUES (%s, %s, %s, %s, %s, '', 'confirmed', 'dm', %s, %s, %s, %s)",
+                (
+                    THURSDAY.id, self.one.id, eid, type_, name, ident, played_by,
+                    "player_character" if played_by else "npc", audience_limited,
+                ),
+            )  # fmt: skip
+            # its own name, as the name list holds it: a confirmed alias (secret or not)
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key, kind,"
+                " secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, 'full', %s, 'confirmed', '{}', 'dm', 1)",
+                (
+                    THURSDAY.id, self.one.id, f"{ident + 10_000:032x}", eid, name,
+                    name.lower(), secret_name,
+                ),
+            )  # fmt: skip
+        return eid
+
+    async def plays(self, person: str, character: str, *, secret: bool = False) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
+                " object_id, detail, confidence, status, source, mention_ids, secret, created_at)"
+                " VALUES (%s, %s, %s, %s, 'plays', %s, '', 1, 'confirmed', 'dm', '{}', %s, 1)",
+                (THURSDAY.id, self.one.id, f"{99:032x}", person, character, secret),
+            )
+
+    @staticmethod
+    def picked(speaker: dict[str, Any]) -> tuple[str, str]:
+        return speaker["suggested"]["userId"], speaker["suggested"]["why"]
+
+    async def guess(self, label: str) -> dict[str, Any]:
+        got = await self.preview(("a.txt", f"{label}: We go in.\n"))
+        (one,) = [s for s in got["files"][0]["speakers"] if s["label"] == label]
+        return cast(dict[str, Any], one)
+
+    async def test_the_username_part_comes_first(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        one = await self.guess("Cerric (mira_v#0)")
+        self.assertEqual(
+            one["suggested"],
+            {"userId": str(MIRA), "name": "Mira the Bold", "why": "username", "agreed": True},
+        )
+
+    async def test_then_the_display_name_or_nickname(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        one = await self.guess("Mira The Bold")
+        self.assertEqual(
+            (one["suggested"]["userId"], one["suggested"]["why"]), (str(MIRA), "display_name")
+        )
+        # the username part beats a display name that is another person's
+        await self.directory(ALICE.id, "mira_v", "alice_a")
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+        two = await self.guess("Someone (mira_v)")
+        self.assertEqual(
+            (two["suggested"]["userId"], two["suggested"]["why"]), (str(MIRA), "username")
+        )
+
+    async def test_then_the_names_the_table_uses(self) -> None:
+        one = await self.guess("Player 0 (nobody_here)")  # a campaign person played by MIRA
+        self.assertEqual(
+            (one["suggested"]["userId"], one["suggested"]["why"]), (str(MIRA), "people")
+        )
+        self.assertEqual(one["suggested"]["name"], "Player 0")
+
+    async def test_two_people_at_the_deciding_step_suggest_no_one(self) -> None:
+        await self.directory(MIRA, "Twin", "twin_a")
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+        await self.directory(ALICE.id, "Twin", "twin_b")
+        self.assertIsNone((await self.guess("Twin"))["suggested"])
+
+    async def test_a_person_who_has_not_agreed_is_not_found_in_the_directory(self) -> None:
+        await self.directory(TOMAS, "Tom", "tom_t")  # no consent row
+        self.assertIsNone((await self.guess("Tom (tom_t)"))["suggested"])
+
+    async def test_another_servers_directory_is_never_read(self) -> None:
+        other = THURSDAY.id + 1
+        await ConsentStore(self.db).grant(other, MIRA)
+        await self.directory(MIRA, "Elsewhere", "mira_e", guild=other)
+        self.assertIsNone((await self.guess("Elsewhere (mira_e)"))["suggested"])
+
+    async def test_the_character_they_already_play_is_suggested(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        cerric = await self.character(500, "Cerric", played_by=MIRA)
+        await self.plays(f"{0:032x}", cerric)  # "Player 0" plays Cerric
+        one = await self.guess("Mira (mira_v)")
+        self.assertEqual(one["suggestedCharacter"], {"name": "Cerric", "why": "plays"})
+
+    async def test_else_a_character_with_the_labels_name(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        await self.character(501, "Cerric")
+        one = await self.guess("Cerric (mira_v)")
+        self.assertEqual(one["suggestedCharacter"], {"name": "Cerric", "why": "same_name"})
+        # one somebody already plays is not offered again
+        await self.character(502, "Brann", played_by=TOMAS)
+        self.assertIsNone((await self.guess("Brann (mira_v)"))["suggestedCharacter"])
+
+    async def test_a_remembered_label_gets_its_character_too(self) -> None:
+        await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14", "order": 1}]},
+            ("a.txt", CRAIG),
+        )
+        await self.character(503, "Mira")
+        one = await self.guess("Mira (mira_v)")
+        self.assertEqual(one["suggested"]["why"], "remembered")
+        self.assertEqual(one["suggestedCharacter"], {"name": "Mira", "why": "same_name"})
+
+    async def test_a_character_whose_name_is_secret_or_limited_is_never_offered(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        # same-name fallback: a secret own name, and a character only some may know
+        await self.character(510, "Veyra", secret_name=True)
+        await self.character(511, "Brannock", audience_limited=True)
+        self.assertIsNone((await self.guess("Veyra (mira_v)"))["suggestedCharacter"])
+        self.assertIsNone((await self.guess("Brannock (mira_v)"))["suggestedCharacter"])
+        # the character they play: the same rules
+        self.assertIsNone(await self.played(512, secret_name=True))
+        self.assertIsNone(await self.played(513, audience_limited=True))
+
+    async def test_a_nickname_match_never_shows_a_secret_own_name(self) -> None:
+        # "Lord Vex" is the person's name and it is secret; "The Stranger" is a public nickname.
+        # The player agreed but has no directory row, so only the campaign's name could be shown.
+        player = ALICE.id + 540
+        await self.character(540, "Lord Vex", played_by=player, type_="person", secret_name=True)
+        await ConsentStore(self.db).grant(THURSDAY.id, player)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                " kind, secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, 'The Stranger', 'the stranger', 'nickname', false,"
+                " 'confirmed', '{}', 'dm', 1)",
+                (THURSDAY.id, self.one.id, f"{541:032x}", f"{540:032x}"),
+            )
+        one = await self.guess("The Stranger")
+        self.assertEqual(
+            (one["suggested"]["userId"], one["suggested"]["why"], one["suggested"]["name"]),
+            (str(player), "people", ""),
+        )
+        self.assertIsNone((await self.guess("Lord Vex"))["suggested"])
+
+    async def test_a_campaign_person_whose_name_is_secret_or_limited_is_never_matched_or_shown(
+        self,
+    ) -> None:
+        # A person played by a member with no directory row, known only by the campaign's name.
+        for ident, name, kw in (
+            (520, "Lord Vex", {"secret_name": True}),
+            (521, "Lady Hush", {"audience_limited": True}),
+        ):
+            await self.character(
+                ident,
+                name,
+                played_by=ALICE.id + ident,
+                type_="person",
+                secret_name=bool(kw.get("secret_name")),
+                audience_limited=bool(kw.get("audience_limited")),
+            )
+            await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id + ident)
+            self.assertIsNone((await self.guess(name))["suggested"], name)
+        # and the remembered path never names them either
+        await self.directory(ALICE.id + 520, "x", "x")
+        await self.directory(ALICE.id + 521, "x", "y")
+        for ident in (520, 521):
+            one = await self.guess(f"Someone ({'x' if ident == 520 else 'y'})")
+            self.assertNotIn(one["suggested"]["name"], ("Lord Vex", "Lady Hush"))
+
+    async def test_a_secret_plays_link_is_never_followed(self) -> None:
+        await self.directory(MIRA, "Mira the Bold", "mira_v")
+        hidden = await self.character(514, "Orsin", played_by=MIRA)
+        await self.plays(f"{0:032x}", hidden, secret=True)
+        self.assertIsNone((await self.guess("Mira (mira_v)"))["suggestedCharacter"])
+
+    async def played(
+        self, ident: int, *, secret_name: bool = False, audience_limited: bool = False
+    ) -> object:
+        """What is offered for Mira when the character she plays is made with these flags."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM memory_relations")
+        chosen = await self.character(
+            ident,
+            f"Played{ident}",
+            played_by=MIRA,
+            secret_name=secret_name,
+            audience_limited=audience_limited,
+        )
+        await self.plays(f"{0:032x}", chosen)
+        return (await self.guess("Mira (mira_v)"))["suggestedCharacter"]
+
+    async def test_only_characters_are_offered_not_places(self) -> None:
+        await self.character(504, "Waterdeep", type_="location")
+        self.assertIsNone((await self.guess("Waterdeep (x)"))["suggestedCharacter"])
+
+    async def test_one_label_does_not_leak_into_the_next(self) -> None:
+        # an ambiguous label, then a plain one that matches, in the same preview
+        await self.directory(MIRA, "Twin", "twin_a")
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+        await self.directory(ALICE.id, "Twin", "twin_b")
+        await self.directory(TOMAS, "Tom", "tom_t")
+        await ConsentStore(self.db).grant(THURSDAY.id, TOMAS)
+        got = await self.preview(("a.txt", "Twin: One.\nStranger: Two.\nTom: Three.\n"))
+        by = {s["label"]: s["suggested"] for s in got["files"][0]["speakers"]}
+        self.assertIsNone(by["Twin"])
+        self.assertIsNone(by["Stranger"])
+        self.assertEqual(by["Tom"]["userId"], str(TOMAS))
+
+    async def test_a_name_from_the_directory_needs_current_consent_in_every_case(self) -> None:
+        await self.directory(TOMAS, "Tom Real Name", "tom_t")  # not recorded
+        one = await self.guess("Player 1")  # the campaign's own person played by TOMAS
+        self.assertEqual(one["suggested"]["userId"], str(TOMAS))
+        self.assertEqual(one["suggested"]["name"], "Player 1")  # not the server's name for him
+        self.assertFalse(one["suggested"]["agreed"])
+
+    async def test_nothing_is_suggested_for_a_stranger(self) -> None:
+        one = await self.guess("Zed (zed_z)")
+        self.assertEqual((one["suggested"], one["suggestedCharacter"]), (None, None))
+
+    def test_a_label_is_split_into_its_display_and_username_parts(self) -> None:
+        self.assertEqual(imports.label_parts("Cerric (stormy#1234)"), ("Cerric", "stormy"))
+        self.assertEqual(imports.label_parts("Cerric"), ("Cerric", ""))
+        self.assertEqual(imports.label_parts("A (b) (c)"), ("A", "b) (c"))
 
 
 class TheStore(WithImports):

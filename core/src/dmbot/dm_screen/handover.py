@@ -3,8 +3,9 @@ owner offers it to another member of the server, and the person offered answers 
 message. Ownership moves only when they accept, within 7 days, and only if their plan
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
-- ⚙️ Settings shows who owns the campaign and, for the owner, **🤝 Hand over** (pick a
-  member of the server), or **Take back offer** while one waits for an answer.
+- ⚙️ Settings → 🗂️ Campaign management shows who owns the campaign and, for the owner,
+  **🤝 Hand over** (pick a member of the server), or **Take back offer** while one waits for
+  an answer.
 - The person offered gets a private message with **Accept** / **No thanks**. If DMbot
   can't reach them (they left the server, or their messages are closed), the offer is
   taken back at once and the owner is told (decision 3).
@@ -63,10 +64,11 @@ NOT_A_PERSON = "That's a bot. Pick a person."
 OFFER_SENT = (
     "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
     "DMbot will send you a private message with their answer. To take it back: "
-    "⚙️ Settings, then **Take back offer**."
+    "⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
 )
 MENU_TIMED_OUT = (
-    "This menu timed out, so no offer was sent. To try again: ⚙️ Settings, then 🤝 Hand over."
+    "This menu timed out, so no offer was sent. To try again: ⚙️ Settings → "
+    "🗂️ Campaign management → 🤝 Hand over."
 )
 # Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
@@ -76,11 +78,12 @@ UNREACHABLE = (
 )
 UNREACHABLE_STUCK = (
     "DMbot couldn't send **{name}** a private message, and couldn't take the offer back "
-    "either. Take it back yourself: ⚙️ Settings, then **Take back offer**."
+    "either. Take it back yourself: ⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
 )
 UNREACHABLE_ANSWERED = (
     "DMbot couldn't send **{name}** a private message, but the offer was already answered "
-    "(on the DMbot website) or taken back meanwhile. ⚙️ Settings shows where it stands."
+    "(on the DMbot website) or taken back meanwhile. ⚙️ Settings → 🗂️ Campaign management "
+    "shows where it stands."
 )
 OFFER_TEXT = (
     "🤝 **{owner}** is asking you to pay for the campaign **{campaign}** on **{server}** with "
@@ -117,7 +120,8 @@ OFFER_EXPIRED = (
     "changed. If you still want it, ask **{owner}** to offer it again."
 )
 _OFFER_AGAIN = (
-    "It stays yours. To offer it again: ⚙️ Settings, then **Hand over**, or your account "
+    "It stays yours. To offer it again: ⚙️ Settings → 🗂️ Campaign management → **Hand "
+    "over**, or your account "
     "page on the DMbot website."
 )
 TOLD_EXPIRED = (
@@ -154,7 +158,10 @@ TAKE_ON_ASK = (
     "nothing else changes, and you can hand it over later. **Not now** changes nothing and "
     "the session runs anyway."
 )
-TAKEN = "✅ You own **{campaign}** now, so it uses your plan. To hand it over later: ⚙️ Settings."
+TAKEN = (
+    "✅ You own **{campaign}** now, so it uses your plan. To hand it over later: ⚙️ "
+    "Settings → 🗂️ Campaign management → 🤝 Hand over."
+)
 TAKE_NO_ROOM = (
     "You can still play today: DMbot will ask again next time. To take this campaign on you "
     "need a DMbot plan with room for one more campaign, and you don't have one right now. "
