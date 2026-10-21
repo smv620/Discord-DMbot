@@ -5276,9 +5276,12 @@ SUPPORT_TICKET_TIMES = """
     -- A person's tickets never share a sent time (#2214): the account page opens a ticket by that
     -- time (#2193). `support.add` stamps the next free second; this index is what holds two sends
     -- in the same instant apart, whichever commits second retries.
-    -- Tickets already sharing a time are moved apart first, the later id by a second at a time
-    -- (the table has forced row-level security, so the migration opens it for itself and closes
-    -- it again, as the other backfills do).
+    -- Tickets already sharing a time are moved apart first: each pass moves every ticket that
+    -- shares its second with an earlier id up by one, until none do. A ticket that was alone can
+    -- be pushed too when the ones below it run into it, so a cluster of k ends up at most k-1
+    -- seconds late; the order by id is kept. (The table has forced row-level security, so the
+    -- migration opens it for itself and closes it again, as the other backfills do.) The older
+    -- index (user_id, created_at DESC) is left as it is: dropping an index is not this change.
     CREATE POLICY migrate_backfill ON support_tickets FOR ALL USING (true) WITH CHECK (true);
     DO $do$
     BEGIN

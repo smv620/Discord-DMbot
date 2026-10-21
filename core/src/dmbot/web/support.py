@@ -120,23 +120,29 @@ async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int
     So a new ticket is stamped the next free second, and a unique index (#2214) holds two sends in
     the same instant apart: the one that commits second finds the time taken and tries again,
     which stamps it one second later."""
+    # (A UniqueViolation here can only be the (user_id, created_at) index: the other unique
+    # constraint on the table is the identity column, which no insert names.)
     for attempt in range(ADD_TRIES):
         try:
-            async with db.user(user_id) as conn:
-                cur = await conn.execute(
-                    "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-                    " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
-                    " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
-                    (now, user_id, user_id, plan, ticket.subject, ticket.message),
-                )
-                row = await cur.fetchone()
+            return await _insert_ticket(db, user_id, plan, ticket, now)
         except psycopg.errors.UniqueViolation:
             if attempt == ADD_TRIES - 1:
                 raise
-            continue
-        assert row is not None
-        return int(row["id"])
-    raise AssertionError("unreachable")  # the last try returns or raises
+    raise AssertionError("ADD_TRIES is at least one")
+
+
+async def _insert_ticket(db: Database, user_id: int, plan: str, ticket: Ticket, now: int) -> int:
+    """One try of `add`: the next free second for this person."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
+            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+            (now, user_id, user_id, plan, ticket.subject, ticket.message),
+        )
+        row = await cur.fetchone()
+    assert row is not None
+    return int(row["id"])
 
 
 @dataclass(frozen=True)

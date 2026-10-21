@@ -893,13 +893,10 @@ class TicketTimesMigration(DatabaseTest):
                 "SELECT subject, user_id, created_at FROM support_tickets ORDER BY id"
             )
             got = {r["subject"]: r["created_at"] for r in await cur.fetchall()}
-        # a keeps 1000; b and c move up and then step past d's 1001 until all are apart.
-        self.assertEqual(got["a"], 1000)
-        self.assertEqual(got["e"], 1000)
-        mine = [got[k] for k in "abcd"]
-        self.assertEqual(len(set(mine)), 4)
-        self.assertLess(got["a"], got["b"])  # the earlier id keeps the earlier time
-        self.assertLess(got["b"], got["c"])
+        # a keeps 1000; b and c step up, run into d at 1001 and push it too (d was not a
+        # duplicate, but the ones below it ran into it): the order by id is kept, all four apart.
+        self.assertEqual([got[k] for k in "abcd"], [1000, 1001, 1002, 1003])
+        self.assertEqual(got["e"], 1000)  # another person at the same second: untouched
         async with self.db.unscoped() as conn:  # the opening is gone again
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
