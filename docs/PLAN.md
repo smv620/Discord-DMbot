@@ -4130,6 +4130,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     - **One fast-tier call** labels the opening lines as table talk, catch-up, recap or play. Code
       checks that the parts are in order, and that the "recap" part really overlaps the earlier
       recap. When it does not, the split is kept but marked unsure.
+    - **Backstory is never the recap** (owner, 2026-10-21). "Recap" means only a retelling of
+      **earlier sessions of this campaign**, so it needs an earlier session to retell. A first
+      session has no recap part. A character's backstory, a flashback, or a player telling where
+      their character comes from is **play and character development**, wherever it comes in the
+      session (the opening included), and it is never cut as last time's recap. When in doubt
+      between recap and backstory, it is play.
     - **What each part is used for:**
       - *Table talk* is left out.
       - *Catch-up* feeds the housekeeping bullets, and only what the table settled.
@@ -4154,8 +4160,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - **Step 3: the writer** (the creative model, as today) writes from the beats and PlotBot's notes,
     with the spoken recap as context. Its three jobs, in order:
     1. plot development;
-    2. character development;
+    2. character development, including backstory and flashbacks told at the table;
     3. where the characters came from, where they are, and where they are going next.
+
+    Plot and character development are DMbot's two most important jobs (owner, 2026-10-21).
   - **"Where next" and motives only as said.** A character's plan, goal or reason appears only when a
     player or the DM said it in a consented line of this session or an earlier posted recap, and it
     cites that line. **DMbot never speaks for a player character** and never guesses a motive. If
