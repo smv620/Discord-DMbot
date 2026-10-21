@@ -65,6 +65,12 @@ export const text = {
     "We can't find that recap. Open it again from your email, or pick it from your list.",
   onlyYou: "Only you can see this until you post it.",
   working: "DMbot is still writing this recap. Check back in a few minutes.",
+  // Written, but the checks that read it before the DM does can't run yet (#2297). One steady line:
+  // it stays up through the short gaps between tries, until the recap is ready or has failed.
+  waitingForCheck:
+    "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
+  checksHeading: "What the checks said",
+  checksNote: "DMbot wasn't sure about these. Only you can see them. Read the recap with them in mind.",
   failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
@@ -139,6 +145,7 @@ export function statusLine(recap: Recap): string {
   if (recap.status === "dropped") return "Not posted";
   if (isHeld(recap)) return heldWords.status;
   if (recap.state === "failed") return "Couldn't be made";
+  if (recap.working && recap.waitingForCheck) return "Waiting for a last check";
   if (recap.working) return "Being made";
   return "Ready to read";
 }
