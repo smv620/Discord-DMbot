@@ -10,6 +10,7 @@ import type {
   AccountApi,
   Campaign,
   Character,
+  ImportProgress,
   Me,
   Offer,
   Person,
@@ -372,6 +373,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
+  const fixLooks = new Map<string, number>();
+  const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -524,7 +527,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
-      return { sessions: [{ file: "session-1-2026-09-14.txt", date: "2026-09-14", state, reason: null }] };
+      return {
+        sessions: [
+          {
+            file: "session-1-2026-09-14.txt",
+            date: "2026-09-14",
+            state,
+            reason: null,
+            stage: state === "done" ? ("done" as const) : ("cleaning" as const),
+          },
+        ],
+      };
     },
     async recapChoices(campaignRef) {
       calls.push(`recapChoices:${campaignRef}`);
@@ -719,6 +732,69 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
       return { ...r };
     },
+    // "Tell DMbot what to fix" (#2114). The note is sorted into the same points every time; the
+    // first look says "working", the next says "done", as the bot's queue would.
+    async sendFix(ref, text) {
+      calls.push(`sendFix:${ref}`);
+      const r = await find(ref);
+      if (!r.canEdit) throw new ApiError("not-editable");
+      if (text.trim() === "") throw new ApiError("bad-text");
+      if (text.length > 1000) throw new ApiError("too-big");
+      fixLooks.set("r1", 0);
+      return { requestId: "r1" };
+    },
+    async fixResult(ref, requestId) {
+      calls.push(`fixResult:${ref}:${requestId}`);
+      const looks = (fixLooks.get(requestId) ?? 0) + 1;
+      fixLooks.set(requestId, looks);
+      if (looks < 2) return { state: "working" as const };
+      return {
+        state: "done" as const,
+        points: {
+          corrections: [
+            { id: "c1", text: "Fix the innkeeper's name" },
+            { id: "c2", text: "Shorten the second part" },
+          ],
+          style: [{ id: "s1", text: "A warmer voice" }],
+          replies: ["I can't add story that didn't happen. That's your call."],
+        },
+      };
+    },
+    // "Speak instead" (#2113 part 2). The clip is never kept: only its size and type are looked at.
+    // A clip of 7 bytes is a DM who has not agreed to be recorded, 13 bytes has no words in it.
+    async sendVoice(ref, clip) {
+      calls.push(`sendVoice:${ref}:${clip.type}:${clip.size}`);
+      const r = await find(ref);
+      if (!r.canEdit) throw new ApiError("not-editable");
+      if (clip.type !== "audio/webm" && clip.type !== "audio/ogg") throw new ApiError("bad-type");
+      if (clip.size > 2 * 1024 * 1024) throw new ApiError("too-big");
+      voiceLooks.set("v1", { looks: 0, size: clip.size });
+      return { requestId: "v1" };
+    },
+    async voiceResult(ref, requestId) {
+      calls.push(`voiceResult:${ref}:${requestId}`);
+      const seen = voiceLooks.get(requestId) ?? { looks: 0, size: 0 };
+      seen.looks += 1;
+      voiceLooks.set(requestId, seen);
+      if (seen.looks < 2) return { state: "working" as const };
+      if (seen.size === 7) return { state: "failed" as const, error: "no_consent" };
+      if (seen.size === 13) return { state: "failed" as const, error: "no_words" };
+      return { state: "done" as const, text: "Change the innkeeper's name to Brannoch." };
+    },
+    async rewriteWith(ref, requestId, corrections, style) {
+      calls.push(`rewriteWith:${ref}:${requestId}:${corrections.join("+")}|${style.join("+")}`);
+      const r = await find(ref);
+      if (r.triesLeft <= 0) throw new ApiError("no-tries");
+      const known = new Set(["c1", "c2", "s1"]);
+      if ([...corrections, ...style].some((id) => !known.has(id))) throw new ApiError("bad-choice");
+      r.triesLeft -= 1;
+      r.working = true;
+      r.canEdit = false;
+      r.canPost = false;
+      r.canTryAgain = false;
+      r.approval = { approved: false, choice: "", approvedAt: null, canApprove: false };
+      return { recap: { ...r }, triesLeft: r.triesLeft, needsApproval: true };
+    },
     // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
     async shareRecap(ref, action) {
       calls.push(`shareRecap:${ref}:${action}`);
@@ -797,6 +873,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push("my-support");
       signedIn();
       return { tickets: questions, reply: true };
+    },
+    async supportThread(at) {
+      calls.push("support-thread");
+      signedIn();
+      const found = questions.find((q) => q.at === at);
+      if (!found) throw new ApiError("not-found");
+      // The mock has only the first message; the real API adds the helper's and the team's.
+      return [{ who: "you", text: found.subject, at }];
     },
     async startTryIt() {
       calls.push("startTryIt");
@@ -1014,3 +1098,33 @@ function mockHomebrew() {
     ],
   };
 }
+
+/** One imported session in each stage the API can report (#2230), for the page's tests and demos:
+ * (the old shape, with no stage, is covered in the tests). */
+export const everyImportStage: ImportProgress = {
+  sessions: [
+    ...(
+      [
+        "cleaning",
+        "checking_names",
+        "finding_names",
+        "waiting_for_names",
+        "starting_recap",
+        "writing_recap",
+        "recap_ready",
+        "recap_failed",
+        "recap_not_written",
+        "done",
+        "failed",
+      ] as const
+    ).map((stage, i) => ({
+      file: `${stage}.txt`,
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      state: stage === "done" || stage.startsWith("recap_") ? ("done" as const) : stage === "failed" ? ("failed" as const) : ("working" as const),
+      reason: null,
+      stage,
+      namesToAnswer: stage === "waiting_for_names" ? 3 : 0,
+      namesUnchecked: false,
+    })),
+  ],
+};

@@ -80,6 +80,26 @@
     overflow-wrap: anywhere;
   }
 
+  /* A question's whole conversation (#2193): oldest first, who wrote each part, then its words
+     with the person's own line breaks kept. */
+  .account .questions button.link {
+    align-self: flex-start;
+  }
+
+  .account .conversation {
+    list-style: none;
+    margin: var(--space-2) 0 0;
+    padding: 0 0 0 var(--space-3);
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .account .conversation-text {
+    white-space: pre-wrap;
+  }
+
   .account .warn,
   .account .warn-box {
     padding: var(--space-4);
@@ -138,6 +158,29 @@
   .account .button.secondary:hover:not(:disabled) {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+
+  /* A button and its small round "i" on one line (the recap page's microphone, #2114). The round
+     button is small to look at, and its tap area is stretched past its edge for a thumb. */
+  .account .with-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .account .info-dot {
+    position: relative;
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    padding: 0;
+    border-radius: 50%;
+    line-height: 1;
+  }
+
+  .account .info-dot::after {
+    content: "";
+    position: absolute;
+    inset: -0.5rem;
   }
 
   .account .button.danger {

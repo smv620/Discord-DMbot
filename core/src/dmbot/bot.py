@@ -268,7 +268,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, short
+from dmbot.recaps import cues, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -366,6 +366,7 @@ from dmbot.transcript.waiting_questions import (
 from dmbot.transcription.base import (
     PlaceholderTranscriber,
     Transcriber,
+    TranscriptionProblem,
     confidence_of,
     engine_of,
 )
@@ -419,7 +420,7 @@ from dmbot.ui.names import (
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
 from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
-from dmbot.ui.recap_hold import WriteNowButton, hold_view
+from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
@@ -463,6 +464,7 @@ SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
 HEARD_FORMS_MAX = 1000  # (name, spelling, person) counts kept in a session
 HINTS_FAIL_LOG_S = 60.0
 HINTS_WAIT_S = 1.5  # the longest a clip waits for the campaign's names to load
+VOICE_TRANSCRIBE_S = 65.0  # a spoken note is up to two minutes: far longer than a live line
 # The rules channel (#1752): changes are gathered for this long, and each campaign's channel is
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
@@ -505,6 +507,9 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+CLIP_SWEEP_EVERY = (
+    30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
+)
 SECRET_QUESTION_WAITING = (
     "🤫 DMbot has a question for you about a secret name. Open your private messages."
 )
@@ -976,6 +981,7 @@ class DMBot(commands.AutoShardedBot):
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
+        self._clip_sweep_rounds = 0
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
@@ -1003,6 +1009,9 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._import_queued: dict[str, list[int]] = {}
+        # campaign -> how many of its import's sessions had their name check given up (told once;
+        # best effort across a restart, the website's progress reads the saved flag)
+        self._import_unchecked: dict[str, int] = {}
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
         self.decision_lines = DecisionLines()  # DM-screen lines to clear once decided (#1509)
@@ -7931,7 +7940,8 @@ class DMBot(commands.AutoShardedBot):
                     sent = quiet or await self.post(
                         channel_id,
                         recap_hold.question_text(waiting),
-                        view=hold_view(cid, session_at),
+                        view=hold_view(cid, session_at, group_id),
+                        remember=hold_line_key(gid, cid, session_at, group_id),
                     )
                     if sent:
                         log.info("Recap: held for %d name question(s)", waiting)  # a count
@@ -8010,6 +8020,7 @@ class DMBot(commands.AutoShardedBot):
         campaign = await self.campaigns.get(gid, held.campaign_id)
         if campaign is None or not campaign.recaps_text:  # the DM's own choice: no recap
             await store.release(gid, held.campaign_id, held.session_at, queue=False)
+            await self._close_hold_lines(gid, [held], recap_hold.LINE_NO_RECAP)
             return
         with log_context(guild_id=gid, campaign_id=held.campaign_id):
             members = group or [held]
@@ -8034,21 +8045,29 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Recap: a hold past its limit is kept (plan not allowed or unchecked)")
                     return
                 note = recap_hold.EXPIRED_NOTE if waiting and held.asked else ""
-                if len(members) > 1:
+                if held.group_id:
                     if not lead:
                         return  # the oldest of the import ends them all, with one line
-                    made = [
-                        m.session_at
-                        for m in members
-                        if await store.release(gid, m.campaign_id, m.session_at)
-                        == recap_hold.QUEUED
-                    ]
+                    ended: list[recap_hold.Hold] = []
+                    made = []
+                    for m in members:
+                        result = await store.release(gid, m.campaign_id, m.session_at)
+                        if result != recap_hold.GONE:  # (over all the same: a job existed)
+                            ended.append(m)
+                        if result == recap_hold.QUEUED:
+                            made.append(m.session_at)
+                    await self._close_hold_lines(gid, ended, recap_hold.LINE_EXPIRED)
+                    # Recaps answers released earlier were not told: they are told here too.
+                    made += self._group_made.pop(held.group_id, [])
                     if made:
                         await self._say_group_writing(
                             campaign, held.channel_id, len(made), note=note, session_at=made[-1]
                         )
                     return
-                if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+                result = await store.release(gid, held.campaign_id, held.session_at)
+                if result != recap_hold.GONE:
+                    await self._close_hold_lines(gid, [held], recap_hold.LINE_EXPIRED)
+                if result == recap_hold.QUEUED:
                     await self._say_writing(campaign, held.channel_id, held.session_at, note=note)
                 return
             if waiting:
@@ -8075,7 +8094,8 @@ class DMBot(commands.AutoShardedBot):
                 if await self.post(
                     held.channel_id,
                     recap_hold.question_text(waiting),
-                    view=hold_view(held.campaign_id, held.session_at),
+                    view=hold_view(held.campaign_id, held.session_at, held.group_id),
+                    remember=hold_line_key(gid, held.campaign_id, held.session_at, held.group_id),
                 ):
                     log.info("Recap: held for %d name question(s)", waiting)  # a count
                     return
@@ -8085,7 +8105,10 @@ class DMBot(commands.AutoShardedBot):
                 await store.unmark_asked(gid, held.campaign_id, held.session_at)
             if not await self.recap_allowed(gid, held.campaign_id, None):
                 return  # the plan could not be checked, or lacks it: kept, asked again next round
-            if await store.release(gid, held.campaign_id, held.session_at) == recap_hold.QUEUED:
+            result = await store.release(gid, held.campaign_id, held.session_at)
+            if result != recap_hold.GONE:
+                await self._close_hold_lines(gid, [held], recap_hold.LINE_ANSWERED)
+            if result == recap_hold.QUEUED:
                 if held.group_id:  # an import's recaps start one by one: the last says so, once
                     made = self._group_made.setdefault(held.group_id, [])
                     made.append(held.session_at)
@@ -8097,6 +8120,35 @@ class DMBot(commands.AutoShardedBot):
                     )
                     return
                 await self._say_writing(campaign, held.channel_id, held.session_at)
+
+    async def _close_hold_lines(
+        self,
+        gid: int,
+        holds: Sequence[recap_hold.Hold],
+        outcome: str,
+        *,
+        pressed_id: int | None = None,
+    ) -> None:
+        """Take the buttons off the question and the reminder of holds that are over, and say how
+        they ended (#2174), so no old line offers buttons that only answer "already". Called after
+        the release. An import posts one line for all its sessions (under the group's key), so it
+        comes off only when none of its sessions is still held. A failed edit is logged inside and
+        goes no further."""
+        remaining: list[recap_hold.Hold] | None = []
+        if self.recap_holds is not None and any(h.group_id for h in holds):
+            try:
+                remaining = await self.recap_holds.held(gid)
+            except Exception:
+                log.exception("Recap: couldn't tell whether an import still waits")
+                remaining = None  # its line stays (it comes off at a restart); a lone hold's goes
+        for h in holds:
+            if h.group_id and (remaining is None or recap_hold.group_of(remaining, h)):
+                continue  # the import still waits on other sessions: its line stays true
+            await self.decision_lines.close(
+                hold_line_key(gid, h.campaign_id, h.session_at, h.group_id),
+                outcome,
+                pressed_id=pressed_id,
+            )
 
     async def _remind(
         self,
@@ -8122,7 +8174,8 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     held.channel_id,
                     recap_hold.reminder_text(waiting, recap_hold.HOLD_MAX_S - age),
-                    view=hold_view(held.campaign_id, held.session_at),
+                    view=hold_view(held.campaign_id, held.session_at, held.group_id),
+                    remember=hold_line_key(gid, held.campaign_id, held.session_at, held.group_id),
                 )
             )
         finally:
@@ -8130,7 +8183,15 @@ class DMBot(commands.AutoShardedBot):
                 for m in group:
                     await store.unmark_reminded(gid, m.campaign_id, m.session_at)
 
-    async def recap_hold_write_now(self, gid: int, cid: str, session_at: int) -> str:
+    async def recap_hold_write_now(
+        self,
+        gid: int,
+        cid: str,
+        session_at: int,
+        *,
+        group_id: str = "",
+        pressed_id: int | None = None,
+    ) -> str:
         """The DM said to write the held recap with what DMbot has (#2169): the same gates as after
         any session. "queued", "already" (no hold: written or decided before) or "refused". The
         "writing it now" line goes to the DM screen the hold stored, wherever the button was
@@ -8144,15 +8205,33 @@ class DMBot(commands.AutoShardedBot):
             return "refused"
         held = await self.recap_holds.get(gid, cid, session_at)
         if held is None:
-            return "already"
-        group = [held]
-        if held.group_id:  # one press writes all of an import's held recaps (#2106)
-            group = recap_hold.group_of(await self.recap_holds.held(gid), held)
-        made = [
-            h.session_at
-            for h in group
-            if await self.recap_holds.release(gid, cid, h.session_at) == recap_hold.QUEUED
-        ]
+            if not group_id:
+                return "already"
+            # The session this button was posted for is answered, but the import still waits:
+            # the press reaches the whole import all the same (its button names the group).
+            group = [
+                h
+                for h in await self.recap_holds.held(gid)
+                if h.campaign_id == cid and h.group_id == group_id
+            ]
+            if not group:
+                return "already"
+            held = group[0]
+        else:
+            group = [held]
+            if held.group_id:  # one press writes all of an import's held recaps (#2106)
+                group = recap_hold.group_of(await self.recap_holds.held(gid), held)
+        ended: list[recap_hold.Hold] = []
+        made = []
+        for h in group:
+            result = await self.recap_holds.release(gid, cid, h.session_at)
+            if result != recap_hold.GONE:
+                ended.append(h)
+            if result == recap_hold.QUEUED:
+                made.append(h.session_at)
+        await self._close_hold_lines(gid, ended, recap_hold.LINE_WRITING, pressed_id=pressed_id)
+        if held.group_id:  # the ones answers released earlier were not told: tell them too
+            made += self._group_made.pop(held.group_id, [])
         if not made:
             return "already"
         await self._say_group_writing(campaign, held.channel_id, len(made), session_at=made[-1])
@@ -9500,6 +9579,9 @@ class DMBot(commands.AutoShardedBot):
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
                         log.warning("Import: giving up on a session's name scan")
                         await store.give_up_scan(gid, ready.session_id)
+                        self._import_unchecked[ready.campaign_id] = (
+                            self._import_unchecked.get(ready.campaign_id, 0) + 1
+                        )
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
@@ -9527,18 +9609,34 @@ class DMBot(commands.AutoShardedBot):
                 )
 
     async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
-        """Say once, on the DM screen, what an import found: the new names (when its last session
-        has been scanned), and the recaps that were asked for and could not be written."""
-        for cid in list(self._import_names):
+        """Say once, on the DM screen, what an import found: the new names and the sessions whose
+        name check was given up, in one 📝 line when the import's last session has been scanned
+        (the given-up note stands alone only when no names were found), and the recaps that were
+        asked for and could not be written."""
+        for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            names = self._import_names.pop(cid)
+            names = self._import_names.pop(cid, [])
+            skipped = self._import_unchecked.pop(cid, 0)
             campaign = await self.campaigns.get(gid, cid)
-            if names and campaign is not None and campaign.dm_screen_channel_id is not None:
+            if campaign is None or campaign.dm_screen_channel_id is None:
+                continue
+            text = after_session_text(names, where="your imported sessions") if names else ""
+            if skipped:
+                one = skipped == 1
+                more = " more" if names else ""
+                what = (
+                    f"one{more} imported session" if one else f"{skipped}{more} imported sessions"
+                )
+                note = (
+                    f"I couldn't check {what} for new names, so names from "
+                    f"{'it' if one else 'them'} may be missing. Add any with ➕ Add a name "
+                    "on the names panel."
+                )
+                text = f"{text}\n{note}" if text else f"📝 {note}"
+            if text:
                 await self.post(
-                    campaign.dm_screen_channel_id,
-                    after_session_text(names, where="your imported sessions"),
-                    view=review_view(cid),
+                    campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
                 )
         for cid in list(self._import_queued):
             if await store.pending_scans(gid, cid):
@@ -9687,6 +9785,15 @@ class DMBot(commands.AutoShardedBot):
     async def run_recap_requests(self) -> None:
         store = self.recap_requests
         ai = self.recap_feedback_ai
+        if store is not None:
+            # No clip outlives about ten minutes, whatever happened to its request and whether or
+            # not recaps are on: this runs before that is looked at, about once a minute.
+            self._clip_sweep_rounds += 1
+            if self._clip_sweep_rounds % CLIP_SWEEP_EVERY == 1:
+                try:  # every server, the ones the bot has left included
+                    await store.sweep_clips()
+                except Exception as exc:
+                    log.warning("The clip sweep failed: %s", type(exc).__name__)
         if store is None or self.recaps is None or not self.settings.recaps_on:
             return
         for guild in list(self.guilds):
@@ -9694,6 +9801,18 @@ class DMBot(commands.AutoShardedBot):
                 request = await store.claim_next(guild.id)
                 if request is None:
                     break
+                if request.kind == "voice":
+                    with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
+                        outcome = await recap_requests.run_voice(
+                            store,
+                            guild.id,
+                            request,
+                            gate=lambda req, gid=guild.id: self._voice_gate(gid, req),  # type: ignore[misc]
+                            write=lambda req, gid=guild.id: self.recap_voice_text(gid, req),  # type: ignore[misc]
+                            meter=lambda req, secs, gid=guild.id: self._meter_voice(gid, req, secs),  # type: ignore[misc]
+                        )
+                        log.info("Recap voice request: %s", outcome)  # the word only
+                    continue
 
                 async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
                     campaign = await self.campaigns.get(gid, req.campaign_id)
@@ -9722,6 +9841,117 @@ class DMBot(commands.AutoShardedBot):
                         store, guild.id, request, gate=gate, sort=sort
                     )
                     log.info("Recap request: %s", outcome)  # the word only, never the text
+
+    async def _voice_gate(self, guild_id: int, request: RecapRequest) -> str | None:
+        """Why a spoken note is not written down, or None: the sender is still a DM of the
+        campaign, the recap is still a draft, and its switch and plan allow it. No AI is used."""
+        campaign = await self.campaigns.get(guild_id, request.campaign_id)
+        job = await self.recaps.get(guild_id, request.campaign_id, request.session_at)  # type: ignore[union-attr]
+
+        async def allowed() -> str | None:
+            ok = await self.recap_allowed(guild_id, request.campaign_id, job)
+            return None if ok else recap_requests.NOT_ALLOWED
+
+        return await recap_requests.stop_reason(
+            request, campaign, job, has_ai=True, feedback_gate=allowed
+        )
+
+    async def recap_voice_text(self, guild_id: int, request: RecapRequest) -> tuple[str, float]:
+        """A DM's spoken note on the recap page, written down (#2113): decoded in memory, sent
+        to the table's speech-to-text with the campaign's name hints (never a secret name), names
+        the Cleaner is sure of fixed, and its length added to the hours meter. Only a DM who has
+        agreed to be recorded; consent is asked again after every wait. The audio is never
+        written anywhere here; the caller deletes the clip with the outcome and adds the minutes
+        to the meter once its own claim has finished the row. Returns the words and the clip's
+        length. Raises `voice.ClipError` for a clip it can't use."""
+        gid, cid, user = guild_id, request.campaign_id, request.user_id
+        # `consenting` loads the server's consent when it is not loaded yet (after a restart);
+        # the cache-only `has_consent` would refuse a DM who did agree.
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)
+        pcm = await asyncio.to_thread(voice.decode, request.clip, request.clip_type)
+        seconds = voice.seconds(pcm)
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)
+        hints, lookup, people = await self._recap_voice_hints(gid, cid)
+        if user not in await self.consent.consenting(
+            gid
+        ):  # asked again right before the audio leaves
+            raise voice.ClipError(voice.NO_CONSENT)
+        now_ms = int(time.time() * 1000)
+        utterance = Utterance(gid, user, now_ms - int(seconds * 1000), now_ms, pcm, 0)
+        try:
+            heard = await asyncio.wait_for(
+                self.pipeline.transcriber.transcribe(utterance, hints), VOICE_TRANSCRIBE_S
+            )
+        except (TranscriptionProblem, TimeoutError) as exc:
+            raise voice.ClipError(voice.TRANSCRIBE_FAILED) from exc
+        finally:
+            del pcm, utterance  # the audio goes as soon as it is written down
+        if user not in await self.consent.consenting(gid):
+            raise voice.ClipError(voice.NO_CONSENT)  # they stopped meanwhile: nothing is kept
+        text = str(heard).strip() if heard else ""
+        if not text:
+            return "", seconds
+        if lookup is not None:
+            try:
+                text = clean(lookup, text, people=people, unsure=False).text
+            except Exception:
+                log.warning("Couldn't fix names in a spoken note; kept it as heard")
+        return text, seconds
+
+    async def _recap_voice_hints(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[list[str], CampaignLookup | None, list[str]]:
+        """The name hints a live session would send for this campaign, without a running table:
+        characters, then people who agreed. The lookup is None when the names could not be
+        loaded (the note then goes with people only and no name is fixed)."""
+        people, absent = await self._hint_people(guild_id, None)
+        everyone = [*people, *absent]
+        if self.lookup is None:
+            return everyone, None, everyone
+        try:
+            found = await self.lookup.get_within(guild_id, campaign_id, HINTS_WAIT_S)
+            if found is None:
+                return everyone, None, everyone
+            parts = await asyncio.to_thread(prepare_hints, found, time.time())
+        except Exception:
+            log.warning("Couldn't load the campaign's names for a spoken note")
+            return everyone, None, everyone
+        hints = scene_hints(
+            found, parts, SceneTracker(), time.monotonic(), people=people, absent=absent
+        )
+        return hints, found, everyone
+
+    async def _meter_voice(self, guild_id: int, request: RecapRequest, seconds: float) -> None:
+        """Add a spoken note's length to the hours meter, rounded up to a whole minute, against
+        the recap's session. Never raises: the words are worth more than a missed minute."""
+        if self.meter is None:
+            return
+        try:
+            campaign = await self.campaigns.get(guild_id, request.campaign_id)
+            if campaign is None:
+                return
+            minutes, now = voice.meter_minutes(seconds), int(time.time())
+            if campaign.owner_user_id is None:
+                await self.meter.add_unowned(
+                    guild_id=guild_id,
+                    campaign_id=request.campaign_id,
+                    session_started_at=request.session_at,
+                    minutes=minutes,
+                    now=now,
+                )
+            else:
+                await self.meter.add(
+                    guild_id=guild_id,
+                    campaign_id=request.campaign_id,
+                    owner_user_id=campaign.owner_user_id,
+                    session_started_at=request.session_at,
+                    minutes=minutes,
+                    now=now,
+                )
+        except Exception as exc:
+            log.warning("A spoken note's minutes could not be recorded: %s", type(exc).__name__)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
