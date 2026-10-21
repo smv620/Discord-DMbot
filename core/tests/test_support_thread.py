@@ -86,14 +86,22 @@ class TheHistory(HelperBase):
         self.assertEqual(await self.status(number), "escalated")
 
     async def test_a_reply_with_no_quote_marks_is_cut_at_the_fixed_line(self) -> None:
-        await self.talk()
-        mail = self.mails(to_alice=True)[-1]
-        sent_back = (
-            f"Thanks, that worked.\n\n{new_words(mail)}\n\n{ai.HISTORY_HEADING}\n\n"
-            "You, 1 May 2027:\nan old line"
-        )
-        self.assertEqual(sm.fresh_words(sent_back), "Thanks, that worked.\n\nOpen the menu.")
+        sent_back = f"Thanks, that worked.\n\n{ai.HISTORY_HEADING}\n\nYou, 1 May 2027:\nan old line"
+        self.assertEqual(sm.fresh_words(sent_back), "Thanks, that worked.")
         self.assertEqual(sm.fresh_words(f"Thanks.\n{ai.HISTORY_HEADING}\nold"), "Thanks.")
+        # A person's own line that only starts with those words is theirs.
+        own = f"{ai.HISTORY_HEADING} I wrote it down, and it still fails.\nMore."
+        self.assertEqual(sm.fresh_words(own), own)
+
+    async def test_dmbots_own_words_sent_back_with_no_marks_are_not_the_persons(self) -> None:
+        number = await self.talk()
+        mail = self.mails(to_alice=True)[-1]
+        starts = await self.helper.quoted_starts(number)
+        sent_back = f"Thanks, that worked.\n\n{new_words(mail)}\n\n{ai.HISTORY_HEADING}\n..."
+        self.assertEqual(sm.fresh_words(sent_back, quoted_starts=starts), "Thanks, that worked.")
+        # The hand-over note and the thank-you have no stored part: their fixed lines count too.
+        note = f"Ok.\n{ai.ESCALATED_BODY.splitlines()[0]}\nmore"
+        self.assertEqual(sm.fresh_words(note, quoted_starts=starts), "Ok.")
 
     async def test_a_long_history_keeps_the_newest_parts_and_says_where_the_rest_is(self) -> None:
         number = await self.ticket("first " * 10)
@@ -127,15 +135,21 @@ class TheLimits(HelperBase):
         one = ai.conversation(first, [support.Reply(1, "ai", "z" * 30_000, 1_800_000_000)])
         self.assertLessEqual(len(one), ai.HISTORY_MAX + len(ai.HISTORY_HEADING) + 400)
 
-    async def test_the_team_is_pointed_to_its_own_page_for_older_messages(self) -> None:
-        number = await self.ticket("first")
+    async def test_the_teams_email_keeps_the_first_message_after_a_long_thread(self) -> None:
+        number = await self.ticket("the very first question")
         first = await support.one(self.web, number)
         assert first is not None
-        many = [support.Reply(i, "customer", "q" * 900, 1_800_000_000) for i in range(1, 30)]
-        text = ai.conversation(
-            first, many, speakers=ai.TEAM_SPEAKERS, limit=3000, older=ai.HISTORY_OLDER_TEAM
-        )
-        self.assertTrue(text.endswith(ai.HISTORY_OLDER_TEAM))
+        many = [support.Reply(i, "customer", "q" * 3000, 1_800_000_000) for i in range(1, 12)]
+        text = ai.conversation(first, many, speakers=ai.TEAM_SPEAKERS, limit=ai.NO_LIMIT)
+        self.assertIn("the very first question", text)
+        self.assertNotIn(ai.HISTORY_OLDER, text)
+
+    async def test_a_newest_part_longer_than_the_limit_ends_with_an_ellipsis(self) -> None:
+        number = await self.ticket("short")
+        first = await support.one(self.web, number)
+        assert first is not None
+        text = ai.conversation(first, [support.Reply(1, "ai", "z" * 500, 1)], limit=200)
+        self.assertIn("…", text)
 
     async def test_the_history_goes_only_to_the_tickets_person(self) -> None:
         await self.ticket()

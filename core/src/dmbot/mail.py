@@ -279,9 +279,17 @@ class Mailer:
         # once-only row behind. The unsubscribe link is made for this person, from their id.
         try:
             message = self._build(
-                to or "", to_dmbot_id(user_id), subject, body, offer, sender, reply_to,
-                message_id, in_reply_to, references,
-            )  # fmt: skip
+                to or "",
+                to_dmbot_id(user_id),
+                subject,
+                body,
+                offer,
+                sender,
+                reply_to,
+                message_id=message_id,
+                in_reply_to=in_reply_to,
+                references=references,
+            )
         except ValueError:
             log.error("Couldn't build a %s email", kind)
             return "failed"

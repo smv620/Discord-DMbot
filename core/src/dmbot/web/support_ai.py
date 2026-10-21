@@ -142,7 +142,7 @@ LABELS = {"customer": "Customer", "ai": "Helper (AI)", "person": "Team"}
 HISTORY_HEADING = "Earlier in this conversation:"
 HISTORY_MAX = 20_000  # characters: the newest parts that fit
 HISTORY_OLDER = "Older messages are on your account page."
-HISTORY_OLDER_TEAM = "Older messages are on the admin page."
+NO_LIMIT = 10**9  # the team's email carries it all: the 30-reply cap bounds it
 SPEAKERS = {"customer": "You", "ai": "DMbot's helper (a program)", "person": "DMbot team"}
 TEAM_SPEAKERS = {**SPEAKERS, "customer": "The customer"}
 MAX_REFERENCES = 20  # earlier Message-IDs named in a new email's References header
@@ -160,7 +160,6 @@ def conversation(
     *,
     speakers: dict[str, str] = SPEAKERS,
     limit: int = HISTORY_MAX,
-    older: str = HISTORY_OLDER,
 ) -> str:
     """The ticket's conversation so far, newest first, each part labelled and dated, starting with
     the fixed line. When it is long, the newest parts that fit in `limit` characters, then a line
@@ -172,9 +171,9 @@ def conversation(
     for label, stamp, text in reversed(parts):
         block = f"{label}, {when(stamp)}:\n{text.strip()}"
         if kept and size + len(block) > limit:
-            kept.append(older)
+            kept.append(HISTORY_OLDER)
             break
-        kept.append(block[:limit])
+        kept.append(block if len(block) <= limit else block[: limit - 1].rstrip() + "…")
         size += len(block)
     return "\n\n".join([HISTORY_HEADING, *kept])
 
@@ -308,7 +307,7 @@ class SupportHelper:
             reply_to=self._reply_to(ticket.id),
             message_id=message_id,
             in_reply_to=earlier[-1] if earlier else None,
-            references=earlier[-MAX_REFERENCES:],
+            references=[*earlier[:1], *earlier[1:][-(MAX_REFERENCES - 1) :]],
         )
         if result == "sent":
             try:
@@ -389,6 +388,22 @@ class SupportHelper:
             ticket, f"support-reply:{added.id}", f"Re: {ticket.subject}", text, history=before
         )
         return True
+
+    async def quoted_starts(self, ticket_id: int) -> list[str]:
+        """The first lines of the emails a person may be answering, so a reply sent back with no
+        ">" is cut there (`support_mail.fresh_words`): the newest answer kept on the ticket and
+        the fixed notes DMbot sends. Lines only, never logged."""
+        starts = [ACK_WITH_HELPER, ACK_PERSON, ESCALATED_BODY]
+        try:
+            replies = await support.thread(self._db, ticket_id)
+        except Exception as exc:
+            log.error("Support helper: the newest answer was not read (%s)", type(exc).__name__)
+            replies = []
+        for r in reversed(replies):
+            if r.who in ("ai", "person"):
+                starts.append(r.text)
+                break
+        return [line.strip() for text in starts for line in text.splitlines()[:1] if line.strip()]
 
     async def customer_replied(self, ticket_id: int, text: str) -> bool:
         """The person's emailed reply, kept on the ticket. It goes back to waiting for the helper
@@ -502,7 +517,7 @@ class SupportHelper:
             f"Ticket {ticket.id}: {ticket.subject}",
             f"Plan: {ticket.plan}",
             "",
-            conversation(ticket, replies, speakers=TEAM_SPEAKERS, older=HISTORY_OLDER_TEAM),
+            conversation(ticket, replies, speakers=TEAM_SPEAKERS, limit=NO_LIMIT),
         ]
         await self._alert_team(
             f"Support ticket {ticket.id} needs you: {ticket.subject}"[:150], "\n".join(lines)

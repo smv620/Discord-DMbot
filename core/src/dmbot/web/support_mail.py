@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from email.utils import parseaddr
 
 log = logging.getLogger(__name__)
@@ -81,17 +81,20 @@ _QUOTE_START = re.compile(
     # our email even if the mail program left no ">" (it would hand every ticket over, #1518).
     r"|Want to talk to a person instead\?|Want a person instead\?|Didn't help\? Reply"
     # The line that opens the conversation DMbot's emails carry (#2192).
-    r"|Earlier in this conversation:)",
+    r"|Earlier in this conversation:\s*$)",
     re.IGNORECASE,
 )
 
 
-def fresh_words(text: str, limit: int = 4000) -> str:
+def fresh_words(text: str, limit: int = 4000, quoted_starts: Sequence[str] = ()) -> str:
     """What the person wrote, without the email they replied to: cut at the first quoted line or
-    "On ... wrote:" line, tidied and shortened. Empty when nothing is left."""
+    "On ... wrote:" line, tidied and shortened. `quoted_starts` are the first lines of the emails
+    they may be answering (DMbot's or the team's newest words): a mail program that adds no ">"
+    sends those back too, and they must not be kept as the person's. Empty when nothing is left."""
     kept: list[str] = []
+    starts = {s.strip() for s in quoted_starts if s.strip()}
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if _QUOTE_START.match(line):
+        if _QUOTE_START.match(line) or line.strip() in starts:
             break
         kept.append(line.rstrip())
     words = "\n".join(kept).strip()
