@@ -6,20 +6,26 @@
 // so no source file carries a smoke-only branch.
 import base from "./astro.config.mjs";
 
-const SWITCHES = ["RECAPS_LIVE", "RECAP_AUDIO_LIVE"];
+// The file each switch lives in, and its names. The Import page (#2250) shows nothing until
+// IMPORT_LIVE is on, so the phone-width run needs it flipped here too.
+const SWITCHES = [
+  { file: /\/content\/recap-words\.ts$/, names: ["RECAPS_LIVE", "RECAP_AUDIO_LIVE"] },
+  { file: /\/content\/import-words\.ts$/, names: ["IMPORT_LIVE"] },
+];
 
 /** @type {import("vite").Plugin} */
 const switchRecapsOn = {
   name: "smoke-recap-switches",
   enforce: "pre",
   transform(code, id) {
-    if (!/\/content\/recap-words\.ts$/.test((id.split("?")[0] ?? ""))) return null;
+    const found = SWITCHES.find((s) => s.file.test(id.split("?")[0] ?? ""));
+    if (!found) return null;
     let out = code;
-    for (const name of SWITCHES) {
+    for (const name of found.names) {
       // A switch may already be on in the source (RECAPS_LIVE is, once recaps are live), so match
       // either value. Fail the build rather than smoke-test a site where a switch can't be found.
       const declaration = new RegExp(`export const ${name} = (?:false|true);`);
-      if (!declaration.test(out)) throw new Error(`smoke build: "export const ${name} = …;" not found in recap-words.ts`);
+      if (!declaration.test(out)) throw new Error(`smoke build: "export const ${name} = …;" not found in ${found.file}`);
       out = out.replace(declaration, `export const ${name} = true;`);
     }
     return { code: out, map: null };
