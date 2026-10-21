@@ -65,6 +65,7 @@ from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
@@ -250,7 +251,9 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         transcript_words={w for s in mine for w in words_of(s.text)},
     )
     out.append(("beats cite real lines, no invented names", not problems, "; ".join(problems)))
-    prose = rd.Prose(job.summary, tuple(job.music))
+    prose = rd.Prose(
+        fixed_lines.without(job.summary), tuple(job.music)
+    )  # (the story, not the lines)
     transcript = "\n".join(s.text for s in mine)
     length = rd.length_for(rd.session_hours(mine, inputs.hours))
     issues = rd.check_prose(
@@ -265,7 +268,9 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         last=True,  # the last try may stand up to 35% over the target (#2013)
     )
     out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
-    words = len(narration_of(job.summary).split())
+    words = len(
+        narration_of(fixed_lines.without(job.summary)).split()
+    )  # (the fixed lines are free)
     out.append(
         (
             f"{words} words (about {length.hours:g} hours: target {length.target}, "

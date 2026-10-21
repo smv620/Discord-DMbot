@@ -32,6 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.recaps.beats import Beat, sheet
+from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.text import (
     CUE,
     NOT_NAMES,
@@ -53,9 +54,9 @@ BELOW = 0.50  # a draft of at least this share of the target passes, on every tr
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
-SUMMARY_MAX = round(
-    WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD
-)  # the longest at all (web editor)
+SUMMARY_MAX = (
+    round(WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD) + FIXED_LINES_ROOM
+)  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
 TITLE_MAX = 80

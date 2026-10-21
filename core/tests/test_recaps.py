@@ -354,8 +354,9 @@ class TheProse(unittest.TestCase):
             )
             self.assertEqual(length.summary_max, length.last_high * 8)
             self.assertGreater(length.max_tokens, length.last_high)
-        self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max)  # the editor's cap
-        self.assertEqual(rd.SUMMARY_MAX, 7560)
+        # the editor's cap: the longest draft, and room for the fixed opening and closing lines
+        self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max + 400)
+        self.assertEqual(rd.SUMMARY_MAX, 7560 + 400)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:

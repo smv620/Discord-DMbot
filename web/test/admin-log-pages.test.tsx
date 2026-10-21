@@ -71,7 +71,9 @@ function setup(total: number, over: Partial<AdminApi> = {}) {
 }
 
 const nav = () => screen.findByRole("navigation", { name: text.pagesNav });
-const button = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
+/** A page-bar button, by its move: a screen reader hears "<move>, page <n>" (#2249); the Go button, and a disabled move, have no page. */
+const button = (move: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${move}(, page \\d+)?$`) }) as HTMLButtonElement;
 const shown = () =>
   within(screen.getByRole("region", { name: text.historyList }))
     .getAllByRole("listitem")

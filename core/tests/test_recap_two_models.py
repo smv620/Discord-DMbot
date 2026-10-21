@@ -10,6 +10,7 @@ from dmbot.config import parse_ai_models
 from dmbot.devtools.recap_run import __main__ as run
 from dmbot.recaps import calls as cl
 from dmbot.recaps import draft as rd
+from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.text import narration_of, words
 from tests import recap_fixtures as fx
@@ -167,7 +168,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         creative, formatting = fx.Canned(WRITTEN), fx.Canned(GOOD)
         out = await self.go(creative, formatting)
         self.assertEqual(out.job.state, "ready")
-        self.assertEqual(out.job.summary, fx.SUMMARY)  # not a word changed
+        self.assertEqual(fixed_lines.without(out.job.summary), fx.SUMMARY)  # not a word changed
         self.assertIsNone(creative.schemas[0])  # the writer has no schema
         self.assertEqual(formatting.schemas[0], rd.prose_schema())
         self.assertIn("<recap>", formatting.sent[0])
@@ -188,7 +189,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.job.state, "ready")
         self.assertEqual(len(formatting.sent), 2)
         self.assertEqual(len(creative.sent), 1)  # the writer was not asked again
-        self.assertEqual(out.job.summary, fx.SUMMARY)
+        self.assertEqual(fixed_lines.without(out.job.summary), fx.SUMMARY)
 
     async def test_a_second_mismatch_fails_the_try_as_shape_and_the_writer_is_told(self) -> None:
         bad = reformatted("Dusk settled over the road", "Evening fell across the road")
