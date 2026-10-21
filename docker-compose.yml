@@ -125,9 +125,9 @@ services:
       STRIPE_PRICE_EXTRA_HOURS: ${STRIPE_PRICE_EXTRA_HOURS:-}
       STRIPE_PRICE_RECAP_AUDIO: ${STRIPE_PRICE_RECAP_AUDIO:-}
       STRIPE_MANAGED_PAYMENTS: ${STRIPE_MANAGED_PAYMENTS:-}
-      # The monthly recap allowances (#1428), so the page can say "N of M this month".
       # The recap switch (the bot's), so the import page offers a recap only where one can be made.
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      # The monthly recap allowances (#1428), so the page can say "N of M this month".
       DMBOT_RECAPS_PER_MONTH: ${DMBOT_RECAPS_PER_MONTH:-}
       DMBOT_RECAP_AUDIO_PER_MONTH: ${DMBOT_RECAP_AUDIO_PER_MONTH:-}
       # The "Say hello" forms (#665).

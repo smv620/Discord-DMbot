@@ -670,6 +670,29 @@ class TheRoutes(WithImports):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["files"][0]["speakers"][0]["label"], "Mira (mira_v)")
 
+    async def test_the_sites_recap_switch_reaches_the_preview_and_the_confirm(self) -> None:
+        got = await self.dm.post(
+            f"/me/campaigns/{self.ref_c}/imports/preview", json={"files": files(("a.txt", CRAIG))}
+        )
+        self.assertEqual((got.json()["recapsPossible"], got.json()["recapsWhy"]), (False, "off"))
+        on = create_app(
+            settings(imports_on=True, recaps_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=on), base_url=API, headers=HEADERS
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            body = {"files": files(("a.txt", CRAIG))}
+            got = await client.post(f"/me/campaigns/{self.ref_c}/imports/preview", json=body)
+            self.assertEqual(got.json()["recapsPossible"], True, got.text)
+            plan = {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]}
+            done = await client.post(
+                f"/me/campaigns/{self.ref_c}/imports", json={**body, "plan": plan}
+            )
+            self.assertEqual(done.json()["recapsPossible"], True, done.text)
+
     async def test_a_person_who_is_not_a_dm_is_refused_before_the_body_is_read(self) -> None:
         got = await self.bob.post(
             f"/me/campaigns/{self.ref_c}/imports/preview",
@@ -873,6 +896,57 @@ class TheRecapFacts(WithImports):
             enforce_plans=True,
         )
         self.assertEqual((got["recapsPossible"], got["recapsWhy"]), (False, "plan"))
+
+    async def test_without_enforced_plans_no_plan_is_read(self) -> None:
+        with unittest.mock.patch.object(
+            imports, "plan_grant_access", AsyncMock(side_effect=AssertionError("read a plan"))
+        ) as asked:
+            got = await self.preview()
+        asked.assert_not_awaited()
+        self.assertTrue(got["recapsPossible"])
+
+    async def test_text_off_speaks_before_the_plan(self) -> None:
+        from dmbot.entitlements import Access
+
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_text = FALSE WHERE id = %s", (self.one.id,)
+            )
+        campaign = imports.Campaign(THURSDAY.id, self.one.id, frozenset(), 99)
+        free = Access("free", "Free access", 1, 1, False)
+        with unittest.mock.patch.object(
+            imports, "plan_grant_access", AsyncMock(return_value=(None, None, free))
+        ):
+            got = await imports.recap_facts(
+                self.web,
+                self.session,
+                self.ref_c,
+                campaign,
+                site_recaps_on=True,
+                now=NOW,
+                enforce_plans=True,
+            )
+        self.assertEqual(got["recapsWhy"], "campaign_off")
+
+    async def test_a_check_that_cannot_be_made_hides_the_tick_and_never_fails_a_stored_import(
+        self,
+    ) -> None:
+        with unittest.mock.patch.object(
+            imports.recap_choices, "read_choices", AsyncMock(side_effect=RuntimeError("down"))
+        ):
+            got = await self.preview()
+            done = await imports.confirm(
+                self.web,
+                self.session,
+                self.ref_c,
+                files(("a.txt", CRAIG)),
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+                **{**self.kw, "site_recaps_on": True},
+            )
+        self.assertEqual(got["recapsPossible"], False)
+        self.assertNotIn("recapsWhy", got)
+        self.assertEqual(done["recapsPossible"], False)
+        self.assertEqual(await self.sessions(), 1)  # the import was stored all the same
 
     async def test_the_reasons_come_in_the_bots_order(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:

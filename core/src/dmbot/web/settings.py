@@ -58,11 +58,11 @@ class WebSettings:
     # Account emails, such as sign-in links (#1231). Nothing is sent until SMTP is set up.
     mail: MailSettings = field(default_factory=MailSettings)
     feedback_repo: str = "smv620/Discord-DMbot"
-    # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
-    # can say "N of M recaps this month".
     # The bot's recap switch (DMBOT_RECAPS, #1382), so the import page offers a recap tick only
     # where a recap can be made (#2225). Off by default, like the bot's.
     recaps_on: bool = False
+    # The monthly recap allowances (#1428), the same two settings the bot reads, so the page
+    # can say "N of M recaps this month".
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
     # Where "a support ticket is waiting" goes (#1340). Empty: tickets are still kept and shown on

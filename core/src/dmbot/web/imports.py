@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import math
 import re
 import uuid
@@ -37,6 +38,8 @@ from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web import recap_choices
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+
+log = logging.getLogger(__name__)
 
 MAX_FILES = 20
 MAX_BYTES = 2 * 1024 * 1024
@@ -265,7 +268,30 @@ async def recap_facts(
     without spending anything. `recapsPossible`; when it is false, `recapsWhy` is one of `off`
     (switched off for the server), `campaign_off` (the DM turned recaps off), `plan` (the owner's
     plan has none). The bot's fourth reason, a campaign with no DM, cannot happen here: the
-    person asking is a DM of the campaign, and the door checked it."""
+    person asking is a DM of the campaign, and the door checked it. The page only learns whether to
+    offer the tick: a check that cannot be made (a database hiccup) hides it, with no reason,
+    rather than failing the import page; and the bot's own engine being absent is not known here,
+    so a tick may still be offered that the bot does not honour (it says so on the DM screen).
+    `recapsWhy` is absent when a recap is possible."""
+    try:
+        return await _recap_facts(
+            db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
+        )
+    except Exception:
+        log.exception("Import: couldn't tell whether a recap can be written")
+        return {"recapsPossible": False}
+
+
+async def _recap_facts(
+    db: Database,
+    session: Session,
+    ref: str,
+    c: Campaign,
+    *,
+    site_recaps_on: bool,
+    now: int,
+    enforce_plans: bool,
+) -> dict[str, Any]:
     if not site_recaps_on:
         return {"recapsPossible": False, "recapsWhy": "off"}
     choices = await recap_choices.read_choices(
@@ -371,7 +397,7 @@ async def preview(
     outside: str | None,
     now: int,
     enforce_plans: bool,
-    site_recaps_on: bool = False,
+    site_recaps_on: bool = False,  # (false hides the tick: the app always passes the real switch)
 ) -> dict[str, Any]:
     """What is in the files: format, date, speakers with their line counts and a suggested member
     for each, and whether a recap can be written for the campaign. Stores nothing."""
@@ -530,6 +556,10 @@ async def confirm(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    # Asked before anything is stored: an answer that cannot be had never fails a stored import.
+    facts = await recap_facts(
+        db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
+    )
     files = await read_files_off_loop(raw_files, links)
     if len(entries) > len(files):
         raise RecapError("bad_files")  # one session for each file, no more
@@ -594,9 +624,6 @@ async def confirm(
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
         remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
         await _remembered(conn, c, remembered, outside)
-    facts = await recap_facts(
-        db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
-    )
     return {
         "importId": batch,
         "sessions": stored,
