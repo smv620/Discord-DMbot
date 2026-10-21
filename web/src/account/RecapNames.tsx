@@ -154,6 +154,7 @@ export default function RecapNames({
                     campaignRef={ref}
                     nameId={name.id}
                     name={name.text}
+                    fieldId={inputId}
                     value={drafts[name.id] ?? ""}
                     disabled={row?.kind === "saving"}
                     onValue={(text) => {

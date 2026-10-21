@@ -40,6 +40,12 @@ function open() {
   fireEvent(details, new Event("toggle"));
 }
 
+// The part keeps an (empty) alert for each name, so the one that says something is the one to read.
+async function alertNow(): Promise<HTMLElement> {
+  await waitFor(() => expect(screen.getAllByRole("alert").some((a) => a.textContent)).toBe(true));
+  return screen.getAllByRole("alert").find((a) => a.textContent)!;
+}
+
 function box(label: string) {
   return screen.getByLabelText(label) as HTMLInputElement;
 }
@@ -94,7 +100,7 @@ describe("the part", () => {
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "x".repeat(81) } });
     fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
-    expect((await screen.findByRole("alert")).textContent).toBe(words.tooLong);
+    expect((await alertNow()).textContent).toBe(words.tooLong);
     expect((api as { calls: string[] }).calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false);
   });
 
@@ -116,7 +122,7 @@ describe("the part", () => {
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
     fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
-    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect((await alertNow()).textContent).toBe(message);
   });
 
   it("sends one request for two quick taps", async () => {
@@ -150,7 +156,7 @@ describe("the part", () => {
     };
     const { unmount } = render(<RecapNames api={failing} recapRef={REF} />);
     open();
-    expect((await screen.findByRole("alert")).textContent).toBe(words.loadFailed);
+    expect((await alertNow()).textContent).toBe(words.loadFailed);
     unmount();
     const none: AccountApi = { ...mockApi("table"), campaignNames: async (): Promise<CampaignName[]> => [] };
     render(<RecapNames api={none} recapRef={REF} />);

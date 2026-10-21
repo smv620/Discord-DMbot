@@ -23,6 +23,7 @@ export default function SayIt({
   name,
   value,
   onValue,
+  fieldId,
   disabled,
 }: {
   api: AccountApi;
@@ -34,6 +35,8 @@ export default function SayIt({
   value: string;
   /** Puts words in the box, unsaved. */
   onValue: (text: string, how: "suggested" | "heard") => void;
+  /** The box's id, so the keyboard can go back to it once the words are in. */
+  fieldId?: string;
   disabled?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -43,19 +46,21 @@ export default function SayIt({
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const clip = useRef<Blob | null>(null);
+  // The playback address is kept here as well as in state, so leaving the page can let it go.
+  const clipUrlRef = useRef<string | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const ticker = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const throwAway = useRef(false);
   const mounted = useRef(true);
+  const sending = useRef(false);
   const stopButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
 
-  const canSuggest = Boolean(api.suggestSaidAs);
   const type = typeof window === "undefined" ? null : pickType();
+  const canSuggest = Boolean(api.suggestSaidAs);
   const canRecord = Boolean(api.respellFromVoice) && type !== null && Boolean(navigator.mediaDevices?.getUserMedia);
-  const canHear = typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined";
-  if (!canSuggest && !canRecord && !canHear) return null;
+  const canHear =
+    typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined";
 
   const release = (): void => {
     if (ticker.current) clearInterval(ticker.current);
@@ -65,26 +70,31 @@ export default function SayIt({
   };
 
   const dropClip = (): void => {
-    setClipUrl((url) => {
-      if (url) URL.revokeObjectURL(url);
-      return null;
-    });
+    if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+    clipUrlRef.current = null;
+    setClipUrl(null);
     clip.current = null;
   };
 
-  // Leaving the page lets go of the microphone and the recording; nothing is sent.
+  // Leaving the page lets go of the microphone, the recording and the voice; nothing is sent.
   useEffect(
     () => () => {
       mounted.current = false;
       const rec = recorder.current;
       if (rec) {
         rec.onstop = null;
-        if (rec.state !== "inactive") rec.stop();
+        try {
+          if (rec.state !== "inactive") rec.stop();
+        } catch {
+          // Leaving anyway: the microphone is let go just below.
+        }
       }
       release();
-      if (clipUrl) URL.revokeObjectURL(clipUrl);
+      if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+      clipUrlRef.current = null;
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
     },
-    // Only on leaving; the values read are refs, or the last url (revoked by dropClip otherwise).
+    // Everything read is a ref or a module value, so the first render's closure is the right one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -119,27 +129,41 @@ export default function SayIt({
     }
   };
 
+  /** Back onto the record button after something went wrong, so the keyboard isn't lost. */
+  const backToRecord = (): void => {
+    setTimeout(() => recordButton.current?.focus(), 0);
+  };
+
   const start = async (): Promise<void> => {
-    if (!type || (phase !== "idle" && phase !== "recorded") || recordingFor !== null) return;
+    if (!type || (phase !== "idle" && phase !== "recorded")) return;
+    if (recordingFor !== null && recordingFor !== nameId) {
+      setProblem(words.problem.busy!);
+      return;
+    }
+    // Taken before the permission prompt, so a second name pressed meanwhile is told to wait.
+    recordingFor = nameId;
     setProblem(null);
     setSaid(null);
-    dropClip();
+    // A voice still reading the box aloud would be heard by the microphone.
+    if (canHear) window.speechSynthesis.cancel();
     setPhase("asking");
     let got: MediaStream;
     try {
       got = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      if (recordingFor === nameId) recordingFor = null;
       if (!mounted.current) return;
-      setPhase("idle");
+      setPhase(clip.current ? "recorded" : "idle");
       setProblem(words.problem["mic-refused"]!);
+      backToRecord();
       return;
     }
     if (!mounted.current) {
+      if (recordingFor === nameId) recordingFor = null;
       got.getTracks().forEach((t) => t.stop());
       return;
     }
     stream.current = got;
-    recordingFor = nameId;
     const chunks: Blob[] = [];
     let rec: MediaRecorder;
     try {
@@ -147,38 +171,47 @@ export default function SayIt({
       rec = new MediaRecorder(got, { mimeType: type, audioBitsPerSecond: 32000 });
     } catch {
       release();
-      setPhase("idle");
+      setPhase(clip.current ? "recorded" : "idle");
       setProblem(words.problem["bad-clip"]!);
+      backToRecord();
       return;
     }
     recorder.current = rec;
-    throwAway.current = false;
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
     };
     rec.onstop = () => {
       release();
-      if (throwAway.current) return;
       // Sent as plain webm or ogg: the API names the types it reads, without the codec part.
       const made = new Blob(chunks, { type: type.split(";")[0] as string });
       if (made.size === 0) {
-        setPhase("idle");
+        setPhase(clip.current ? "recorded" : "idle");
         setProblem(words.problem["bad-clip"]!);
+        backToRecord();
         return;
       }
       clip.current = made;
-      setClipUrl(URL.createObjectURL(made));
+      const url = URL.createObjectURL(made);
+      clipUrlRef.current = url;
+      setClipUrl(url);
       setPhase("recorded");
-      // The record button is back in the row: the keyboard returns to the thing that started it.
-      setTimeout(() => recordButton.current?.focus(), 0);
+      backToRecord();
     };
     try {
       rec.start();
     } catch {
       release();
-      setPhase("idle");
+      setPhase(clip.current ? "recorded" : "idle");
       setProblem(words.problem["bad-clip"]!);
+      backToRecord();
       return;
+    }
+    // The old recording is let go only now that a new one has really begun.
+    if (clipUrlRef.current) {
+      URL.revokeObjectURL(clipUrlRef.current);
+      clipUrlRef.current = null;
+      setClipUrl(null);
+      clip.current = null;
     }
     setPhase("recording");
     let elapsed = 0;
@@ -193,12 +226,22 @@ export default function SayIt({
   const stop = (): void => {
     const rec = recorder.current;
     if (ticker.current) clearInterval(ticker.current);
-    if (rec && rec.state !== "inactive") rec.stop();
+    if (!rec || rec.state === "inactive") return;
+    try {
+      rec.stop();
+    } catch {
+      // The recorder would not stop: let go of the microphone and the lock rather than stay stuck.
+      release();
+      setPhase("idle");
+      setProblem(words.problem["bad-clip"]!);
+      backToRecord();
+    }
   };
 
   const useThis = async (): Promise<void> => {
     const made = clip.current;
-    if (!made || !api.respellFromVoice) return;
+    if (!made || !api.respellFromVoice || sending.current) return;
+    sending.current = true;
     setPhase("sending");
     setProblem(null);
     try {
@@ -208,11 +251,15 @@ export default function SayIt({
       setSaid(words.filled);
       dropClip();
       setPhase("idle");
+      // The words are in the box: the keyboard goes there, to check and save them.
+      if (fieldId) setTimeout(() => document.getElementById(fieldId)?.focus(), 0);
     } catch (error) {
       if (!mounted.current) return;
       fail(error);
       // The clip is still here: the DM may try again or record it again.
       setPhase("recorded");
+    } finally {
+      sending.current = false;
     }
   };
 
@@ -222,7 +269,20 @@ export default function SayIt({
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(value));
   };
 
+  if (!canSuggest && !canRecord && !canHear) return null;
+
   const busy = disabled || suggesting || phase === "asking" || phase === "sending";
+  // What a screen reader is told as things change; the region is always on the page, so it is heard.
+  const spoken =
+    phase === "recording"
+      ? words.startedAloud
+      : phase === "recorded"
+        ? words.recorded
+        : phase === "asking"
+          ? words.askingHint
+          : phase === "sending"
+            ? words.sending
+            : (said ?? "");
   return (
     <div class="say-it">
       <div class="row">
@@ -258,6 +318,7 @@ export default function SayIt({
           {words.recording(seconds)}
         </p>
       )}
+      {phase === "asking" && <p class="small muted">{words.askingHint}</p>}
       {phase === "recorded" && clipUrl && (
         <div class="stack">
           <p class="small">{words.recorded}</p>
@@ -272,30 +333,14 @@ export default function SayIt({
           </div>
         </div>
       )}
-      {phase === "asking" && (
-        <p class="small muted" role="status">
-          {words.askingHint}
-        </p>
-      )}
-      {phase === "sending" && (
-        <p class="small muted" role="status">
-          {words.sending}
-        </p>
-      )}
-      {/* Said once when it starts (the ticking line above is for the eyes only). */}
+      {phase === "sending" && <p class="small muted">{words.sending}</p>}
+      {said && phase === "idle" && <p class="small muted">{said}</p>}
       <p class="sr-only" role="status">
-        {phase === "recording" ? words.startedAloud : ""}
+        {spoken}
       </p>
-      {said && (
-        <p class="small muted" role="status">
-          {said}
-        </p>
-      )}
-      {problem && (
-        <p class="warn small" role="alert">
-          {problem}
-        </p>
-      )}
+      <p role="alert" class={problem ? "warn small" : "visually-hidden"}>
+        {problem ?? ""}
+      </p>
       <p class="small muted">{words.how}</p>
     </div>
   );

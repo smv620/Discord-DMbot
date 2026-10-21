@@ -62,12 +62,12 @@ afterEach(() => {
 const REF = "100.cmp1";
 const NAME_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-function Box({ api, start = "" }: { api: AccountApi; start?: string }) {
+function Box({ api, start = "", id = NAME_ID }: { api: AccountApi; start?: string; id?: string }) {
   const [value, setValue] = useState(start);
   return (
     <>
       <input aria-label="said as" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
-      <SayIt api={api} campaignRef={REF} nameId={NAME_ID} name="Ka'zeth" value={value} onValue={(t) => setValue(t)} />
+      <SayIt api={api} campaignRef={REF} nameId={id} name="Ka'zeth" value={value} onValue={(t) => setValue(t)} />
     </>
   );
 }
@@ -85,7 +85,7 @@ describe("💡 Suggest", () => {
     render(<Box api={api} />);
     press(w.suggest);
     await waitFor(() => expect(field().value).toBe("KAH-zeth"));
-    expect(screen.getByText(w.suggested)).toBeTruthy();
+    expect(screen.getAllByText(w.suggested).length).toBeGreaterThan(0);
     fireEvent.input(field(), { target: { value: "Kah-zeth" } });
     expect(field().value).toBe("Kah-zeth");
     expect(api.calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false); // nothing was saved
@@ -140,7 +140,7 @@ describe("🎤 Say it", () => {
     press(w.useThis);
     await waitFor(() => expect(field().value).not.toBe(""));
     expect(api.calls.some((c) => c === `respellFromVoice:${REF}:${NAME_ID}:audio/webm`)).toBe(true);
-    expect(screen.getByText(w.filled)).toBeTruthy();
+    expect(screen.getAllByText(w.filled).length).toBeGreaterThan(0);
     // The recording is let go of once used; the box holds the unsaved respelling.
     expect(revoked.length).toBeGreaterThan(0);
     expect(api.calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false);
@@ -215,6 +215,115 @@ describe("🎤 Say it", () => {
     expect(api.calls.some((c) => c.startsWith("respellFromVoice"))).toBe(false);
   });
 
+  it("lets go of the recording's playback address when the page is left after recording", async () => {
+    const { unmount } = render(<Box api={apiWithName()} />);
+    await record();
+    press(w.stop);
+    await screen.findByLabelText(w.playbackLabel("Ka'zeth"));
+    unmount();
+    expect(revoked).toContain("blob:fake-1");
+  });
+
+  it("lets go of it too when the page is left while the clip is being sent", async () => {
+    const api = apiWithName();
+    let release: () => void = () => undefined;
+    api.respellFromVoice = () => new Promise((resolve) => (release = () => resolve("kah-ZETH")));
+    const { unmount } = render(<Box api={api} />);
+    await record();
+    press(w.stop);
+    await screen.findByLabelText(w.playbackLabel("Ka'zeth"));
+    press(w.useThis);
+    unmount();
+    release();
+    await act(async () => undefined);
+    expect(revoked).toContain("blob:fake-1");
+  });
+
+  it("a second name pressed during the permission prompt is told to wait, not recorded", async () => {
+    const api = apiWithName();
+    let allow: (s: unknown) => void = () => undefined;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(() => new Promise((resolve) => (allow = resolve))) },
+    });
+    render(
+      <>
+        <Box api={api} id="one" />
+        <Box api={api} id="two" />
+      </>,
+    );
+    const [first, second] = screen.getAllByRole("button", { name: w.sayIt });
+    fireEvent.click(first!);
+    fireEvent.click(second!);
+    await waitFor(() => expect(screen.getAllByText(w.problem.busy!).length).toBeGreaterThan(0));
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    allow({ getTracks: () => [track] });
+    await act(async () => undefined);
+  });
+
+  it("the microphone is free again after a refusal, so another name can use it", async () => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => Promise.reject(new Error("denied"))) },
+    });
+    render(
+      <>
+        <Box api={apiWithName()} id="one" />
+        <Box api={apiWithName()} id="two" />
+      </>,
+    );
+    const [first, second] = screen.getAllByRole("button", { name: w.sayIt });
+    fireEvent.click(first!);
+    await waitFor(() => expect(screen.getAllByText(w.problem["mic-refused"]!).length).toBeGreaterThan(0));
+    fireEvent.click(second!);
+    await act(async () => undefined);
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not get stuck if the recorder will not stop", async () => {
+    class Stuck extends FakeRecorder {
+      override stop(): void {
+        throw new Error("no");
+      }
+    }
+    vi.stubGlobal("MediaRecorder", Stuck);
+    render(<Box api={apiWithName()} />);
+    await record();
+    press(w.stop);
+    expect((await screen.findByRole("alert")).textContent).toBe(w.problem["bad-clip"]);
+    expect(stopped).toBe(1);
+    expect(screen.getByRole("button", { name: w.sayIt })).toBeTruthy();
+  });
+
+  it("stops the voice that is reading the box aloud when recording starts", async () => {
+    render(<Box api={apiWithName()} start="KAH-zeth" />);
+    press(w.hear);
+    const cancel = (window.speechSynthesis as unknown as { cancel: ReturnType<typeof vi.fn> }).cancel;
+    cancel.mockClear();
+    press(w.sayIt);
+    await screen.findByRole("button", { name: w.stop });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("puts the keyboard in the box once the words are in it", async () => {
+    function WithField({ api }: { api: AccountApi }) {
+      const [value, setValue] = useState("");
+      return (
+        <>
+          <input id="said-as-box" aria-label="said as" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
+          <SayIt api={api} campaignRef={REF} nameId={NAME_ID} name="Ka'zeth" value={value} onValue={setValue} fieldId="said-as-box" />
+        </>
+      );
+    }
+    render(<WithField api={apiWithName()} />);
+    press(w.sayIt);
+    await screen.findByRole("button", { name: w.stop });
+    press(w.stop);
+    await screen.findByLabelText(w.playbackLabel("Ka'zeth"));
+    press(w.useThis);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("said as")));
+  });
+
   it("is not shown where the browser can't record, or by an older API", () => {
     vi.stubGlobal("MediaRecorder", undefined);
     render(<Box api={apiWithName()} />);
@@ -231,8 +340,8 @@ describe("🎤 Say it", () => {
     const api = apiWithName();
     render(
       <>
-        <Box api={api} />
-        <Box api={api} />
+        <Box api={api} id="one" />
+        <Box api={api} id="two" />
       </>,
     );
     const [first, second] = screen.getAllByRole("button", { name: w.sayIt });

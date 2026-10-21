@@ -27,6 +27,7 @@ export const sayIt = {
   playbackLabel: (name: string): string => `Your recording of ${name}`,
   problem: {
     "voice-off": "Saying it isn't available right now. You can type how to say it instead.",
+    busy: "Finish the other recording first.",
     "mic-refused": "DMbot can't use the microphone. Allow it in your browser, or type how to say it instead.",
     "bad-clip": "DMbot couldn't make that out. Try again somewhere quieter, or type it.",
     "too-big": `That recording was a bit long. Try again in under ${CLIP_SECONDS} seconds, or type it.`,
