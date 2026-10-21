@@ -25,6 +25,11 @@ export const RECAP_NAMES_LIVE = false;
 // new routes deployed, so it stays off until dev1 has deployed #2113 and seen it work. It moves with
 // the What's new entry "Tell DMbot what to fix" and can only be true with RECAPS_LIVE.
 export const RECAP_FIX_LIVE = false;
+// RECAP_VOICE_LIVE is "Speak instead" under that box (#2113 part 2, #2114): the DM records a short note,
+// DMbot turns it into words and deletes the recording. It needs the voice routes deployed and the
+// microphone header (public/_headers) live, and dev1 to have seen a note spoken and heard back. It moves
+// with the What's new entry "Speak a note to DMbot" and can only be true with RECAP_FIX_LIVE.
+export const RECAP_VOICE_LIVE = false;
 // RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
 // link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
@@ -104,6 +109,13 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
         },
       ]
     : []),
+  ...(RECAP_VOICE_LIVE
+    ? [
+        {
+          text: "Under that box you can press Speak instead and say your note (up to a minute). Your browser asks to use the microphone the first time. DMbot turns what you said into words in the box and deletes the recording as soon as the words are ready. Check the words, change them if you like, then press Send. A note you speak counts toward your listening time, and DMbot only listens to people who have agreed to be recorded.",
+},
+]
+: []),
   ...(RECAP_SHARE_LIVE
     ? [
         {
