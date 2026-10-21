@@ -39,6 +39,25 @@ def remember(guild_id: int, campaign_id: str, message: Any) -> None:
         _forgot((guild_id, campaign_id))  # one forgotten: the screen must be read again
 
 
+def forget(guild_id: int, campaign_id: str, message_id: int | None) -> None:
+    """A question was answered (its buttons were used): it no longer shows a name, so the list
+    holds only open ones. Nothing happens for a message that was not remembered (a private
+    message, or one a restart forgot, which the screen search finds if it is still open)."""
+    kept = _posts.get((guild_id, campaign_id))
+    if kept is None or message_id is None:
+        return
+    kept[:] = [m for m in kept if getattr(m, "id", None) != message_id]
+
+
+def answered(interaction: Any, campaign_id: str) -> None:
+    """A button on a remembered question was pressed and its message was edited: forget it. Call it
+    after the edit went through, so a question that failed to close stays listed and can still be
+    pulled back. A press in a private message has nothing on the screen to forget."""
+    guild = getattr(interaction, "guild", None)
+    if guild is not None:
+        forget(guild.id, campaign_id, getattr(getattr(interaction, "message", None), "id", None))
+
+
 def pending(guild_id: int, campaign_id: str) -> int:
     return len(_posts.get((guild_id, campaign_id), ()))
 

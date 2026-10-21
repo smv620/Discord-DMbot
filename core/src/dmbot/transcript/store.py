@@ -287,6 +287,24 @@ class TranscriptStore:
             )
             return [_session(r) for r in await cur.fetchall()]
 
+    async def latest_before(
+        self, guild_id: int, campaign_id: str, before: int
+    ) -> tuple[int, bool] | None:
+        """The campaign's latest session that began before `before`: when it began, and whether
+        its transcript is gone (deleted by the keep-days limit, #1533). Counts a session whose lines
+        were deleted, which `sessions` does not list; a session that never had lines is no session
+        (#2253: the previous session, for finding a retelling of it)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT started_at, line_count = 0 AS gone FROM transcript_sessions"
+                " WHERE campaign_id = %s AND started_at < %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)"
+                " ORDER BY started_at DESC, id DESC LIMIT 1",
+                (campaign_id, before),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (int(row["started_at"]), bool(row["gone"]))
+
     async def next_session_start(self, guild_id: int, campaign_id: str, after: int) -> int | None:
         """When the campaign's first session with lines that started after `after` began, or None.
         A session row is written before anyone speaks (and the one being played now has few

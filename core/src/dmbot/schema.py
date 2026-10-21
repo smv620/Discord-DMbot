@@ -3055,6 +3055,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)",
     ),
     ("dmbot_import_members", "dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)"),
+    ("dmbot_import_suggest", "dmbot_import_suggest(BIGINT, TEXT, JSONB, INT, TEXT)"),
     ("dmbot_import_progress", "dmbot_import_progress(BIGINT, TEXT, TEXT)"),
     ("dmbot_import_mapping", "dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT)"),
     # A posted recap's public link (#2118): turned on and off by a DM, read by anyone with it.
@@ -3068,6 +3069,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     (
         "dmbot_recap_rewrite",
         "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])",
+    ),
+    # The recap's names to check, answered on its page (#2113): the read door and the queue door.
+    ("dmbot_recap_names_read", "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"),
+    (
+        "dmbot_name_answer_add",
+        "dmbot_name_answer_add(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)",
     ),
     # A spoken note: the clip is held until the bot has written it down (#2113).
     (
@@ -7769,6 +7776,221 @@ MEMBER_DIRECTORY = (
     REVOKE ALL ON FUNCTION dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
     """
 )
+IMPORT_SUGGEST = r"""
+    -- The import page's suggestions (#2135): for each name in a file, who it probably is and which
+    -- character they play. Read-only, never decides anything: the DM confirms. `wanted` is a
+    -- list of {label, user, shown, member}: `user` is the username part of Craig's
+    -- "Display (username)", `shown` the display part, `member` a person already known for the
+    -- label (remembered from an earlier import). A person is looked for by username, then by
+    -- display name or server nickname, then by the names the campaign's table already uses for
+    -- them; the first step that finds anyone decides, and two people at that step suggest no one.
+    -- Members come from the server's directory (only while their consent is current) and the
+    -- campaign's own people. Characters: the one they already play, else a confirmed character
+    -- called what the label is called. Never another server's or campaign's names. NULL unless a
+    -- DM of the campaign.
+    CREATE FUNCTION dmbot_import_suggest(g BIGINT, c TEXT, wanted JSONB, terms INT, outside TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out JSONB := '{}'::jsonb;
+        w JSONB;
+        u TEXT;
+        s TEXT;
+        lbl TEXT;
+        uid BIGINT;
+        who TEXT;
+        why TEXT;
+        found BIGINT[];
+        agreed BOOLEAN;
+        plays TEXT;
+        plays_why TEXT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF wanted IS NULL OR jsonb_typeof(wanted) <> 'array' THEN
+            RETURN out;
+        END IF;
+        FOR w IN SELECT e FROM jsonb_array_elements(wanted) WITH ORDINALITY AS t(e, n)
+                 WHERE t.n <= 100 LOOP
+            lbl := coalesce(w->>'label', '');
+            u := lower(btrim(left(coalesce(w->>'user', ''), 100)));
+            s := lower(btrim(left(coalesce(w->>'shown', ''), 100)));
+            uid := NULL; who := NULL; why := NULL; plays := NULL; plays_why := NULL;
+            found := NULL;
+            IF lbl = '' THEN
+                CONTINUE;
+            END IF;
+            IF coalesce(w->>'member', '') ~ '^[0-9]{1,19}$'
+               AND (length(w->>'member') < 19 OR w->>'member' <= '9223372036854775807')
+               AND (w->>'member')::BIGINT > 0
+               AND (EXISTS (SELECT 1 FROM member_directory d
+                            WHERE d.guild_id = g AND d.user_id = (w->>'member')::BIGINT)
+                    OR EXISTS (SELECT 1 FROM memory_entities p
+                               WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
+                                 AND p.played_by = (w->>'member')::BIGINT)
+                    OR EXISTS (SELECT 1 FROM consent x
+                               WHERE x.guild_id = g AND x.user_id = (w->>'member')::BIGINT))
+            THEN
+                uid := (w->>'member')::BIGINT;  -- remembered from an earlier import
+                why := 'remembered';
+                who := '';
+            ELSE
+                -- 1. the username part
+                IF u <> '' THEN
+                    SELECT array_agg(d.user_id) INTO found FROM member_directory d
+                        WHERE d.guild_id = g AND lower(d.username) = u
+                          AND EXISTS (SELECT 1 FROM consent x
+                                      WHERE x.guild_id = g AND x.user_id = d.user_id
+                                        AND x.terms_version = terms
+                                        AND (outside IS NULL OR x.outside_to = outside));
+                    IF found IS NOT NULL THEN
+                        why := 'username';
+                    END IF;
+                END IF;
+                -- 2. the display name or server nickname
+                IF found IS NULL AND (s <> '' OR u <> '') THEN
+                    SELECT array_agg(d.user_id) INTO found FROM member_directory d
+                        WHERE d.guild_id = g AND d.display_name <> ''
+                          AND lower(d.display_name) IN (s, u)
+                          AND EXISTS (SELECT 1 FROM consent x
+                                      WHERE x.guild_id = g AND x.user_id = d.user_id
+                                        AND x.terms_version = terms
+                                        AND (outside IS NULL OR x.outside_to = outside));
+                    IF found IS NOT NULL THEN
+                        why := 'display_name';
+                    END IF;
+                END IF;
+                -- 3. the names the table already uses for a person
+                IF found IS NULL AND s <> '' THEN
+                    SELECT array_agg(DISTINCT p.played_by) INTO found FROM memory_entities p
+                        WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
+                          AND p.status = 'confirmed' AND p.played_by IS NOT NULL
+                          AND NOT p.audience_limited
+                          AND EXISTS (SELECT 1 FROM memory_aliases a
+                                      WHERE a.guild_id = g AND a.campaign_id = c
+                                        AND a.entity_id = p.id AND a.status = 'confirmed'
+                                        AND NOT a.secret AND lower(a.text) = s
+                                        AND (lower(p.name) <> s OR a.key = (
+                                             SELECT n.key FROM memory_aliases n
+                                             WHERE n.guild_id = g AND n.campaign_id = c
+                                               AND n.entity_id = p.id AND n.text = p.name
+                                               AND n.status <> 'rejected'
+                                             ORDER BY n.id LIMIT 1)));
+                    IF found IS NOT NULL THEN
+                        why := 'people';
+                    END IF;
+                END IF;
+                IF found IS NOT NULL AND cardinality(found) = 1 THEN
+                    uid := found[1];
+                    found := NULL;
+                ELSE
+                    why := NULL;  -- nobody, or more than one at the deciding step: the DM picks
+                END IF;
+                IF uid IS NOT NULL THEN
+                    -- The server's own name for them only while they are recorded now; else the
+                    -- campaign's name for the person.
+                    SELECT coalesce(nullif(d.display_name, ''), d.username) INTO who
+                        FROM member_directory d
+                        WHERE d.guild_id = g AND d.user_id = uid
+                          AND EXISTS (SELECT 1 FROM consent x
+                                      WHERE x.guild_id = g AND x.user_id = uid
+                                        AND x.terms_version = terms
+                                        AND (outside IS NULL OR x.outside_to = outside));
+                    IF who IS NULL THEN
+                        SELECT p.name INTO who FROM memory_entities p
+                            WHERE p.guild_id = g AND p.campaign_id = c AND p.type = 'person'
+                              AND p.status = 'confirmed' AND p.played_by = uid
+                              AND NOT p.audience_limited
+                              AND EXISTS (SELECT 1 FROM memory_aliases a
+                                          WHERE a.guild_id = g AND a.campaign_id = c
+                                            AND a.entity_id = p.id AND a.text = p.name
+                                            AND a.status = 'confirmed' AND NOT a.secret
+                                            AND a.key = (SELECT n.key FROM memory_aliases n
+                                                         WHERE n.guild_id = g AND n.campaign_id = c
+                                                           AND n.entity_id = p.id
+                                                           AND n.text = p.name
+                                                           AND n.status <> 'rejected'
+                                                         ORDER BY n.id LIMIT 1))
+                            ORDER BY p.created_at, p.id LIMIT 1;
+                    END IF;
+                    who := coalesce(who, '');
+                END IF;
+            END IF;
+            -- The character: the one they already play, else one called what the label is.
+            IF uid IS NOT NULL THEN
+                SELECT ch.name INTO plays
+                    FROM memory_relations r
+                    JOIN memory_entities p ON p.guild_id = r.guild_id
+                         AND p.campaign_id = r.campaign_id AND p.id = r.subject_id
+                    JOIN memory_entities ch ON ch.guild_id = r.guild_id
+                         AND ch.campaign_id = r.campaign_id AND ch.id = r.object_id
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.predicate = 'plays'
+                      AND r.status = 'confirmed' AND r.to_session_at IS NULL AND NOT r.secret
+                      AND p.type = 'person' AND p.played_by = uid AND p.status = 'confirmed'
+                      AND ch.status = 'confirmed' AND ch.type = 'character'
+                      AND NOT ch.audience_limited
+                      AND EXISTS (SELECT 1 FROM memory_aliases a
+                                  WHERE a.guild_id = g AND a.campaign_id = c
+                                    AND a.entity_id = ch.id AND a.text = ch.name
+                                    AND a.status = 'confirmed' AND NOT a.secret
+                                    AND a.key = (SELECT n.key FROM memory_aliases n
+                                                 WHERE n.guild_id = g AND n.campaign_id = c
+                                                   AND n.entity_id = ch.id AND n.text = ch.name
+                                                   AND n.status <> 'rejected'
+                                                 ORDER BY n.id LIMIT 1))
+                    ORDER BY ch.created_at DESC, ch.id LIMIT 1;
+                IF plays IS NOT NULL THEN
+                    plays_why := 'plays';
+                END IF;
+            END IF;
+            IF plays IS NULL AND s <> '' THEN
+                SELECT ch.name INTO plays FROM memory_entities ch
+                    WHERE ch.guild_id = g AND ch.campaign_id = c AND ch.type = 'character'
+                      AND ch.status = 'confirmed' AND ch.played_by IS NULL
+                      AND lower(ch.name) = s
+                      AND NOT ch.audience_limited
+                      AND EXISTS (SELECT 1 FROM memory_aliases a
+                                  WHERE a.guild_id = g AND a.campaign_id = c
+                                    AND a.entity_id = ch.id AND a.text = ch.name
+                                    AND a.status = 'confirmed' AND NOT a.secret
+                                    AND a.key = (SELECT n.key FROM memory_aliases n
+                                                 WHERE n.guild_id = g AND n.campaign_id = c
+                                                   AND n.entity_id = ch.id AND n.text = ch.name
+                                                   AND n.status <> 'rejected'
+                                                 ORDER BY n.id LIMIT 1))
+                    ORDER BY ch.created_at, ch.id LIMIT 1;
+                IF plays IS NOT NULL THEN
+                    plays_why := 'same_name';
+                END IF;
+            END IF;
+            agreed := uid IS NOT NULL AND EXISTS (
+                SELECT 1 FROM consent x
+                WHERE x.guild_id = g AND x.user_id = uid AND x.terms_version = terms
+                  AND (outside IS NULL OR x.outside_to = outside));
+            out := out || jsonb_build_object(lbl, jsonb_build_object(
+                'member', CASE WHEN uid IS NULL THEN NULL ELSE jsonb_build_object(
+                    'userId', uid::TEXT, 'name', who, 'why', why, 'agreed', agreed) END,
+                'character', CASE WHEN plays IS NULL THEN NULL ELSE jsonb_build_object(
+                    'name', plays, 'why', plays_why) END));
+        END LOOP;
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_suggest(BIGINT, TEXT, JSONB, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_import_suggest(BIGINT, TEXT, JSONB, INT, TEXT) FROM PUBLIC;
+"""
+
 RECAP_HOLDS = f"""
     -- A session's recap held until the DM has answered DMbot's name questions (#2169). A hold is
     -- a row here, not a job state: the recap job is made when the hold is released (the last
@@ -8241,6 +8463,222 @@ NAMES_LATER = f"""
     );
     """ + _isolate("name_later")
 
+NAME_ANSWERS = (
+    f"""
+    -- The names a recap kept that DMbot did not know (#2027) and that the DM is asked to check, now
+    -- answerable on the recap page (#2113). `recap_name_checks` only says which waiting
+    -- suggestions belong to which recap (ids, no words): written when the bot queues them. A
+    -- name stops being listed when it is no longer a suggestion, whoever answered it, here or in
+    -- Discord's 📝 Check new names. Per campaign, isolated, gone with the name and the campaign,
+    -- left out of backups (a pointer, not content).
+    CREATE TABLE recap_name_checks (
+        {_memory_scope()}
+        session_at  BIGINT NOT NULL,
+        entity_id   TEXT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, session_at, entity_id),
+        {_entity_link("entity_id")}
+    );
+
+    -- An answer the DM gave on the page, waiting for the bot to apply it through the same
+    -- MemoryStore paths as Discord's (so the change log, Undo and the lists all agree). The
+    -- website has no right on the memory tables, so it only queues the answer; the bot applies
+    -- it and marks the row. `text` is the new spelling (at most 80 letters) or the DM's note (at
+    -- most 300); a row lives an hour at most and is never logged. Gone with its name and its
+    -- campaign, left out of backups, isolated per server.
+    CREATE TABLE name_answers (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        entity_id   TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        action      TEXT NOT NULL
+            CHECK (action IN ('confirm', 'same', 'respell', 'not_a_name', 'explain')),
+        kind        TEXT NOT NULL DEFAULT '' CHECK (char_length(kind) <= 40),
+        target_id   TEXT NOT NULL DEFAULT '' CHECK (char_length(target_id) <= 32),
+        text        TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= 300),
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, id),
+        {_entity_link("entity_id")}
+    );
+    -- One answer in flight for a name: a second is "busy" until the first is done.
+    CREATE UNIQUE INDEX name_answers_in_flight ON name_answers (guild_id, campaign_id, entity_id)
+        WHERE state IN ('waiting', 'working');
+    CREATE INDEX name_answers_open ON name_answers (guild_id, created_at)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("recap_name_checks")
+    + _isolate("name_answers")
+    + r"""
+    -- The recap's names to check, for a DM of the campaign: each waiting suggestion the recap
+    -- kept (id, name, the note kept with it, whether an answer is on its way or failed), and the
+    -- known names a suggestion can be said to be (confirmed, public, not a person at the table).
+    -- Never a secret name: a suggestion with a secret spelling is left out, and so is a known
+    -- name with any secret spelling (the same rule as the queue door and the bot). NULL for anyone
+    -- else.
+    CREATE FUNCTION dmbot_recap_names_read(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'names', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'id', e.id, 'name', e.name, 'note', e.description,
+                           'answering', EXISTS (
+                               SELECT 1 FROM name_answers a
+                               WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                                 AND a.state IN ('waiting', 'working')),
+                           'error', COALESCE((
+                               SELECT a.error FROM name_answers a
+                               WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                                 AND a.state = 'failed'
+                               ORDER BY a.created_at DESC LIMIT 1), ''))
+                       ORDER BY lower(e.name), e.id)
+                FROM recap_name_checks k
+                JOIN memory_entities e
+                  ON e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id
+                 AND e.id = k.entity_id
+                WHERE k.guild_id = g AND k.campaign_id = c AND k.session_at = at_
+                  AND e.status = 'proposed'
+                  AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                  WHERE s.guild_id = g AND s.campaign_id = c
+                                    AND s.entity_id = e.id AND s.secret)), '[]'::jsonb),
+            'known', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id', n.id, 'name', n.name, 'kind', n.type)
+                                 ORDER BY lower(n.name), n.id)
+                FROM (
+                    SELECT e.id, e.name, e.type
+                    FROM memory_entities e
+                    WHERE e.guild_id = g AND e.campaign_id = c
+                      AND e.status = 'confirmed' AND e.type <> 'person'
+                      AND EXISTS (SELECT 1 FROM memory_aliases a
+                                  WHERE a.guild_id = g AND a.campaign_id = c
+                                    AND a.entity_id = e.id AND NOT a.secret
+                                    AND a.status = 'confirmed'
+                                    AND lower(a.text) = lower(e.name))
+                      AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                      WHERE s.guild_id = g AND s.campaign_id = c
+                                        AND s.entity_id = e.id AND s.secret)
+                    ORDER BY lower(e.name), e.id
+                    LIMIT 200
+                ) n), '[]'::jsonb));
+    END
+    $fn$;
+
+    -- Queue the DM's answer to one of the recap's names to check. The door checks what it can
+    -- see: the caller is a DM of the campaign, the name is one of this recap's waiting
+    -- suggestions, the words are within their limits, and nothing is in flight for it; the bot
+    -- checks the rest (the kind, the known name) when it applies the answer. Answers 'ok' with
+    -- the answer's id, or 'bad_action', 'bad_text', 'bad_target', 'not_found', 'busy' or
+    -- 'too_soon'.
+    CREATE FUNCTION dmbot_name_answer_add(
+        g BIGINT, c TEXT, at_ BIGINT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        clean TEXT := btrim(regexp_replace(COALESCE(txt, ''), '[[:space:]]+', ' ', 'g'));
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN ('confirm', 'same', 'respell', 'not_a_name', 'explain') THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF clean ~ '[[:cntrl:]]'
+           OR (act = 'respell' AND char_length(clean) NOT BETWEEN 1 AND 80)
+           OR (act = 'explain' AND char_length(clean) NOT BETWEEN 1 AND 300)
+           OR (act IN ('confirm', 'same', 'not_a_name') AND clean <> '')
+           OR (act = 'confirm' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
+           OR (act <> 'confirm' AND COALESCE(kd, '') <> '')
+           OR (act = 'same' AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
+           OR (act <> 'same' AND COALESCE(tgt, '') <> '') THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        -- A merge target must be one the list offers: confirmed, not a person at the table, and
+        -- with no secret spelling. (The bot checks again when it applies the answer.)
+        IF act = 'same' AND NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person'
+                 AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                 WHERE s.guild_id = g AND s.campaign_id = c
+                                   AND s.entity_id = t.id AND s.secret)) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('name_answer:' || g::TEXT || c, 0));
+        DELETE FROM name_answers a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF NOT EXISTS (SELECT 1 FROM recap_name_checks k
+                       JOIN memory_entities e
+                         ON e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id
+                        AND e.id = k.entity_id
+                       WHERE k.guild_id = g AND k.campaign_id = c AND k.session_at = at_
+                         AND k.entity_id = ent AND e.status = 'proposed'
+                         AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                                         WHERE s.guild_id = g AND s.campaign_id = c
+                                           AND s.entity_id = e.id AND s.secret)) THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF EXISTS (SELECT 1 FROM name_answers a
+                   WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = ent
+                     AND a.state IN ('waiting', 'working')) THEN
+            RETURN jsonb_build_object('status', 'busy');
+        END IF;
+        IF (SELECT count(*) FROM name_answers a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 30
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        DELETE FROM name_answers a  -- a failed answer is replaced by the new one
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = ent
+              AND a.state = 'failed';
+        INSERT INTO name_answers (guild_id, campaign_id, id, entity_id, user_id, action, kind,
+                                  target_id, text, created_at)
+            VALUES (g, c, rid, ent, dmbot_current_user(), act, COALESCE(kd, ''),
+                    COALESCE(tgt, ''), clean, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_names_read(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_name_answer_add('
+            'BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_names_read(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_name_answer_add(
+        BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+    """
+)
+RECAP_SPLIT = """
+    -- How a recap's session was split (#2253): its opening into talk, catch-up and last time's
+    -- recap, then play. NULL until the split stage has run (or for a job from before it). Ranges
+    -- of line numbers and a flag only, never a word of the transcript, so nothing here needs
+    -- consent or row-level changes: the column is on a table that already isolates by server. A
+    -- new nullable column changes no rows. The next session reads it to leave this session's
+    -- retelling out of what it compares with.
+    ALTER TABLE recap_jobs ADD COLUMN split JSONB;
+    """
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -8437,6 +8875,60 @@ RECAP_VOICE = r"""
     REVOKE ALL ON FUNCTION dmbot_sweep_old_clips() FROM PUBLIC;
     """
 
+INSTALLS_LEFT_EXCEPT = r"""
+    -- Servers DMbot was removed from while it was offline (#2166): at start-up the bot lists the
+    -- servers it is in, and every install row that still says it is there but is not in the list
+    -- gets `left_at`. A plain UPDATE can't do it: the bot's connection sees one server's rows at
+    -- a time. This door is the exception; its policy needs the setting the function sets, only
+    -- opens the update of a row that has not left, and is TO the role that owns the function
+    -- (never the website's, whose own restrictive policy on installs would refuse it anyway).
+    -- The function is for the bot: no one else is granted it. It changes no one's installer,
+    -- reads nothing back, and returns a count.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY install_left_sweep ON installs FOR UPDATE TO %I
+                USING (dmbot_owner_sync() = ''installs-left'' AND left_at IS NULL)
+                WITH CHECK (dmbot_owner_sync() = ''installs-left'' AND left_at IS NOT NULL)',
+            current_user);
+        EXECUTE format(
+            'CREATE POLICY install_left_sweep_read ON installs FOR SELECT TO %I
+                USING (dmbot_owner_sync() = ''installs-left'')',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_installs_left_except(present BIGINT[]) RETURNS INTEGER
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+        n INTEGER;
+    BEGIN
+        -- An empty or missing list means the caller could not see its servers, not that it is in
+        -- none: marking everything left would be wrong, so nothing is marked.
+        IF present IS NULL OR cardinality(present) = 0 THEN
+            RETURN 0;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'installs-left', true);
+        UPDATE installs
+            SET left_at = floor(extract(epoch FROM clock_timestamp()))::BIGINT
+            WHERE left_at IS NULL AND NOT (guild_id = ANY (present));
+        GET DIAGNOSTICS n = ROW_COUNT;
+        PERFORM set_config('dmbot.owner_sync', before, true);
+        RETURN n;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_installs_left_except(BIGINT[])'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_installs_left_except(BIGINT[]) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -8618,6 +9110,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         SUPPORT_TICKET_TIMES,
     ),  # no two of a person's tickets share a time
     ("0156_names_later", NAMES_LATER),  # a "Later" that stops holding a recap (#2174)
+    ("0157_name_answers", NAME_ANSWERS),  # answering a recap's names to check on its page (#2113)
+    ("0158_recap_split", RECAP_SPLIT),  # a session's opening split into parts (#2253)
+    ("0160_installs_left_except", INSTALLS_LEFT_EXCEPT),  # servers left while offline (#2166)
+    ("0161_import_suggest", IMPORT_SUGGEST),  # who a name is, and who they play (#2135)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -8683,6 +9179,8 @@ ISOLATED_TABLES = (
     "recap_style_examples",
     "recap_style_notes",
     "recap_requests",
+    "recap_name_checks",
+    "name_answers",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
