@@ -43,7 +43,7 @@ from dmbot.ui import rule_card
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-11"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-12"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)
@@ -70,7 +70,8 @@ The table is waiting, so answer as briefly as you can.
 Rules:
 1. Give the shortest accurate answer. If "Yes." or "No." answers it, start with that and add \
 at most one short sentence of why. Otherwise use one or two short sentences, under 200 \
-characters in all. No greeting, no repeating the question, no "let me know", no offers of more\
+characters in all. Write only the answer and the fields asked for: no thinking out loud, no notes \
+before or after. No greeting, no repeating the question, no "let me know", no offers of more\
  help, no extra detail.
 2. Use only the material given below: house rules, rules entries, campaign names, who is who at \
 the table, the scene, and DMbot's help. If it does not answer the question, say so in a few \
