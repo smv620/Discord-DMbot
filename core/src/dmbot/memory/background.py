@@ -321,21 +321,23 @@ def merge(
     # A loop is allowed to leave a kept entry as another kept entry's secret too (Vecnor is an
     # entry and Mira's secret): every name is then somewhere, and nothing is lost to the fold.
     extra: dict[str, list[str]] = {}
-    for f in folded:
-        above = holder.get(name_key(f.name))
-        if above is not None:
-            extra.setdefault(above, []).extend((*f.also, *f.secret))
+    for gone in folded:
+        top = holder.get(name_key(gone.name))
+        if top is not None:
+            extra.setdefault(top, []).extend((*gone.also, *gone.secret))
     joined: list[Found] = []
     entry_names = {name_key(f.name) for f in out}  # another entry's own name stays that entry's
     for f in out:
         have = {name_key(x) for x in (f.name, *f.also, *f.secret)} | entry_names
-        more: list[str] = []
+        carried: list[str] = []
         for a in extra.get(name_key(f.name), ()):
             if name_key(a) not in have and name_key(a) not in skip:
                 have.add(name_key(a))
-                more.append(a)
+                carried.append(a)
         joined.append(
-            Found(f.name, f.kind, f.also, (*f.secret, *more)[:MAX_ALSO], f.quote) if more else f
+            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote)
+            if carried
+            else f
         )
     out = joined
     # An other spelling that is another name's own name is that name's, not an alias; and a
