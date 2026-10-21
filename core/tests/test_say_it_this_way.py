@@ -564,24 +564,32 @@ class TheSpokenWay(SaidAsTest):
         table = await self.said((SPEAKER, "Cerric is pronounced Seh-rick"))  # shaped like a sound
         self.assertEqual(table.pronounced, self.sound("sehrick", "Seh-rick"))
 
-    async def test_a_short_name_that_sits_inside_a_title_or_word_is_not_a_pronunciation(
-        self,
-    ) -> None:
+    async def test_a_title_is_not_a_pronunciation_whatever_it_looks_like(self) -> None:
+        """The stop list: these pass the length and score rule, so only the list rejects them."""
         from dmbot.ui import names as ui
 
         for name, word in (
             ("Aron", "Baron"),
             ("Bran", "Baron"),
-            ("Tor", "Traitor"),
-            ("Fin", "Final"),
             ("Kount", "Count"),
             ("Duka", "Duke"),
-            ("Champa", "Champion"),
             ("Viktor", "Victor"),
         ):
-            await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
-            table = await self.said((SPEAKER, f"{name} was pronounced {word}"))
-            self.assertEqual(table.pronounced, {}, f"{name} / {word}")
+            with self.subTest(name=name):
+                await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+                table = await self.said((SPEAKER, f"{name} was pronounced {word}"))
+                self.assertEqual(table.pronounced, {})
+
+    async def test_a_word_much_longer_than_the_name_is_not_a_pronunciation(self) -> None:
+        """The length rule: "Final" is not on any list, it is two letters longer than "Fin"."""
+        from dmbot.ui import names as ui
+
+        await ui.save_name(self.memory, self.campaign, "Fin", "npc", [], [])
+        table = await self.said((SPEAKER, "Fin was pronounced Final"))
+        self.assertEqual(table.pronounced, {})
+        await ui.save_name(self.memory, self.campaign, "Torin", "npc", [], [])
+        table = await self.said((SPEAKER, "Torin was pronounced Thorin"))  # one letter off: kept
+        self.assertEqual([w for c in table.pronounced.values() for w in c], ["Thorin"])
 
     async def test_the_names_that_are_said_the_way_they_sound_are_still_found(self) -> None:
         from dmbot.ui import names as ui

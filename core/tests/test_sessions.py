@@ -1613,7 +1613,8 @@ class SaveAndResume(SessionTests):
             table, "it's pronounced Seh-rick", at_ms=5_000
         )  # held, with the window's call out
         self.said(table, "and Kael is there too", at_ms=10_000)  # a second name before the label
-        self.said(table, "Kerr called about the spreadsheet", at_ms=15_000)  # fills the window
+        # A second held line fills the window, so both are labelled.
+        self.said(table, "Kerr called about the spreadsheet", at_ms=15_000)
         await self.settle()
         self.assertEqual(list(table.pronounced), [(cerric, "sehrick", PLAYER)])
 
