@@ -10,6 +10,7 @@ import { ApiError, type AccountApi, type CampaignName } from "../src/account/api
 import { mockApi } from "../src/account/mock";
 import RecapNames, { campaignRefOf } from "../src/account/RecapNames";
 import Recaps from "../src/account/Recaps";
+import { sayIt as sayWords } from "../src/content/say-it-words";
 import { nameWords as words } from "../src/content/recap-names";
 
 const live = vi.hoisted(() => ({ recaps: true, audio: true }));
@@ -68,6 +69,14 @@ describe("the part", () => {
     expect(box(words.label("Brynwater")).value).toBe("Brin-water");
     expect(box(words.label("Ka'zeth")).value).toBe("");
     expect(screen.getByText(words.secret)).toBeTruthy();
+  });
+
+  it("says how Say it works once for the whole list, not under every name", async () => {
+    render(<RecapNames api={mockApi("table")} recapRef={REF} />);
+    open();
+    await screen.findByLabelText(words.label("Ka'zeth"));
+    expect(screen.getAllByRole("textbox").length).toBeGreaterThan(1);
+    expect(screen.getAllByText(sayWords.how)).toHaveLength(1);
   });
 
   it("saves one name with a one-line confirmation, and sends the tidied words", async () => {

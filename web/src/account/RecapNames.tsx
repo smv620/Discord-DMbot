@@ -7,6 +7,7 @@ import { useRef, useState } from "preact/hooks";
 import { nameWords as words, SAID_AS_MAX } from "../content/recap-names";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type CampaignName } from "./api";
+import { sayIt as sayWords } from "../content/say-it-words";
 import { keepFocus } from "./focus";
 import SayIt from "./SayIt";
 
@@ -110,6 +111,8 @@ export default function RecapNames({
       <summary>{words.heading}</summary>
       <p>{words.lead}</p>
       <p class="small muted">{words.secret}</p>
+      {/* Said once for the whole list, not under every name (it pushed Save away at 360 px). */}
+      <p class="small muted">{sayWords.how}</p>
       {load.kind === "loading" && (
         <p class="muted" role="status">
           {words.loading}

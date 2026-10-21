@@ -341,7 +341,6 @@ export default function SayIt({
       <p role="alert" class={problem ? "warn small" : "visually-hidden"}>
         {problem ?? ""}
       </p>
-      <p class="small muted">{words.how}</p>
     </div>
   );
 }

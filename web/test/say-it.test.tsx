@@ -371,9 +371,9 @@ describe("🔊 Hear it", () => {
 });
 
 describe("the words", () => {
-  it("say what happens to the recording", () => {
+  it("say what happens to the recording, and the box itself does not repeat them", () => {
     render(<Box api={apiWithName()} />);
-    expect(screen.getByText(w.how)).toBeTruthy();
+    expect(screen.queryByText(w.how)).toBeNull();
     expect(w.how).toContain("deleted");
   });
 });
