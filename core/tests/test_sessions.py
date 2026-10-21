@@ -1594,6 +1594,38 @@ class SaveAndResume(SessionTests):
         self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # when unsure, keep
         self.assertTrue(table.vocabulary.is_word("sneak"))
 
+    async def spelled_through_the_gate(self, answer: str) -> Any:
+        """#2168: the find is held with the line, not skipped, until the line is labelled."""
+        table = await self.filtered(answer)
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        self.assertEqual(table.spelled, [])  # held: not recorded yet
+        self.assertIn((PLAYER, 5_000), table.held_spelled)
+        await self.settle()
+        self.assertEqual(table.held_spelled, {})
+        return table
+
+    async def test_a_spelled_line_labelled_game_talk_is_recorded(self) -> None:
+        table = await self.spelled_through_the_gate("1 game\n2 game")
+        self.assertEqual([w for w, _, _ in table.spelled], ["Brannoch"])
+
+    async def test_a_spelled_line_labelled_off_topic_is_dropped(self) -> None:
+        table = await self.spelled_through_the_gate("1 other\n2 other")
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_drops_a_held_spelling_and_the_words_before_it(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "ask Brenoch about it")
+        self.said(table, "how do you spell that", at_ms=2_000)
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertEqual((table.held_spelled, table.spelled), ({}, []))
+        self.assertEqual(
+            table.spelling.note(DM, "B R A N N O C H", 1e9), []
+        )  # no ask left, no words
+        await self.settle()
+        self.assertEqual(table.spelled, [])
+
     async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
         table = await self.filtered("1 other\n2 game")
         self.said(table, "I roll a d20 for initiative")  # never held for a label

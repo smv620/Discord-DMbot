@@ -323,6 +323,17 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
             bot.memory.set_note.await_args.args[3], "Spelled out at the table: Brannoch"
         )
 
+    async def test_two_spellings_near_one_suggestion_give_it_one_note(self) -> None:
+        pending = SimpleNamespace(id="e" * 32, name="Brenoch", description="Heard 3 times")
+        bot, table = table_bot(waiting=[pending]), a_table()
+        said = [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N N O C H")]
+        said += [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N O C H")]
+        self.say(bot, table, said)
+        self.assertEqual(len(table.spelled), 2)
+        await bot.suggest_spelled(table)
+        bot.memory.set_note.assert_awaited_once()  # the first spelling stays
+        bot.memory.add_entity.assert_not_awaited()
+
     async def test_a_secret_name_spelled_out_is_never_suggested(self) -> None:
         bot, table = table_bot(), a_table(frozenset({"brannoch"}))
         self.say(bot, table, [(1, "how do you spell that"), (2, "B R A N N O C H")])

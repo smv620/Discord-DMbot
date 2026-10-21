@@ -1611,6 +1611,11 @@ class DMBot(commands.AutoShardedBot):
             table.name_answers.drop_speaker(user_id)  # nor part of who answers to what
             table.topics.drop_speaker(user_id)  # and never sent to the off-topic filter
             table.held = {k: v for k, v in table.held.items() if k[0] != user_id}
+            table.held_spelled = {k: v for k, v in table.held_spelled.items() if k[0] != user_id}
+            table.spelled = [
+                x for x in table.spelled if x[1] != user_id
+            ]  # and nothing they spelled
+            table.spelling.forget(user_id)  # nor the words they said just before
             table.unsaved.drop_speaker(user_id)  # and never saved
             table.recent.drop_speaker(user_id)  # and never part of a sidebar answer's scene
             table.sheet_watch.drop_speaker(user_id)  # no sheet is read again for what they said
@@ -4296,17 +4301,17 @@ class DMBot(commands.AutoShardedBot):
             names_said = 0
         # Talk not about the game never feeds hints or suggestions (#1748): a line the off-topic
         # filter holds for a label is left out, as for the word list.
+        # One answer for the whole line, so the callers below can't disagree (#1748).
+        holds = bool(text) and self._topic_holds(table, cleaned or text, names_said)
         if text and self.tables.get(table.guild_id) is table:
             # Every line goes to the watcher (memory only); what it finds waits with a held line.
             self._note_spelling(
                 table,
                 utterance.user_id,
                 str(cleaned or text),
-                held_key=(utterance.user_id, utterance.start_ms)
-                if self._topic_holds(table, cleaned or text, names_said)
-                else None,
+                held_key=(utterance.user_id, utterance.start_ms) if holds else None,
             )
-        if text and not self._topic_holds(table, cleaned or text, names_said):
+        if text and not holds:
             # After cleaning, so a line is never evidence about itself; even when the names
             # couldn't be loaded, a word said in lower case is a real word next time. A line
             # waiting for the off-topic filter adds its words only once labelled game talk
@@ -4320,7 +4325,7 @@ class DMBot(commands.AutoShardedBot):
                 table,
                 utterance.user_id,
                 str(cleaned or text),
-                held=self._topic_holds(table, cleaned or text, names_said),
+                held=holds,
             )
         labelling = False  # is this line waiting for its speaker label? (#1624)
         if text and self.transcripts is not None:
@@ -8474,6 +8479,7 @@ class DMBot(commands.AutoShardedBot):
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
             waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            given: set[str] = set()  # suggestions that already got a spelling in this run
             for word, user_id, near in spelled:
                 key = name_key(word)
                 if user_id not in agreed or key in known:
@@ -8484,8 +8490,9 @@ class DMBot(commands.AutoShardedBot):
                     (e for e in waiting if near and name_key(e.name) == name_key(near)), None
                 )
                 if target is not None and name_key(target.name) != key:
-                    if target.description.startswith(SPELLED_OUT):
+                    if target.id in given or target.description.startswith(SPELLED_OUT):
                         continue  # the first spelling stays; a second never silently wins
+                    given.add(target.id)
                     try:
                         await self.memory.set_note(
                             gid, cid, target.id, f"{SPELLED_OUT}: {word}", source="scan"

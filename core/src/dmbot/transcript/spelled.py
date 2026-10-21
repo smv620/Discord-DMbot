@@ -340,6 +340,11 @@ class SpellingWatcher:
         self._lines.append((now, user_id, text))
         return found
 
+    def forget(self, user_id: int) -> None:
+        """Someone stopped being recorded: their recent words go now, so they can neither be a
+        nearby word nor make another person's spelling count."""
+        self._lines = deque((x for x in self._lines if x[1] != user_id), maxlen=RECENT_LINES)
+
     def _near(self, now: float) -> list[str]:
         """Words from the last few lines that might be the name being spelled: capitalised ones
         first, then the other words, closest line first."""
