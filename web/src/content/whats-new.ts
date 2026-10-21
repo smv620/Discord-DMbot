@@ -230,6 +230,43 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-21",
+    title: "Your support questions now show the whole conversation",
+    what: "On your account page, press \"Read the conversation\" under one of your questions to read all of it: what you wrote, the answers from DMbot's helper (a program, not a person), the replies you sent by email and the team's replies, with the dates. On our website, only you and the team can read it.",
+    reason:
+      "Waits for the website's API change (#2193) to deploy, and for the support helper to be on (SUPPORT_AI_LIVE, #1431). When it is live, move this up with the helper's entry.",
+  },
+  {
+    date: "2026-10-21",
+    title: "Make the audio again for a recap you already posted",
+    what: "If you fix a name's spelling after a recap was posted, the recap page offers Make the audio again. The new audio is used on the recap page and its link. The message already in Discord keeps its old audio. Only the DM sees the button, and audio has to be part of your plan.",
+    reason: "In review (#2203); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "Recaps for the older sessions you bring in",
+    what: "When you bring in older sessions on the website, you can ask for a recap of each one. DMbot first looks for new names in each session, in date order, then asks you about them on your DM screen the usual way. A recap waits for your answers about its names, like a recap of a live session, and counts toward your monthly recaps. Only you, the DM, can ask for it, and it only uses the words of people who agreed to be recorded.",
+    reason: "In review (#2106); held until dev1 deploys it and the import page offers the choice (IMPORT_LIVE).",
+  },
+  {
+    date: "2026-10-21",
+    title: "A recap won't wait forever for your name answers",
+    what: "If a recap is waiting for your answers about names, DMbot reminds you once after a day, on your DM screen, with 📝 Check new names and Write the recap now. If nobody answers, after three days it writes the recap with the names as it heard them, and says so on your DM screen. Also: pressing Write a recap on a short session now waits for your name answers too.",
+    reason: "In review (#2174); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "Say a name your way, from its card",
+    what: "On a name's card in Discord, press 🔊 How to say it to type how the recap narrator should say that name. Leave it empty to have it said as written. It matches the field on the website's Names page, and it only shows when spoken recaps are on for your campaign.",
+    reason: "In review (#2171); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Link a server you added with a plain link",
+    what: "If you added DMbot to your server with a plain invite link, \"Link this server\" on the website now finds it and puts your name on it. DMbot also notes when it is taken out of a server.",
+    reason: "In review (#2163); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-20",
     title: "See what your plan is doing",
     what: "My Account now shows when your plan renews, ends or changes. If you cancelled but the paid time hasn't run out, Renew keeps your plan, with no charge before the renewal date. Change plan now opens straight on the plans to choose from.",
@@ -256,6 +293,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-20",
+    title: "A note when a spelling changed a posted recap",
+    what: "If a fixed spelling changed the text of a recap you already posted, its page on the website now says \"Spelling updated\". It reminds you that the message in Discord still shows the old spelling.",
+    reason: "Waits for the spelling change to reach recaps (#2170) and for dev1 to deploy it (#2178).",
+  },
+  {
+    date: "2026-10-20",
     title: "Your recap waits for your name answers",
     what: "If a session leaves name questions for you, DMbot waits to write the recap until you have answered them, so it uses the right names. Your DM screen says how many are left, with 📝 Check new names and Write the recap now if you would rather not wait. Nothing is written, and nothing costs anything, while it waits.",
     reason: "In review (#2169); held until dev1 deploys it.",
@@ -266,6 +309,13 @@ export const held: Held[] = [
     what: "On the website, a game master can load text transcripts (or paste a Google Doc link) of sessions DMbot didn't record, such as a Craig session, and have DMbot read them the way it reads a live session, asking you about any new names. You match each name in a file to a member of your server. DMbot keeps a player's lines only if they have already agreed to be recorded; your word that they agreed is not enough. Everyone else's lines are dropped before anything is saved. Imported sessions can be read by everyone in your server, like any transcript. You choose each session's date and order, and see the estimated cost before you start. Paid plans only.",
     reason:
       "Waits for the importer (#2105, #2106) and the Google Doc link support (#2143) to be merged and deployed, and for the page (#2107). When it is live, move this up and turn on IMPORT_LIVE in import-words.ts.",
+  },
+  {
+    date: "2026-10-20",
+    title: "Tell DMbot what to fix",
+    what: "On a recap's page, type what you'd like changed. DMbot sorts your note into points, you keep the ones you want, and it writes the recap again with them. That uses one Try again, you approve the new text again, and style notes you keep are saved for this campaign's later recaps too (the newest 10 are kept). To remove them, go to ⚙️ Settings → 📜 Recaps → ✍️ Recap style.",
+    reason:
+      "Waits for the website's new routes (#2113) to deploy and for dev1 to see it work. When it is live, move this up and turn on RECAP_FIX_LIVE in recap-words.ts (it needs RECAPS_LIVE too).",
   },
   {
     date: "2026-10-20",

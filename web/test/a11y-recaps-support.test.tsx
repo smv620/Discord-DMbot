@@ -121,8 +121,8 @@ describe("My Account's Your questions", () => {
     // One list item reads as a whole: the subject, then where it stands, then the last reply.
     const items = screen.getAllByRole("listitem");
     expect(items).toHaveLength(5);
-    expect(items[1]!.textContent).toMatch(/^Helped.*Answered by DMbot's AI helper.*Last reply: Try the Billing page\.$/);
-    expect(items[3]!.textContent).toMatch(/^With the team.*· With the team.*Last reply: Not sure\.$/);
+    expect(items[1]!.textContent).toMatch(/^Helped.*Answered by DMbot's AI helper.*Last reply: Try the Billing page\.Read the conversation$/);
+    expect(items[3]!.textContent).toMatch(/^With the team.*· With the team.*Last reply: Not sure\.Read the conversation$/);
   });
 });
 

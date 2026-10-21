@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+import psycopg
+
 from dmbot.db import Database
 from dmbot.entitlements import Entitlement
 from dmbot.web.feedback import clean_text
@@ -33,9 +35,10 @@ log = logging.getLogger(__name__)
 
 MAX_SUBJECT = 120
 MAX_MESSAGE = 4000
-# How many tickets the admin page lists at once, newest first. Kept short because the page looks
-# up each person's name with one query per person.
-LIST_LIMIT = 100
+PAGE_SIZE = 20  # tickets on one page of the admin list (#2211)
+# How many times `add` tries when another send of the same person took its second (#2214). Each
+# retry finds the next free one, so this is the number of sends that could all land at once.
+ADD_TRIES = 8
 
 # "new" is a ticket waiting for an answer (the helper's, or the team's after an escalation
 # reply from the person goes back to it); "escalated" is waiting for a person, and the helper
@@ -109,12 +112,31 @@ async def recent(db: Database, user_id: int, *, now: int) -> tuple[int, int]:
 async def add(db: Database, user_id: int, plan: str, ticket: Ticket, *, now: int) -> int:
     """Keep a ticket for this signed-in person; returns its number. The table's policy lets them
     add a row for their own account and nothing else, which is why the person is set
-    (`db.user`); the number comes back through the same person's `read_own` right."""
+    (`db.user`); the number comes back through the same person's `read_own` right.
+
+    A person's tickets never share a sent time: the account page opens one by that time (#2193).
+    So a new ticket is stamped the next free second, and a unique index (#2214) holds two sends in
+    the same instant apart: the one that commits second finds the time taken and tries again,
+    which stamps it one second later."""
+    # (A UniqueViolation here can only be the (user_id, created_at) index: the other unique
+    # constraint on the table is the identity column, which no insert names.)
+    for attempt in range(ADD_TRIES):
+        try:
+            return await _insert_ticket(db, user_id, plan, ticket, now)
+        except psycopg.errors.UniqueViolation:
+            if attempt == ADD_TRIES - 1:
+                raise
+    raise AssertionError("ADD_TRIES is at least one")
+
+
+async def _insert_ticket(db: Database, user_id: int, plan: str, ticket: Ticket, now: int) -> int:
+    """One try of `add`: the next free second for this person."""
     async with db.user(user_id) as conn:
         cur = await conn.execute(
             "INSERT INTO support_tickets (created_at, user_id, plan, subject, message)"
-            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (now, user_id, plan, ticket.subject, ticket.message),
+            " VALUES (GREATEST(%s, COALESCE((SELECT MAX(created_at) FROM support_tickets"
+            " WHERE user_id = %s), 0) + 1), %s, %s, %s, %s) RETURNING id",
+            (now, user_id, user_id, plan, ticket.subject, ticket.message),
         )
         row = await cur.fetchone()
     assert row is not None
@@ -142,28 +164,49 @@ class Row:
     email: str | None
 
 
-async def newest(
-    db: Database, *, status: Status | None = None, limit: int = LIST_LIMIT
-) -> list[Row]:
-    """The tickets, newest first, for the admin page; only those with this status when one is
-    given (#1375). `status` is one of STATUSES (the route checks it); it goes in as a parameter."""
-    where, args = ("", (limit,)) if status is None else (" WHERE status = %s", (status, limit))
+async def page(
+    db: Database, *, status: Status | None, number: int, size: int = PAGE_SIZE
+) -> tuple[list[Row], int]:
+    """Page `number` (from 1) of the tickets with an optional status filter, and
+    the number of pages in that filtered list (at least one). Newest first, except "escalated":
+    that list is read longest-waiting first (since it was handed to a person, #1485), so the page
+    that matters is page 1. The count and the rows come from one statement, so they share a
+    snapshot; the count is joined to the page, so it comes back even for a page past the end
+    (#2211)."""
+    where = "" if status is None else " WHERE status = %s"
+    # The status goes in twice when there is one: for the count and for the page.
+    filter_args: tuple[object, ...] = () if status is None else (status,)
+    params = (*filter_args, *filter_args, size, (number - 1) * size)
+    if status == "escalated":
+        order = "COALESCE(handed_over_at, created_at), id"
+        outer = "COALESCE(t.handed_over_at, t.created_at) NULLS LAST, t.id NULLS LAST"
+    else:
+        order = "created_at DESC, id DESC"
+        outer = "t.created_at DESC NULLS LAST, t.id DESC NULLS LAST"
     async with db.support_admin() as conn:
         cur = await conn.execute(
+            "SELECT c.n, t.id, t.created_at, t.user_id, t.plan, t.subject, t.message, t.source,"
+            " t.status, t.reason, t.handed_over_at, t.email"
+            f" FROM (SELECT count(*) AS n FROM support_tickets{where}) c"
+            " LEFT JOIN LATERAL (SELECT id, created_at, user_id, plan, subject,"
             # The words come through a door function: the website's role has no right to the column.
-            # One call per row (at most LIST_LIMIT): fine for an admin page read now and then.
-            "SELECT id, created_at, user_id, plan, subject,"
             " COALESCE(dmbot_support_message(id), '') AS message, source, status,"
             " escalated_reason AS reason, handed_over_at, dmbot_support_email(user_id) AS email"
-            f" FROM support_tickets{where} ORDER BY created_at DESC, id DESC LIMIT %s",
-            args,
+            f" FROM support_tickets{where} ORDER BY {order}"
+            " LIMIT %s OFFSET %s) t ON true"
+            f" ORDER BY {outer}",
+            params,
         )
-        return [Row(**r) for r in await cur.fetchall()]
+        found = await cur.fetchall()
+    pages = max(1, -(-(int(found[0]["n"]) if found else 0) // size))
+    return [
+        Row(**{k: v for k, v in r.items() if k != "n"}) for r in found if r["id"] is not None
+    ], pages
 
 
 async def counts(db: Database) -> dict[Status, int]:
     """How many tickets have each status, for the filter buttons (#1375). Every status is there,
-    with 0 for none, and the counts cover all tickets, not just the newest LIST_LIMIT."""
+    with 0 for none, and the counts cover all tickets, not just the page shown."""
     async with db.support_admin() as conn:
         cur = await conn.execute(
             "SELECT status, count(*) AS n FROM support_tickets GROUP BY status"
@@ -367,6 +410,38 @@ async def mine(db: Database, user_id: int) -> list[Mine]:
         )
         for r in found
     ]
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One part of a person's own conversation: who wrote it (as the page labels it), the words
+    and when. Only ever read for the signed-in person's own ticket; never logged."""
+
+    who: Literal["you", "helper", "team"]
+    text: str
+    created_at: int
+
+
+_TURN_WHO: dict[str, Literal["you", "helper", "team"]] = {
+    "customer": "you",
+    "ai": "helper",
+    "person": "team",
+}
+
+
+async def my_thread(db: Database, user_id: int, sent: int) -> list[Turn] | None:
+    """The whole conversation of the signed-in person's own ticket sent at `sent`, oldest first
+    (#2193), or None when they have no such ticket. Another account's ticket and a missing one
+    look the same. The words come through a door that checks the owner itself, so a wrong line
+    here still cannot show anyone else's."""
+    async with db.user(user_id) as conn:
+        cur = await conn.execute(
+            "SELECT who, text, created_at FROM dmbot_support_mine_thread(%s)", (sent,)
+        )
+        found = await cur.fetchall()
+    if not found:
+        return None
+    return [Turn(_TURN_WHO[r["who"]], r["text"], r["created_at"]) for r in found]
 
 
 async def set_status(db: Database, ticket_id: int, status: Status) -> bool:

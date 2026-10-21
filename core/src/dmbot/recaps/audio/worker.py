@@ -284,7 +284,7 @@ class AudioWorker:
             if (
                 now_job is None
                 or now_job.state != "ready"
-                or now_job.status not in ("draft", "posting")
+                or now_job.status not in ("draft", "posting", "posted")
                 or (now_job.title, now_job.summary) != (job.title, job.summary)
             ):
                 raise Stop(EDITED, permanent=False)  # the recap went, or the DM changed the text

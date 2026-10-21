@@ -21,7 +21,7 @@ export const importSteps: { text: string }[] = [
     text: `Importing is for game masters on paid plans. To bring in sessions DMbot didn't record, such as a written-out Craig recording (Craig is a Discord recording bot), open your campaign's session transcripts on the website and press Import sessions. Pick up to ${IMPORT_MAX_FILES} text files, each up to ${IMPORT_MAX_MB} MB, and press Preview. You can also paste the link of a Google Doc (Share, then General access, then Anyone with the link, then Viewer); DMbot reads it without signing in to your Google account, only when you press Preview, Check or Import; files and links count together, up to ${IMPORT_MAX_FILES} in all. For each name in a file, pick the server member it is, or Leave out. DMbot suggests a person for a name it has seen in an earlier import or that matches a member's name; you decide. DMbot keeps a player's lines only if they have agreed to be recorded in Discord, the same as for a live session. Your word that everyone agreed is not enough. Everyone else's lines (a person you left out, a person who has not agreed, and bots) are dropped before anything is saved and are never stored, and the page shows how many lines each choice keeps or drops. Then set each file's date and order, check how much work it will take, and press Import. Imported sessions can be read by everyone in your server, like any transcript.`,
   },
   {
-    text: "After an import, DMbot goes through the imported sessions in date order, as it does after a live session, and asks you about any new names. Nothing becomes a fact without your say. The files themselves are not kept after the import.",
+    text: "After an import, DMbot goes through the imported sessions in date order, as it does after a live session, and asks you about any new names. Nothing becomes a fact without your say. Recaps are optional. For each session you tick under Recaps, DMbot writes one after you've answered the questions about names, like after a live session, and sends you one message in Discord when they start. The files themselves are not kept after the import.",
   },
 ];
 
@@ -120,6 +120,12 @@ export const importPage = {
   moveDown: (name: string): string => `Move ${name} down`,
   position: (i: number, n: number): string => `${i} of ${n}`,
   confirmHeading: "Ready?",
+  // The choice to have DMbot write a recap of an imported session (#2221; #2106 step 2).
+  recapsHeading: "Recaps (optional)",
+  recapsAll: "Write recaps for all",
+  recapsOne: (name: string): string => `Write a recap of ${name}`,
+  recapsNote:
+    "Nothing is written for a session you leave unticked. Recaps wait until you've answered DMbot's questions about names, like after a live session. You'll get one message in Discord when they start. Recaps are not in the estimate above.",
   checkFirst: `Press "Check what will be kept" first, so you see what is dropped before you import.`,
   needDates: "Every session needs a date before you can import.",
   checkAgain: "Check again",
@@ -140,6 +146,29 @@ export const importPage = {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
     partly_labelled: "Some lines couldn't be sorted, so they count as game talk.",
   } as Record<string, string>,
+  // Where each session has got to (#2230). Simple words: what DMbot is doing, or what it needs.
+  stage: {
+    cleaning: "Tidying the transcript",
+    checking_names: "Looking for names",
+    finding_names: "Looking for names",
+    starting_recap: "Writing the recap",
+    writing_recap: "Writing the recap",
+    recap_ready: "Recap ready",
+    recap_failed: "The recap couldn't be written. You can try again from the recaps.",
+    recap_not_written: "Imported (no recap)",
+    done: "Imported",
+    failed: "Couldn't import this one",
+  } as Record<string, string>,
+  waitingForNames: (n: number): string =>
+    n > 0
+      ? `Waiting for your answers about ${n} ${n === 1 ? "name" : "names"}`
+      : "Waiting for your answers about names",
+  // The file's name goes in the link's label, so ten rows are not ten identical links to a screen reader.
+  recapLink: "Open the recap",
+  namesLink: "Answer the questions about names",
+  linkFor: (link: string, name: string): string => `${link} for ${name}`,
+  namesUnchecked:
+    "DMbot couldn't check every imported session for new names, so some may be missing. Add any with ➕ Add a name on the names panel.",
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
   allDone: "All done. The sessions are in your transcripts.",

@@ -4124,7 +4124,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   higher, `pcm_24000`), and `RECAP_AUDIO_LIVE` on the site. Narration comes with Guild and Pro
   (`RECAP_AUDIO_PLANS`); on the other paid plans it is an add-on priced from one constant
   (`RECAP_AUDIO_PRICE_CENTS`, web `recap-audio.ts`; the price is the owner's, #1385). A DM may
-  ask for the audio again once every 10 minutes (#1418).
+  ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
+  again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
+  spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
+  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
+  once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
+  gets that audio afterwards, for its page. Recaps left in that state before this change (when they
+  never got it) are marked failed by migration 0149, so nothing old is narrated without a new press.
 - **Monthly allowance** (Supervisor decision 2026-10-16, #1428, #1437, #1445): each campaign gets
   **10 recaps a month** and **8 narrated ones** (`DMBOT_RECAPS_PER_MONTH`,
   `DMBOT_RECAP_AUDIO_PER_MONTH`; the site mirrors them in `recap-words.ts`, change both
@@ -4273,7 +4280,7 @@ months.
   ask for a person (every helper answer ends "Want to talk to a person instead? Reply with just the word PERSON
   and someone on the DMbot team will write back to you."; the whole word *person* or *human*, any case, hands over as
   `asked` with no AI call, #1518), the 5-answer limit is reached, the account has no address, or the helper
-  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (jarvis@getdmbot.com) to
+  was down for a day. The alert goes from `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md) to
   `SUPPORT_TEAM_EMAIL` (support@getdmbot.com) with the reason; the admin page shows the thread,
   "Needs the team", the reason (#1459) and a reply box; the team's reply is emailed from info@
   and the ticket becomes answered.
