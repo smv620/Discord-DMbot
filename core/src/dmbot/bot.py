@@ -93,6 +93,7 @@ from dmbot.dm_screen import (
     dm_bot_buttons,
     ensure_dm_screen,
     house_sync,
+    import_button,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -136,6 +137,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
     FixUndoButton,
@@ -388,6 +390,7 @@ from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
 from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
 from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
+from dmbot.ui.import_command import dmbot_import  # noqa: F401 (registers it)
 from dmbot.ui.line_fix import (
     MORE_WAITING,
     WAITING_SHOWN,
@@ -1452,6 +1455,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(set_update.SetUpdateButton)  # shared rules changed (#1191)
         # how long transcripts are kept (#1533); named one by one so the registration test sees them
         self.add_dynamic_items(TranscriptsButton, KeepChoiceButton, KeepYesButton, KeepNoButton)
+        self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
+        import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
