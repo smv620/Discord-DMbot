@@ -441,6 +441,27 @@ class TheSuggestions(WithImports):
         self.assertIsNone(await self.played(512, secret_name=True))
         self.assertIsNone(await self.played(513, audience_limited=True))
 
+    async def test_a_nickname_match_never_shows_a_secret_own_name(self) -> None:
+        # "Lord Vex" is the person's name and it is secret; "The Stranger" is a public nickname.
+        # The player agreed but has no directory row, so only the campaign's name could be shown.
+        player = ALICE.id + 540
+        await self.character(540, "Lord Vex", played_by=player, type_="person", secret_name=True)
+        await ConsentStore(self.db).grant(THURSDAY.id, player)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                " kind, secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, 'The Stranger', 'the stranger', 'nickname', false,"
+                " 'confirmed', '{}', 'dm', 1)",
+                (THURSDAY.id, self.one.id, f"{541:032x}", f"{540:032x}"),
+            )
+        one = await self.guess("The Stranger")
+        self.assertEqual(
+            (one["suggested"]["userId"], one["suggested"]["why"], one["suggested"]["name"]),
+            (str(player), "people", ""),
+        )
+        self.assertIsNone((await self.guess("Lord Vex"))["suggested"])
+
     async def test_a_campaign_person_whose_name_is_secret_or_limited_is_never_matched_or_shown(
         self,
     ) -> None:
