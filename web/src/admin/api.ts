@@ -63,7 +63,18 @@ export interface FreePerson {
 export interface GrantsView {
   free: FreePerson[];
   grants: AdminGrant[];
+  /** Page 1 of Recent changes, newest first (#2199). */
   log: AdminLogEntry[];
+  /** How many pages the log has. Missing from an API older than #2199: then there is only
+   * the one list, and no page bar. */
+  logPages?: number;
+}
+
+/** One page of Recent changes (#2199). */
+export interface LogPage {
+  log: AdminLogEntry[];
+  page: number;
+  pages: number;
 }
 
 export interface GrantRequest {
@@ -153,6 +164,8 @@ export interface AdminApi {
   signOut(csrf: string): Promise<void>;
   /** Free access (#773). */
   grants(): Promise<GrantsView>;
+  /** One page of Recent changes, from 1; a page that isn't there is a "stale" refusal. */
+  grantsLog?(page: number): Promise<LogPage>;
   give(
     csrf: string,
     request: GrantRequest,
@@ -175,6 +188,7 @@ const grantProblems: Record<string, AdminProblem> = {
   bad_note: "bad-note",
   already_free: "already-free",
   no_grant: "no-grant",
+  bad_page: "stale", // a page that was there is gone: the page goes back to the first
   no_ticket: "no-ticket",
   bad_text: "bad-reply",
   reply_off: "reply-off",
@@ -257,6 +271,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       return (await response.json()) as GrantsView;
     },
+    async grantsLog(page) {
+      const response = await call(`/admin/grants/log?page=${encodeURIComponent(String(page))}`);
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return (await response.json()) as LogPage;
+    },
     async give(csrf, request) {
       const response = await call("/admin/grants", {
         method: "POST",
@@ -329,6 +348,9 @@ function readWeek(raw: TicketWeek | undefined): TicketWeek | undefined {
   return { questions: raw.questions, helper: raw.helper, team: raw.team, waiting: raw.waiting, reasons };
 }
 
+/** Entries on a page of Recent changes in the preview, as on the real API (#2199). */
+const MOCK_PAGE = 20;
+
 /** The pretend API for preview builds (PUBLIC_API_BASE=mock): any password works. */
 export function pretendAdminApi(): AdminApi {
   let me: AdminMe | null = null;
@@ -396,7 +418,21 @@ export function pretendAdminApi(): AdminApi {
       if (!ticket) throw new AdminApiError("no-ticket");
       ticket.status = status;
     },
-    grants: async () => structuredClone(view),
+    grants: async () => {
+      const first = structuredClone(view);
+      first.log = first.log.slice(0, MOCK_PAGE);
+      first.logPages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      return first;
+    },
+    grantsLog: async (page) => {
+      const pages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      if (!Number.isInteger(page) || page < 1 || page > pages) throw new AdminApiError("stale");
+      return {
+        log: structuredClone(view.log.slice((page - 1) * MOCK_PAGE, page * MOCK_PAGE)),
+        page,
+        pages,
+      };
+    },
     give: async (_csrf, request) => {
       if (!/^[0-9]{17,20}$/.test(request.discordId)) throw new AdminApiError("bad-id");
       const action = view.grants.some((g) => g.discordId === request.discordId)

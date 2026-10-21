@@ -136,19 +136,27 @@ async def grants(db: Database) -> list[GrantRow]:
     ]
 
 
-async def log_entries(db: Database, limit: int = 200) -> list[LogEntry]:
-    """The newest changes first."""
+async def log_entries(db: Database, limit: int = 200, offset: int = 0) -> list[LogEntry]:
+    """The newest changes first; `offset` skips that many of the newest (a page of the log)."""
     async with db.grant_writer() as conn:
         cur = await conn.execute(
             "SELECT admin_email, action, discord_user_id, at FROM access_log"
-            " ORDER BY id DESC LIMIT %s",
-            (limit,),
+            " ORDER BY id DESC LIMIT %s OFFSET %s",
+            (limit, offset),
         )
         rows = await cur.fetchall()
     return [
         LogEntry(r["admin_email"], cast(Action, r["action"]), int(r["discord_user_id"]), r["at"])
         for r in rows
     ]
+
+
+async def log_count(db: Database) -> int:
+    """How many changes the log holds, for the page count under Recent changes."""
+    async with db.grant_writer() as conn:
+        cur = await conn.execute("SELECT count(*) AS n FROM access_log")
+        row = await cur.fetchone()
+    return int(row["n"]) if row else 0
 
 
 async def _lock(conn: Conn, discord_user_id: int) -> None:

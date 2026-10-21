@@ -100,6 +100,40 @@ import Base from "../layouts/Base.astro";
     gap: var(--space-3);
   }
 
+  /* Recent changes (#2199): a window of fixed height, so the box never grows or shrinks as the
+     pages change; a long page scrolls inside it. */
+  .admin :global(.history-window) {
+    height: 24rem;
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+  }
+
+  .admin :global(.page-bar) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin :global(.page-bar .button) {
+    align-self: auto;
+    min-width: var(--tap);
+    min-height: var(--tap);
+  }
+
+  .admin :global(.page-jump) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .admin :global(.page-jump input[type="text"]) {
+    width: 5rem;
+    text-align: center;
+  }
+
   .admin :global(.grants li),
   .admin :global(.tickets li) {
     display: flex;
