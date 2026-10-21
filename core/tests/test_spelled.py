@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
-from dmbot.bot import SPELLED_MAX, DMBot, Table
+from dmbot.bot import SPELLED_MAX, DMBot
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.scene import HintParts, SceneTracker, prepare, scene_hints
 from dmbot.transcript.spelled import (
@@ -254,6 +254,3 @@ class TheHint(unittest.TestCase):
         names = lookup()
         hints = scene_hints(names, prepare(names, NOW), SceneTracker(), 0.0, spelled=["Brannoch"])
         self.assertLess(hints.index("Cerric"), hints.index("Brannoch"))
-
-
-assert Table  # (imported for the type of the real table the fake stands in for)
