@@ -48,7 +48,7 @@ COLUMNS = (
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
-    " approved_by, approved_at, approved_hash, audio_choice"
+    " approved_by, approved_at, approved_hash, audio_choice, split"
 )
 
 
@@ -111,6 +111,7 @@ class Job:
     approved_at: int = 0
     approved_hash: str = ""  # the fingerprint of the text they approved
     audio_choice: str = ""  # voice, music, both or text, once approved
+    split: Any = None  # the opening's parts (dmbot.recaps.split.from_json reads it); None: not yet
 
     @property
     def finished(self) -> bool:
@@ -166,6 +167,7 @@ def _job(r: dict[str, Any]) -> Job:
         int(r["approved_at"]),
         r["approved_hash"],
         r["audio_choice"],
+        r["split"],
     )
 
 
@@ -184,6 +186,7 @@ _WRITABLE = frozenset(
         "last_error",
         "problems",
         "beats",
+        "split",
         "title",
         "summary",
         "original",
@@ -331,6 +334,8 @@ class RecapStore:
                 values.append(list(value))
             elif name in ("beats", "grade"):
                 values.append(Jsonb(value))
+            elif name == "split":  # None is SQL NULL ("not split yet"), not a JSON null
+                values.append(None if value is None else Jsonb(value))
             else:
                 values.append(value)
         async with self._db.guild(guild_id) as conn:
@@ -628,6 +633,22 @@ class RecapStore:
                 f"SELECT {COLUMNS} FROM recap_jobs"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at < %s"
                 " AND status = 'posted' ORDER BY session_at DESC LIMIT 1",
+                (guild_id, campaign_id, before),
+            )
+            row = await cur.fetchone()
+        return None if row is None else _job(row)
+
+    async def earlier_job(self, guild_id: int, campaign_id: str, before: int) -> Job | None:
+        """The latest earlier recap job of this campaign with a finished, checked beat sheet,
+        whether or not it was posted: what the next session is compared with to find a retelling
+        (#2253). Never another campaign's: the query names the campaign."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM recap_jobs"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at < %s"
+                " AND status <> 'dropped'"
+                " AND state IN ('checked', 'prose', 'housekeeping', 'ready')"
+                " ORDER BY session_at DESC LIMIT 1",
                 (guild_id, campaign_id, before),
             )
             row = await cur.fetchone()

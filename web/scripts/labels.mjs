@@ -95,7 +95,9 @@ export function labelProblems(items, labels, allowed = []) {
  * checks the text is still there, so a renamed button can't hide behind this list.
  */
 export const hiddenBotLabels = [
-  { label: "My buttons", file: "dm_screen/dm_bot_panel.py" },
+  { label: "DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
+  { label: "Transcript retention", file: "dm_screen/transcript_keep.py" },
+  { label: "Transcripts", file: "dm_screen/dm_bot_panel.py" },
   { label: "Species", file: "ui/homebrew.py" },
   { label: "Start a timer", file: "dm_screen/clock.py" },
   { label: "Rejoin the party", file: "dm_screen/clock.py" },

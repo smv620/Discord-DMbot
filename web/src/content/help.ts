@@ -191,9 +191,9 @@ export const settingsOnDmScreenSteps: Step[] = [
 
 export const dmBotChannelSteps: Step[] = [
   {
-    text: "Each campaign has a channel called dmb-dm-bot. Everyone can read it, and only DMbot posts there. It holds one message with two buttons. Press 👤 My buttons to see the buttons for your part at the table. Only you see them. Press ❓ Help to read about DMbot.",
+    text: "Each campaign has a channel called dmb-dm-bot. Everyone can read it, and only DMbot posts there. It holds one message with two buttons. Press 👤 DMbot Main Menu to see the buttons for your part at the table. Only you see them. Press ❓ Help to read about DMbot.",
     names: [
-      { name: "👤 My buttons", file: "dm_screen/dm_bot_panel.py" },
+      { name: "👤 DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
       { name: "❓ Help", file: "dm_screen/dm_bot_panel.py" },
     ],
   },
@@ -213,7 +213,7 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 My buttons in the DMbot channel, then ⚙️ Settings.",
+    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Settings. Who can see the DM screen is under 👁️.",
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
@@ -808,8 +808,8 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
-    names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
+    names: [{ name: "Transcript retention", file: "dm_screen/transcript_keep.py" }],
   },
   {
     text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file (see keeping homebrew in a text file). When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
@@ -880,7 +880,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
+    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗂️ Campaign management, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
     names: [
       { name: "Delete this campaign", file: "dm_screen/delete_campaign.py" },
       { name: "Back up first", file: "dm_screen/delete_campaign.py" },
@@ -888,7 +888,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To see or change who your game masters are, press ⚙️ Settings, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    text: "To see or change who your game masters are, press 🗂️ Campaign management (it is in ⚙️ Settings), then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (🤝 Hand over, under 🗂️ Campaign management in ⚙️ Settings). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
     names: [
       { name: "Game masters", file: "dm_screen/game_masters.py" },
       { name: "Add a game master", file: "dm_screen/game_masters.py" },
@@ -896,7 +896,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
+    text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
 ];
@@ -1048,11 +1048,11 @@ export const accountSteps: Step[] = [
     text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
   },
   {
-    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    text: "Moving to a new Discord account? Do this for each campaign you own: press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
+    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings → 🗂️ Campaign management. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
     names: [
       { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },

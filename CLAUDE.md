@@ -47,6 +47,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **The Cloudflare Pages check is a preview, not CI** (Supervisor, 2026-10-21, after it sat "in
+  progress" for over 20 minutes on #2267 and #2269): when every CI job (`core`, `ears`, `web`,
+  `scripts`, `docker images`) is green on the exact head and Cloudflare Pages has been in progress for
+  more than 20 minutes without failing, RepoManager merges without it. A Cloudflare Pages failure
+  still blocks.
   **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
   `development` into an approved PR's branch is clean and the PR's own change is unchanged
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
@@ -58,7 +63,12 @@ CI runs all of the above on every pull request. Never merge red CI.
   where its permissions allow a push to the PR's branch; where they refuse, the author merges
   `development` and keeps both entries. Either way the approval carries over as a merge-only
   refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
-  no new line). A conflict in any other file goes to the author and needs a fresh "approved".
+  no new line). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
+  `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
+  whole in the file's order, and the approval carries over the same way. An edit to an existing entry
+  on either side is not a union. A conflict in any other file goes to the author and needs a fresh
+  "approved".
   **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
   "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
   no new design review; Supervisor records the approval again as a review on the new head so the

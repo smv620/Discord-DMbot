@@ -1,6 +1,6 @@
 """Reads and checks the golden set for the story-memory extractor (#1268).
 
-The set is invented table talk in core/tests/golden/story/*.txt: no real person, no live
+The set is invented table talk in dmbot/devtools/golden/story/*.txt: no real person, no live
 transcript, no sourcebook text. Every line says who spoke (`dm` or `player`) and what kind of
 line it is, and under it what a person would pull from it. The format is deliberately plain so
 a developer can add a scene by hand; `load_golden` refuses anything malformed, and a test runs
@@ -40,7 +40,7 @@ CONDITIONS = (
 SPEAKERS = {"dm": "DM", "player": "Player"}
 KINDS = ("statement", "question", "plan", "ooc")
 MIN_LINES, MAX_LINES = 5, 15  # a scene is a minute or so of talk
-GOLDEN = Path(__file__).resolve().parents[4] / "tests" / "golden" / "story"
+GOLDEN = Path(__file__).resolve().parents[1] / "golden" / "story"
 
 _SCENE = re.compile(r"^##\s+Scene\s+(\d+):\s*(.+)$")
 _LINE = re.compile(r"^(\d+)\.\s+(dm|player)\s+(statement|question|plan|ooc):\s*(.+)$")
@@ -159,6 +159,11 @@ def _check_scene(scenes: list[Scene], name: str) -> None:
 def load_golden(directory: Path = GOLDEN) -> list[Scene]:
     """Every scene of every *.txt file in the folder, in file order. Scene numbers must run 1,
     2, 3… without a gap or repeat across the files."""
+    if not directory.is_dir():
+        raise GoldenError(
+            f"The golden data folder isn't there: {directory}. It is part of DMbot's package "
+            "(dmbot/devtools/golden); install DMbot again."
+        )
     paths = sorted(directory.glob("*.txt"))
     if not paths:
         raise GoldenError(f"no *.txt files in {directory}")

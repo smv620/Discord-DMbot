@@ -1823,11 +1823,19 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def set_note(
-        self, guild_id: int, campaign_id: str, entity_id: str, note: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        note: str,
+        *,
+        source: str,
+        limit: int = 200,
     ) -> Written[Entity]:
-        """The note shown with a suggestion (how it was heard, or spelled out at the table). Only
-        a suggestion still waiting for the DM has one that can change."""
-        note = " ".join(note.split())[:200]
+        """The note shown with a suggestion (how it was heard, or spelled out at the table, or
+        what the DM wrote about it on the recap page: `limit` letters). Only a suggestion still
+        waiting for the DM has one that can change."""
+        note = " ".join(note.split())[:limit]
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if current["status"] != PROPOSED:
@@ -2751,6 +2759,50 @@ class MemoryStore:
             await w.delete(RELATIONS, relation_id)  # _sync_plays makes the DM's own link
             await _sync_plays(w, link["object_id"])
             return Written(None, w.batch)
+
+    async def apply_import_plays(
+        self, guild_id: int, campaign_id: str, character_id: str, user_id: int
+    ) -> Written[bool]:
+        """The DM's "plays which character" choice from the import page (#2135), made a link when
+        the bot gets to it. The DM may have changed things since, so it is judged again here,
+        in one write: the character must still be a confirmed character that nobody plays, that
+        everyone may know, whose own name is a confirmed, non-secret one (the transcript-export
+        rule). Anything else leaves it alone and returns False. It sets the role and the player
+        only: names waiting for the DM stay waiting."""
+        if not 0 < user_id <= INT64_MAX:
+            raise ValueError("Bad Discord user ID")
+        async with self._write(guild_id, campaign_id, DM) as w:
+            rows = await w.select(ENTITIES, " AND id = %s", [character_id])
+            if not rows:
+                return Written(False, w.batch)
+            row = rows[0]
+            if (
+                row["type"] != "character"
+                or row["status"] != CONFIRMED
+                or row["played_by"] is not None
+                or row["audience_limited"]
+            ):
+                return Written(False, w.batch)
+            named = sorted(
+                await w.select(
+                    ALIASES,
+                    " AND entity_id = %s AND text = %s AND status <> 'rejected'",
+                    [character_id, row["name"]],
+                ),
+                key=lambda a: str(a["id"]),
+            )
+            own = named[0]["key"] if named else None
+            if not any(
+                a["status"] == CONFIRMED and not a["secret"] and a["key"] == own for a in named
+            ):
+                return Written(False, w.batch)
+            await w.update(
+                ENTITIES,
+                character_id,
+                {"role": PLAYER_CHARACTER, "played_by": user_id, "needs_look": False},
+            )
+            await _sync_plays(w, character_id)
+            return Written(True, w.batch)
 
     async def forget_learned(self, guild_id: int, user_id: int) -> int:
         """Stop recording me (#1188): in every campaign of the server, remove the names

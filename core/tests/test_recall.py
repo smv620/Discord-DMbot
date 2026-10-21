@@ -290,6 +290,17 @@ class Recalling(MemoryTest):
         self.assertEqual((await self.recall(PLAYERS, guess)).seeds, ())
         self.assertEqual((await self.recall(DM_SCREEN, "Stray Wolf")).seeds, (guess,))
 
+    async def test_confirmed_only_leaves_a_proposed_entry_out_of_the_dm_screen_view(self) -> None:
+        # (#2254) A recap rests on what the DM confirmed; the DM screen's usual view shows more.
+        guess = await self.add("Stray Wolf", type="character", role="npc", status="proposed")
+        self.assertEqual((await self.recall(DM_SCREEN, "Stray Wolf")).seeds, (guess,))
+        only = await self.recall(DM_SCREEN, "Stray Wolf", confirmed_only=True)
+        self.assertEqual((only.items, only.seeds), ((), ()))
+        self.assertEqual((await self.recall(DM_SCREEN, guess, confirmed_only=True)).seeds, ())
+        # still the DM screen's view otherwise: a secret is there
+        mira = await self.recall(DM_SCREEN, "Mira", confirmed_only=True)
+        self.assertEqual(mira.seeds, (self.mira,))
+
     async def test_a_fact_from_the_story_plan_never_reaches_players(self) -> None:
         with mock.patch.object(recall, "PLAN_SOURCES", frozenset({"dm"})):
             players = await self.recall(PLAYERS, "Mira")
