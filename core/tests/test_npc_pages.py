@@ -6,6 +6,7 @@ deleted. Invented names throughout."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,9 +14,11 @@ import httpx
 
 from dmbot.dm_screen import npc_pages as npg
 from dmbot.dm_screen import npcs_channel as nc
+from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.recall import RosterEntry
 from dmbot.memory.store import MemoryStore
+from dmbot.rules.house import HouseRulesSection
 from dmbot.web import npc_pages as web
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -29,6 +32,19 @@ from tests.test_web_api import API, QUILLON, SITE, THURSDAY, FakeDiscord, settin
 GUILD = THURSDAY.id
 CAROL = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")
 DAVE = SimpleNamespace(id=4004, name="Dave", email="dave@example.com")  # in another server only
+
+
+def sections_reading_the_note_tables() -> list[str]:
+    """Backup-section modules that mention the private note tables (there must be none)."""
+    root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
+    allowed = {"schema.py", "npc_pages.py", "npcs_channel.py"}
+    found = []
+    for path in root.rglob("*.py"):
+        text = path.read_text()
+        mentions = "npc_notes" in text or "npc_roster" in text
+        if "def dump" in text and path.name not in allowed and mentions:
+            found.append(path.name)
+    return found
 
 
 class WithNpcs(Base):
@@ -214,11 +230,23 @@ class TheNotes(WithNpcs):
         self.assertEqual(await self.notes(self.carol), [])
         self.assertEqual(len(await self.notes(self.alice)), 1)  # nobody else's were touched
 
+    async def export_with_every_section(self) -> dict[str, Any]:
+        """A backup made with the sections the bot registers for memory and rules.
+
+        Without them the export holds no memory at all, so "no note in it" proves nothing.
+        """
+        self.campaigns.register_section(MemorySection())
+        self.campaigns.register_section(HouseRulesSection())
+        return await self.campaigns.export(GUILD, self.one.id)
+
+    async def test_no_backup_section_reads_the_note_tables(self) -> None:
+        self.assertEqual(sections_reading_the_note_tables(), [])
+
     async def test_a_note_goes_with_the_campaign_and_is_not_in_a_backup(self) -> None:
         aldric = await self.npc()
         await self.listed(aldric)
         await web.save_note(self.web, self.carol, f"{GUILD}.{self.one.id}", aldric.id, "private")
-        exported = repr(await self.campaigns.export(GUILD, self.one.id))
+        exported = repr(await self.export_with_every_section())
         self.assertNotIn("private", exported)
         self.assertNotIn("npc_notes", exported)
         self.assertNotIn("npc_roster", exported)

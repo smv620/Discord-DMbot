@@ -389,10 +389,12 @@ async def sync_roster(
             continue
         try:
             view = npc_pages.open_view(links.get(key, ""))
-            extra = {"view": view} if view is not None else {}
-            sent = await channel.send(
-                wanted_text[key], allowed_mentions=NO_PINGS, silent=True, **extra
-            )
+            if view is not None:
+                sent = await channel.send(
+                    wanted_text[key], allowed_mentions=NO_PINGS, silent=True, view=view
+                )
+            else:
+                sent = await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
         except discord.HTTPException as exc:
             log.warning("NPC channel: couldn't post a message: %s", exc)
             result.left_for_next_time += 1

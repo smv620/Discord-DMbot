@@ -902,6 +902,9 @@ class DMBot(commands.AutoShardedBot):
     so nothing runs twice when several processes split the shards between them.
     """
 
+    # A class-level default so tests that build a bot without __init__ still see "no pages" (#2265).
+    _npcs_roster: NpcRosterStore | None = None
+
     def __init__(
         self,
         settings: Settings,
