@@ -122,9 +122,12 @@ describe("what is sent", () => {
 
   it("sends none when not possible", async () => {
     const api = await ready("100.recaps-plan");
+    fireEvent.input(screen.getByLabelText(w.dateLabel("session-1-2026-09-14.txt")), { target: { value: "2026-09-14" } });
     fireEvent.click(screen.getByRole("button", { name: w.importButton }));
     await screen.findByText(w.progressHeading);
-    expect(api.calls.some((c) => c.startsWith("importStart:") && c.includes("#recap"))).toBe(false);
+    const started = api.calls.filter((c) => c.startsWith("importStart:"));
+    expect(started).toHaveLength(1);
+    expect(started[0]).not.toContain("#recap");
   });
 });
 
@@ -159,5 +162,44 @@ describe("the setting changed between Preview and the start", () => {
     await run("campaign_off", false);
     expect(screen.queryByText(w.recapsWhy.campaign_off ?? "")).toBeNull();
     expect(screen.queryByText(w.recapsNotWritten)).toBeNull();
+  });
+});
+
+describe("odd replies and stale ticks", () => {
+  it("shows no empty note for a reason it does not know", async () => {
+    await ready("100.cmp1", (api) => {
+      const real = api.importPreview!.bind(api);
+      api.importPreview = async (...a) => ({ ...(await real(...a)), recapsPossible: false, recapsWhy: "new_reason" as never });
+    });
+    expect(tick()).toBeNull();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("shows nothing on the progress view when the start reply says nothing about recaps", async () => {
+    await ready("100.cmp1", (api) => {
+      const real = api.importStart!.bind(api);
+      api.importStart = async (...a) => {
+        const { recapsPossible: _p, recapsWhy: _y, ...rest } = await real(...a);
+        return rest;
+      };
+    });
+    fireEvent.click(tick() as HTMLElement);
+    fireEvent.input(screen.getByLabelText(w.dateLabel("session-1-2026-09-14.txt")), { target: { value: "2026-09-14" } });
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    await screen.findByText(w.progressHeading);
+    expect(screen.queryByText(w.recapsNotWritten)).toBeNull();
+  });
+
+  it("starts unticked again after new files are chosen", async () => {
+    await ready("100.cmp1");
+    fireEvent.click(tick() as HTMLElement);
+    expect((tick() as HTMLInputElement).checked).toBe(true);
+    const input = screen.getByLabelText(w.pickLabel, { selector: "input" }) as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [s1], configurable: true });
+    fireEvent.change(input);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.click(await screen.findByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+    expect((tick() as HTMLInputElement).checked).toBe(false);
   });
 });

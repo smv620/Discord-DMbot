@@ -206,6 +206,8 @@ export default function Import({
     setKnown({});
     setSentLinks([]);
     setSentNames({});
+    // Ticks belong to the files they were made for; new files start unticked (#2229).
+    setRecaps({});
   };
 
   /** The problem with the chosen files and links as they stand, if there is one. */
@@ -374,9 +376,8 @@ export default function Import({
     });
 
   const allDates = order.every((n) => isDate(dates[n] ?? ""));
-  // The choice is offered while recaps are on for the site (the bot decides the rest, with the
-  // DM's own recap choice and the plan, and says so on the DM screen).
-  // and only where the API says the bot would write them (#2229): never a tick it would refuse.
+  // The choice is offered while recaps are on for the site and only where the API says the bot
+  // would write them (#2229, from the preview): never a tick it would refuse.
   const offerRecaps = RECAPS_LIVE && preview?.recapsPossible === true;
   const recapsWhy = RECAPS_LIVE && preview?.recapsPossible === false ? preview.recapsWhy : undefined;
   const allRecaps = order.length > 0 && order.every((n) => recaps[n] === true);
@@ -405,8 +406,8 @@ export default function Import({
         },
         sentLinks,
       );
-      // The setting can change between Preview and the start: then nothing was asked for, and the
-      // progress view says so instead of showing sessions as getting a recap.
+      // The setting can change between Preview and the start: the tick was sent but the bot will
+      // decline it, and the progress view says so instead of implying a recap is coming.
       if (started.recapsPossible === false && offerRecaps && someRecaps)
         setStartedWithoutRecaps(started.recapsWhy ?? "unknown");
       setProgress({
@@ -837,7 +838,7 @@ export default function Import({
                     (check?.estimate ?? preview.estimate).fastCalls,
                   )}
                 </p>
-                {recapsWhy && recapsWhy !== "off" && order.length > 0 && (
+                {recapsWhy && words.recapsWhy[recapsWhy] && order.length > 0 && (
                   <p class="small" role="note">
                     {words.recapsWhy[recapsWhy]}
                     {recapsWhy === "plan" && (
