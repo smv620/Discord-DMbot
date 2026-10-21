@@ -47,6 +47,7 @@ MAX_BYTES = 2 * 1024 * 1024
 # 2.5x covers the worst text a legal file can hold (a file full of newlines and quotes is 2x);
 # the plan around them gets 256 KB. Each file is still held to MAX_BYTES once decoded.
 MAX_BODY_BYTES = int(MAX_FILES * MAX_BYTES * 2.5) + 256 * 1024
+MAX_SUGGESTED = 100  # labels asked about at once (the door takes no more)
 MAX_LABEL = 80  # the table's own limit on a remembered label
 MAX_LINES = 20_000  # lines in one file; each is a stored row and a share of an AI call
 MAX_LINES_ALL = 60_000  # lines in one import
@@ -408,17 +409,29 @@ async def preview(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         remembered = await _remembered(conn, c, None, outside)
-        seen: dict[str, dict[str, Any] | None] = {}
+        labels = list(
+            dict.fromkeys(
+                s.label
+                for f in files
+                if f.transcript is not None
+                for s in ip.speakers(f.transcript)
+            )
+        )
+        guesses = await _suggest(conn, c, labels, remembered, outside)
         out = []
         for f in files:
             view = _file_view(f)
             view["speakers"] = []
             if f.transcript is not None:
                 for s in ip.speakers(f.transcript):
-                    if s.label not in seen:
-                        seen[s.label] = await _suggest(conn, c, s.label, remembered, outside)
+                    member, character = guesses.get(s.label, (None, None))
                     view["speakers"].append(
-                        {"label": s.label, "lines": s.lines, "suggested": seen[s.label]}
+                        {
+                            "label": s.label,
+                            "lines": s.lines,
+                            "suggested": member,
+                            "suggestedCharacter": character,
+                        }
                     )
             out.append(view)
     facts = await recap_facts(
@@ -427,20 +440,45 @@ async def preview(
     return {"files": out, "estimate": estimate(files), **facts}
 
 
+def label_parts(label: str) -> tuple[str, str]:
+    """("Cerric (stormy#1234)") is ("Cerric", "stormy"): the display part and the username part of
+    Craig's "Display (username)", the old "#1234" tag left off. A label with no brackets has no
+    username part."""
+    shown, _, rest = label.partition(" (")
+    user = rest.rstrip(")").split("#", 1)[0].strip() if rest.endswith(")") else ""
+    return shown.strip(), user
+
+
 async def _suggest(
-    conn: Conn, c: Campaign, label: str, remembered: Mapping[str, str], outside: str | None
-) -> dict[str, Any] | None:
-    """A member to suggest for a label, never decided: the one remembered from an earlier import,
-    else a member whose name is the label's name. The DM confirms."""
-    if label in remembered:
-        return {"userId": remembered[label], "name": "", "why": "remembered"}
-    wanted = _display(label)
-    if len(wanted) < 2:
-        return None
-    for m in await _members(conn, c, wanted, outside):
-        if m["name"].casefold() == wanted:
-            return {"userId": m["userId"], "name": m["name"], "why": "display_name"}
-    return None
+    conn: Conn,
+    c: Campaign,
+    labels: Sequence[str],
+    remembered: Mapping[str, str],
+    outside: str | None,
+) -> dict[str, tuple[dict[str, Any] | None, dict[str, str] | None]]:
+    """A member and a character to suggest for each label, never decided: the member remembered
+    from an earlier import, else the one whose Discord username is the label's username part, else
+    whose display name or nickname is its name, else the one the table already calls that. The
+    character is the one the member already plays, else a confirmed character with the label's
+    name. The database does the matching in one read-only door (migration 0161), so the DM's
+    campaign names never leave it. The DM confirms every one."""
+    wanted = []
+    for label in labels[:MAX_SUGGESTED]:
+        shown, user = label_parts(label)
+        entry: dict[str, str] = {"label": label, "user": user, "shown": shown}
+        if label in remembered:
+            entry["member"] = remembered[label]
+        wanted.append(entry)
+    cur = await conn.execute(
+        "SELECT dmbot_import_suggest(%s, %s, %s::jsonb, %s, %s) AS r",
+        (c.guild_id, c.campaign_id, json.dumps(wanted), TERMS_VERSION, outside),
+    )
+    found = (await cur.fetchone() or {}).get("r") or {}
+    return {
+        label: (guess.get("member"), guess.get("character"))
+        for label, guess in found.items()
+        if isinstance(guess, dict)
+    }
 
 
 def mapping_of(raw: object) -> dict[str, int | str | None]:
