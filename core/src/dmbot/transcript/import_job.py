@@ -33,6 +33,7 @@ TOPIC_CALL_TIMEOUT_S = 30.0
 FAILED_NAMES = "names_failed"  # the campaign's names couldn't be read
 FAILED_ERROR = "error"  # anything else that stopped it
 PARTLY = "partly_labelled"  # done, but the AI was not asked about every line
+STALE_SCAN_S = 15 * 60  # a name scan claimed this long ago and never finished is taken again
 RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped; it is taken again
 CHUNK_LINES = 120  # lines cleaned between two yields to the bot's other work, and between saves
 MAX_WINDOWS = 1_200  # AI windows (WINDOW_LINES lines each) for one session, about 7,200 lines
@@ -40,6 +41,17 @@ TOPIC_FAILURES_BEFORE_REST = 3  # windows failing one after another before the A
 
 Lookup = Callable[[int, str], Awaitable[CampaignLookup]]
 Consenting = Callable[[int], Awaitable[frozenset[int]]]  # who is recorded now, in a server
+
+
+@dataclass(frozen=True, slots=True)
+class Ready:
+    """A cleaned import whose name scan is next (#2106)."""
+
+    campaign_id: str
+    session_id: str
+    started_at: int
+    write_recap: bool
+    import_id: str = ""  # the batch the session came in
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +112,154 @@ class ImportStore:
                 (session_id,),
             )
             return [Row(int(r["id"]), int(r["user_id"]), r["heard"]) for r in await cur.fetchall()]
+
+    async def ready_for_scan(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
+        """For each campaign, its earliest cleaned import not yet scanned (or whose claim never
+        finished, `STALE_SCAN_S` ago), when no earlier import of that campaign is still waiting,
+        being cleaned or unscanned: the scans and recaps of a batch go in date order (#2106)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at, i.import_id"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.state = 'done' AND NOT i.scan_finished"
+                " AND (NOT i.scanned OR i.scan_from < %s) AND NOT EXISTS ("
+                " SELECT 1 FROM session_imports j JOIN transcript_sessions u"
+                " ON u.id = j.session_id AND u.guild_id = j.guild_id"
+                " WHERE j.campaign_id = i.campaign_id"
+                " AND (u.started_at, j.session_id) < (t.started_at, i.session_id)"
+                " AND (j.state IN ('waiting', 'working')"
+                " OR (j.state = 'done' AND NOT j.scan_finished)))"
+                " ORDER BY t.started_at, i.session_id LIMIT %s",
+                (int(time.time()) - STALE_SCAN_S, limit),
+            )
+            return [
+                Ready(
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def pending_scans(self, guild_id: int, campaign_id: str) -> int:
+        """How many imports of the campaign still wait to be cleaned or scanned: the batch is
+        over when none do."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM session_imports WHERE campaign_id = %s"
+                " AND (state IN ('waiting', 'working') OR (state = 'done' AND NOT scan_finished))",
+                (campaign_id,),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def claim_scan(self, guild_id: int, session_id: str, began: int) -> bool:
+        """Take the name scan of this import before doing it, so two bots never both propose its
+        names; `began` starts its window. A claim that never finished (the bot stopped) can be
+        taken again after `STALE_SCAN_S`. False when it is taken."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scanned = TRUE, scan_from = %s, scan_to = %s"
+                " WHERE session_id = %s AND NOT scan_finished"
+                " AND (NOT scanned OR scan_from < %s)",
+                (began, began, session_id, began - STALE_SCAN_S),
+            )
+            return bool(cur.rowcount)
+
+    async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
+        """The scan ran to `ended` (seconds): its window is closed."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scan_to = %s, scan_finished = TRUE"
+                " WHERE session_id = %s",
+                (ended, session_id),
+            )
+
+    async def release_scan(self, guild_id: int, session_id: str) -> int:
+        """The scan failed: give it back for the next round and count the try. Returns the tries."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET scanned = FALSE, scan_tries = scan_tries + 1"
+                " WHERE session_id = %s RETURNING scan_tries",
+                (session_id,),
+            )
+            row = await cur.fetchone()
+        return int(row["scan_tries"]) if row else 0
+
+    async def give_up_scan(self, guild_id: int, session_id: str) -> None:
+        """A scan that keeps failing is let go with an empty window, so it blocks no later session
+        and the recap is not held for questions it never raised."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scanned = TRUE, scan_finished = TRUE,"
+                " scan_from = 0, scan_to = 0 WHERE session_id = %s",
+                (session_id,),
+            )
+
+    async def ready_for_recap(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
+        """Scanned imports whose recap the DM asked for and that has not been dealt with, in date
+        order. Separate from the scan, so a recap that failed to start is tried again."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT i.campaign_id, i.session_id, i.write_recap, t.started_at, i.import_id"
+                " FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.scan_finished AND i.write_recap AND NOT i.recap_started"
+                " ORDER BY t.started_at, i.session_id LIMIT %s",
+                (limit,),
+            )
+            return [
+                Ready(
+                    r["campaign_id"],
+                    r["session_id"],
+                    int(r["started_at"]),
+                    bool(r["write_recap"]),
+                    r["import_id"],
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def mark_recap_started(self, guild_id: int, session_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET recap_started = TRUE WHERE session_id = %s",
+                (session_id,),
+            )
+
+    async def note_recap_failure(self, guild_id: int, session_id: str) -> int:
+        """A recap could not be started: count the try. Returns the tries so far."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET recap_tries = recap_tries + 1"
+                " WHERE session_id = %s RETURNING recap_tries",
+                (session_id,),
+            )
+            row = await cur.fetchone()
+        return int(row["recap_tries"]) if row else 0
+
+    async def window(self, guild_id: int, session_id: str) -> tuple[int, int] | None:
+        """When this import's name scan ran, or None for a session that was not imported (or
+        whose scan has not run)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT scan_from, scan_to FROM session_imports WHERE session_id = %s AND scanned",
+                (session_id,),
+            )
+            r = await cur.fetchone()
+        return (int(r["scan_from"]), int(r["scan_to"])) if r else None
+
+    async def scan_lines(self, guild_id: int, session_id: str) -> list[tuple[int, str]]:
+        """(speaker, words) of the session's game talk, cleaned where the cleaner changed them."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, COALESCE(text, heard) AS words FROM transcript_lines"
+                " WHERE session_id = %s AND sidebar IS NULL AND topic = %s ORDER BY started_ms, id",
+                (session_id, GAME),
+            )
+            return [(int(r["user_id"]), r["words"]) for r in await cur.fetchall()]
 
     async def back_to_waiting(self, guild_id: int, session_id: str) -> None:
         async with self._db.guild(guild_id) as conn:
