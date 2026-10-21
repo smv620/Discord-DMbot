@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from dmbot.memory.extractor import Said
 from dmbot.recaps import split as sp
@@ -162,6 +162,35 @@ class TheSplit(unittest.TestCase):
         lines = said(OWN_WORDS, PLAY[:1])
         self.assertTrue(sp.build(lines, [("recap", 4)], EARLIER).unsure)
 
+    def test_a_recap_the_call_over_extended_over_backstory_is_cut_back_to_play(self) -> None:
+        backstory = [
+            "My ranger grew up herding goats above a quiet valley, long before she met them.",
+            "Her father taught her the bow beside a cold spring, and she kept his patience.",
+        ]
+        lines = said(READ_ALOUD, [CLOSING], backstory, PLAY * 3)
+        recap_end = 5 + 1 + 2  # the call says the recap runs through the backstory
+        split = sp.build(lines, [("recap", recap_end)], EARLIER)
+        self.assertEqual(
+            (split.label_of(6), split.label_of(7), split.label_of(8)), ("recap",) + ("play",) * 2
+        )
+        self.assertFalse(split.unsure)
+        self.assertEqual(len(sp.pick(lines, split, sp.PLAY)), 2 + 9)
+        # a "recap" that is all backstory is marked unsure, and used as play
+        only = sp.build(said(backstory, PLAY * 3), [("recap", 2)], EARLIER)
+        self.assertTrue(only.unsure)
+
+    def test_the_fixed_lines_alone_never_make_a_recap(self) -> None:
+        # opening and closing lines around text that has nothing to do with the earlier session
+        lines = said(["Previously…"], PLAY, [CLOSING], PLAY * 3)
+        split = sp.build(lines, [("recap", 5)], EARLIER)
+        self.assertTrue(split.unsure)
+
+    def test_when_the_previous_transcript_is_gone_its_beats_and_recap_stand_in(self) -> None:
+        gone = sp.Earlier(frozenset(), PREVIOUS_BEATS)
+        lines = said(TALK, READ_ALOUD, [CLOSING], PLAY * 3)
+        split = sp.build(lines, [("talk", 2), ("recap", 8)], gone, " ".join(PREVIOUS_PLAY))
+        self.assertEqual((split.label_of(5), split.unsure), (sp.RECAP, False))
+
     def test_a_claim_past_the_opening_or_of_most_of_the_session_drops_nothing(self) -> None:
         lines = said(TALK, READ_ALOUD, PLAY * 4)
         for labelled in (
@@ -263,7 +292,8 @@ class TheSplit(unittest.TestCase):
     def test_the_stored_split_reads_back_and_a_bad_one_reads_as_none(self) -> None:
         _, split = self.split([TALK, READ_ALOUD, PLAY], [("talk", 2), ("recap", 7)])
         self.assertEqual(sp.from_json(json.loads(json.dumps(split.to_json()))), split)
-        for bad in (None, [], {"parts": [["x", 1, 2]]}, {"parts": [["play", 3, 2]]}, {"parts": 5}):
+        bads: list[object] = [None, [], {"parts": [["x", 1, 2]]}, {"parts": [["play", 3, 2]]}]
+        for bad in [*bads, {"parts": 5}]:
             self.assertIsNone(sp.from_json(bad))
 
     def test_the_ai_is_shown_the_opening_and_a_short_summary_never_the_whole_session(self) -> None:
@@ -288,7 +318,9 @@ def reading(groups: list[list[str]]) -> list[Line]:
 
 def beats_after(offset: int, extra: list[dict[str, Any]] | None = None) -> str:
     """The fixtures' beat sheet with its line numbers moved past `offset` earlier lines."""
-    beats = [{**b, "lines": [n + offset for n in b["lines"]]} for b in fx.BEATS["beats"]]
+    beats = [
+        {**b, "lines": [n + offset for n in cast(list[int], b["lines"])]} for b in fx.BEATS["beats"]
+    ]
     return json.dumps({"beats": [*(extra or []), *beats]})
 
 
@@ -355,7 +387,29 @@ class TheEarlierSession(unittest.IsolatedAsyncioTestCase):
 
         later = SimpleNamespace(started_at=500, id="z")  # after this one, so not earlier
         transcripts = SimpleNamespace(sessions=AsyncMock(return_value=[later]))
-        self.assertIsNone(await _earlier(transcripts, SimpleNamespace(), 1, "c" * 32, 300))
+        recaps = SimpleNamespace(earlier_job=AsyncMock(return_value=None))
+        self.assertIsNone(await _earlier(transcripts, recaps, 1, "c" * 32, 300))
+
+    async def test_a_recapped_session_whose_transcript_is_gone_is_compared_by_its_beats(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.recaps.inputs import _earlier
+
+        # session 15 still has lines; 16 was recapped but its transcript was deleted
+        fifteen = SimpleNamespace(started_at=100, id="a")
+        job = SimpleNamespace(session_at=200, split=None, beats=[{"what": "The wagon burned"}])
+        transcripts = SimpleNamespace(
+            sessions=AsyncMock(return_value=[fifteen]),
+            lines=AsyncMock(return_value=reading([OWN_WORDS])),
+        )
+        recaps = SimpleNamespace(earlier_job=AsyncMock(return_value=job))
+        got = await _earlier(transcripts, recaps, 1, "c" * 32, 300)
+        assert got is not None
+        self.assertEqual((got.vocabulary, got.beats), (frozenset(), ("The wagon burned",)))
+        transcripts.lines.assert_not_awaited()  # session 15 is not what 17 is compared with
 
 
 if __name__ == "__main__":

@@ -1163,3 +1163,49 @@ class Working(Base):
         self.assertEqual((job.state, job.restarts), ("queued", 1))
         self.assertIsNone(job.split)  # begun again, without them
         self.assertIsInstance(job, Job)
+
+    async def test_split_errors_do_not_use_up_the_recaps_error_budget(self) -> None:
+        # The split call errors twice, the beats call once: the recap still ends ready, because
+        # the split's errors are cleared when it is stored (it is optional after two).
+        split_down = AIError("down")
+        fast = fx.Canned(
+            split_down, split_down, AIError("down"), st.beats_after(0), fx.PROSE_ANSWER,
+            fx.GRADE_ANSWER, fx.FINISH_ANSWER,
+        )  # fmt: skip
+        await self.setUpWorker(
+            fast, lines=st.reading([[t for _, t in fx.LINES]]), earlier=st.EARLIER
+        )
+        job = None
+        for _ in range(6):
+            job = await self.worker.run(1, self.one.id, 100)
+            self.clock.now += 1000
+            if job is not None and job.finished:
+                break
+        assert job is not None
+        self.assertEqual(job.state, "ready")
+        split = sp.from_json(job.split)
+        assert split is not None
+        self.assertEqual(split.method, "fallback")  # done without the AI after two errors
+
+    async def test_the_catch_up_goes_to_the_housekeeping_alone(self) -> None:
+        catchup = "Reminder: we travel by the old Zebulon road next week."
+        talk = st.TALK[0]
+        play = [t for _, t in fx.LINES]
+        lines = st.reading([[talk], [catchup], st.READ_ALOUD, play])
+        answer = json.dumps(
+            {"parts": [{"label": "talk", "last": 1}, {"label": "catchup", "last": 2},
+                       {"label": "recap", "last": 2 + len(st.READ_ALOUD)}]}
+        )  # fmt: skip
+        offset = 2 + len(st.READ_ALOUD)
+        fast = fx.Canned(
+            answer, st.beats_after(offset), fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER
+        )
+        await self.setUpWorker(fast, lines=lines, earlier=st.EARLIER)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        beats_call, writer, *_, housekeeping = fast.sent[1], fast.sent[2], *fast.sent[3:]
+        self.assertNotIn("Zebulon", beats_call)
+        self.assertNotIn("Zebulon", writer)
+        self.assertIn("Zebulon", housekeeping)
+        self.assertIn("<catchup>", housekeeping)
+        self.assertNotIn("pizza", "\n".join(fast.sent[1:]))  # and the talk went nowhere

@@ -84,18 +84,23 @@ async def _earlier(
     """What the campaign's previous session was about (#2253), for finding a retelling of it at
     the start of this one: the content words of its play and its beat sentences. Only its play, by
     its stored split, so a retelling inside it is not carried on into this one (15 into 16 into
-    17); a session from before the split is taken whole. None when there is no earlier session
-    with a transcript: then nothing in this one is a recap. Read once, for the split stage."""
+    17); a session from before the split is taken whole. When the previous session's transcript
+    was deleted (keep-days) but it was recapped, its beats stand in for it: the retelling is then
+    compared with them and the recap. None when there is no earlier session at all: then nothing
+    in this one is a recap. Read once, for the split stage."""
     earlier = [
         s
         for s in await transcripts.sessions(guild_id, campaign_id, limit=1000)
         if s.started_at < session_at
     ]
-    if not earlier:
-        return None
-    last = max(earlier, key=lambda s: (s.started_at, s.id))
-    said = readable(await transcripts.lines(guild_id, last.id))
+    last = max(earlier, key=lambda s: (s.started_at, s.id)) if earlier else None
     job = await recaps.earlier_job(guild_id, campaign_id, session_at)
+    if job is not None and (last is None or job.session_at > last.started_at):
+        # (the latest earlier session has no transcript any more: its beats are what is left)
+        return sp.Earlier(frozenset(), sp.beat_sentences(job.beats or []))
+    if last is None:
+        return None
+    said = readable(await transcripts.lines(guild_id, last.id))
     if job is not None and job.session_at != last.started_at:
         job = None  # a recap of an older session: its line numbers are not this transcript's
     split = sp.from_json(job.split) if job is not None else None

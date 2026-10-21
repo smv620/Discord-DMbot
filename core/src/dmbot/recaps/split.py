@@ -30,7 +30,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory.extractor import Said, transcript_of
+from dmbot.memory.extractor import Said, quoted, transcript_of
 from dmbot.recaps.text import words
 
 TALK, CATCHUP, RECAP, PLAY = "talk", "catchup", "recap", "play"
@@ -291,9 +291,9 @@ def message(
         .replace("<transcript>", "<opening>")
         .replace("</transcript>", "</opening>")
     ]
-    summary = [b[:BEAT_CHARS] for b in earlier.beats[:BEATS_SHOWN]]
+    summary = [quoted(b)[:BEAT_CHARS] for b in earlier.beats[:BEATS_SHOWN]]
     if not summary and previous_recap.strip():
-        summary = [" ".join(previous_recap.split())[: BEAT_CHARS * 3]]
+        summary = [quoted(previous_recap)[: BEAT_CHARS * 3]]
     parts.append(
         "<earlier>\n" + ("\n".join(f"- {s}" for s in summary) or "(nothing kept)") + "\n</earlier>"
     )
@@ -367,11 +367,53 @@ def build(
     )
     if prelude > MAX_PRELUDE_LINES or prelude > len(said) * MAX_PRELUDE_SHARE:
         return all_play(said, "fallback")
+    parts = trimmed(said, parts, earlier, previous_recap)
     unsure = False
     recap = next((p for p in parts if p.label == RECAP), None)
     if recap is not None:
         unsure = not backed_up(said, recap, earlier, previous_recap)
     return Split(tuple(parts), unsure, "ai")
+
+
+LINE_FLOOR = 0.25  # of a line's long words that the earlier session also has, to stay in the recap
+
+
+def trimmed(
+    said: Sequence[Said], parts: Sequence[Part], earlier: Earlier, previous_recap: str = ""
+) -> list[Part]:
+    """A retelling the call over-extended is cut back: trailing "recap" lines that have nothing to
+    do with the earlier session (a player's backstory told right after the recap, new play) go to
+    play, whatever the call said. Backstory is always play, and when in doubt it is play. The
+    closing fixed line is not "about" the earlier session and stays. Nothing else moves."""
+    out = list(parts)
+    index = next((i for i, p in enumerate(out) if p.label == RECAP), None)
+    if index is None:
+        return out
+    recap = out[index]
+    refs = [earlier.vocabulary, vocabulary_of(earlier.beats), vocabulary_of([previous_recap])]
+    reference: set[str] = set().union(*[set(r) for r in refs])
+    lines = [s for s in said if recap.first <= s.number <= recap.last]
+    end = len(lines)
+    while end > 0:
+        text = lines[end - 1].text
+        if heard_fixed_lines([text])[1]:  # the closing line: part of a read-aloud recap
+            break
+        mine = content_words(text)
+        if len(mine) >= 3 and len(mine & reference) / len(mine) >= LINE_FLOOR:
+            break
+        end -= 1  # (a line too short to compare, or about something else: play)
+    if end == len(lines):
+        return out
+    if end == 0:  # nothing of it is about the earlier session: `backed_up` marks it unsure
+        return out
+    cut = lines[end - 1].number
+    out[index] = Part(RECAP, recap.first, cut)
+    nxt = out[index + 1] if index + 1 < len(out) else None
+    if nxt is not None and nxt.label == PLAY:
+        out[index + 1] = Part(PLAY, lines[end].number, nxt.last)
+    else:
+        out.insert(index + 1, Part(PLAY, lines[end].number, recap.last))
+    return out
 
 
 def backed_up(
