@@ -124,6 +124,15 @@ export const importPage = {
   recapsHeading: "Recaps (optional)",
   recapsAll: "Write recaps for all",
   recapsOne: (name: string): string => `Write a recap of ${name}`,
+  // Said where the ticks would be when recaps are on for the site but this campaign can't have
+  // them (#2229). A reason the DM can't change (the whole server's switch) says nothing.
+  recapsWhy: {
+    campaign_off: "Recaps are off for this campaign. Turn them on in the campaign's settings to get recaps of imported sessions.",
+    plan: "Recaps aren't part of this campaign's plan.",
+  } as Record<string, string>,
+  // Only after the DM ticked recaps and the setting changed before the start: say it, don't stay silent.
+  recapsNotWritten: "No recaps will be written for these sessions.",
+  recapsPlans: "See the plans",
   recapsNote:
     "Nothing is written for a session you leave unticked. Recaps wait until you've answered DMbot's questions about names, like after a live session. You'll get one message in Discord when they start. Recaps are not in the estimate above.",
   checkFirst: `Press "Check what will be kept" first, so you see what is dropped before you import.`,

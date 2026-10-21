@@ -82,6 +82,8 @@ export default function Import({
   // The sessions the DM wants a recap of (by file name): none until ticked (#2221).
   const [recaps, setRecaps] = useState<Record<string, boolean>>({});
   const [importId, setImportId] = useState<string | null>(null);
+  // Set when the start reply says recaps weren't possible although ticks were sent (#2229).
+  const [startedWithoutRecaps, setStartedWithoutRecaps] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -374,7 +376,9 @@ export default function Import({
   const allDates = order.every((n) => isDate(dates[n] ?? ""));
   // The choice is offered while recaps are on for the site (the bot decides the rest, with the
   // DM's own recap choice and the plan, and says so on the DM screen).
-  const offerRecaps = RECAPS_LIVE;
+  // and only where the API says the bot would write them (#2229): never a tick it would refuse.
+  const offerRecaps = RECAPS_LIVE && preview?.recapsPossible === true;
+  const recapsWhy = RECAPS_LIVE && preview?.recapsPossible === false ? preview.recapsWhy : undefined;
   const allRecaps = order.length > 0 && order.every((n) => recaps[n] === true);
   const someRecaps = order.some((n) => recaps[n] === true);
 
@@ -401,6 +405,10 @@ export default function Import({
         },
         sentLinks,
       );
+      // The setting can change between Preview and the start: then nothing was asked for, and the
+      // progress view says so instead of showing sessions as getting a recap.
+      if (started.recapsPossible === false && offerRecaps && someRecaps)
+        setStartedWithoutRecaps(started.recapsWhy ?? "unknown");
       setProgress({
         sessions: started.sessions.map((s) => ({
           file: s.file,
@@ -451,6 +459,17 @@ export default function Import({
           >
             {words.checkAgain}
           </button>
+        )}
+        {startedWithoutRecaps && (
+          <p class="small" role="note">
+            {words.recapsWhy[startedWithoutRecaps] ?? words.recapsNotWritten}
+            {startedWithoutRecaps === "plan" && (
+              <>
+                {" "}
+                <a href="/pricing">{words.recapsPlans}</a>
+              </>
+            )}
+          </p>
         )}
         <p role="status" aria-live="polite">
           {words.doneCount(
@@ -818,6 +837,17 @@ export default function Import({
                     (check?.estimate ?? preview.estimate).fastCalls,
                   )}
                 </p>
+                {recapsWhy && recapsWhy !== "off" && order.length > 0 && (
+                  <p class="small" role="note">
+                    {words.recapsWhy[recapsWhy]}
+                    {recapsWhy === "plan" && (
+                      <>
+                        {" "}
+                        <a href="/pricing">{words.recapsPlans}</a>
+                      </>
+                    )}
+                  </p>
+                )}
                 {offerRecaps && order.length > 0 && (
                   <fieldset class="recap-choices">
                     <legend>{words.recapsHeading}</legend>

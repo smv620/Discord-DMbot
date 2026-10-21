@@ -341,6 +341,16 @@ export function mockRecaps(): Recap[] {
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
+/** What the import preview and start say about recaps (#2229): a campaign whose address ends in
+ * `.recaps-off`, `.recaps-campaign_off`, `.recaps-plan` or `.recaps-unknown` gets that case, any
+ * other can have recaps. */
+function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" | "campaign_off" | "plan" } {
+  const why = /\.recaps-([a-z_]+)$/.exec(ref)?.[1];
+  if (why === "unknown") return { recapsPossible: false };
+  if (why === "off" || why === "campaign_off" || why === "plan") return { recapsPossible: false, recapsWhy: why };
+  return { recapsPossible: true };
+}
+
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
@@ -460,6 +470,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           };
         }),
         estimate: { sessions: files.length + links.length, fastCalls: 14 * (files.length + links.length) },
+        ...recapFacts(ref),
       };
     },
     async importMembers(ref, q) {
@@ -519,6 +530,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         importId: "imp1",
         sessions: plan.sessions.map((s) => ({ file: s.file, state: "waiting" as const })),
         estimate: { sessions: plan.sessions.length, fastCalls: 14 * plan.sessions.length },
+        ...recapFacts(ref),
       };
     },
     async importProgress(ref, importId) {
