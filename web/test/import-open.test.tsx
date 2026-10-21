@@ -4,7 +4,7 @@
 // campaign whose server the API says has imports on (`importsOn`, #2259: the owner's test
 // servers). Only IMPORT_LIVE advertises imports: the Help step, What's new and the Transcripts
 // page's link stay hidden when the page is open for a test server alone.
-import { cleanup, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Campaign } from "../src/account/api";
