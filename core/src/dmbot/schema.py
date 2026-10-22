@@ -10418,6 +10418,31 @@ WEB_GRAPH_VIEWS = (
     """
     + _isolate("web_peeks")
     + r"""
+    -- Note a peek: the caller's name and visit, once. Internal (no grant): the peek door and the
+    -- graph door call it, so a full view is never given to a player without the DM being told,
+    -- whichever way it was asked for. TRUE the first time for this visit.
+    CREATE FUNCTION dmbot_web_peek_note(g BIGINT, c TEXT, v TEXT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        who TEXT;
+        added INT;
+    BEGIN
+        IF v IS NULL OR v = '' OR char_length(v) > 100 THEN
+            RETURN NULL;
+        END IF;
+        SELECT left(COALESCE(
+                   NULLIF(btrim(regexp_replace(display_name, '[[:space:]]+', ' ', 'g')), ''),
+                   'Someone'), 100) INTO who
+            FROM web_users WHERE user_id = dmbot_current_user();
+        INSERT INTO web_peeks (guild_id, campaign_id, user_id, visit, name, created_at)
+            VALUES (g, c, dmbot_current_user(), v, COALESCE(who, 'Someone'),
+                    floor(extract(epoch FROM clock_timestamp()))::BIGINT)
+            ON CONFLICT DO NOTHING;
+        GET DIAGNOSTICS added = ROW_COUNT;
+        RETURN added > 0;
+    END
+    $fn$;
+
     -- Peeked: the caller (not a DM of the campaign) opens the full view for this visit. 'ok' with
     -- `noted` true the first time for this visit; 'peek_off' under a private DM screen. NULL when
     -- the caller is not in the server or there is no such campaign.
@@ -10425,8 +10450,7 @@ WEB_GRAPH_VIEWS = (
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         vis TEXT;
-        who TEXT;
-        added INT;
+        noted BOOLEAN;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
@@ -10443,17 +10467,11 @@ WEB_GRAPH_VIEWS = (
         IF vis NOT IN ('peek', 'open') THEN
             RETURN jsonb_build_object('status', 'peek_off');
         END IF;
-        IF v IS NULL OR v = '' OR char_length(v) > 100 THEN
+        noted := dmbot_web_peek_note(g, c, v);
+        IF noted IS NULL THEN
             RETURN jsonb_build_object('status', 'bad_visit');
         END IF;
-        SELECT left(COALESCE(NULLIF(btrim(display_name), ''), 'Someone'), 100) INTO who
-            FROM web_users WHERE user_id = dmbot_current_user();
-        INSERT INTO web_peeks (guild_id, campaign_id, user_id, visit, name, created_at)
-            VALUES (g, c, dmbot_current_user(), v, COALESCE(who, 'Someone'),
-                    floor(extract(epoch FROM clock_timestamp()))::BIGINT)
-            ON CONFLICT DO NOTHING;
-        GET DIAGNOSTICS added = ROW_COUNT;
-        RETURN jsonb_build_object('status', 'ok', 'noted', added > 0);
+        RETURN jsonb_build_object('status', 'ok', 'noted', noted);
     END
     $fn$;
     DO $do$
@@ -10462,9 +10480,14 @@ WEB_GRAPH_VIEWS = (
             'ALTER FUNCTION dmbot_web_peek(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_peek_note(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_peek(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_peek_note(BIGINT, TEXT, TEXT) FROM PUBLIC;
     """
 )
 
@@ -10487,6 +10510,12 @@ _VIEW_STEPS = (
         sees_all := wanted = 'full' AND (is_dm OR screen IN ('peek', 'open'));
         IF wanted = 'full' AND NOT sees_all THEN
             RETURN jsonb_build_object('status', 'peek_off');
+        END IF;
+        -- A player's full view is a peek, however it was asked for: the DM is told once for this
+        -- visit (the visit is the API's `dmbot.web_visit`); with none, the peek is refused.
+        IF sees_all AND NOT is_dm
+           AND dmbot_web_peek_note(g, c, current_setting('dmbot.web_visit', true)) IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_visit');
         END IF;
         vis := ARRAY(""",
         1,

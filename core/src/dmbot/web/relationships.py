@@ -14,6 +14,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -84,6 +85,12 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
     return out
 
 
+def visit_of(session: Session) -> str:
+    """The visit a peek belongs to: one sign-in. A digest of the session's lookup key, so nothing
+    that finds a session is kept in the peek table."""
+    return hashlib.sha256(f"{session.id_hash}:peek".encode()).hexdigest()
+
+
 def _refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
     if view is not None and view not in VIEWS:
         raise RecapError("bad_view")
@@ -110,6 +117,10 @@ async def _door(
         await _scoped(conn, guild_id)
         if view is not None:  # asked for; the door decides whether this person may have it
             await conn.execute("SELECT set_config('dmbot.web_view', %s, true)", (view,))
+            # which visit a peek belongs to (the door tells the DM once for each)
+            await conn.execute(
+                "SELECT set_config('dmbot.web_visit', %s, true)", (visit_of(session),)
+            )
         cur = await conn.execute(
             "SELECT dmbot_web_relationships(%s, %s, %s, %s, %s, %s) AS r",
             (guild_id, campaign_id, center, hops, MAX_NODES, size_only),
@@ -175,7 +186,7 @@ async def peek(db: Database, session: Session, ref: str) -> dict[str, Any]:
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_peek(%s, %s, %s) AS r", (guild_id, campaign_id, session.id_hash)
+            "SELECT dmbot_web_peek(%s, %s, %s) AS r", (guild_id, campaign_id, visit_of(session))
         )
         found = await cur.fetchone()
     got = found["r"] if found else None

@@ -5,7 +5,8 @@ A player who turns the peek on (after the page's warning) asks the website's pee
 records the visit in `web_peeks` (only when the campaign's DM screen lets players peek). The bot
 posts one line for each new row on the campaign's DM screen and marks it posted, so a restart never
 posts it twice. The name is the person's own display name as the website kept it; it is made plain
-text here (no mention can ping anyone). A row is deleted a day after it was posted.
+text here (no mention can ping anyone). A row is deleted 31 days after it was posted (a sign-in
+lasts 30), so a visit is told once.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import discord
 
 from dmbot.db import Database
 
-KEEP_FOR_S = 86_400  # a posted row is kept a day (the sweep), then gone
+KEEP_FOR_S = 31 * 86_400  # kept as long as a sign-in lasts (30 days), so a visit is told once
 PER_ROUND = 10  # notices taken in one round for one server
 
 
@@ -30,7 +31,8 @@ class Peek:
 
 def notice(name: str) -> str:
     """The line for the DM screen. A name with markdown or a mention in it does neither."""
-    plain = discord.utils.escape_markdown(discord.utils.escape_mentions(name))
+    one_line = " ".join(name.split())  # no new line, so a name cannot fake a second message
+    plain = discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
     return f"👀 {plain} peeked at the relationship web."
 
 

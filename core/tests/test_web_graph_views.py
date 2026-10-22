@@ -110,6 +110,22 @@ class ThePlayer(Views):
         await self.setScreen("private")
         self.assertEqual(await self.refused_with(self.player, view="full"), "peek_off")
 
+    async def test_a_full_view_asked_for_directly_still_tells_the_dm(self) -> None:
+        """No peek call first: the graph door itself notes the visit, once."""
+        await self.graph(self.player, view="full")
+        await self.graph(self.player, view="full")
+        notices = PeekNotices(self.db)
+        taken = await notices.take(self.g)
+        self.assertEqual([p.campaign_id for p in taken], [self.one.id])
+        self.assertEqual(await notices.take(self.g), [])
+
+    async def test_the_players_view_and_a_dms_view_leave_no_notice(self) -> None:
+        await self.graph(self.player, view="players")
+        await self.graph(self.player)
+        await self.graph(view="full")
+        await self.graph(view="players")
+        self.assertEqual(await PeekNotices(self.db).take(self.g), [])
+
     async def test_asking_for_the_players_view_always_works(self) -> None:
         await self.setScreen("private")
         got = await self.graph(self.player, center=self.mira, hops=1, view="players")
@@ -141,10 +157,13 @@ class ThePeekNotice(Views):
         self.assertEqual([p.campaign_id for p in taken], [self.one.id])
         self.assertEqual(await notices.take(self.g), [])  # never twice
         self.assertEqual(await notices.sweep(self.g), 0)
-        clock[0] += 90_000
+        clock[0] += 86_400  # a day on: kept, so the same visit is not told twice
+        self.assertEqual(await notices.sweep(self.g), 0)
+        clock[0] += 31 * 86_400
         self.assertEqual(await notices.sweep(self.g), 1)
 
     async def test_the_line_is_plain_text_with_no_mention_or_markdown(self) -> None:
+        self.assertNotIn("\n", notice("Bo\nsecond line"))
         text = notice("**Bo** @everyone <@123> _x_")
         self.assertNotIn("@everyone", text.replace("@​everyone", ""))
         self.assertTrue(text.startswith("👀 "))
