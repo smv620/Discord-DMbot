@@ -52,7 +52,7 @@ describe("how to say a name, on the Names page", () => {
     expect(await row.findByText(w.saySaved)).toBeTruthy();
   });
 
-  it("keeps the saved words on the next read, and the button waits for a change", async () => {
+  it("the button waits for a change, and again once the words are saved", async () => {
     const { row } = await edit();
     const box = row.getByLabelText(w.sayLabel("Gorrak")) as HTMLInputElement;
     const save = row.getByRole("button", { name: w.saySave }) as HTMLButtonElement;
@@ -107,5 +107,28 @@ describe("how to say a name, on the Names page", () => {
     };
     const { row } = await edit(DM, api);
     expect(row.queryByLabelText(w.sayLabel("Gorrak"))).toBeNull();
+  });
+});
+
+describe("the saved words on the next read", () => {
+  it("are in the box when the page is opened again", async () => {
+    const api = mockApi("table");
+    const first = await edit(DM, api);
+    fireEvent.input(first.row.getByLabelText(w.sayLabel("Gorrak")), { target: { value: "Gor-rak" } });
+    fireEvent.click(first.row.getByRole("button", { name: w.saySave }));
+    await waitFor(() => expect(first.row.getByText(w.saySaved)).toBeTruthy());
+    cleanup();
+    const again = await edit(DM, api);
+    expect((again.row.getByLabelText(w.sayLabel("Gorrak")) as HTMLInputElement).value).toBe("Gor-rak");
+  });
+
+  it("an emptied box says it is said as spelled", async () => {
+    const { row } = await edit();
+    fireEvent.input(row.getByLabelText(w.sayLabel("Gorrak")), { target: { value: "Gor-rak" } });
+    fireEvent.click(row.getByRole("button", { name: w.saySave }));
+    await waitFor(() => expect(row.getByText(w.saySaved)).toBeTruthy());
+    fireEvent.input(row.getByLabelText(w.sayLabel("Gorrak")), { target: { value: "" } });
+    fireEvent.click(row.getByRole("button", { name: w.saySave }));
+    expect(await row.findByText(w.sayCleared)).toBeTruthy();
   });
 });

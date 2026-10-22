@@ -406,13 +406,33 @@ class TheSaying(Listing):
         self.assertNotIn("aliasId", row)
         self.assertNotIn("saidAs", row)
 
-    async def test_a_secret_main_name_has_neither_key(self) -> None:
+    async def test_a_secret_main_name_has_neither_key_and_its_spelling_is_never_sent(self) -> None:
         vecnor = await self.add("Vecnor", "npc")
         await self.alias(vecnor, "Vecnor", secret=True)
-        await self.sql("UPDATE memory_aliases SET said_as = NULL WHERE entity_id = %s", vecnor)
+        await self.sql(
+            "UPDATE memory_aliases SET said_as = NULL WHERE entity_id = %s", vecnor
+        )  # (a secret name may not hold one: the table's own check)
         row = (await self.rows())["Vecnor"]
         self.assertNotIn("aliasId", row)
         self.assertNotIn("saidAs", row)
+
+    async def test_another_campaigns_entry_gets_no_keys_even_when_asked_for_by_id(self) -> None:
+        other = await self.memory.add_entity(
+            self.g, self.two.id, type="npc", name="Ka'zeth", source=DM_SOURCE, status="confirmed"
+        )
+        await self.memory.add_alias(
+            self.g, self.two.id, other.value.id, "Ka'zeth", kind="short", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_all_names_said(%s, %s, %s) AS r",
+                (self.g, self.one.id, [other.value.id]),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["r"], [])
 
     async def test_a_manager_who_is_not_a_dm_learns_no_spelling_or_id(self) -> None:
         row = (await self.rows())["Ka'zeth"]

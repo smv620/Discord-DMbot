@@ -396,6 +396,11 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
     setAsk(null);
   };
 
+  // The box follows the row when a read changes it (a rename, a merge), as the spelling box does.
+  useEffect(() => {
+    setSaid(row.saidAs ?? "");
+    setSavedSaid(row.saidAs ?? "");
+  }, [row.aliasId, row.saidAs]);
   const saidId = `said-as-${row.id}`;
   const saveSaid = async (): Promise<void> => {
     if (!row.aliasId || !api.saveSaidAs || savingSaid) return;
@@ -406,10 +411,10 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
       await api.saveSaidAs(refId, row.aliasId, clean === "" ? null : clean);
       setSaid(clean);
       setSavedSaid(clean);
-      setSaidNote({ ok: true, text: words.saySaved });
+      setSaidNote({ ok: true, text: clean === "" ? words.sayCleared : words.saySaved });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
-      setSaidNote({ ok: false, text: kind === "bad-text" ? words.sayTooLong : (words.errors[kind] ?? words.sayFailed) });
+      setSaidNote({ ok: false, text: kind === "bad-text" ? words.sayTooLong : (kind === "network" ? words.errors.network! : words.sayFailed) });
     } finally {
       setSavingSaid(false);
     }

@@ -135,6 +135,7 @@ export const siteButtons = [
   "Make a link",
   "Turn the link off",
   "Make a new link",
+  "Save how to say it", // the Names page row editor (#2317), on the website, not in Discord
 ];
 
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that
