@@ -3,6 +3,8 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
+import { recapCard } from "./account-cards";
+
 import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
 import { shareWords } from "./recap-share";
 import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "./recap-words";
@@ -55,7 +57,7 @@ export const text = {
   // While recaps are off (RECAPS_LIVE false) the page promises nothing: no email, no recap to come.
   emptyOff: "No recaps yet.",
   back: "All your recaps",
-  linkToList: "Read your session recaps",
+  linkToList: recapCard.linkToList,
   account: "Back to My Account",
   open: "Open",
   signedOut: "Sign in to read your recaps.",
