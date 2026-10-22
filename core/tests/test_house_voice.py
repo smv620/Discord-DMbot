@@ -344,6 +344,41 @@ class Pressing(TableTest):
         self.assertIn("✅ Saved as house rule 2.", it.message.edit.await_args.kwargs["content"])
         self.bot.house_wins.record.assert_awaited_once()  # type: ignore[union-attr]
 
+    async def test_the_questions_timeout_edits_the_question_not_the_offer(self) -> None:
+        it, _, view = await self.disagreeing()
+        # the press was answered with a deferred update, so the question is a follow-up of its own
+        self.assertIs(view.question, it.followup.send.return_value)
+        view.question = SimpleNamespace(edit=AsyncMock())
+        await view.on_timeout()
+        view.question.edit.assert_awaited_once()
+        self.assertIsNone(view.question.edit.await_args.kwargs["view"])
+        it.edit_original_response.assert_not_awaited()  # the offer's own message is left alone
+
+    async def test_the_edit_forms_question_times_out_on_the_question_too(self) -> None:
+        self.store.seed("Potions take an item interaction")
+        reply = '{"checks":[{"new":1,"disagrees_with":[1]}]}'
+        self.bot.rule_conflict_ai = SimpleNamespace(  # type: ignore[assignment]
+            complete=AsyncMock(return_value=Reply(reply, cut=False))
+        )
+        self.bot.house_wins = SimpleNamespace(record=AsyncMock())  # type: ignore[assignment]
+        view = await self.proposal()
+        opened = self.interaction()
+        opened.response.send_modal = AsyncMock()
+        await self.button(view, "Edit").callback(opened)
+        form = opened.response.send_modal.await_args.args[0]
+        form.rule._value = "Potions are a free action"
+        submit = self.interaction(content=self.posts[0][1])
+        submit.type = discord.InteractionType.modal_submit
+        submit.message.edit = AsyncMock()
+        await form.on_submit(submit)
+        question = submit.followup.send.await_args.kwargs["view"]
+        self.assertIs(question.question, submit.followup.send.return_value)
+        question.question = SimpleNamespace(edit=AsyncMock())
+        await question.on_timeout()
+        question.question.edit.assert_awaited_once()
+        self.assertIsNone(question.question.edit.await_args.kwargs["view"])
+        submit.edit_original_response.assert_not_awaited()
+
     async def test_cancelling_the_question_gives_the_offer_back(self) -> None:
         _, _, view = await self.disagreeing()
         press = self.interaction()

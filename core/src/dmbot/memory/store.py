@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -128,11 +129,14 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.names import not_names
 
+log = logging.getLogger(__name__)
+
 PERSON = "person"
 PLAYS = "plays"
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
+ANALYZE_AFTER_NAMES = 500  # a list this long refreshes the planner's statistics (#2376)
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
 # _live_ids instead: joined to a campaign with no table statistics yet (one just given
@@ -1487,6 +1491,40 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def add_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        names: Sequence[NewName],
+        *,
+        source: str,
+        secret_clashes: bool = True,
+        more: Sequence[MoreNames] = (),
+        entity_source: str | None = None,
+    ) -> Written[list[str | None]]:
+        """`_add_names` (see there), then the memory tables' statistics refreshed after a big
+        list (#2376): the next read of a campaign that just grew by thousands of names is planned
+        from fresh counts."""
+        written = await self._add_names(
+            guild_id, campaign_id, names, source=source, secret_clashes=secret_clashes,
+            more=more, entity_source=entity_source,
+        )  # fmt: skip
+        if sum(1 for i in written.value if i is not None) >= ANALYZE_AFTER_NAMES:
+            await self.analyze(guild_id)
+        return written
+
+    async def analyze(self, guild_id: int) -> None:
+        """Refresh the planner's statistics for the memory tables, after a big import or a
+        restore (#2376): until the database's own ANALYZE has run, a read over thousands of new
+        rows is planned from guesses and can take seconds. Best effort: the database role may not
+        be allowed to (then nothing happens), and nothing here may fail the import that called
+        it. Only table names are run, never anyone's data."""
+        try:
+            async with self._db.guild(guild_id) as conn:
+                await conn.execute("ANALYZE memory_entities, memory_aliases, memory_relations")
+        except Exception:
+            log.warning("Couldn't refresh the memory tables' statistics", exc_info=False)
+
+    async def _add_names(
         self,
         guild_id: int,
         campaign_id: str,

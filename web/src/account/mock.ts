@@ -375,7 +375,7 @@ function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" |
  * `.names-manager` is a server manager who isn't a DM of it (no secret names, nothing to change), and
  * `.names-none` is someone who may not see the list (not found). Any other address is a DM. */
 const NAME_KINDS: { key: string; label: string }[] = [
-  { key: "npc", label: "NPCs" },
+  { key: "npc", label: "People" },
   { key: "place", label: "Places" },
   { key: "group", label: "Groups" },
   { key: "item", label: "Items" },
@@ -910,9 +910,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         case "remove-other":
           row.others = row.others.filter((o) => o !== change.other);
           break;
-        case "secret":
-          row.secret = change.secret;
+        case "hide":
+          row.hidden = change.hidden;
           break;
+        case "secret":
+          break; // a single other name's switch: the pretend memory keeps none
         case "merge": {
           const into = memory.find((n) => n.id === change.into);
           if (!into || into.id === id) throw new ApiError("not-found");
