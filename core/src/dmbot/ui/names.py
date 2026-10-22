@@ -727,7 +727,7 @@ def already_known(name: str, entry: str) -> str:
 # draws one). Each label says what pressing does, as on the name card; no colon, the site's
 # button check refuses one.
 PLAYERS_KNOW = "🙈 Hide from players"
-PLAYERS_DONT_KNOW = "👀 Show to players"
+PLAYERS_DONT_KNOW = "👁️ Show to players"
 
 
 class KindPicker(_Menu):
@@ -771,7 +771,9 @@ class KindPicker(_Menu):
         """The question, and (to a DM) whether the name will be kept from the players."""
         text = f"**What is {_md(self.name)}?** Pick one to save it."
         if self.hidden:
-            text += "\n🙈 Hidden from players until it is said at the table. Only you see it."
+            text += (
+                "\n🙈 Hidden from players for now. Press Show to players when they should know it."
+            )
         return text
 
     async def _flip_hidden(self, interaction: discord.Interaction) -> None:
