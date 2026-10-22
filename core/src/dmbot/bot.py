@@ -4449,7 +4449,10 @@ class DMBot(commands.AutoShardedBot):
             if view is None:
                 await user.send(text, allowed_mentions=NO_PINGS)
             else:
-                await user.send(text, view=view, allowed_mentions=NO_PINGS)
+                sent = await user.send(text, view=view, allowed_mentions=NO_PINGS)
+                keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
+                if keep is not None:
+                    keep(sent)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"

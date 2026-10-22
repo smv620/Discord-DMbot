@@ -44,16 +44,23 @@ class ClashView(discord.ui.View):
         super().__init__(timeout=TIMEOUT_S)
         self._dm_ids, self._record, self._retry = frozenset(dm_ids), record, retry
         self._answered = False
+        self.message: discord.Message | None = (
+            None  # the question as sent, to take its buttons away
+        )
         first, second = sides
         self.add_item(_Pick(self, first, second))
         self.add_item(_Pick(self, second, first))
 
     async def on_timeout(self) -> None:
         """Buttons that do nothing any more are taken away, so none looks live and fails."""
-        message = getattr(self, "message", None)  # (set by discord.py when it is sent)
-        if message is not None and not self._answered:
+        if self.message is not None and not self._answered:
             with contextlib.suppress(discord.HTTPException):
-                await message.edit(content=TIMED_OUT, view=None)
+                await self.message.edit(content=TIMED_OUT, view=None)
+
+    def keep_message(self, message: discord.Message) -> None:
+        """Called by whoever sends the question, with the message that was sent: discord.py does
+        not keep it for a view sent in a DM by `user.send`."""
+        self.message = message
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id in self._dm_ids:  # on every press

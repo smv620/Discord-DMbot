@@ -44,7 +44,7 @@ from dmbot.ui import rule_card
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-PROMPT_VERSION = "sidebar-12"  # bump when SYSTEM or the reply form changes (it is recorded)
+PROMPT_VERSION = "sidebar-13"  # bump when SYSTEM or the reply form changes (it is recorded)
 MAX_TOKENS = 150  # 200 characters of answer and the four fields fit in ~100
 CALL_TIMEOUT_S = 6  # one AI call; a Haiku answer of ~80 tokens takes 1 to 3 s
 TOTAL_BUDGET_S = 8  # everything after the plan check, retry included (the target is ~5 s)

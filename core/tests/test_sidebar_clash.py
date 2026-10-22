@@ -278,8 +278,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         view, record, _retry = self.view()
         message = MagicMock()
         message.edit = AsyncMock()
-        setattr(view, "_message", message)  # noqa: B010 - the library keeps it under this name
-        setattr(view, "message", message)  # noqa: B010
+        view.keep_message(message)
         await view.on_timeout()
         self.assertIn("neither rule was used", message.edit.await_args.kwargs["content"])
         self.assertIsNone(message.edit.await_args.kwargs["view"])
@@ -314,7 +313,7 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
         )
         self.clash = FakeAnswer(
             text=rule_clash.question_text(*sides),  # type: ignore[misc]
-            in_game=False,
+            in_game=True,
         )
         self.clash.clash = sides
         self.answerer = FakeAnswerer(self.clash)
@@ -347,10 +346,11 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
         text, view = reply.await_args.args
         self.assertIn("Which one applies?", text)
         self.assertEqual(len(view.children), 2)
-        saved = " ".join(
-            str(line.sidebar) + str(getattr(line, "text", "")) for line in self.host.saved
-        )
-        self.assertNotIn("item interaction", saved)
+        saved = [str(getattr(line, "text", "")) for line in self.host.saved]
+        self.assertIn("can I drink a potion?", saved)  # the question is kept
+        self.assertIn("(asked the DM which house rule applies)", saved)  # the answer line, no rules
+        self.assertNotIn("item interaction", " ".join(saved))  # never a rule's words
+        self.assertNotIn("Which one applies?", " ".join(saved))
 
     async def test_a_players_table_question_tells_the_dm_which_two_and_nothing_else(self) -> None:
         public = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
@@ -365,5 +365,24 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("item interaction", " ".join(self.host.chat).lower())  # no rule's words
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TheRealSend(unittest.IsolatedAsyncioTestCase):
+    """The buttons are taken away when nobody answers, through the bot's own send (#2284)."""
+
+    async def test_the_bot_hands_the_sent_message_to_the_view_and_the_timeout_edits_it(
+        self,
+    ) -> None:
+        from dmbot.bot import DMBot
+
+        sent = MagicMock()
+        sent.edit = AsyncMock()
+        user = SimpleNamespace(send=AsyncMock(return_value=sent))
+        bot = SimpleNamespace(get_user=lambda _id: user)
+        sides = rule_clash.named(
+            "House rule 1, House rule 2", [house(1, POTION_A), house(2, POTION_B)]
+        )
+        view = ClashView(sides, dm_ids={DM}, record=AsyncMock(), retry=AsyncMock())
+        status = await DMBot.sidebar_send_dm(bot, DM, "Which one applies?", view)  # type: ignore[arg-type]
+        self.assertEqual(status, "sent")
+        await view.on_timeout()
+        sent.edit.assert_awaited_once()
+        self.assertIsNone(sent.edit.await_args.kwargs["view"])
