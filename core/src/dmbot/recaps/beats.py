@@ -25,7 +25,19 @@ MAX_WINDOWS = 12  # a longer session gets bigger windows, not more calls
 WINDOW_BEATS = 30  # most beats asked for in one window
 MAX_BEATS = 120  # most beats in the whole sheet
 MIN_BEATS = 3  # fewer real beats than this is not a session worth a recap
-MAX_TOKENS = 3600  # (the place on each beat added to the answer, #2064)
+BEAT_TOKENS = 220  # one beat as JSON: a sentence, names, line numbers, the place and the kind
+# Room for a full window of beats and a margin. A full window of 30 beats ran past the old fixed
+# 3,600 in the owner's live session (#2341), and the retry had the same limit, so the job failed.
+MAX_TOKENS = WINDOW_BEATS * BEAT_TOKENS + 400  # (a ceiling, not a spend: paid for what is written)
+
+
+def room(attempt: int) -> int:
+    """The output room of a beat-sheet call: double on each retry, so an answer that was cut off
+    gets a try with twice the room, never the same limit again (#2341). (The beat sheet retries
+    once, so attempt 1 is the last; the cap only stops a runaway.)"""
+    return MAX_TOKENS << min(attempt, 2)
+
+
 BEAT_MAX = 240  # characters of one beat
 MIN_LINES_FOR_A_PLAYER = 8  # a player with this many lines must appear in some beat
 KINDS = ("event", "moment", "state")

@@ -2059,6 +2059,21 @@ QUIET_STOP = """
             CHECK (quiet_stop_minutes IN (0, 30, 60, 90));
 """
 
+QUIET_STOP_CHOICES_SQL = """
+    -- Stop when quiet has no Off and offers 5, 10, 15 or 30 minutes, 10 by default (#2288).
+    -- A campaign on Off, 60 or 90 goes to 30, the longest wait left; one on 30 stays on 30.
+    -- This changes rows, and every campaign table has forced row-level security, so the update
+    -- opens the table for itself and closes it again (migrations run with no server set).
+    ALTER TABLE campaigns DROP CONSTRAINT campaigns_quiet_stop_minutes_check;
+    CREATE POLICY migrate_backfill ON campaigns USING (true) WITH CHECK (true);
+    UPDATE campaigns SET quiet_stop_minutes = 30 WHERE quiet_stop_minutes NOT IN (5, 10, 15, 30);
+    DROP POLICY migrate_backfill ON campaigns;
+    ALTER TABLE campaigns ALTER COLUMN quiet_stop_minutes SET DEFAULT 10;
+    ALTER TABLE campaigns
+        ADD CONSTRAINT campaigns_quiet_stop_minutes_check
+            CHECK (quiet_stop_minutes IN (5, 10, 15, 30));
+"""
+
 RECAP_STYLE = f"""
     -- The examples a DM pastes so recaps sound the way they like (#2075). DMbot copies how an
     -- example sounds, never what happens in it. At most 3 a campaign, each at most 600 words
@@ -8099,6 +8114,26 @@ IMPORT_PLAYS = (
     """
 )
 
+HOUSE_RULE_WINS = f"""
+    -- Which of two house rules that disagree wins (#2284), decided by the DM. A side is a rule
+    -- of the campaign's own (`*_set` empty) or a rule of a set it follows (the set's name and
+    -- the rule's number in it). The pair is stored once, the smaller side first, and `winner`
+    -- says which side wins. Per campaign, deleted with it, carried in backups.
+    CREATE TABLE house_rule_wins (
+        {_memory_scope()}
+        a_set       TEXT NOT NULL DEFAULT '',
+        a_number    INTEGER NOT NULL CHECK (a_number > 0),
+        b_set       TEXT NOT NULL DEFAULT '',
+        b_number    INTEGER NOT NULL CHECK (b_number > 0),
+        winner      TEXT NOT NULL CHECK (winner IN ('a', 'b')),
+        decided_by  BIGINT NOT NULL,
+        decided_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_set, a_number, b_set, b_number),
+        CHECK (a_set COLLATE "C" < b_set COLLATE "C"
+               OR (a_set = b_set AND a_number < b_number))
+    );
+    """ + _isolate("house_rule_wins")
+
 HOUSE_RULE_SOURCE = """
     -- Where each house rule came from (#2285; docs/PLAN.md, "Seeing where house rules come from"):
     -- 'discord' is every rule from before this was recorded ("added in Discord"), 'typed' the
@@ -9443,7 +9478,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0161_import_suggest", IMPORT_SUGGEST),  # who a name is, and who they play (#2135)
     ("0162_recap_critics", RECAP_CRITICS),  # the critics loop's saved state (#2255)
     ("0163_import_plays", IMPORT_PLAYS),  # the DM's "plays" choices wait for the bot (#2135)
+    ("0164_house_rule_wins", HOUSE_RULE_WINS),  # which of two disagreeing rules wins (#2284)
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
+    ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -9462,6 +9499,7 @@ ISOLATED_TABLES = (
     "session_imports",
     "import_speakers",
     "import_plays",
+    "house_rule_wins",
     "member_directory",
     "transcript_suggestions",
     "waiting_name_questions",

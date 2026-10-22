@@ -165,6 +165,8 @@ from dmbot.dm_screen.quiet_stop import (
     KeepListeningButton,
     idle_warning_text,
     keep_view,
+    stopped_dm_text,
+    stopped_player_text,
     stopped_text,
 )
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
@@ -309,6 +311,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
+from dmbot.rules.wins import WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -1282,6 +1285,13 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.rule_conflict_ai = (  # a saved house rule that disagrees with another (#2284)
+            self.ai_client.tier(FEATURE_TIERS[Feature.RULE_CONFLICTS], Feature.RULE_CONFLICTS)
+            if self.ai_client
+            else None
+        )
+        # Which disagreeing house rule wins, as the DM decided; set where the database is known.
+        self.house_wins: WinsStore | None = None
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
@@ -10413,6 +10423,11 @@ class DMBot(commands.AutoShardedBot):
             elif verdict.action == "stop" and verdict.reason is not None:
                 log.info("Idle: stopping the session (%s)", verdict.reason)
                 await self._remove_idle_warning(table)
+                # Who was there when it stopped, and who runs the table: read before the stop
+                # clears the table (#2288).
+                in_voice = self._people_in_voice(table)
+                dms = {table.dm_user_id, *table.dm_user_ids}
+                name = table.campaign_name
                 result = await self.stop_session(
                     table.guild_id,
                     table.dm_user_id,
@@ -10425,8 +10440,52 @@ class DMBot(commands.AutoShardedBot):
                 # session, answers with something else and nothing is said about it.
                 if result.startswith("Stopped listening"):
                     await self.post(table.screen_channel_id, stopped_text(verdict.reason, minutes))
+                    # Then private messages, in a task of their own: they never delay the stop
+                    # and a closed inbox never breaks it (#2288). Not sent for a DM's own Stop.
+                    self._track(
+                        self._tell_auto_stop(
+                            table.guild_id, table.campaign_id, name, verdict.reason, minutes,
+                            dms, in_voice,
+                        ),
+                        "auto-stop messages",
+                    )  # fmt: skip
             elif table.idle_message is not None and table.idle.warned_at is None:
                 await self._remove_idle_warning(table, CANCELLED)  # people are back, or spoke
+
+    async def _tell_auto_stop(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        name: str,
+        reason: str,
+        minutes: int,
+        dms: set[int],
+        in_voice: list[int],
+    ) -> None:
+        """Say privately that DMbot stopped by itself (#2288): the campaign's DM with where to
+        change it, and each other person who was in the voice channel. A closed inbox is skipped
+        and only counted in the log (counts, never names or IDs)."""
+        where = "with `/dmbot settings`"
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+        except Exception:
+            campaign = None
+            log.exception("Couldn't read the campaign for the auto-stop message")
+        if campaign is not None and campaign.dm_bot_channel_id:
+            where = f"in <#{campaign.dm_bot_channel_id}>"
+        sent = skipped = 0
+        for user_id in sorted(dms):
+            text = stopped_dm_text(name, reason, minutes, where)
+            if await self._dm_user(user_id, text):
+                sent += 1
+            else:
+                skipped += 1
+        for user_id in dict.fromkeys(u for u in in_voice if u not in dms):
+            if await self._dm_user(user_id, stopped_player_text(name, reason, minutes)):
+                sent += 1
+            else:
+                skipped += 1
+        log.info("Auto-stop messages: %d sent, %d skipped (closed inbox)", sent, skipped)
 
     @staticmethod
     async def _remove_idle_warning(table: Table, text: str | None = None) -> None:
@@ -11601,6 +11660,7 @@ def register_backup_sections(
     by the running bot and by the tests, so a test exports exactly what production does."""
     campaigns.register_section(MemorySection())  # campaign memory goes in backups
     campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+    campaigns.register_section(WinsSection())  # and which disagreeing rule wins (#2284)
     campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
     campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
     campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
@@ -11680,6 +11740,7 @@ async def run(settings: Settings) -> None:
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
         )
+        bot.house_wins = WinsStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

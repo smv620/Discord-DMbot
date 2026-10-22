@@ -597,8 +597,8 @@ export const ruleKindDmSteps: Step[] = [
 ];
 
 // DMbot stops a session by itself when nobody is there (#2034, #2038): nobody in the voice channel
-// for 5 minutes, or nobody has spoken or typed for the campaign's quiet limit (30 minutes, or 60, 90,
-// Off). It warns on the DM screen first, with a Keep listening button. The numbers MIRROR core
+// for 5 minutes, or nobody has spoken or typed for the campaign's quiet limit (5, 10, 15 or 30 minutes,
+// no Off, #2288). It warns on the DM screen first, with a Keep listening button. The numbers MIRROR core
 // idle_stop.py (EMPTY_S, WARN_S) and campaigns/store.py (QUIET_STOP_CHOICES): change them together.
 // Held with the What's new entry "Stops listening when no one's there" until dev1 deploys
 // #2038. Set this to true in the same change that moves that entry out of `held`; a test keeps the
@@ -607,7 +607,7 @@ export const QUIET_STOP_LIVE = false;
 
 export const quietStopSteps: Step[] = [
   {
-    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 30 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 30 minutes, use the 🔇 Stop when quiet button in ⚙️ Settings: each press goes to 60, 90 and Off, then back to 30. Off turns off only the quiet stop; the empty-channel stop always stays on.",
+    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 10 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 10 minutes, use the 🔇 Stop when quiet button in ⚙️ Settings: each press goes to 15, 30 and 5, then back to 10; there is no Off. When it stops, it sends you a private message and tells everyone still in the voice channel.",
     names: [
       { name: "Keep listening", file: "dm_screen/quiet_stop.py" },
       { name: "Stop when quiet", file: "dm_screen/settings.py" },
@@ -709,10 +709,11 @@ export const dmSteps: Step[] = [
     names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
   },
   {
-    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret: no, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Next one is public so it reads 🤫 Next one is secret, then pick the other name from the list. Players' cards never show that connection. To hide or show a connection you already made, use 🤫 Hide or show a connection… on the same screen. Only a game master of the campaign can do either.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
-      { name: "🤫 Secret: yes", file: "ui/name_card.py" },
+      { name: "🤫 Next one is secret", file: "ui/name_card.py" },
+      { name: "🤫 Hide or show a connection…", file: "ui/name_card.py" },
     ],
   },
   {

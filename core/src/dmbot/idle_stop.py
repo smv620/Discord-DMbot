@@ -1,7 +1,7 @@
 """When DMbot stops a session by itself (#2034, owner decision 2026-10-19): when no person is in
 the voice channel for 5 minutes, or nobody has spoken (or typed at the table) for the campaign's
-quiet limit (30, 60 or 90 minutes, or never). A session left running bills listening minutes
-against the owner's plan, and a music bot in the channel must not keep it alive.
+quiet limit (5, 10, 15 or 30 minutes; never off since #2288). A session left running bills
+listening minutes against the owner's plan, and a music bot in the channel must not keep it alive.
 
 Either condition first gives a warning, with a Keep listening button; the stop follows
 `WARN_S` seconds later if nothing changes. Someone coming back or speaking cancels the warning,
@@ -64,7 +64,8 @@ class IdleWatch:
 
     def poll(self, now: float, *, people: bool, quiet_minutes: int) -> Verdict:
         """Where the watch stands. `people`: a person (never a bot) is in the channel now.
-        `quiet_minutes`: the campaign's limit; 0 turns off the silence stop only."""
+        `quiet_minutes`: the campaign's limit (5, 10, 15 or 30; a 0 is read as off, though the store
+        no longer allows it)."""
         if people:
             self.last_person = now
         reason: Reason | None = None

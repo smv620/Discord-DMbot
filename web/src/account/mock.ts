@@ -26,6 +26,12 @@ import type {
   RecordingEntry,
   SupportQuestion,
   TranscriptVersion,
+  WebEdge,
+  WebGraph,
+  WebLink,
+  WebLinkChange,
+  WebNode,
+  WebQuery,
 } from "./api";
 import { ApiError } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
@@ -410,11 +416,114 @@ function namesView(ref: string): "dm" | "manager" | "none" {
   return "dm";
 }
 
+/** The pretend campaign behind the relationship web (#2324): the Names page's names joined by a few
+ * made-up connections, so every ring has something in it. `.web-big` makes a campaign of 350 names
+ * (the page warns before drawing it), `.web-manager` a server manager who isn't a DM (no secrets, no
+ * editing) and `.web-none` someone who may not see it (not found). */
+interface WebState {
+  nodes: WebNode[];
+  /** Each connection belongs to a pair (a, b) and has an order: later is newer. */
+  links: { id: string; a: string; b: string; words: string; secret: boolean; direction: WebLink["direction"] }[];
+  nextLink: number;
+}
+
+function startWeb(big: boolean): WebState {
+  const base = startNames();
+  const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
+  if (big) {
+    for (let i = nodes.length; i < 350; i += 1) nodes.push({ id: `n${i + 1}`, name: `Villager ${i + 1}`, kind: "npc", secret: false });
+  }
+  const words = ["works with", "owes a debt to", "is afraid of", "guards", "trusts", "serves", "is hunting", "grew up with"];
+  const links: WebState["links"] = [];
+  const connect = (a: number, b: number, secret = false): void => {
+    if (a === b || a >= nodes.length || b >= nodes.length) return;
+    const id = `l${links.length + 1}`;
+    links.push({ id, a: nodes[a]!.id, b: nodes[b]!.id, words: words[links.length % words.length]!, secret, direction: links.length % 5 === 0 ? "both" : "ab" });
+  };
+  for (let i = 0; i < nodes.length; i += 1) {
+    connect(i, (i + 1) % nodes.length);
+    if (i % 3 === 0) connect(i, (i * 7 + 3) % nodes.length, i % 9 === 0);
+  }
+  // A big campaign has hubs everyone is tied to, so a few steps out reach nearly every name.
+  if (big) for (let i = 12; i < nodes.length; i += 1) connect(i, i % 40);
+  // Two connections between one pair, one of them secret: the line says "(+1)".
+  connect(0, 1, true);
+  connect(0, 1);
+  return { nodes, links, nextLink: links.length + 1 };
+}
+
+function webView(ref: string): "dm" | "manager" | "none" {
+  if (/\.web-none$/.test(ref)) return "none";
+  if (/\.web-manager$/.test(ref)) return "manager";
+  return "dm";
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
   const memory = startNames();
+  // One pretend web per campaign address, started on first use.
+  const webs = new Map<string, WebState>();
+  const web = (ref: string): WebState => {
+    let found = webs.get(ref);
+    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref))));
+    return found;
+  };
+  /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
+   * if every one is secret and the viewer may see them). */
+  const edgesOf = (links: WebState["links"], dm: boolean): WebEdge[] => {
+    const pairs = new Map<string, WebState["links"]>();
+    for (const l of links) {
+      if (l.secret && !dm) continue;
+      const key = [l.a, l.b].sort().join("|");
+      (pairs.get(key) ?? pairs.set(key, []).get(key)!).push(l);
+    }
+    return [...pairs.values()].map((group) => {
+      const known = group.filter((l) => !l.secret);
+      const label = (known.length > 0 ? known : group).at(-1)!.words;
+      return {
+        a: group[0]!.a,
+        b: group[0]!.b,
+        label,
+        more: group.length - 1,
+        links: group.map((l) => ({ id: l.id, words: l.words, secret: l.secret, direction: l.direction })),
+      };
+    });
+  };
+  const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
+    const view = webView(ref);
+    if (view === "none") throw new ApiError("not-found");
+    const dm = view === "dm";
+    const state = web(ref);
+    const visible = new Set(state.nodes.filter((n) => dm || !n.secret).map((n) => n.id));
+    const usable = state.links.filter((l) => visible.has(l.a) && visible.has(l.b) && (dm || !l.secret));
+    const centre = query.center && visible.has(query.center) ? query.center : [...visible][0]!;
+    // Hops over every usable connection, as the real API counts them.
+    const near = new Map<string, number>([[centre, 0]]);
+    const queue = [centre];
+    for (let i = 0; i < queue.length; i += 1) {
+      const here = queue[i]!;
+      if ((near.get(here) ?? 0) >= query.hops) continue;
+      for (const l of usable) {
+        const there = l.a === here ? l.b : l.b === here ? l.a : null;
+        if (there !== null && !near.has(there)) {
+          near.set(there, (near.get(here) ?? 0) + 1);
+          queue.push(there);
+        }
+      }
+    }
+    // A name changed on the Names routes (rename, kind) shows here too: they are the same names.
+    const current = (n: WebNode): WebNode => {
+      const live = memory.find((m) => m.id === n.id);
+      return { ...n, name: live?.name ?? n.name, kind: live?.kind ?? n.kind };
+    };
+    const nodes = state.nodes
+      .filter((n) => near.has(n.id))
+      .map((n) => (dm ? current(n) : { id: n.id, name: current(n).name, kind: current(n).kind }));
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), dm);
+    return { center: centre, nodes, edges, truncated: false, maxHops: 6, canEdit: dm };
+  };
   // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
   let questions: SupportQuestion[] = [];
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
@@ -641,6 +750,48 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (which === "audio" && on && !choices.canAudio) throw new ApiError("not-in-plan");
       choices[which] = on;
       return { ...choices };
+    },
+    // The relationship web (#2324): rings out from a name, the way the real API counts hops.
+    async webGraph(ref, query: WebQuery): Promise<WebGraph> {
+      calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
+      await reachable();
+      signedIn();
+      return webGraphOf(ref, query);
+    },
+    async webSize(ref, query: WebQuery) {
+      calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
+      await reachable();
+      signedIn();
+      return { names: webGraphOf(ref, query).nodes.length };
+    },
+    async changeWebLink(ref, change: WebLinkChange) {
+      calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
+      const state = web(ref);
+      const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true);
+        return found[0] ?? { removed: true };
+      };
+      if (change.action === "add") {
+        if (change.words.trim() === "") throw new ApiError("bad-name");
+        if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
+        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "ab" });
+        return edgeOf(change.a, change.b);
+      }
+      const link = state.links.find((l) => l.id === change.id);
+      if (!link) throw new ApiError("not-found");
+      if (change.action === "words") {
+        if (change.words.trim() === "") throw new ApiError("bad-name");
+        link.words = change.words.trim();
+      } else if (change.action === "secret") {
+        link.secret = change.secret;
+      } else {
+        if (change.confirm !== true) throw new ApiError("needs-confirm");
+        state.links.splice(state.links.indexOf(link), 1);
+      }
+      return edgeOf(link.a, link.b);
     },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
       calls.push(`allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}`);
@@ -869,6 +1020,27 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       return names.map((n) => ({ ...n }));
+    },
+    // "How to say it" (#2317): a made-up respelling, the first half in capitals (suggest) or the second
+    // (from a recording), so the two can be told apart in a demo.
+    async suggestSaidAs(campaignRef, nameId) {
+      calls.push(`suggestSaidAs:${campaignRef}:${nameId}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      const half = Math.ceil(found.text.length / 2);
+      return `${found.text.slice(0, half).toUpperCase()}-${found.text.slice(half).toLowerCase()}`;
+    },
+    async respellFromVoice(campaignRef, nameId, clip) {
+      calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      if (clip.size === 0) throw new ApiError("bad-clip");
+      const half = Math.ceil(found.text.length / 2);
+      return `${found.text.slice(0, half).toLowerCase()}-${found.text.slice(half).toUpperCase()}`;
     },
     async saveSaidAs(campaignRef, nameId, saidAs) {
       calls.push(`saveSaidAs:${campaignRef}:${nameId}:${saidAs ?? ""}`);
