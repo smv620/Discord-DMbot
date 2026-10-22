@@ -542,7 +542,7 @@ class MemoryStore:
             rows = await scope.select(
                 RELATIONS,
                 " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
-                " AND (%s OR NOT secret) ORDER BY created_at, id",
+                " AND (%s OR (NOT secret AND NOT unrevealed)) ORDER BY created_at, id",
                 [statuses, entity_id, entity_id, include_secret],
             )
             ends = {r[end] for r in rows for end in ("subject_id", "object_id")}
@@ -600,7 +600,7 @@ class MemoryStore:
                     RELATIONS,
                     # a proposed one is shown while it is not secret; a confirmed one when the
                     # players hold it as fact (their belief, #2409)
-                    " AND ((status = 'proposed' AND NOT secret)"
+                    " AND ((status = 'proposed' AND NOT secret AND NOT unrevealed)"
                     f" OR (status = 'confirmed' AND {beliefs.party_knows()})) ORDER BY id",
                 )
                 if r["subject_id"] in live and r["object_id"] in live
@@ -610,7 +610,7 @@ class MemoryStore:
             secret_relations = [
                 r
                 for r in await scope.select(
-                    RELATIONS, " AND status = 'confirmed' AND secret ORDER BY id"
+                    RELATIONS, " AND status = 'confirmed' AND (secret OR unrevealed) ORDER BY id"
                 )
                 if r["subject_id"] in live and r["object_id"] in live
             ]

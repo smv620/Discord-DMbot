@@ -16,8 +16,13 @@ from dmbot.memory.store import MemoryStore
 async def set_secret(
     memory: MemoryStore, guild_id: int, campaign_id: str, link: Relation, secret: bool
 ) -> Written[Relation]:
-    """Hide the connection from players, or show it to them."""
-    return await memory.update_relation(guild_id, campaign_id, link.id, source=DM, secret=secret)
+    """Hide the connection from players, or show it to them. Showing one the story was holding
+    back (a backstory connection, #2404) also reveals it, in the same change: the DM's one
+    "players can see it" switch, refused until both its names are shown."""
+    reveal = False if link.unrevealed and not secret else None
+    return await memory.update_relation(
+        guild_id, campaign_id, link.id, source=DM, secret=secret, unrevealed=reveal
+    )
 
 
 async def remove(

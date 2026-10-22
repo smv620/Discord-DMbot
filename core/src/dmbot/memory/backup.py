@@ -350,7 +350,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # One left from another player, or on an entry with no player (an undone merge), is
     # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
     # the file is damage.
-    secret = {r["id"] for r in by_tag["relation"] if r["secret"]}
+    secret = {r["id"] for r in by_tag["relation"] if r["secret"] or r["unrevealed"]}
     party = {p["id"] for p in by_tag["perspective"] if p["kind"] == "party"}
     newest: dict[str, dict[str, Any]] = {}  # the players' current belief in each connection
     for b in sorted(by_tag["belief"], key=lambda b: b["seq"]):

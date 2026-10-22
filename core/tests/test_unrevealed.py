@@ -101,6 +101,30 @@ class TheConnection(Held):
         new = got.value.id
         self.assertNotIn(new, await self.seen(self.player))
 
+    async def test_the_name_card_reader_hides_an_unrevealed_connection_from_players(self) -> None:
+        held = await self.held_link()
+        shown = await self.memory.relations(self.g, self.one.id, include_secret=False)
+        self.assertNotIn(held, {r.id for r in shown})
+        dm = await self.memory.relations(self.g, self.one.id, include_secret=True)
+        self.assertIn(held, {r.id for r in dm})
+
+    async def test_making_a_held_back_connection_public_reveals_it_once_both_names_are_shown(
+        self,
+    ) -> None:
+        from dmbot.memory import link_edits
+
+        other = await self.add("Aldous Pell", "npc", hidden_from_players=True)
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", other, source=DM, confidence=1.0,
+            status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        link = made.value[0]
+        with self.assertRaises(MemoryRuleError):  # a name is still hidden
+            await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
+        await self.memory.set_hidden_from_players(self.g, self.one.id, other, False, source=DM)
+        await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
+        self.assertIn(link.id, await self.seen(self.player))
+
 
 class TheNames(Held):
     async def test_a_list_of_names_starts_unrevealed(self) -> None:

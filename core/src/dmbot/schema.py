@@ -10599,8 +10599,8 @@ UNREVEALED_CONNECTIONS = """
         1,
     )
 )
-assert "'revealed', NOT (e.hidden" in UNREVEALED_CONNECTIONS
-assert "'revealed', EXISTS" in UNREVEALED_CONNECTIONS
+assert UNREVEALED_CONNECTIONS.count("'revealed', NOT (e.hidden") == 1
+assert UNREVEALED_CONNECTIONS.count("'revealed', EXISTS") == 1
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
