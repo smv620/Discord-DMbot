@@ -95,6 +95,7 @@ export const text = {
   actionFailed: "That didn't work. Try again in a minute.",
   signInAgain: "For your safety, sign in again first. Tap Sign in with Discord.",
   errors: {
+    "bad-email": "That doesn't look like an email address. It should look like name@example.com. Check it and try again.",
     "try-it-used": "You've already used Try It. Pick a plan to keep playing.",
     "has-plan": "You already have a plan. Tap Change plan to switch.",
     "not-ending": "This plan isn't ending, or has already ended. The page now shows how things are.",
@@ -325,6 +326,28 @@ export const text = {
   moveTooSoon:
     "You can move once every 30 days, and this account moved less than 30 days ago. Try again after 30 days, or tell us on the Say hello page.",
   moveEmailFailed: "The code couldn't be emailed just now. Try again in a few minutes.",
+
+  // The email DMbot uses (#2349)
+  myEmailHeading: "Your email",
+  emailNow: (address: string): string => `DMbot emails you at ${address}.`,
+  emailNone: "DMbot has no email for you yet, so it can't email you.",
+  emailPayment: "That's the email on your payment account.",
+  emailPaymentButton: "Change your email in Stripe",
+  emailPaymentHelp: "You will leave this page. In Stripe, open Billing information, then change your email. It shows here once DMbot has the new one.",
+  emailChange: "Change your email",
+  emailAdd: "Add an email",
+  emailNewLabel: "New email address",
+  emailSend: "Send a confirmation link",
+  emailPending: (address: string, old: string | null): string =>
+    old
+      ? `We sent a link to ${address}. Nothing changes until you open it. Until then DMbot keeps emailing ${old}. Sending a new link replaces this one.`
+      : `We sent a link to ${address}. Your email is saved when you open it. Until then DMbot has no email for you. Sending a new link replaces this one.`,
+  emailLinkNote: "We'll send a link to this address. Your email changes when you open it.",
+  emailSendAgain: "Send a new link",
+  emailLoadFailed: "Your email didn't load. Reload the page.",
+  emailSaved: "If that address can be used, we've sent a link to it. Check the inbox (and spam).",
+  emailTypeFirst: "Type your new email address first.",
+  emailPortalOff: "The payment page isn't available right now. Try again later.",
 
   // Write to the team, for everyone with an account, Try It too (#1340, #1435)
   supportHeading: "Write to the DMbot team",

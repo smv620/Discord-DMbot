@@ -12,6 +12,7 @@ import type {
   Character,
   ImportProgress,
   Me,
+  MyEmail,
   NameChanged,
   NameChange,
   NameKind,
@@ -461,6 +462,11 @@ function webView(ref: string): "dm" | "manager" | "none" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  const myEmail: MyEmail = {
+    address: "dm@example.com",
+    source: scenario === "table" ? "payment" : "signin",
+    pending: null,
+  };
   const memory = startNames();
   // One pretend web per campaign address, started on first use.
   const webs = new Map<string, WebState>();
@@ -1178,6 +1184,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async getMoveCode() {
       calls.push("move-code");
       signedIn();
+    },
+    // The email setting (#2349). A confirmation link is "sent"; nothing changes until it is opened.
+    async myEmail() {
+      calls.push("myEmail");
+      await reachable();
+      signedIn();
+      return { ...myEmail };
+    },
+    async changeEmail(address) {
+      calls.push(`changeEmail:${address}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address.trim())) throw new ApiError("bad-email");
+      if (myEmail.source === "payment") throw new ApiError("not-allowed");
+      myEmail.pending = address.trim();
+      return { pending: myEmail.pending };
     },
     async sendSupport(ticket) {
       calls.push("support");

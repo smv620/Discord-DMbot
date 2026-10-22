@@ -703,6 +703,12 @@ export const held: Held[] = [
     what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
     reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
   },
+  {
+    date: "2026-10-22",
+    title: "Change the email DMbot uses",
+    what: "On your account page, see the email DMbot uses for recap emails and change it. DMbot sends a link to the new address and changes nothing until you open it. If it is the email on your payment account, you change it in Stripe instead.",
+    reason: "Waits for the email routes (#2349) to be merged and deployed. When they are live, move this up.",
+  },
 ];
 
 const months = [

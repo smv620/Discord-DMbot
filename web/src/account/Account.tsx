@@ -22,6 +22,7 @@ import {
   type Campaign,
   type Character,
   type Me,
+  type MyEmail,
   type MyPlan,
   type Offer,
   type Person,
@@ -488,6 +489,7 @@ function SignedIn({
       )}
       <PlanSection me={me} />
       {me.dmbotId !== undefined && <IdSection me={me} />}
+      {api.myEmail && <EmailSection />}
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
@@ -1366,6 +1368,170 @@ function SupportOrQuestions({ me }: { me: Me }) {
       )}
       <MyQuestions api={api} version={sentCount} canWrite={me.canSupport === true && !!api.sendSupport} />
     </>
+  );
+}
+
+/** The email DMbot uses, for recap emails (#2349). A payment email is changed with the payment company
+ * (its page is asked for only on a press); any other is changed here, but only after a link sent to
+ * the new address is opened, so a typo or a stranger's address never takes over. Only their own
+ * address is ever shown. */
+function EmailSection() {
+  const { api, go } = useShared();
+  const { busy, notice, run, clear } = useAction();
+  const [mine, setMine] = useState<MyEmail | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [address, setAddress] = useState("");
+  const [sent, setSent] = useState(false);
+  const [typeFirst, setTypeFirst] = useState(false);
+  const [portalOff, setPortalOff] = useState(false);
+  const box = useRef<HTMLInputElement>(null);
+
+  const read = useCallback(async () => {
+    try {
+      setMine((await api.myEmail?.()) ?? null);
+      setLoadFailed(false);
+    } catch (error) {
+      // A 401 already ends the session for the whole page (SIGNED_OUT_EVENT); this only says it did not load.
+      setLoadFailed(true);
+    }
+  }, [api]);
+  useEffect(() => void read(), [read]);
+
+  if (loadFailed && !mine)
+    return (
+      <section aria-labelledby="email-section-heading" class="panel" id="email">
+        <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+        <p class="warn" role="alert">
+          {text.emailLoadFailed}
+        </p>
+      </section>
+    );
+  if (!mine) return null;
+
+  const payment = mine.source === "payment";
+  const stripe = (): void =>
+    void run(
+      async () => {
+        const url = await api.billingPortalUrl();
+        if (!isSafeRedirect(url)) throw new ApiError("server");
+        go(url);
+      },
+      (error) => {
+        if (error.kind !== "payments-off") return null;
+        setPortalOff(true);
+        return "";
+      },
+    );
+  const submit = (event: Event): void => {
+    event.preventDefault();
+    if (address.trim() === "") {
+      setTypeFirst(true);
+      box.current?.focus();
+      return;
+    }
+    setTypeFirst(false);
+    void run(async () => {
+      await api.changeEmail?.(address.trim());
+      setSent(true);
+      setEditing(false);
+      setAddress("");
+      await read();
+    });
+  };
+
+  return (
+    <section aria-labelledby="email-section-heading" class="panel" id="email">
+      <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+      <p>{mine.address ? text.emailNow(mine.address) : text.emailNone}</p>
+      {payment && <p class="small">{text.emailPayment}</p>}
+      {mine.pending && (
+        <p class="small" role="status">
+          {text.emailPending(mine.pending, mine.address)}
+        </p>
+      )}
+      {sent && !mine.pending && !editing && (
+        <p class="ok" role="status">
+          {text.emailSaved}
+        </p>
+      )}
+      <Notice message={notice} />
+      {payment ? (
+        <>
+          {portalOff ? (
+            <p class="small">{text.emailPortalOff}</p>
+          ) : (
+            <>
+              <div class="row">
+                <ActionButton busy={busy} kind="secondary" onClick={stripe}>
+                  {text.emailPaymentButton}
+                </ActionButton>
+              </div>
+              <p class="small muted">{text.emailPaymentHelp}</p>
+            </>
+          )}
+        </>
+      ) : editing ? (
+        <form class="stack" noValidate onSubmit={submit}>
+          <label class="field">
+            {text.emailNewLabel}
+            <input
+              ref={box}
+              type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoComplete="email"
+              aria-describedby="email-link-note"
+              value={address}
+              maxLength={254}
+              onInput={(e) => {
+                setAddress((e.target as HTMLInputElement).value);
+                setTypeFirst(false);
+                clear();
+              }}
+            />
+          </label>
+          <p id="email-link-note" class="small muted">
+            {text.emailLinkNote}
+          </p>
+          {typeFirst && (
+            <p class="warn" role="alert">
+              {text.emailTypeFirst}
+            </p>
+          )}
+          <div class="row">
+            <button type="submit" class="button" disabled={busy}>
+              {busy ? text.busy : mine.pending ? text.emailSendAgain : text.emailSend}
+            </button>
+            <button
+              type="button"
+              class="button secondary"
+              onClick={() => {
+                setEditing(false);
+                setTypeFirst(false);
+                clear();
+              }}
+            >
+              {text.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div class="row">
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setEditing(true);
+              setSent(false);
+              setTimeout(() => box.current?.focus(), 0);
+            }}
+          >
+            {mine.pending ? text.emailSendAgain : mine.address ? text.emailChange : text.emailAdd}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 

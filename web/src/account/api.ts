@@ -200,6 +200,14 @@ export interface SupportTicket {
   turnstile: string;
 }
 
+/** The address DMbot emails this person at (#2349). `pending` is a new address that has been sent a
+ * confirmation link and has not been confirmed yet. */
+export interface MyEmail {
+  address: string | null;
+  source: "payment" | "signin" | "none";
+  pending: string | null;
+}
+
 /** One session recap the DM reviews (#1382, #1386). The words come from the API already clean of
  * the music and voice cues the bot's own tools use, so the page shows `text` as it is. */
 export interface Recap {
@@ -835,6 +843,7 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
   | "name-exists" // another name already goes by that (#2295)
@@ -903,6 +912,12 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
+   * Missing from an API older than that. */
+  myEmail?(): Promise<MyEmail>;
+  /** Ask to change it: a confirmation link goes to the new address and nothing changes until it is
+   * opened. Not for a payment email, which is changed with the payment company. */
+  changeEmail?(address: string): Promise<{ pending: string }>;
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
@@ -1109,6 +1124,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  bad_email: "bad-email",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
   exists: "name-exists",
@@ -1264,6 +1280,8 @@ export function httpApi(
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
     },
+    myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
+    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string },
     sendSupport: async (ticket) => {
       const answer = (await call("POST", "/support", ticket)) as {
         reply?: unknown;
