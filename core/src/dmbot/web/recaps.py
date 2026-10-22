@@ -427,7 +427,9 @@ async def edit_recap(
 
 
 async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
-    """`post` (the bot sends it), `drop` (Don't post) or `again` (Try again, at most twice)."""
+    """`post` (the bot sends it), `drop` or `again` (Try again, at most twice). The page no longer
+    offers `drop` (#2419: a recap the DM does not approve simply stays a draft); the route stays
+    so an older open page still works."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
@@ -497,6 +499,8 @@ async def approve_recap(
     choice: str,
     *,
     audio_in_plan: bool,
+    audio_unavailable: str = "",
+    post: bool = False,
     outside_engine: str | None = None,
 ) -> dict[str, Any]:
     """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
@@ -504,11 +508,17 @@ async def approve_recap(
     queues the audio. `outside_engine`: the speech-to-text company in use, so that only consent
     given for it counts, as in the bot. The secret names and the plan are checked again by the
     audio step before any paid call. `audio_in_plan`: from the campaign owner's plan; an audio
-    choice without it is refused ("not_in_plan")."""
-    if choice not in CHOICES:
+    choice without it is refused ("not_in_plan"), and one made while `audio_unavailable` says why
+    it can't be ("not_set_up", "allowance") is refused ("audio_unavailable").
+    `post` (#2419, "Approve and post text only"): approve a text-only choice and hand it to the bot
+    to post in the same transaction, so a failure leaves nothing approved and half-posted; it is
+    only for the text-only choice, since audio is made and reviewed before anything is posted."""
+    if choice not in CHOICES or (post and choice != TEXT):
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
         raise RecapError("not_in_plan")
+    if choice != TEXT and audio_unavailable in ("not_set_up", "allowance"):
+        raise RecapError("audio_unavailable")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, row = await _one(conn, ref, session, marks=False)
         if refusal := cue_refusal(row["summary"]):
@@ -521,6 +531,14 @@ async def approve_recap(
         outcome = (await cur.fetchone() or {}).get("r")
         if outcome != "approved":
             raise RecapError("not_allowed")
+        if post:  # the same hand-over as `decide(..., "post")`, in this transaction
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting' WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND state = 'ready' AND status = 'draft'",
+                (gid, cid, at),
+            )
+            if not cur.rowcount:
+                raise RecapError("not_allowed")  # (the approval is rolled back with it)
         *_, row = await _one(conn, ref, session)
     return _view(row)
 

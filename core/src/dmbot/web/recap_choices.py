@@ -23,6 +23,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.entitlements import RECAP_AUDIO_PLANS, plan_grant_access
+from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.notify import parse_ref
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -44,27 +45,40 @@ async def _audio_facts(
     (`recap_panel.audio_how`'s two answers), from the campaign owner's plan. With
     plans not enforced (the test server) the bot allows it, so the page does too."""
     if not enforce_plans:
-        return {"canAudio": True, "audioHow": ""}
+        return {"canAudio": True, "audioHow": "", "limited": False}
     if owner is None or not owner.isascii() or not owner.isdecimal():
-        return {"canAudio": False, "audioHow": ""}
+        return {"canAudio": False, "audioHow": "", "limited": True}
     # The owner's plan, as the bot reads it (`recap_plan_facts`), not the signed-in person's.
     _plan, _grant, access = await plan_grant_access(db, int(owner), now)
     if not (access.works and access.recap_audio):  # the bot's `can_recap_audio`
-        return {"canAudio": False, "audioHow": ""}
+        return {"canAudio": False, "audioHow": "", "limited": True}
     # As the panel says it: "part of your plan" unless it is a paid plan outside Guild and Pro.
     how = (
         "an add-on"
         if access.kind == "paid" and (access.plan_name or "").casefold() not in RECAP_AUDIO_PLANS
         else "part of your plan"
     )
-    return {"canAudio": True, "audioHow": how}
+    # Free access and grants are not held to the month's allowance by the bot (`_recap_allowance`).
+    return {"canAudio": True, "audioHow": how, "limited": access.kind not in ("free", "grant")}
 
 
 async def read_choices(
-    db: Database, session: Session, ref: str, *, now: int, enforce_plans: bool
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    now: int,
+    enforce_plans: bool,
+    recaps_on: bool = True,
+    audio_allowed: int | None = None,
 ) -> dict[str, Any]:
     """The three choices and whether the narration may be offered. A player, another campaign's DM
-    and a server manager who is no DM get "not found"."""
+    and a server manager who is no DM get "not found". `audioUnavailable` says why narration can't
+    be made right now, for the recap page's greyed button (#2419): "not_set_up" (`recaps_on` is
+    false: nothing on this server makes it), "plan" (the owner's plan has none) or "allowance" (the
+    month's narrated recaps are used up, `audio_allowed`, for a campaign the bot holds to it);
+    empty when it can be made. It is advice for the page: the bot checks again before any paid
+    call."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -77,12 +91,38 @@ async def read_choices(
     if found is None:
         raise RecapError("not_found")
     facts = await _audio_facts(db, found.get("owner"), now, enforce_plans=enforce_plans)
+    limited = bool(facts.pop("limited"))
+    why = ""
+    if not recaps_on:
+        why = "not_set_up"
+    elif not facts["canAudio"]:
+        why = "plan"
+    elif limited and audio_allowed is not None:
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, guild_id)
+            if await _narrated_this_month(conn, guild_id, campaign_id, now) >= audio_allowed:
+                why = "allowance"
     return {
         "text": bool(found["text"]),
         "email": bool(found["email"]),
         "audio": bool(found["audio"]),
         **facts,
+        "audioUnavailable": why,
     }
+
+
+async def _narrated_this_month(conn: Any, guild_id: int, campaign_id: str, now: float) -> int:
+    """The campaign's narrated recaps this month, counted as the bot counts them
+    (`RecapStore.used_in_month`): each made one once and each Try again again."""
+    start, end = month_bounds(now)
+    cur = await conn.execute(
+        "SELECT COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
+        " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0) AS n FROM recap_jobs"
+        " WHERE guild_id = %s AND campaign_id = %s AND created_at >= %s AND created_at < %s",
+        (guild_id, campaign_id, start, end),
+    )
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
 
 
 async def set_choice(
@@ -108,4 +148,6 @@ async def set_choice(
     outcome = row["r"] if row else "not_allowed"
     if outcome != "ok":
         raise RecapError("bad_choice" if outcome == "bad_choice" else "not_found")
-    return await read_choices(db, session, ref, now=now, enforce_plans=enforce_plans)
+    after = await read_choices(db, session, ref, now=now, enforce_plans=enforce_plans)
+    after.pop("audioUnavailable")  # not asked here (no allowance or set-up facts): never half-said
+    return after

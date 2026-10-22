@@ -65,7 +65,9 @@ class Choices(Base):
     async def test_a_dm_sees_the_three_choices_on_by_default(self) -> None:
         got = await self.read()
         self.assertEqual((got["text"], got["audio"], got["email"]), (True, True, True))
-        self.assertEqual(set(got), {"text", "audio", "email", "canAudio", "audioHow"})
+        self.assertEqual(
+            set(got), {"text", "audio", "email", "canAudio", "audioHow", "audioUnavailable"}
+        )
 
     async def test_anyone_who_is_not_a_dm_of_it_gets_not_found(self) -> None:
         bob = await self.session_of(BOB)
@@ -168,6 +170,28 @@ class Choices(Base):
             self.web, self.session, self.cref, "audio", True, now=NOW, enforce_plans=False
         )
         self.assertTrue(got["audio"])
+
+    async def test_the_page_is_told_why_the_narration_cannot_be_made(self) -> None:
+        """(#2419) The greyed 🎙️ button gives the reason: set-up first, then plan, then allowance."""
+
+        async def why(**more: Any) -> str:
+            got = await read_choices(
+                self.web, self.session, self.cref, now=NOW, enforce_plans=True, **more
+            )
+            return str(got["audioUnavailable"])
+
+        await self.give_plan(ALICE.id, "guild")
+        self.assertEqual(await why(), "")
+        self.assertEqual(await why(recaps_on=False), "not_set_up")
+        self.assertEqual(await why(audio_allowed=0), "allowance")  # none left this month
+        self.assertEqual(await why(audio_allowed=8), "")
+        await self.give_plan(ALICE.id, "table")  # no narration in this plan
+        self.assertEqual(await why(audio_allowed=8), "plan")
+        # Plans not enforced (the test server): the bot holds nobody to the allowance either.
+        got = await read_choices(
+            self.web, self.session, self.cref, now=NOW, enforce_plans=False, audio_allowed=0
+        )
+        self.assertEqual(got["audioUnavailable"], "")
 
     async def test_a_plan_that_does_not_work_does_not_offer_the_narration(self) -> None:
         await self.give_plan(ALICE.id, "guild")

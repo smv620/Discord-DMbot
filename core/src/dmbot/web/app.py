@@ -712,6 +712,7 @@ def create_app(
         "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
+        "audio_unavailable": (409, "audio_unavailable"),  # not set up here, or the month's used up
         "audio_off": (409, "audio_off"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
@@ -937,12 +938,15 @@ def create_app(
         except ValueError:
             body = None
         choice = body.get("choice") if isinstance(body, dict) else None
-        if not isinstance(choice, str):
+        post = body.get("post", False) if isinstance(body, dict) else False
+        if not isinstance(choice, str) or not isinstance(post, bool):
             raise HTTPException(status_code=422, detail="bad_choice")
         try:
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),
                 enforce_plans=settings.enforce_plans,
+                recaps_on=settings.recaps_on,
+                audio_allowed=settings.recap_audio_per_month,
             )  # fmt: skip
             return await approve_recap(
                 db,
@@ -950,6 +954,8 @@ def create_app(
                 ref,
                 choice,
                 audio_in_plan=bool(facts["canAudio"]),
+                audio_unavailable=str(facts["audioUnavailable"]),
+                post=post,
                 outside_engine=settings.outside_engine,
             )
         except RecapError as err:
@@ -1127,7 +1133,13 @@ def create_app(
         session, _token = signed
         try:
             return await read_choices(
-                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+                db,
+                session,
+                ref,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+                recaps_on=settings.recaps_on,
+                audio_allowed=settings.recap_audio_per_month,
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
