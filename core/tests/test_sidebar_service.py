@@ -35,6 +35,7 @@ class FakeAnswer:
     parts: tuple[str, ...] = ()
     one_for_dm: bool = False
     question: str = ""  # the AI's few-word restatement of a table question
+    clash: Any = None  # two house rules that disagree (#2284)
 
 
 class FakeAnswerer:
@@ -138,6 +139,9 @@ class FakeHost:
 
     async def sidebar_tell_screen(self, table: Any, text: str) -> None:
         self.screen.append(text)
+
+    async def sidebar_record_win(self, campaign: Any, winner: Any, loser: Any, by: int) -> bool:
+        return True
 
     def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
         self.house_rules.append((table.guild_id, user_id, text))

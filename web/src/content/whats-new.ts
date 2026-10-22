@@ -243,6 +243,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "All your names on the website",
+    what: "When a name list in Discord is too long to show everything, its last choice is now \"All names on the website\". It gives you a private button that opens the whole list.",
+    reason: "In review (#2294); held until dev1 deploys it and the website's Names page is live (#2295, WebDev).",
+  },
+  {
+    date: "2026-10-22",
     title: "Keep a name from the players until they learn it",
     what: "When you add a name, 🙈 Hide from players keeps it to yourself: not in the NPC list, answers or recaps. On its card, 👀 Players know it now shows it to everyone when the players find out.",
     reason: "In review (#2321); held until dev1 deploys it.",
