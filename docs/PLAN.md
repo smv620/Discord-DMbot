@@ -1756,10 +1756,12 @@ names panel nor the speech-to-text hints can be a fixed list.
   • is a member of The Thieves' Guild
   ```
   Each connection is its own line. Only a secret one carries 🤫; a known one has no icon. Discord can't put a
-  button on a line of text, so the card gets one **✏️ Edit a connection…** dropdown listing each connection
+  button on a line of text, so there is one **✏️ Edit a connection…** dropdown listing each connection
   in the same order and words (🤫 on secret ones). Choosing one opens that connection's choices: change the
   words, mark secret or known, or remove it (one confirmation). Each is the same action and Undo as today.
   More than 25 connections: the dropdown's last choice is "🌐 All connections on the website…".
+  **Where it is** (Supervisor, 2026-10-22, #2414): in the card's 🧭 Connect to… screen, not on the card itself,
+  because the card's five rows are full (three rows of five buttons, a thread's buttons, and Show all ▾).
 - **The relationship web on the website** (owner, 2026-10-21): a graph of names (nodes) and connections
   (edges) at `/account/web/<server>.<campaign>`.
   - **Centre and distance:** pick the centre from a searchable list of every name; the graph shows
