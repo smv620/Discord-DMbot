@@ -1842,7 +1842,7 @@ names panel nor the speech-to-text hints can be a fixed list.
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
 
-  *Built (#2426, migration 0180):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
+  *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
   all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
   letters (spaces, hyphens and a leading the/a/an ignored), a letter or two apart (one up to 8 letters, two
   beyond; never below 5 letters, never when a number or a one-letter last word differs, the linker's rule),

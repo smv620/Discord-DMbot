@@ -9854,7 +9854,7 @@ NAME_ACTIONS = (
 """
 )
 
-# Merging several names at once (#2426, migration 0180). Three things:
+# Merging several names at once (#2426, migration 0183). Three things:
 # 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
 #    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
 #    that one action only;
@@ -10385,7 +10385,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
-    ("0180_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
+    ("0183_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
