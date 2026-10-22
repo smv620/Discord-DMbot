@@ -951,6 +951,46 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    name_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_name": (400, "bad_name"),
+        "bad_kind": (400, "bad_kind"),
+        "too_long": (400, "too_long"),
+        "needs_confirm": (400, "needs_confirm"),
+        "bad_target": (400, "bad_target"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/all-names/{entity_id}", status_code=202)
+    async def me_campaign_all_names_act(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One DM action on a name (#2294): queued for the bot, which applies it the way the
+        Discord name card does. The answer is polled at `.../all-names/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await all_names.queue_action(db, session, ref, entity_id, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/all-names/answers/{answer}")
+    async def me_campaign_all_names_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in DM's own action stands: waiting, working, done (with the changed
+        name's row) or failed (with why)."""
+        session, _token = signed
+        try:
+            return await all_names.read_action(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/names")
     async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:
         """The campaign's confirmed public names with the narrator's spelling (#1451). DM only; a

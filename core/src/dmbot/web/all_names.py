@@ -12,6 +12,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.db import Database
@@ -110,4 +111,113 @@ async def read_page(
         "page": page,
         "pages": pages,
         "pageSize": PAGE_SIZE,
+    }
+
+
+# ---- the DM's actions: queued for the bot, read back by polling ----------------------------------
+
+NAME_MAX = 100  # a name or another name: the same limit as the bot's
+KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
+ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+ACTIONS = ("spell", "kind", "add-other", "remove-other", "secret", "merge", "remove")
+
+
+def _text(value: object) -> str:
+    """A name the way the bot keeps it: tidy spaces, printable, within the limit."""
+    if not isinstance(value, str):
+        raise RecapError("bad_name")
+    clean = " ".join(value.split())
+    if not clean or not clean.isprintable():
+        raise RecapError("bad_name")
+    if len(clean) > NAME_MAX:
+        raise RecapError("too_long")
+    return clean
+
+
+def _arguments(body: object) -> tuple[str, str, str, str, bool]:
+    """(action, kind, target, text, flag) for the database door, or the refusal word."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action = body.get("action")
+    if action not in ACTIONS:
+        raise RecapError("bad_action")
+    kind = target = text = ""
+    flag = False
+    if action == "spell":
+        text = _text(body.get("name"))
+    elif action == "kind":
+        kind = str(body.get("kind") or "")
+        if not KIND_PATTERN.match(kind):
+            raise RecapError("bad_kind")
+    elif action in ("add-other", "remove-other"):
+        text = _text(body.get("other"))
+    elif action == "secret":
+        if not isinstance(body.get("secret"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["secret"])
+        if body.get("other") is not None:
+            text = _text(body.get("other"))
+    elif action == "merge":
+        target = str(body.get("into") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("bad_target")
+    elif action == "remove":
+        flag = body.get("confirm") is True
+        if not flag:
+            raise RecapError("needs_confirm")
+    return str(action), kind, target, text, flag
+
+
+async def queue_action(
+    db: Database, session: Session, ref: str, entity_id: str, body: object
+) -> str:
+    """Queue one action of the signed-in DM for the bot and return its id. The words are checked
+    here for the page's sake and again by the door and the bot. A server the person is not in, or
+    a name that is not in this campaign, is "not found"; a member who is not a DM of it is "not
+    allowed"."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not ID_PATTERN.match(entity_id):
+        raise RecapError("not_found")
+    action, kind, target, text, flag = _arguments(body)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, entity_id, action, kind, target, text, flag),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return str(got["id"])
+
+
+async def read_action(db: Database, session: Session, ref: str, action_id: str) -> dict[str, Any]:
+    """Where one of the caller's own actions stands: `state` (waiting, working, done, failed), the
+    `error` word when it failed, the changed (or surviving) name's `row`, and `removed`."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not ID_PATTERN.match(action_id):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_read(%s, %s, %s) AS r", (guild_id, campaign_id, action_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    row = None
+    if got["state"] == "done" and got["resultId"]:
+        shown = await read_page(db, session, ref, only=got["resultId"])
+        row = shown["names"][0] if shown["names"] else None
+    return {
+        "state": got["state"],
+        "row": row,
+        "removed": got["state"] == "done" and got["action"] == "remove",
+        "error": got["error"],
     }
