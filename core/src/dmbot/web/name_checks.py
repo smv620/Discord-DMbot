@@ -45,9 +45,14 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are not
-    # shown (#2358). The DM's own names are in `known`, which is not touched.
-    waiting = [n for n in got["names"] if not not_names.is_not_name(str(n.get("name", "")))]
+    # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
+    # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
+    # pronoun the database marks as made before the gate. The marker is not passed on.
+    waiting = [
+        {k: v for k, v in n.items() if k != "old"}
+        for n in got["names"]
+        if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
+    ]
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
 
 

@@ -260,6 +260,9 @@ class Entity:
     # The campaign's party (#1655): one group per campaign whose members are its confirmed player
     # characters, worked out in code and not stored fact by fact.
     party: bool = False
+    # Written before pronouns were kept out of the suggestions (#2358): such a suggestion that is a
+    # pronoun ("We", "I'll") is not offered again. Set by the database for the rows that existed.
+    made_before_name_gate: bool = False
 
     @property
     def is_unique(self) -> bool:

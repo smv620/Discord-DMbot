@@ -289,6 +289,11 @@ class TheSourcesEach(unittest.TestCase):
         self.assertEqual(read("Oskar", "Oskar went north."), ["Oskar"])
         self.assertEqual(read("We", "A gnome whose name is We went north."), ["We"])
         self.assertEqual(read("She", "A gnome named She went north."), ["She"])
+        reply = json.dumps(
+            {"names": [{"name": "Oskar", "kind": "person", "also": ["We"], "quote": ""}]}
+        )
+        (found,) = bg.read_answer(reply, "Oskar, whom We call the Old Owl, went north.")
+        self.assertEqual(found.also, ())  # a pronoun is not another spelling either
 
     def test_the_recap_page_does_not_show_old_pronoun_suggestions(self) -> None:
         import asyncio
@@ -297,7 +302,11 @@ class TheSourcesEach(unittest.TestCase):
         from dmbot.web import name_checks, recaps
 
         door = {
-            "names": [{"id": "a" * 32, "name": "We"}, {"id": "b" * 32, "name": "Oskar"}],
+            "names": [
+                {"id": "a" * 32, "name": "We", "old": True},  # from before the gate: not shown
+                {"id": "c" * 32, "name": "They", "old": False},  # made after it, by a cue: shown
+                {"id": "b" * 32, "name": "Oskar", "old": False},
+            ],
             "known": [],
         }
         conn = MagicMock()
@@ -328,4 +337,5 @@ class TheSourcesEach(unittest.TestCase):
         session = MagicMock()
         with patch.object(recaps, "_one", one):
             got = asyncio.run(name_checks.read_checks(db, session, "1.x.2"))
-        self.assertEqual([n["name"] for n in got["names"]], ["Oskar"])
+        self.assertEqual([n["name"] for n in got["names"]], ["They", "Oskar"])
+        self.assertTrue(all("old" not in n for n in got["names"]))  # the marker is not passed on

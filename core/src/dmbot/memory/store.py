@@ -182,7 +182,7 @@ def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
-        r["audience_limited"], r["party"],
+        r["audience_limited"], r["party"], r["made_before_name_gate"],
     )  # fmt: skip
 
 
@@ -310,7 +310,14 @@ class PersonAdded:
     flagged: tuple[str, ...]  # characters named but not linked: played by someone else, or unknown
 
 
-PRONOUNS_KEPT_OUT_FROM = 1792713600  # 2026-10-23 00:00 UTC: after this, the write side did the job
+def hidden_old_pronoun(entity: Entity) -> bool:
+    """A suggestion from before the pronoun gate that is a pronoun: never offered (#2358)."""
+    return (
+        entity.status == PROPOSED
+        and entity.source != DM
+        and entity.made_before_name_gate
+        and not_names.is_not_name(entity.name)
+    )
 
 
 class MemoryStore:
@@ -430,16 +437,9 @@ class MemoryStore:
             found = [_entity(r) for r in rows]
         # Suggestions made before pronouns were kept out ("We", "I'll") are still stored; they
         # are not offered again (#2358). Later ones passed the gate when they were made (a naming
-        # cue let "We" through), so only the old ones are looked at again. A name the DM added or
-        # confirmed is never hidden.
-        return [
-            e
-            for e in found
-            if e.status != PROPOSED
-            or e.source == DM
-            or e.created_at >= PRONOUNS_KEPT_OUT_FROM
-            or not not_names.is_not_name(e.name)
-        ]
+        # cue let "We" through), so only the old ones, marked by the database, are looked at
+        # again. A name the DM added or confirmed is never hidden.
+        return [e for e in found if not hidden_old_pronoun(e)]
 
     async def aliases(
         self,
