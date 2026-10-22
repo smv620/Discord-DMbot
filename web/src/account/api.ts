@@ -760,6 +760,10 @@ export interface NameRow {
   others: string[];
   /** Only the campaign's DMs see a secret name. */
   secret: boolean;
+  /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
+  hidden?: boolean;
+  /** For a DM: which of `others` are secret names. */
+  secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
   npcId: string | null;
 }
@@ -799,9 +803,20 @@ export type NameChange =
   | { action: "kind"; kind: string }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
-  | { action: "secret"; secret: boolean }
+  | { action: "secret"; secret: boolean; other?: string }
   | { action: "merge"; into: string }
   | { action: "remove"; confirm: true };
+
+/** What the bot says about a queued name change (#2294). */
+interface NameAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  row: NameRow | null;
+  removed?: boolean;
+  /** A store-side refusal, such as "exists" or "not_found". */
+  error?: string | null;
+}
+const NAME_POLL_MS = 1000;
+const NAME_POLLS = 60;
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -1548,12 +1563,28 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
-    changeName: async (ref, id, change) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(ref)}/all-names/${encodeURIComponent(id)}`,
-        change,
-      )) as NameChanged,
+    // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
+    // answer by asking about once a second, up to a minute (#2294).
+    changeName: async (ref, id, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, change)) as {
+        answer: string;
+      };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        const got = (await call(
+          "GET",
+          `${base}/answers/${encodeURIComponent(queued.answer)}`,
+        )) as NameAnswer;
+        if (got.state === "done") return got.removed || !got.row ? { removed: true } : got.row;
+        if (got.state === "failed") {
+          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      // The bot may still apply it later; the page then shows its plain error and the list on reload.
+      throw new ApiError("server");
+    },
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
