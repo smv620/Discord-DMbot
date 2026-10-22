@@ -9648,8 +9648,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
     ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
-    ("0172_house_file_read", HOUSE_FILE_READ),  # the AI's last read of a linked file (#2377)
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
+    ("0172_house_file_read", HOUSE_FILE_READ),  # the AI's last read of a linked file (#2377)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
