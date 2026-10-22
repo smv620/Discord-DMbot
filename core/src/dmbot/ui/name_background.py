@@ -25,6 +25,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory.backstory_links import NewLink, Waiting
+from dmbot.memory.link_words import connection_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
@@ -42,7 +43,6 @@ from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
-from dmbot.ui.name_card import connection_words
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     AI_READS_PER_DAY,
