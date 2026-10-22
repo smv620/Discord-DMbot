@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "DMbot asks when two house rules disagree", // until #2284 merges and dev1 deploys it
       "Hear and record how a name sounds", // until #2316 and #2318 are deployed (#2317)
       "See where your house rules came from", // until #2285 merges and dev1 deploys it
       "See where your homebrew came from", // until #2285 merges and dev1 deploys it
