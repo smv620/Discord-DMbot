@@ -47,9 +47,11 @@ def page_link(site: str, guild_id: int, campaign_id: str, session_at: int) -> st
     return f"{site.rstrip('/')}/account/recaps/{job_ref(guild_id, campaign_id, session_at)}"
 
 
-def _kind(what: str, guild_id: int, campaign_id: str, session_at: int, tries: int = 0) -> str:
-    """Once for each session and each Try again (so a new recap gets its own email)."""
-    digest = hashlib.sha256(f"{guild_id}.{campaign_id}.{session_at}.{tries}".encode()).hexdigest()[
+def _kind(what: str, guild_id: int, campaign_id: str, session_at: int, run: int = 0) -> str:
+    """Once for each session and each run (so a new recap gets its own email). `run` must never
+    go down: it is the job's last-change time, not its tries, because a failure of ours gives the
+    DM's Try again back and the same key would then drop the next failure's email (#2341)."""
+    digest = hashlib.sha256(f"{guild_id}.{campaign_id}.{session_at}.{run}".encode()).hexdigest()[
         :16
     ]
     return f"recap-{what}:{digest}"
@@ -78,7 +80,7 @@ async def tell_the_dm(
             "When it's right, press Post to send it to your table. "
             "Nothing is posted until you do."
         )
-        kind = _kind("ready", guild_id, campaign_id, job.session_at, job.tries)
+        kind = _kind("ready", guild_id, campaign_id, job.session_at, job.updated_at)
     else:
         subject = f"No recap this time: {job.last_error or 'something went wrong'}"[:150]
         again = (
@@ -87,7 +89,7 @@ async def tell_the_dm(
             else f"\n\nTry again here: {link}"
         )
         body = f"{job.last_error or 'Something went wrong.'}{again}"
-        kind = _kind("failed", guild_id, campaign_id, job.session_at, job.tries)
+        kind = _kind("failed", guild_id, campaign_id, job.session_at, job.updated_at)
     result = "no_address"
     for user_id in dict.fromkeys((job.dm_user_id, *sorted(dm_user_ids))):  # the job's DM first
         try:
