@@ -37,6 +37,7 @@ UNCHECKED = (
     "`/dmbot houserules`._"
 )
 ONLY_DMS = "Only this campaign's DMs can answer this."
+GONE = "That campaign is gone. Nothing was saved."
 WORDS_MAX = 150
 LABEL_MAX = 25  # a phone cuts a longer label
 
@@ -171,7 +172,16 @@ class DisagreeView(_Menu):
         self.add_item(_Button(self._on_cancel, label="Cancel", style=discord.ButtonStyle.secondary))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Who may answer, read from the campaign as it is now (#2314), as `house_voice.press`
+        does: a DM removed since the question was shown can no longer answer it."""
         await super().interaction_check(interaction)
+        store = getattr(self.bot, "campaigns", None)
+        if store is not None:
+            fresh = await store.get(self.campaign.guild_id, self.campaign.id)
+            if fresh is None:
+                await _tell(interaction, GONE)
+                return False
+            self.campaign = fresh
         if interaction.user.id in self.campaign.dm_user_ids:
             return True
         await _tell(interaction, ONLY_DMS)
@@ -191,7 +201,13 @@ class DisagreeView(_Menu):
         await self._done(interaction, note)
 
     async def _on_replace(self, interaction: discord.Interaction) -> None:
+        async with self._busy:  # one answer at a time, as for the other buttons
+            await self._on_replace_once(interaction)
+
+    async def _on_replace_once(self, interaction: discord.Interaction) -> None:
         assert self._replace is not None
+        if self.stopped:
+            return  # already answered
         try:
             note = await self._replace(self.other.number)
         except HouseRuleError as exc:
@@ -297,3 +313,4 @@ async def ask(
     )
     with contextlib.suppress(discord.HTTPException):
         await _tell(interaction, view.prompt(), view=view)
+    view.origin = interaction  # an unanswered question says so when it times out (#2314)

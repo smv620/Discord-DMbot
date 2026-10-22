@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -130,6 +131,38 @@ class Disagreeing(UITest):
         _, view = self.question(it)
         self.assertFalse(await view.interaction_check(self.it(PLAYER)))
         self.assertTrue(await view.interaction_check(self.it(DM)))
+
+    async def test_a_dm_removed_since_the_question_was_shown_can_no_longer_answer(self) -> None:
+        _, it = await self.add()
+        _, view = self.question(it)
+        self.campaigns["c1"] = replace(self.campaigns["c1"], dm_user_ids=frozenset({PLAYER}))
+        self.assertFalse(await view.interaction_check(self.it(DM)))  # the stale copy had them
+        self.assertTrue(await view.interaction_check(self.it(PLAYER)))
+
+    async def test_a_campaign_that_is_gone_answers_plainly_and_saves_nothing(self) -> None:
+        _, it = await self.add()
+        _, view = self.question(it)
+        del self.campaigns["c1"]
+        press = self.it()
+        self.assertFalse(await view.interaction_check(press))
+        said = str(press.response.sent) + str(press.followup.send.await_args_list)
+        self.assertIn("gone", said)  # a plain answer, shown privately
+        self.assertEqual([c[0] for c in self.store.calls], [])
+
+    async def test_two_replace_presses_at_once_edit_once(self) -> None:
+        _, it = await self.add()
+        _, view = self.question(it)
+        button = self.press(view, "Replace rule 2")
+        await asyncio.gather(button.callback(self.it()), button.callback(self.it()))
+        self.assertEqual([c[0] for c in self.store.calls], ["edit"])
+
+    async def test_an_unanswered_question_says_so_when_it_times_out(self) -> None:
+        _, it = await self.add()
+        _, view = self.question(it)
+        self.assertIsNotNone(view.origin)  # the question's own message, to be edited on timeout
+        await view.on_timeout()
+        view.origin.edit_original_response.assert_awaited()
+        self.assertEqual([c[0] for c in self.store.calls], [])
 
     async def test_a_rule_that_agrees_is_just_saved(self) -> None:
         self.bot.rule_conflict_ai = says()
