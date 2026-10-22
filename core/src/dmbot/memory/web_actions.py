@@ -19,6 +19,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory.link_words import predicate_for
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -103,18 +104,26 @@ class ActionStore:
         )
 
     async def finish(
-        self, guild_id: int, action: Action, *, error: str = "", result_id: str = ""
+        self,
+        guild_id: int,
+        action: Action,
+        *,
+        error: str = "",
+        result_id: str = "",
+        result_other: str = "",
     ) -> bool:
         """Done, or failed with why, for the page to read. Only the worker that holds the current
         claim can write. False: not its row any more."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE name_actions SET state = %s, error = %s, result_id = %s"
+                "UPDATE name_actions SET state = %s, error = %s, result_id = %s,"
+                " result_other = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
                     "failed" if error else "done",
                     error,
                     "" if error else result_id,
+                    "" if error else result_other,
                     guild_id,
                     action.id,
                     action.claimed_at,
@@ -139,6 +148,7 @@ class Outcome:
 
     error: str = ""
     result_id: str = ""
+    result_other: str = ""  # a connection's other name: the pair the page draws next (#2323)
 
 
 def _failed(why: str) -> Outcome:
@@ -257,4 +267,57 @@ async def _do(
             return _failed(BAD_TARGET)  # (the door asks for the confirmation; so does this)
         await memory.set_entity_status(guild_id, cid, entity_id, REJECTED, source=DM)
         return Outcome()
+    if a.action.startswith("link-"):
+        return await _link(memory, guild_id, cid, entity_id, a)
     return _failed(FAILED)
+
+
+async def _link(
+    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action
+) -> Outcome:
+    """The relationship web's edits (#2323), through the calls the name card makes. The outcome
+    names the pair, so the page can draw the edge as it now stands."""
+    if a.action == "link-add":
+        other = await memory.entity(guild_id, cid, a.target_id)
+        if other is None or other.status != CONFIRMED or other.type == PERSON or other.id == entity_id:
+            return _failed(BAD_TARGET)
+        predicate, detail = predicate_for(a.text)
+        try:
+            await memory.add_relation(
+                guild_id, cid, entity_id, predicate, other.id, source=DM, confidence=1.0,
+                status=CONFIRMED, detail=detail[:100], secret=a.flag,
+            )  # fmt: skip
+        except MemoryRuleError:
+            return _failed(BAD_TARGET)
+        return Outcome(result_id=entity_id, result_other=other.id)
+    # the others name one connection, filed under its first name
+    found = [
+        r
+        for r in await memory.relations(guild_id, cid, entity_id=entity_id, include_secret=True)
+        if r.id == a.target_id and r.status == CONFIRMED
+    ]
+    if not found:
+        return _failed(NOT_FOUND)
+    link = found[0]
+    pair = {"result_id": link.subject_id, "result_other": link.object_id}
+    try:
+        if a.action == "link-secret":
+            await memory.update_relation(guild_id, cid, link.id, source=DM, secret=a.flag)
+        elif a.action == "link-remove":
+            if not a.flag:
+                return _failed(BAD_TARGET)
+            await memory.update_relation(guild_id, cid, link.id, source=DM, status=REJECTED)
+        elif a.action == "link-words":
+            predicate, detail = predicate_for(a.text)
+            if (predicate, detail) != (link.predicate, link.detail):
+                # the new words first, so a refusal leaves the old connection as it was
+                await memory.add_relation(
+                    guild_id, cid, link.subject_id, predicate, link.object_id, source=DM,
+                    confidence=1.0, status=CONFIRMED, detail=detail[:100], secret=link.secret,
+                )  # fmt: skip
+                await memory.update_relation(guild_id, cid, link.id, source=DM, status=REJECTED)
+        else:
+            return _failed(FAILED)
+    except MemoryRuleError:
+        return _failed(BAD_TARGET)
+    return Outcome(**pair)

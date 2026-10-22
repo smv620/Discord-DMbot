@@ -10177,7 +10177,11 @@ class DMBot(commands.AutoShardedBot):
                         done = web_actions.Outcome(error=web_actions.FAILED)
                     try:
                         await store.finish(
-                            guild.id, action, error=done.error, result_id=done.result_id
+                            guild.id,
+                            action,
+                            error=done.error,
+                            result_id=done.result_id,
+                            result_other=done.result_other,
                         )
                     except Exception as exc:  # taken again later: apply() sees it already done
                         log.warning("A name action could not be marked: %s", type(exc).__name__)
