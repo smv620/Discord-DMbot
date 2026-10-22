@@ -8120,6 +8120,27 @@ HIDDEN_FROM_PLAYERS = """
     -- has a default and is added, not updated, so no row-level security needs opening.
     ALTER TABLE memory_entities ADD COLUMN hidden_from_players BOOLEAN NOT NULL DEFAULT false;
 
+    -- A player's character is named to everyone (the transcript file's labels, the table list),
+    -- so it can never be hidden: whichever path makes an entry a player's character (an import,
+    -- a change of kind, the "plays" answer, a merge) clears the flag in the same write. One
+    -- trigger covers them all, the SQL functions that set `played_by` included. It only edits
+    -- the row being written, so it needs no extra rights.
+    CREATE FUNCTION dmbot_unhide_player_characters() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF NEW.hidden_from_players AND (
+            NEW.played_by IS NOT NULL OR NEW.party OR NEW.role = 'player_character'
+        ) THEN
+            NEW.hidden_from_players := false;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER memory_entities_unhide_players
+        BEFORE INSERT OR UPDATE ON memory_entities
+        FOR EACH ROW EXECUTE FUNCTION dmbot_unhide_player_characters();
+
     -- The two recap functions that list the names a recap's text is checked against, and the
     -- names of a shared recap page, now count such an entry as secret. CREATE OR REPLACE resets
     -- a function's own settings, so each one's search_path is set again below.

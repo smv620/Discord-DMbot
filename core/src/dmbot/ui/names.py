@@ -682,7 +682,7 @@ def already_known(name: str, entry: str) -> str:
 # A state the DM flips on the kind step (#2321), so the form needs no switch (not every client
 # draws one). The label shows how it is now; no colon, the site's button check refuses one.
 PLAYERS_KNOW = "🙈 Hide from players"
-PLAYERS_DONT_KNOW = "👁 Show to players"
+PLAYERS_DONT_KNOW = "👀 Show to players"
 
 
 class KindPicker(_Menu):

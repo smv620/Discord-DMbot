@@ -190,15 +190,16 @@ class CampaignLookup:
 
     @property
     def hidden(self) -> frozenset[str]:
-        """What the campaign's DMs alone may see: the clues only some people know (#1649) and
-        the story threads (#1662) and deeds (#1732), which are the DM's plot notes."""
+        """What the campaign's DMs alone may see: the clues only some people know (#1649), the
+        entries the DM marked "Players don't know yet" (#2321), and the story threads (#1662)
+        and deeds (#1732), which are the DM's plot notes."""
         return frozenset(
             e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
         )
 
     def for_viewer(self, secrets: bool) -> CampaignLookup:
         """What a person who may not see secrets (a server manager who is not a DM) gets to
-        read: the same names without the clues only some people know, in every list, search,
+        read: the same names without the DM-only entries (`hidden`), in every list, search,
         card and file. The campaign's DMs, and the Cleaner, get the whole thing."""
         gone = self.hidden
         if secrets or not gone:

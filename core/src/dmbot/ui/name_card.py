@@ -93,7 +93,7 @@ ONLY_ONE = "☝️ Only one of these exists (you said so)."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 # A state the DM flips (#2321): the label says what pressing does, not what is now.
 HIDE_BUTTON = "🙈 Hide from players"
-SHOW_BUTTON = "👁 Players know it now"
+SHOW_BUTTON = "👀 Players know it now"
 HIDDEN_LINE = "🙈 Hidden from players. Only you see it."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
@@ -536,9 +536,10 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
-        hide=(
+        hide=(  # (drawn whenever it is on, so a DM can always turn it off)
             entity.hidden_from_players
-            if secrets and not entity.is_player_character and not entity.party
+            if secrets
+            and (entity.hidden_from_players or not (entity.is_player_character or entity.party))
             else None
         ),
         standing=(
@@ -884,7 +885,7 @@ class NameCard(_Menu):
         note = (
             f"🙈 **{_md(name)}** is hidden. Only you can see it."
             if hide
-            else f"👁 Players can see **{_md(name)}** now."
+            else f"👀 Players can see **{_md(name)}** now."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

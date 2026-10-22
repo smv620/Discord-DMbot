@@ -126,6 +126,51 @@ class Hidden(ConfirmedMemoryTest):
             any(e.hidden_from_players for e in await self.memory.entities(GUILD_B, old.id))
         )
 
+    async def becomes_a_player_character_and_is_shown(self, entry: str) -> None:
+        self.assertFalse((await self.entity(entry)).hidden_from_players)
+
+    async def test_an_entry_that_becomes_a_players_character_is_shown_on_every_path(self) -> None:
+        """A player's character is named to everyone, so each way of becoming one clears the
+        flag in the same write (one database trigger covers them all)."""
+        for how in ("kind", "plays", "party"):
+            hidden = await self.add(f"Hidden {how}", type="character", role="npc")
+            await self.memory.set_hidden_from_players(GUILD_A, self.c, hidden, True, source="dm")
+            if how == "kind":
+                await self.memory.set_entity_type(
+                    GUILD_A, self.c, hidden, "character", source="dm", role="player_character"
+                )
+            elif how == "plays":  # (the import and the table list set the player the same way)
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "UPDATE memory_entities SET played_by = 5 WHERE id = %s", (hidden,)
+                    )
+            else:
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "UPDATE memory_entities SET party = true WHERE id = %s", (hidden,)
+                    )
+            await self.becomes_a_player_character_and_is_shown(hidden)
+
+    async def test_a_merge_into_a_players_character_is_shown(self) -> None:
+        pc = await self.add("Cerric", type="character", role="player_character", played_by=7)
+        await self.memory.merge(GUILD_A, self.c, pc, self.shadow, source="dm", dm_said_same=True)
+        await self.becomes_a_player_character_and_is_shown(pc)
+
+    async def test_a_hidden_entrys_names_are_all_secret_in_a_lookup(self) -> None:
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        mine = [n for n in lookup.names if n.entity_id == self.shadow]
+        self.assertTrue(mine)
+        self.assertTrue(all(n.secret for n in mine))
+        self.assertFalse(any(n.secret for n in lookup.names if n.entity_id == self.jack))
+
+    async def test_a_card_for_someone_who_may_not_see_secrets_is_nothing(self) -> None:
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        self.assertIsNone(name_card.card_text(lookup, self.shadow, [], secrets=False))
+        self.assertIsNotNone(name_card.card_text(lookup, self.shadow, [], secrets=True))
+        self.assertIn(
+            "Hidden from players", name_card.card_text(lookup, self.shadow, [], secrets=True) or ""
+        )
+
     async def test_a_merge_keeps_it_hidden_if_either_was(self) -> None:
         keeper = await self.add("Shade", type="character", role="npc")
         await self.memory.merge(
