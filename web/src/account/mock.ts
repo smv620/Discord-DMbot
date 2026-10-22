@@ -925,7 +925,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         }
         case "merge-many": {
           // The queue action of #2427: every other name goes into this one, in one change.
-          const others = change.others.map((other) => memory.find((n) => n.id === other));
+          const others = [...new Set(change.others)].map((other) => memory.find((n) => n.id === other));
           if (others.length === 0 || others.some((o) => !o)) throw new ApiError("not-found");
           if (change.others.includes(id)) throw new ApiError("bad-target");
           for (const other of others as NameRow[]) {

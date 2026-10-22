@@ -64,6 +64,8 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   const [merging, setMerging] = useState(false);
   const [keepId, setKeepId] = useState("");
   const [mergeBusy, setMergeBusy] = useState(false);
+  // Set at once, unlike state: a second press in the same moment must not send a second request.
+  const mergeFlight = useRef(false);
   const mergeHeading = useRef<HTMLHeadingElement>(null);
   const mergeOpener = useRef<HTMLButtonElement>(null);
   const newsBox = useRef<HTMLParagraphElement>(null);
@@ -81,6 +83,12 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       if (mine !== latest.current) return pageNow.current;
       setData(read);
       setView("ok");
+      // Ticks are kept across searches and pages, but a ticked name shown again here is refreshed
+      // (a new spelling must not stay old in the question), and nothing stays ticked for someone
+      // who may no longer change names.
+      setPicked((now) =>
+        read.canEdit ? now.map((t) => read.names.find((n) => n.id === t.id) ?? t) : [],
+      );
       // An editor stays open only for a row still on the page: a search, filter or page change that
       // drops it must not bring it back, with old words in it, when the row returns (#2299).
       setEditing((open) => (open !== null && read.names.some((n) => n.id === open) ? open : null));
@@ -148,10 +156,11 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
 
   /** Every ticked name into the one kept: one queued change, waited for like the others (#2427). */
   async function mergeMany(): Promise<void> {
-    if (!ref || !api.changeName || mergeBusy) return;
+    if (!ref || !api.changeName || !data?.canEdit || mergeFlight.current) return;
     const keep = ordered.find((r) => r.id === keepId) ?? ordered[0];
     if (!keep) return;
     const others = ordered.filter((r) => r.id !== keep.id);
+    mergeFlight.current = true;
     setMergeBusy(true);
     try {
       await api.changeName(ref, keep.id, { action: "merge-many", others: others.map((r) => r.id) });
@@ -174,6 +183,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         await load(pageNow.current, true);
       }
     } finally {
+      mergeFlight.current = false;
       setMergeBusy(false);
     }
   }
@@ -183,6 +193,10 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     if (!ref || !api.changeName) return words.errorFallback;
     try {
       await api.changeName(ref, row.id, change);
+      // A name that has gone (removed, or merged into another) is not ticked any more.
+      if (change.action === "remove" || change.action === "merge") {
+        setPicked((now) => now.filter((t) => t.id !== row.id));
+      }
     } catch (error) {
       const said = refusal(error);
       if (said === null) {
@@ -313,18 +327,24 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
-      {data.canEdit && picked.length >= 2 && (
-        <section class="panel merge-bar" aria-label={words.selected(picked.length)}>
-          <p role="status">{words.selected(picked.length)}</p>
+      {data.canEdit && picked.length >= 1 && (
+        <section class="panel merge-bar" aria-label={words.selectedBar}>
+          <p role="status">{picked.length === 1 ? words.selectedOne : words.selected(picked.length)}</p>
           <div class="row">
-            <button type="button" class="button" ref={mergeOpener} disabled={merging || mergeBusy} onClick={openMerge}>
-              {words.mergeSelected}
-            </button>
-            <button type="button" class="button secondary" disabled={mergeBusy} onClick={() => setPicked([])}>
+            {picked.length >= 2 && (
+              <button type="button" class="button" ref={mergeOpener} disabled={merging || mergeBusy} onClick={openMerge}>
+                {words.mergeSelected}
+              </button>
+            )}
+            <button type="button" class="button secondary" disabled={mergeBusy} onClick={() => {
+                setPicked([]);
+                // The bar is gone: the keyboard goes to the first tick box.
+                setTimeout(() => document.querySelector<HTMLInputElement>(".name-pick")?.focus(), 0);
+              }}>
               {words.clearSelected}
             </button>
           </div>
-          {merging && (
+          {merging && picked.length >= 2 && (
             <MergeMany
               ordered={ordered}
               kinds={data.kinds}
@@ -438,7 +458,7 @@ function MergeMany({
       </div>
       {kindKeys.length > 1 && (
         <p class="note" role="note">
-          {words.mergeManyKinds(listOf(kindKeys.map((k) => kindWords(kinds, k))))}
+          {words.mergeManyKinds(listOf(kindKeys.map((k) => kindWords(kinds, k))), kindWords(kinds, keep.kind))}
         </p>
       )}
       <p>{words.mergeManyAsk(listOf(others.map((r) => r.name)), keep.name)}</p>

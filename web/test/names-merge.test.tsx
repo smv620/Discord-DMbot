@@ -39,12 +39,60 @@ describe("the tick boxes", () => {
     open();
     await ready();
     tick("Mira Voss");
+    expect(screen.getByText(w.selectedOne)).toBeTruthy(); // one ticked: told what to do, no merge yet
     expect(screen.queryByRole("button", { name: w.mergeSelected })).toBeNull();
     tick("Brother Anselm");
     expect(screen.getByText(w.selected(2))).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.clearSelected }));
     expect(screen.queryByRole("button", { name: w.mergeSelected })).toBeNull();
     expect((screen.getByLabelText(w.pickLabel("Mira Voss")) as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe("what stays ticked", () => {
+  it("survives a search, so look-alikes from different searches can be merged together", async () => {
+    open();
+    await ready();
+    tick("Mira Voss");
+    fireEvent.input(screen.getByLabelText(w.searchLabel), { target: { value: "Aldric" } });
+    await waitFor(() => expect(screen.queryByLabelText(w.pickLabel("Mira Voss"))).toBeNull());
+    tick("Aldric Thorn");
+    expect(screen.getByText(w.selected(2))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.mergeSelected }));
+    expect(await screen.findByRole("radio", { name: /Mira Voss/ })).toBeTruthy();
+  });
+
+  it("drops a ticked name that is removed meanwhile, so no ghost is counted or merged", async () => {
+    const api = open();
+    await ready();
+    tick("Mira Voss");
+    tick("Aldric Thorn");
+    tick("Brother Anselm");
+    expect(screen.getByText(w.selected(3))).toBeTruthy();
+    const row = screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Mira Voss")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: w.changeFor("Mira Voss") }));
+    fireEvent.click(within(row).getByRole("button", { name: /Remove this name/ }));
+    fireEvent.click(await within(row).findByRole("button", { name: /Yes, remove it/ }));
+    expect(await screen.findByText(w.selected(2))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.mergeSelected }));
+    fireEvent.click(await screen.findByRole("button", { name: w.mergeManyYes }));
+    await screen.findByText(w.mergedMany("Brother Anselm"));
+    expect(merges(api)[0]).not.toContain('"n1"'); // Mira Voss is not in what was sent
+  });
+
+  it("shows a renamed ticked name by its new spelling", async () => {
+    open();
+    await ready();
+    tick("Mira Voss");
+    tick("Brother Anselm");
+    const row = screen.getAllByRole("listitem").find((li) => li.textContent?.includes("Mira Voss")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: w.changeFor("Mira Voss") }));
+    fireEvent.input(within(row).getByLabelText(w.spellLabel), { target: { value: "Mira Vosk" } });
+    fireEvent.click(within(row).getByRole("button", { name: w.saveSpelling }));
+    await screen.findByText(w.saved);
+    fireEvent.click(screen.getByRole("button", { name: w.mergeSelected }));
+    expect(await screen.findByRole("radio", { name: /Mira Vosk/ })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: /Mira Voss/ })).toBeNull();
   });
 });
 
@@ -92,7 +140,7 @@ describe("merging the ticked names", () => {
   it("warns when the kinds differ, and not when they don't", async () => {
     await ask("Mira Voss", "Brynwater Crossing");
     const note = screen.getByRole("note");
-    expect(note.textContent).toBe(w.mergeManyKinds("People and Places"));
+    expect(note.textContent).toBe(w.mergeManyKinds("People and Places", "People"));
     cleanup();
     await ask("Mira Voss", "Brother Anselm");
     expect(screen.queryByRole("note")).toBeNull();
