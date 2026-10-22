@@ -59,6 +59,23 @@ class Deleted:
     sessions: int  # sessions that had at least one of the person's lines
 
 
+@dataclass(frozen=True, slots=True)
+class Around:
+    """A line and its neighbours, each (speaker's Discord ID, words)."""
+
+    before: tuple[int, str] | None
+    line: tuple[int, str]
+    after: tuple[int, str] | None
+
+
+# In an imported session only game talk counts (the name scan reads it so); a live session's
+# lines all count. Spelled out because the import's mark lives in its own table.
+GAME_IN_IMPORTS = (
+    "(topic = 'game' OR NOT EXISTS (SELECT 1 FROM session_imports i"
+    " WHERE i.guild_id = transcript_lines.guild_id AND i.session_id = transcript_lines.session_id))"
+)
+
+
 class TranscriptStore:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -403,6 +420,54 @@ class TranscriptStore:
             row = await cur.fetchone()
             return None if row is None else _session(row)
 
+    async def around(
+        self,
+        guild_id: int,
+        session_id: str,
+        started_ms: int,
+        user_id: int,
+        speakers: Collection[int],
+    ) -> Around | None:
+        """One line of table speech and the one before and after it (#2329): what the review of a
+        suggested name shows. Only `speakers` (the people who agree now) are read, the line
+        itself and its neighbours: someone who stopped being recorded is not quoted even though
+        their past lines stay. None when the line is not there any more (the transcript was
+        deleted, or the person withdrew). The DM sidebar is skipped, so neighbours are what the
+        table said. In an imported session only game talk is read, as the name scan reads it, so
+        an off-topic line is never quoted next to a place (#2329)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, started_ms, user_id, coalesce(text, heard) AS text"
+                " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL"
+                f" AND {GAME_IN_IMPORTS} AND started_ms = %s AND user_id = %s"
+                " AND user_id = ANY(%s) ORDER BY id LIMIT 1",
+                (session_id, started_ms, user_id, list(speakers)),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            here = (int(row["started_ms"]), int(row["id"]))
+            before = await conn.execute(
+                "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
+                f" WHERE session_id = %s AND sidebar IS NULL AND {GAME_IN_IMPORTS}"
+                " AND (started_ms, id) < (%s, %s)"
+                " AND user_id = ANY(%s) ORDER BY started_ms DESC, id DESC LIMIT 1",
+                (session_id, *here, list(speakers)),
+            )
+            after = await conn.execute(
+                "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
+                f" WHERE session_id = %s AND sidebar IS NULL AND {GAME_IN_IMPORTS}"
+                " AND (started_ms, id) > (%s, %s)"
+                " AND user_id = ANY(%s) ORDER BY started_ms, id LIMIT 1",
+                (session_id, *here, list(speakers)),
+            )
+            prev, nxt = await before.fetchone(), await after.fetchone()
+        return Around(
+            (int(prev["user_id"]), prev["text"]) if prev else None,
+            (int(row["user_id"]), row["text"]),
+            (int(nxt["user_id"]), nxt["text"]) if nxt else None,
+        )
+
     async def lines(self, guild_id: int, session_id: str) -> list[Line]:
         """The session's lines in the order the speech started."""
         async with self._db.guild(guild_id) as conn:
@@ -739,6 +804,7 @@ class TranscriptStore:
                 conn,
                 guild_id,
                 [line_ref(session_id, int(r["started_ms"]), int(r["user_id"])) for r in gone],
+                keep_pending=True,
             )
             await conn.execute(
                 "UPDATE transcript_sessions SET line_count = 0, speakers = '{}',"
@@ -806,14 +872,21 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
     )
 
 
-async def _forget_mentions(conn: Any, guild_id: int, refs: Sequence[str]) -> None:
-    """The story-memory mentions that point at these lines, and their undo-log rows."""
+async def _forget_mentions(
+    conn: Any, guild_id: int, refs: Sequence[str], *, keep_pending: bool = False
+) -> None:
+    """The story-memory mentions that point at these lines, and their undo-log rows.
+    `keep_pending`: leave the pointers of a name still waiting for the DM's check (#2329), so its
+    card can say the transcript is gone; they hold a line reference and a place, never words."""
     mentions: dict[str, list[str]] = {}
     for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
         cur = await conn.execute(
-            "DELETE FROM memory_mentions WHERE guild_id = %s AND line_ref = ANY(%s)"
-            " RETURNING campaign_id, id",
-            (guild_id, list(batch)),
+            "DELETE FROM memory_mentions m WHERE m.guild_id = %s AND m.line_ref = ANY(%s)"
+            " AND NOT (%s AND EXISTS (SELECT 1 FROM memory_entities e"
+            "   WHERE e.guild_id = m.guild_id AND e.campaign_id = m.campaign_id"
+            "   AND e.id = m.entity_id AND e.status = 'proposed'))"
+            " RETURNING m.campaign_id, m.id",
+            (guild_id, list(batch), keep_pending),
         )
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
