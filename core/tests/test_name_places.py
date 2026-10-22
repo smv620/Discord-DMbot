@@ -122,14 +122,14 @@ class Cards(NamesTest):
         self.bot.transcripts = self.store
         self.bot.settings = replace(self.bot.settings, site_url="https://dmbot.example")
         self.sid = await self.store.open_session(GUILD, self.campaign.id, START)
-        self.names = {DM: "Sam", PLAYER: "Mia"}
+        self.speakers = {DM: "Sam", PLAYER: "Mia"}
 
     def it(self, user_id: int = DM) -> Any:
         it = super().it(user_id)
         it.guild = SimpleNamespace(
             id=GUILD,
             get_member=lambda uid: (
-                SimpleNamespace(display_name=self.names[uid]) if uid in self.names else None
+                SimpleNamespace(display_name=self.speakers[uid]) if uid in self.speakers else None
             ),
             fetch_member=AsyncMock(
                 side_effect=discord.NotFound(MagicMock(status=404), "Unknown Member")
@@ -208,7 +208,8 @@ class Cards(NamesTest):
         view, _text = await self.card()
         link = next(b for b in view.children if getattr(b, "label", "") == "📜 Open in transcript")
         self.assertEqual(
-            link.url, f"https://dmbot.example/account/transcripts/{GUILD}.{self.campaign.id}/1"
+            getattr(link, "url", ""),
+            f"https://dmbot.example/account/transcripts/{GUILD}.{self.campaign.id}/1",
         )
 
     async def test_few_places_have_no_more_button(self) -> None:
