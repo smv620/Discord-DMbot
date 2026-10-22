@@ -4694,6 +4694,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   one can be cancelled. An address another account already uses is refused (sign-in by email
   needs one address per account). Once changed, the **old** address gets a short note, so a
   stolen session can't quietly move email sign-in. API shape: the comment on #2349.
+  *Two more rules (Supervisor, 2026-10-22, #2359 review):* an email the person chose **outlives
+  later Discord sign-ins** (a Discord sign-in no longer overwrites it), and confirming deletes any
+  unused sign-in links sent to the old address. "That address is already used by another account"
+  is the one place DMbot says whether an address has an account: only to a signed-in person, at
+  most 6 tries an hour, because two accounts sharing an address would lock both out of email
+  sign-in.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
