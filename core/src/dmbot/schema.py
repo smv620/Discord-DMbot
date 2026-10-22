@@ -8099,6 +8099,26 @@ IMPORT_PLAYS = (
     """
 )
 
+HOUSE_RULE_WINS = f"""
+    -- Which of two house rules that disagree wins (#2284), decided by the DM. A side is a rule
+    -- of the campaign's own (`*_set` empty) or a rule of a set it follows (the set's name and
+    -- the rule's number in it). The pair is stored once, the smaller side first, and `winner`
+    -- says which side wins. Per campaign, deleted with it, carried in backups.
+    CREATE TABLE house_rule_wins (
+        {_memory_scope()}
+        a_set       TEXT NOT NULL DEFAULT '',
+        a_number    INTEGER NOT NULL CHECK (a_number > 0),
+        b_set       TEXT NOT NULL DEFAULT '',
+        b_number    INTEGER NOT NULL CHECK (b_number > 0),
+        winner      TEXT NOT NULL CHECK (winner IN ('a', 'b')),
+        decided_by  BIGINT NOT NULL,
+        decided_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_set, a_number, b_set, b_number),
+        CHECK (a_set COLLATE "C" < b_set COLLATE "C"
+               OR (a_set = b_set AND a_number < b_number))
+    );
+    """ + _isolate("house_rule_wins")
+
 HOUSE_RULE_SOURCE = """
     -- Where each house rule came from (#2285; docs/PLAN.md, "Seeing where house rules come from"):
     -- 'discord' is every rule from before this was recorded ("added in Discord"), 'typed' the
@@ -9443,6 +9463,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0161_import_suggest", IMPORT_SUGGEST),  # who a name is, and who they play (#2135)
     ("0162_recap_critics", RECAP_CRITICS),  # the critics loop's saved state (#2255)
     ("0163_import_plays", IMPORT_PLAYS),  # the DM's "plays" choices wait for the bot (#2135)
+    ("0164_house_rule_wins", HOUSE_RULE_WINS),  # which of two disagreeing rules wins (#2284)
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
 )
 
@@ -9462,6 +9483,7 @@ ISOLATED_TABLES = (
     "session_imports",
     "import_speakers",
     "import_plays",
+    "house_rule_wins",
     "member_directory",
     "transcript_suggestions",
     "waiting_name_questions",
