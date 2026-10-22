@@ -25,6 +25,7 @@ const SCRIPTED = new Set([
   "account/import.html", // the importer (#2107); open for the site or a test server (#2260)
   "account/names.html", // the Names page (#2295)
   "account/web.html", // the relationship web (#2324)
+  "account/npc.html", // an NPC's page and my notes (#2266)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
   "hello.html",
@@ -70,4 +71,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /account/import, /account/names, /account/web, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/transcripts, /account/import, /account/names, /account/web, /account/npc, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
