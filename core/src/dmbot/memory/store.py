@@ -3337,7 +3337,7 @@ class MemoryStore:
             if current is None or current["status"] != CONFIRMED:
                 raise MemoryRuleError(NOT_FOUND)
             before = {
-                r.id
+                r.id: r.status
                 for r in await _relations_touching(w, current["subject_id"], current["object_id"])
             }
             new, _ = await self.add_relation_in(
@@ -3347,7 +3347,9 @@ class MemoryStore:
             )  # fmt: skip
             if new.id == relation_id:
                 return Written(new, w.batch)
-            if new.id not in before:  # the words are new: the new connection takes over (#2409)
+            # The words are new, or match a duplicate only proposed so far (the upgrade just made it
+            # the DM's, with no beliefs yet): the new connection takes over (#2409)
+            if before.get(new.id) != CONFIRMED:
                 await beliefs.carry(w, current, new.id)
                 moved = await w.get(RELATIONS, new.id)
                 assert moved is not None

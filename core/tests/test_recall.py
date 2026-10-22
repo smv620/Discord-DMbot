@@ -273,6 +273,78 @@ class Recalling(MemoryTest):
         # the DM still sees the secret one
         self.assertIn(moved.value.id, self.ids(await self.recall(DM_SCREEN, "Mira", hops=2)))
 
+    async def roster_ties(self) -> dict[str, tuple[str, ...]]:
+        return {e.name: e.ties for e in await self.service().roster(GUILD_A, self.c)}
+
+    async def test_the_roster_reads_what_the_party_believes_as_the_flag_flips_and_on_reword(
+        self,
+    ) -> None:
+        """#2409: the NPC list and pages tie Mira and Ulfgar only while the players know it."""
+        self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        self.assertEqual((await self.roster_ties())["Mira"], ("Ulfgar",))
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
+        hidden = await self.memory.change_relation_words(  # a hidden one reworded stays hidden
+            GUILD_A, self.c, self.secret, "enemy_of", "", source="dm"
+        )
+        self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
+        await self.memory.update_relation(
+            GUILD_A, self.c, hidden.value.id, source="dm", secret=False
+        )
+        await self.memory.change_relation_words(  # a shown one reworded stays shown
+            GUILD_A, self.c, hidden.value.id, "kin_of", "", source="dm"
+        )
+        self.assertEqual((await self.roster_ties())["Mira"], ("Ulfgar",))
+
+    async def lookup_ids(self) -> tuple[set[str], set[str]]:
+        data = await self.memory.lookup_data(GUILD_A, self.c)
+        return {r.id for r in data.relations}, {r.id for r in data.secret_relations}
+
+    async def test_the_lookup_reads_what_the_party_believes_as_the_flag_flips_and_on_reword(
+        self,
+    ) -> None:
+        shown, secret = await self.lookup_ids()
+        self.assertNotIn(self.secret, shown)
+        self.assertIn(self.secret, secret)
+        self.assertIn(self.member, shown)
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        shown, secret = await self.lookup_ids()
+        self.assertIn(self.secret, shown)
+        self.assertNotIn(self.secret, secret)
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, self.secret, "enemy_of", "", source="dm"
+        )
+        again = await self.memory.change_relation_words(
+            GUILD_A, self.c, self.member, "ally_of", "", source="dm"
+        )
+        shown, secret = await self.lookup_ids()
+        self.assertNotIn(moved.value.id, shown)
+        self.assertIn(moved.value.id, secret)
+        self.assertIn(again.value.id, shown)
+
+    async def test_the_two_party_readers_give_the_same_set(self) -> None:
+        """`party_knows_by` (recall and the roster, a probe by The party's id) and `party_knows`
+        (the lookup, a join) are two spellings of one question."""
+        from dmbot.memory.beliefs import party_id, party_knows, party_knows_by
+
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        await self.memory.update_relation(GUILD_A, self.c, self.member, source="dm", secret=True)
+        async with self.memory._read(GUILD_A, self.c) as scope:
+            party = await party_id(scope)
+            ids = []
+            for clause in (party_knows(), party_knows_by("memory_relations", party)):
+                cur = await scope.conn.execute(
+                    "SELECT id FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                    f" AND {clause} ORDER BY id",
+                    scope.ids,
+                )
+                ids.append([r["id"] for r in await cur.fetchall()])
+        self.assertEqual(ids[0], ids[1])
+        self.assertIn(self.secret, ids[0])
+        self.assertNotIn(self.member, ids[0])
+
     async def test_players_see_no_secret_fact_no_note_and_no_condition(self) -> None:
         await self.memory.set_condition(GUILD_A, self.c, self.mira, DEAD, source="dm")
         got = await self.recall(PLAYERS, "Mira", hops=2)

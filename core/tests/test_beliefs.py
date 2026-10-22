@@ -289,6 +289,32 @@ class Beliefs(MemoryTest):
         assert row is not None
         self.assertEqual((row["evidence_ids"], row["session_at"]), (["line:s1:1000:7"], 1_000))
 
+    async def test_words_that_match_a_proposed_duplicate_still_carry_the_dms_belief(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(
+            GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm",
+            evidence=["line:s1:1000:7"], session_at=1_000,
+        )  # fmt: skip
+        proposed = await self.relate(a, "ally_of", b, status=PROPOSED)
+        dup = str(proposed.value[0].id)
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        self.assertEqual(moved.value.id, dup)  # the proposed one was upgraded, not a third made
+        self.assertEqual((await self.truth())[dup], (0.6, "theory"))
+        self.assertEqual(await self.party(), {dup: 1.0})
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT evidence_ids, session_at FROM memory_beliefs WHERE relation_id = %s"
+                " AND perspective_id = %s ORDER BY seq DESC LIMIT 1",
+                (dup, truth),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["evidence_ids"], row["session_at"]), (["line:s1:1000:7"], 1_000))
+
     async def test_undo_of_the_new_words_takes_the_carried_beliefs_with_them(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b)
