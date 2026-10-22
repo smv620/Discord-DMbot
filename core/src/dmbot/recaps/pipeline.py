@@ -116,13 +116,16 @@ UNMATCHED = "Couldn't write a recap that matched the session."
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
 SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and keep every word"
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
+FACTS_ROOM_MAX = (
+    16_000  # after doubling too: a run of one-word sentences stays under the output limit
+)
 FACTS_TOKENS_PER_SENTENCE = 60  # one flag as JSON: the sentence number, the kind, the beat numbers
 
 
 def facts_room(sentences: int) -> int:
     """The fact check's output room: never below the old 800, and a number pair for each sentence
     of a long recap (#2345)."""
-    return max(FACTS_TOKENS, FACTS_TOKENS_PER_SENTENCE * sentences + 400)
+    return min(max(FACTS_TOKENS, FACTS_TOKENS_PER_SENTENCE * sentences + 400), FACTS_ROOM_MAX // 2)
 
 
 GRADE_TOKENS = 200  # the grader's room: a few numbers
@@ -1174,10 +1177,10 @@ class RecapWorker:
         reply: Reply | None = None
         for again in (False, True):
             if again:
-                room *= 2
                 fresh = await self._store.get(gid, cid, job.session_at) or job
                 if fresh.calls >= self._ceiling(fresh) - 1:
-                    break
+                    break  # (the room reported stays the one the cut answer had)
+                room = min(room * 2, FACTS_ROOM_MAX)
                 await self._store.update(
                     gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
                 )
@@ -1205,7 +1208,7 @@ class RecapWorker:
         self._announce(gid, cid, job, self._careful, room, reply, stage="facts")
         self._annotate(
             gid, cid, job, "facts",
-            checks=["shape"] if facts is None else [],
+            checks=(["cut off" if reply.cut else "shape"] if facts is None else []),
             facts=facts.counts() if facts is not None else {},
         )  # fmt: skip
         return facts
