@@ -32,6 +32,7 @@ import type {
   WebLinkChange,
   WebNode,
   WebQuery,
+  CampaignPage,
   MyNpcNote,
   NpcPage,
 } from "./api";
@@ -67,6 +68,7 @@ const user: Person = { id: "100000000000000001", name: "Belleros" };
 const campaigns: Campaign[] = [
   {
     id: "cmp-brynwater",
+    ref: "100.cmp1",
     name: "The Brynwater Crossing",
     serverName: "Thursday Table",
     lastPlayedAt: "2026-10-02T19:30:00Z",
@@ -77,6 +79,7 @@ const campaigns: Campaign[] = [
   },
   {
     id: "cmp-ashen",
+    ref: "100.cmp2",
     name: "Ashen Crown",
     serverName: "Gorrak's Hall",
     lastPlayedAt: null,
@@ -85,6 +88,7 @@ const campaigns: Campaign[] = [
   },
   {
     id: "cmp-varrow",
+    ref: "100.cmp3.cp-co",
     name: "Shrine of Varrow",
     serverName: "Thursday Table",
     lastPlayedAt: "2026-09-25T18:00:00Z",
@@ -796,6 +800,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         state.links.splice(state.links.indexOf(link), 1);
       }
       return edgeOf(link.a, link.b);
+    },
+    // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
+    // the person plays in without running it, `.cp-co` one they help run.
+    async campaignPage(ref): Promise<CampaignPage> {
+      calls.push(`campaignPage:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      const mine = campaigns.find((c) => c.ref === ref);
+      return {
+        ref,
+        name: mine?.name ?? "The Brynwater Crossing",
+        serverName: mine?.serverName ?? "Thursday Table",
+        role: /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner",
+        importsOn: mine?.importsOn ?? false,
+      };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
     // one the person is not in; `.npc-dm` shows a DM's own note.

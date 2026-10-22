@@ -13,6 +13,7 @@ import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import { type AccountApi, ApiError, type NameChange, type NameRow, type WebEdge, type WebGraph, type WebLinkChange, type WebNode } from "./api";
 import WebMap from "./WebMap";
 import { clampHops } from "./webLayout";
+import BackToCampaign from "./BackToCampaign";
 
 /** The campaign's address, read from `/account/web/<server>.<campaign>`. */
 export function webRefFromPath(path: string): string | null {
@@ -205,6 +206,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
   return (
     <div class="stack web-page">
+      {ref && <BackToCampaign campaignRef={ref} />}
       <p class="muted small">{words.lead}</p>
       {canEdit ? (
         <p class="small muted">{words.undoNote}</p>

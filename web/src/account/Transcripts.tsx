@@ -16,6 +16,7 @@ import {
   type TranscriptVersion,
   type TranscriptView,
 } from "./api";
+import BackToCampaign from "./BackToCampaign";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
 export function placeFromPath(path: string): { ref: string; number: number | null } | null {
@@ -157,6 +158,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
           <p>
             <a href="/account/transcripts">{text.allCampaigns}</a>
           </p>
+          <BackToCampaign campaignRef={campaignRef} name={found.name} />
           <h2>{found.name}</h2>
           <p class="small">{text.shareLine}</p>
           {IMPORT_LIVE && api.importPreview && (

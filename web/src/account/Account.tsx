@@ -27,6 +27,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
 import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
@@ -1070,7 +1071,10 @@ function CampaignRow({
 
   return (
     <li data-campaign={campaign.id}>
-      <p class="campaign-name">{campaign.name}</p>
+      <p class="campaign-name">
+        {/* Linked only when the API sends the campaign's address (#2416). */}
+        {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
+      </p>
       <p class="muted small">
         {campaign.serverName} ·{" "}
         {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
