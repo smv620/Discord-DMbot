@@ -120,6 +120,25 @@ class Criticising(WorkerHarness):
         loop = cr.loop_from_json(job.critics)
         self.assertEqual((loop.done, loop.round, loop.notes, loop.cut), (True, 2, (), 0))
 
+    async def test_the_revision_is_shown_the_sessions_real_last_two_beats(self) -> None:
+        # A short session shows the writer only a pick of its beats; the revision's ending block
+        # must still hold the session's real last two (#2331), as the first draft's does.
+        filler = " ".join(["calm"] * 95)
+        invented = f"《Tense》 Mira wanted to avenge her brother. {filler} Oskar"
+        fast = Smart(
+            fx.BEATS_ANSWER, fx.prose_answer(invented, "1. Strings."), *([fx.GRADE_ANSWER] * 2),
+            fx.FINISH_ANSWER,
+        )  # fmt: skip
+        clean = f"《Tense》 Mira stood by the door. {filler} Oskar"
+        careful = fx.Canned(fx.prose_answer(clean, "1. Strings."))
+        await self.setUpWorker(fast, careful, critics=True, hours=0.5)
+        job = await self.settle(await self.go())
+        self.assertEqual(job.state, "ready")
+        revision = careful.sent[0]
+        self.assertIn("avenge her brother", revision)  # it is the revision, told what nobody said
+        ending = revision.split("<ending>")[1].split("</ending>")[0]
+        self.assertIn("Mira found a locked door with a silver lock", ending)  # beat 4 of 5
+
     async def test_a_motive_the_word_list_does_not_know_is_caught_by_the_call(self) -> None:
         text = "Mira stayed at the door, loyal to the last."
         draft = CLEAN.replace(

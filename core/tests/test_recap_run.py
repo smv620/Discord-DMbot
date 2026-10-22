@@ -134,9 +134,12 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.job.state, "failed")
         text = "\n".join(run.report(out, {}))
         self.assertIn("Step prose, try 1:", text)
-        self.assertIn("Step prose, try 2:", text)
-        self.assertIn("Step prose, try 3:", text)
+        # The same 3 words again did not move toward the range, so the run stops there on our
+        # side (the owner's rule, #2383) instead of spending the third try.
+        self.assertIn("(check: length)", text)
+        self.assertNotIn("Step prose, try 3:", text)
         self.assertIn("problem: Your draft was 3 words", text)
+        self.assertIn("Make it longer by about 337 words", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)
 
