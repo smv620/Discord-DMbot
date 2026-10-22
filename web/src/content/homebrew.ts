@@ -1,10 +1,12 @@
 // The words of the homebrew pages (#1525). Everything the DM made for the table is here, nothing
 // is hidden from players (#1643); an entry the DM turned off still shows, marked. The DM adds and
 // changes entries in Discord, never here.
+import { homebrewCard } from "./account-cards";
+
 export const text = {
-  heading: "Homebrew",
-  link: "Read your table's homebrew",
-  lead: "Spells, monsters, items and other game content your DM made for your table. Everyone in your Discord server can read them.",
+  heading: homebrewCard.heading,
+  link: homebrewCard.link,
+  lead: homebrewCard.lead,
   leadOneCampaign:
     "Everything your DM made for this table. An entry marked (off) is kept, but DMbot ignores it.",
   off: "(off)",
