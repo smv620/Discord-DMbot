@@ -243,6 +243,29 @@ class Beliefs(MemoryTest):
         (still,) = await self.memory.party_view(GUILD_A, self.c, known_only=False)
         self.assertEqual((still.confidence, still.status), (0.5, "theory"))
 
+    async def test_a_new_belief_wins_over_rows_numbered_by_another_campaigns_history(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b, secret=True)
+        party = (await self.kinds())["party"]
+        async with self.db.guild(GUILD_A) as conn:  # as a restored backup brings them
+            await conn.execute(
+                "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id,"
+                " relation_id, confidence, status, evidence_ids, seq, recorded_at)"
+                " VALUES (%s, %s, %s, %s, %s, 0.5, 'theory', '{}', 1000000, 1)",
+                (GUILD_A, self.c, new_id(), party, rel),
+            )
+        await self.memory.believe(GUILD_A, self.c, party, rel, 1.0, "revealed_fact", source="dm")
+        self.assertEqual(await self.party(), {rel: 1.0})
+
+    async def test_a_connection_that_is_no_longer_confirmed_drops_out_of_the_views(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        self.assertEqual(set(await self.party()), {rel})
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", status=REJECTED)
+        self.assertEqual(await self.party(), {})
+        self.assertEqual(await self.truth(), {})
+        self.assertEqual(await self.memory.party_view(GUILD_A, self.c, known_only=False), [])
+
     async def test_only_the_dm_writes_the_truth_and_the_shapes_are_checked(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b)
