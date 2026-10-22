@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 import uuid
 from typing import Any
+from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.db import Database, drop_schema
@@ -229,6 +230,37 @@ class TheListeners(Held):
         self.assertIn("Orla Finch", hidden)
         allowed, hidden = recap_name_sets(lookup, said_in([line("Orla Finchley was there")]))
         self.assertIn("Orla Finch", hidden)  # a whole name, not a prefix of another
+
+
+class TheNarration(Held):
+    async def test_the_audio_check_gets_the_same_lists_as_the_written_recap(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+        from dmbot.memory.lookup import LookupCache
+
+        await self.add("Orla Finch", "npc", hidden_from_players=True)
+        sessions = [SimpleNamespace(started_at=100, id="s1")]
+
+        async def run(text: str) -> Any:
+            line = SimpleNamespace(heard=text, text=text, sidebar="")
+            bot = SimpleNamespace(
+                lookup=LookupCache(self.memory),
+                transcripts=SimpleNamespace(
+                    sessions=AsyncMock(return_value=sessions), lines=AsyncMock(return_value=[line])
+                ),
+            )
+            job = SimpleNamespace(session_at=100)
+            return await DMBot.recap_audio_inputs(bot, self.g, self.one.id, job)  # type: ignore[arg-type]
+
+        silent = await run("We rode on")
+        assert silent is not None
+        self.assertIn("Orla Finch", silent.secret_names)  # not said: not for the narrator
+        self.assertNotIn("Orla Finch", silent.allowed_names)
+        spoken = await run("We met Orla Finch")
+        assert spoken is not None
+        self.assertNotIn("Orla Finch", spoken.secret_names)  # said at the table: allowed
+        self.assertIn("Orla Finch", spoken.allowed_names)
 
 
 class TheMigration(unittest.IsolatedAsyncioTestCase):

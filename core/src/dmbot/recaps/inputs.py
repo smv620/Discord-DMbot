@@ -31,6 +31,24 @@ def said_in(lines: Any) -> str:
     )
 
 
+async def recap_said(
+    transcripts: Any, guild_id: int, campaign_id: str, session_at: int | None
+) -> str | None:
+    """What the table said in that session (for names the players haven't been shown yet, #2404),
+    or None when there is no session or its lines can't be read: then such a name is not allowed."""
+    if session_at is None or transcripts is None:
+        return None
+    try:
+        sessions = await transcripts.sessions(guild_id, campaign_id, limit=1000)
+        found = [s for s in sessions if s.started_at == session_at]
+        if not found:
+            return None
+        return said_in(await transcripts.lines(guild_id, found[0].id))
+    except Exception:
+        log.exception("Recap: couldn't read what the session said")
+        return None
+
+
 def recap_name_sets(names: Any, said: str | None) -> tuple[list[str], list[str]]:
     """(the names the recap may use, the names it must not) for a session. A secret name is never
     allowed. A name the players haven't been shown yet (#2404) is allowed only when the table said

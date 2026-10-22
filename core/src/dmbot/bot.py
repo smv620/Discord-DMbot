@@ -292,7 +292,7 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.inputs import load_inputs, recap_name_sets, said_in
+from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.requests import Request as RecapRequest
@@ -8616,21 +8616,6 @@ class DMBot(commands.AutoShardedBot):
         if asked is not None:
             await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
-    async def _recap_said(self, campaign: Campaign, session_at: int | None) -> str | None:
-        """What the table said in that session (for names the players haven't been shown yet,
-        #2404), or None when there is no session or its lines can't be read."""
-        if session_at is None or self.transcripts is None:
-            return None
-        try:
-            sessions = await self.transcripts.sessions(campaign.guild_id, campaign.id, limit=1000)
-            found = [s for s in sessions if s.started_at == session_at]
-            if not found:
-                return None
-            return said_in(await self.transcripts.lines(campaign.guild_id, found[0].id))
-        except Exception:
-            log.exception("Recap: couldn't read what the session said")
-            return None
-
     async def recap_secret_names(
         self, campaign: Campaign, session_at: int | None = None
     ) -> list[str] | None:
@@ -8645,7 +8630,9 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
-        return recap_name_sets(lookup, await self._recap_said(campaign, session_at))[1]
+        return recap_name_sets(
+            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+        )[1]
 
     async def recap_allowed_names(
         self, campaign: Campaign, session_at: int | None = None
@@ -8661,7 +8648,9 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
-        return recap_name_sets(lookup, await self._recap_said(campaign, session_at))[0]
+        return recap_name_sets(
+            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+        )[0]
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
@@ -8896,13 +8885,26 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap audio: couldn't load the campaign's names")
             return None
+        # The same lists as the written recap's check (#2050), so the two locks agree: a name the
+        # players haven't been shown yet is secret unless the table said it in this session.
+        _, secret = recap_name_sets(
+            lookup,
+            await recap_said(
+                getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
+            ),
+        )
+        hidden = set(secret)
         return AudioInputs(
-            secret_names=sorted({n.text for n in lookup.names if n.secret}),
+            secret_names=secret,
             # The DM's "said as" spelling (#1419); a secret name never has one, and the names are
             # read fresh all the same, so a secret one is always known to the filter.
             names=[
                 audio_names.SpokenName(
-                    n.text, n.said_as, secret=n.secret, confirmed=n.confirmed, person=n.person
+                    n.text,
+                    n.said_as,
+                    secret=n.secret or n.text in hidden,
+                    confirmed=n.confirmed,
+                    person=n.person,
                 )
                 for n in lookup.names
             ],
