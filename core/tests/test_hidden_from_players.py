@@ -90,7 +90,10 @@ class Hidden(ConfirmedMemoryTest):
         self.assertIn(self.shadow, {i.id for i in dm.items})
 
     async def test_the_npc_list_leaves_it_out_until_the_players_know(self) -> None:
-        names_of = lambda roster: {e.name for e in roster}  # noqa: E731
+
+        def names_of(roster: list[Any]) -> set[str]:
+            return {e.name for e in roster}
+
         service = RecallService(self.memory)
         got = names_of(await service.roster(GUILD_A, self.c))
         self.assertIn("Jack", got)
