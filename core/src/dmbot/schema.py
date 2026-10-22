@@ -10128,7 +10128,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
-    ("0179_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
