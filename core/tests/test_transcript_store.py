@@ -536,7 +536,7 @@ class BotTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER)
         table = self.table()
         self.said(table, PLAYER, "hello")
-        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign,assignment]
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
         await self.bot.save_transcript(table)
         self.assertEqual(await self.kept(table), {})
         self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
@@ -550,7 +550,7 @@ class BotTests(DatabaseTest):
         self.said(table, PLAYER, "hello")
         self.said(table, STRANGER, "left the server", 2)
         await self.consent.grant(GUILD, STRANGER)
-        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign,assignment]
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign]
         await self.bot.save_transcript(table)  # saved, but with no name kept
         self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
         with patch.object(DMBot, "guilds", new=[self.guild]), patch("asyncio.sleep", AsyncMock()):
