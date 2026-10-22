@@ -3185,6 +3185,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_npc_note_put", "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"),
     ("dmbot_web_npc_notes_mine", "dmbot_web_npc_notes_mine(BIGINT, TEXT)"),
     ("dmbot_web_npc_notes_delete", "dmbot_web_npc_notes_delete(BIGINT, TEXT)"),
+    # A campaign's own page on the website: its name, for any member of the server (#2416).
+    ("dmbot_web_campaign_card", "dmbot_web_campaign_card(BIGINT, TEXT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
     (
@@ -9267,6 +9269,38 @@ NPC_NOTES = (
     """
 )
 
+CAMPAIGN_CARD = """
+    -- The campaign's own page on the website (#2416) needs the campaign's name for any member of
+    -- the server, a player included, and nothing else of it: not its DMs, its settings or one
+    -- line of its story. NULL when the caller is not in the server (the session's own list, the
+    -- same check as the other web doors) or the campaign is not there, so another server's
+    -- campaign looks like none at all.
+    CREATE FUNCTION dmbot_web_campaign_card(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        found_name TEXT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT k.name INTO found_name FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('name', found_name);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_campaign_card(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_campaign_card(BIGINT, TEXT) FROM PUBLIC;
+"""
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -10438,6 +10472,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
     ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
+    ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
