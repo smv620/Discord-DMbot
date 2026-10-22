@@ -707,6 +707,31 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**House rules from any file or link** (owner, 2026-10-22). The plain numbered format stays what DMbot
+**writes** (the download, sharing and review copy), but DMbot **reads** the house rules a DM already has,
+in whatever shape they are:
+- **What it reads:** an upload of PDF, Word (.docx), Excel (.xlsx) or CSV, plain text or Markdown; or a
+  link to a Google Doc, Google Sheet, Drive, Dropbox or OneDrive file, or a public web page. Everything is
+  read through the guarded link reader (`dmbot.fetch`: public https only, every address checked), 10 MB
+  and 200,000 characters of text at most. Text only: images and scanned pages without text are said, not
+  guessed at.
+- **How:** a file already in the plain format is read by code as today, with no AI. Anything else goes to
+  one AI call (the careful tier) that lists the house rules it finds, each with a short **quote** from
+  the file. Code keeps only rules whose quote is really in the file (DMbot never invents a rule), at most
+  200, each 500 characters at most, and drops repeats of a rule the campaign already has.
+- **The DM decides:** the result is the same offer as a linked file's changes today (**Accept all /
+  Review / Not now**, one at a time in Review), plus the plain-format file to download so the DM can
+  check it. Nothing is saved without a press, and every new rule goes through the disagreement check
+  ("Which one wins?", #2284). 📂 Sources shows "from <file name>" or "from <site>" (never the full link).
+- **A linked file in another shape** is read the same way at session start, **only when it has changed**
+  since the last read (DMbot keeps a fingerprint of the text, not the text), so the AI call is made once
+  per change, not once per session.
+- **Only the DM's own rules:** the form says "Your own house rules only. For a published book, use Share
+  a rulebook." A file that reads as a published book (long, page-numbered rules text with no house
+  rules) gets that line instead of an offer. The file's text goes to the AI for this one read and is not
+  stored; the link is stored and shown as today (site only, never logged).
+- **Cost:** one AI call per file read (or per change of a linked file), counted in the campaign's usage.
+
 **Homebrew (part 1)** (decided 2026-10-16 by Supervisor, #1520, migration 0097). A campaign stores its
 own homebrew: **entries** the DM wrote, in the DM's own words (a spell, monster, item, feat, condition,
 species, subclass, background or other). **A rule the DM makes up is a house rule, not homebrew** (owner, 2026-10-16, #1628): there is
