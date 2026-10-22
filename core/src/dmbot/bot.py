@@ -927,6 +927,16 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
         await _failed(interaction, cause, f"/{command}")
 
 
+def _fixed(texts: list[str]) -> Callable[[], Awaitable[list[str]]]:
+    """Words already read (an imported session's lines were filtered to the people who agree
+    when they were read, just before)."""
+
+    async def read() -> list[str]:
+        return texts
+
+    return read
+
+
 class DMBot(commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
 
@@ -9260,20 +9270,26 @@ class DMBot(commands.AutoShardedBot):
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
-            agreed = await self.consent.consenting(gid)  # asked after the lines were read
-            recorded = {line.user_id for line in lines} & set(agreed)
             sessions = await self.transcripts.sessions(gid, cid, limit=1000)
             number = sum(1 for s in sessions if s.started_at <= (table.started_at or 0)) or 1
-            await self._reveal_said(
-                gid, cid, table_lines(lines, recorded=recorded), f"Session {number}"
-            )
 
-    async def _reveal_said(self, gid: int, cid: str, texts: list[str], where: str) -> None:
-        """Show the held-back names `texts` say, and say so on the DM screen (see above)."""
+            async def spoken() -> list[str]:
+                # Asked last, right before the names are matched: a person can stop at any moment
+                agreed = await self.consent.consenting(gid)
+                recorded = {line.user_id for line in lines} & set(agreed)
+                return table_lines(lines, recorded=recorded)
+
+            await self._reveal_said(gid, cid, spoken, f"Session {number}")
+
+    async def _reveal_said(
+        self, gid: int, cid: str, texts: Callable[[], Awaitable[list[str]]], where: str
+    ) -> None:
+        """Show the held-back names the table said (`texts` reads the words, after everything
+        else is loaded), and say so on the DM screen (see above)."""
         if self.memory is None:
             return
         held = await unrevealed_names(self.memory, gid, cid)
-        found = said(held, texts)
+        found = said(held, await texts())
         if not found:
             return
         written = await self.memory.reveal_said(gid, cid, [f.entity_id for f in found])
@@ -9286,12 +9302,14 @@ class DMBot(commands.AutoShardedBot):
         if campaign is None or campaign.dm_screen_channel_id is None:
             return
         shown = [f.name for f in found if f.entity_id in set(written.value)]
-        waiting = await self.memory.waiting_connections(gid, cid)
-        await self.post(
+        waiting = await self.memory.waiting_connections(gid, cid, written.value)
+        if not await self.post(
             campaign.dm_screen_channel_id,
             report_text(shown, where=where, waiting=waiting),
             view=revealed_view(cid, written.batch),
-        )
+        ):
+            # The names are shown and the DM could not be told: say so in the log (a count only)
+            log.warning("Names shown at the table, but the DM screen could not say so")
 
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
@@ -10165,9 +10183,14 @@ class DMBot(commands.AutoShardedBot):
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         # What an imported session says is what was said at the table: held-back names it says
         # are shown, as after a live session (#2404).
-        await self._reveal_said(
-            gid, ready.campaign_id, [t for _, t in lines], "an imported session"
-        )
+        try:
+            await self._reveal_said(
+                gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
+            )
+        except Exception:
+            log.exception(
+                "Import: showing the names the session said failed"
+            )  # never stops the scan
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
             agreed=set(agreed), game_only=True,

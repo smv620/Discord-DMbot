@@ -79,6 +79,19 @@ class WithTheStore(MemoryTest):
         self.assertNotIn(shown, got)
         self.assertEqual(said(list(got.values()), ["The Ferrywoman was seen"]), [])
 
+    async def test_a_clue_a_player_character_and_the_party_are_never_shown_by_speech(self) -> None:
+        clue, hero = await self.held("The Map", "Rook Pell")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE memory_entities SET type = 'clue' WHERE id = %s", (clue,))
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = false, party = true"
+                " WHERE id = %s", (hero,)
+            )  # fmt: skip
+        names = {u.entity_id for u in await unrevealed_names(self.memory, GUILD_A, self.c)}
+        self.assertNotIn(clue, names)
+        written = await self.memory.reveal_said(GUILD_A, self.c, [clue])
+        self.assertEqual(written.value, [])
+
     async def test_saying_it_shows_it_and_one_undo_hides_it_again(self) -> None:
         orla, rook = await self.held("Orla Finch", "Rook Pell")
         self.assertTrue(await self.hidden(orla))
@@ -119,11 +132,15 @@ class WithTheStore(MemoryTest):
             GUILD_A, self.c, orla, "knows", rook, source="dm", confidence=1.0,
             status="confirmed", unrevealed=True,
         )  # fmt: skip
-        self.assertEqual(await self.memory.waiting_connections(GUILD_A, self.c), 0)  # both held
+        self.assertEqual(
+            await self.memory.waiting_connections(GUILD_A, self.c, [orla, rook]), 0
+        )  # both held
         await self.memory.reveal_said(GUILD_A, self.c, [orla])
-        self.assertEqual(await self.memory.waiting_connections(GUILD_A, self.c), 0)  # one held
+        self.assertEqual(
+            await self.memory.waiting_connections(GUILD_A, self.c, [orla]), 0
+        )  # one held
         await self.memory.reveal_said(GUILD_A, self.c, [rook])
-        self.assertEqual(await self.memory.waiting_connections(GUILD_A, self.c), 1)
+        self.assertEqual(await self.memory.waiting_connections(GUILD_A, self.c, [rook]), 1)
 
 
 def fake_bot(memory: Any, lines: list[Line], agreed: set[int]) -> Any:
@@ -194,9 +211,51 @@ class AfterTheSession(WithTheStore):
     async def test_an_imported_session_is_the_table_too(self) -> None:
         orla, _ = await self.held("Orla Finch", "Rook Pell")
         bot = fake_bot(self.memory, [], set())
-        await DMBot._reveal_said(bot, GUILD_A, self.c, ["Orla Finch spoke"], "an imported session")
+
+        async def texts() -> list[str]:
+            return ["Orla Finch spoke"]
+
+        await DMBot._reveal_said(bot, GUILD_A, self.c, texts, "an imported session")
         self.assertFalse(await self.hidden(orla))
         self.assertIn("(an imported session)", bot.post.await_args.args[1])
+
+    async def test_consent_is_asked_last_and_a_person_who_stopped_does_not_reveal(self) -> None:
+        orla, _ = await self.held("Orla Finch", "Rook Pell")
+        bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch")], {PLAYER})
+        order: list[str] = []
+        real = bot.memory.reveal_said
+
+        async def held_names(*a: Any) -> Any:
+            order.append("write")
+            return await real(*a)
+
+        bot.consent.consenting = AsyncMock(side_effect=lambda gid: order.append("consent") or set())
+        bot.memory = SimpleNamespace(
+            reveal_said=held_names,
+            waiting_connections=self.memory.waiting_connections,
+            _read=self.memory._read,
+        )
+        await DMBot.reveal_names_said(bot, self.table())
+        self.assertEqual(order, ["consent"])  # asked, and then nothing written for nobody
+        self.assertTrue(await self.hidden(orla))
+
+    async def test_a_failing_post_still_leaves_the_names_shown_and_does_not_raise(self) -> None:
+        orla, _ = await self.held("Orla Finch", "Rook Pell")
+        bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch")], {PLAYER})
+        bot.post = AsyncMock(return_value=False)
+        await DMBot.reveal_names_said(bot, self.table())
+        self.assertFalse(await self.hidden(orla))
+
+    async def test_only_connections_of_the_names_just_shown_are_pointed_to(self) -> None:
+        _orla, rook, hana = await self.held("Orla Finch", "Rook Pell", "Hana Dray")
+        await self.memory.reveal_said(GUILD_A, self.c, [hana, rook])
+        await self.memory.add_relation(
+            GUILD_A, self.c, hana, "knows", rook, source="dm", confidence=1.0,
+            status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch")], {PLAYER})
+        await DMBot.reveal_names_said(bot, self.table())
+        self.assertNotIn("hidden connection", bot.post.await_args.args[1])  # an old, kept one
 
     async def test_waiting_connections_are_pointed_to_after_the_names(self) -> None:
         orla, rook = await self.held("Orla Finch", "Rook Pell")

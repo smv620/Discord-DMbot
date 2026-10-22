@@ -1354,23 +1354,31 @@ class MemoryStore:
                     row["status"] == CONFIRMED
                     and row["hidden_from_players"]
                     and not row["audience_limited"]
+                    and not row["party"]
+                    and row["type"] not in (PERSON, "clue")
+                    and row["role"] != PLAYER_CHARACTER
+                    and row["played_by"] is None
                 ):
                     await w.update(ENTITIES, row["id"], {"hidden_from_players": False})
                     shown.append(str(row["id"]))
             return Written(shown, w.batch if shown else None)
 
-    async def waiting_connections(self, guild_id: int, campaign_id: str) -> int:
+    async def waiting_connections(
+        self, guild_id: int, campaign_id: str, touching: Sequence[str]
+    ) -> int:
         """How many connections the story is holding back (#2404) now join two names the players
-        have been shown: the DM may show them from the connection's page. A count only."""
+        have been shown, one of them just shown (`touching`): the DM may show them from the
+        connection's page. A count only."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_relations r WHERE r.guild_id = %s"
                 " AND r.campaign_id = %s AND r.status = 'confirmed' AND r.unrevealed"
+                " AND (r.subject_id = ANY(%s) OR r.object_id = ANY(%s))"
                 " AND NOT r.secret AND (SELECT count(*) FROM memory_entities e"
                 "  WHERE e.guild_id = r.guild_id AND e.campaign_id = r.campaign_id"
                 "  AND e.id IN (r.subject_id, r.object_id) AND e.status = 'confirmed'"
                 "  AND NOT e.hidden_from_players AND NOT e.audience_limited) = 2",
-                scope.ids,
+                (*scope.ids, list(touching), list(touching)),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0

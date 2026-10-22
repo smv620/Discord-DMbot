@@ -66,7 +66,8 @@ async def unrevealed_names(
     memory: MemoryStore, guild_id: int, campaign_id: str
 ) -> list[Unrevealed]:
     """This campaign's confirmed entries the players haven't been shown, with the names they may
-    be said by (never a 🤫 spelling, a clue only some people know, a person or the party). Read for
+    be said by (never a 🤫 spelling, a clue, a person, a player's character or the party). Any of
+    its other names said reveals the entry: the DM held the entry back, not one spelling. Read for
     this server and campaign only."""
     async with memory._read(guild_id, campaign_id) as scope:
         cur = await scope.conn.execute(
@@ -74,7 +75,8 @@ async def unrevealed_names(
             " ON a.guild_id = e.guild_id AND a.campaign_id = e.campaign_id AND a.entity_id = e.id"
             " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
             " AND e.hidden_from_players AND NOT e.audience_limited AND NOT e.party"
-            " AND e.type <> 'person' AND a.status = 'confirmed' AND NOT a.secret"
+            " AND e.type NOT IN ('person', 'clue') AND e.role IS DISTINCT FROM 'player_character'"
+            " AND e.played_by IS NULL AND a.status = 'confirmed' AND NOT a.secret"
             " ORDER BY e.id, a.id",
             scope.ids,
         )
