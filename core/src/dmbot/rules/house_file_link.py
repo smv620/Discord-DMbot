@@ -34,6 +34,8 @@ class FileLink:
     ignored: str | None  # the fingerprint of the file the DM chose to ignore until it changes
     set_by: int
     set_at: int
+    # A hash of the file's text when the AI last read it (#2377); None before any such read.
+    read: str | None = None
 
     @property
     def site(self) -> str:
@@ -67,14 +69,20 @@ class HouseFileLinkStore:
     async def get(self, guild_id: int, campaign_id: str) -> FileLink | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT link, ignored, set_by, set_at FROM house_rules_file"
+                "SELECT link, ignored, set_by, set_at, read_fingerprint FROM house_rules_file"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
         if row is None:
             return None
-        return FileLink(row["link"], row["ignored"], int(row["set_by"]), int(row["set_at"]))
+        return FileLink(
+            row["link"],
+            row["ignored"],
+            int(row["set_by"]),
+            int(row["set_at"]),
+            row["read_fingerprint"],
+        )
 
     async def set_link(self, guild_id: int, campaign_id: str, user_id: int, link: str) -> FileLink:
         """Link (or re-link) the file. A new link forgets what was ignored."""
@@ -86,7 +94,8 @@ class HouseFileLinkStore:
                 "INSERT INTO house_rules_file (guild_id, campaign_id, link, ignored, set_by,"
                 " set_at) VALUES (%s, %s, %s, NULL, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET link = EXCLUDED.link,"
-                " ignored = NULL, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at",
+                " ignored = NULL, read_fingerprint = NULL, set_by = EXCLUDED.set_by,"
+                " set_at = EXCLUDED.set_at",
                 (guild_id, campaign_id, text, user_id, now),
             )
         return FileLink(text, None, user_id, now)
@@ -98,6 +107,17 @@ class HouseFileLinkStore:
             cur = await conn.execute(
                 "DELETE FROM house_rules_file WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
+            )
+            return cur.rowcount > 0
+
+    async def set_read(self, guild_id: int, campaign_id: str, fingerprint: str) -> bool:
+        """Remember what the file's text was when the AI read it (#2377). False if no file is
+        linked any more. Nobody's press: the bot does it after a read."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE house_rules_file SET read_fingerprint = %s"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (fingerprint, guild_id, campaign_id),
             )
             return cur.rowcount > 0
 

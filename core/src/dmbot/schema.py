@@ -9448,6 +9448,14 @@ NAME_GATE = (
 )
 
 
+HOUSE_FILE_READ = """
+    -- The linked house-rules file read by the AI (#2377): a hash of the file's text as it was
+    -- when last read (spacing and case ignored), so the AI is asked again only when the file
+    -- changes. Never the text. A new link forgets it. Added with no default, so no row changes.
+    ALTER TABLE house_rules_file ADD COLUMN read_fingerprint TEXT
+        CHECK (read_fingerprint IS NULL OR read_fingerprint ~ '^[0-9a-f]{64}$');
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -9640,6 +9648,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
     ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
+    ("0172_house_file_read", HOUSE_FILE_READ),  # the AI's last read of a linked file (#2377)
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
 )
 

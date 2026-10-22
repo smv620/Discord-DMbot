@@ -18,8 +18,10 @@ restart an old button says so. Register with `bot.add_dynamic_items(HouseSyncBut
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import re
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
@@ -31,8 +33,9 @@ import discord
 from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.memory.name_documents import DocumentError
 from dmbot.mentions import NO_PINGS
-from dmbot.rules import house_file, house_file_sync
+from dmbot.rules import house_ai, house_file, house_file_sync, house_reader
 from dmbot.rules.house_file_sync import Applied, Item
 
 log = logging.getLogger(__name__)
@@ -59,9 +62,20 @@ BIG_REMOVAL = (
     "looks wrong, press **Not now**; otherwise use **Review**."
 )
 SAME = "Your house-rules file and DMbot's house rules match. Nothing to change."
-NOT_TEXT = (
-    "Your rules file isn't a Google Doc or a plain .txt file, so I couldn't read it. "
+BOOK = "Your own house rules only. For a published book, use Share a rulebook."
+NOTHING_FOUND = (
+    "I read your file and found no house rules in it that aren't already in your list. "
     "Nothing was changed."
+)
+NOT_READ = (
+    "I couldn't read that file just now, so nothing was changed. Try again in a minute, or "
+    "put the rules in DMbot's numbered format (📥 Download rules shows how)."
+)
+UNCHANGED = "Your file hasn't changed since I last read it. Nothing to change."
+BUSY = "I'm already reading a file for this server. Try again when it's done."
+TOO_MANY_READS = "This server has read its files for today. Try again tomorrow."
+HOUSE_AI_READS_PER_DAY = (
+    20  # files read by the AI, a server a day (a linked file counts once per change)
 )
 TOO_BIG = "That file is too big to be a house-rules file. Nothing was changed."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
@@ -75,6 +89,7 @@ LABELS = {
     "accept": ("Accept", "✅", discord.ButtonStyle.primary),
     "skip": ("Skip", "⏭️", discord.ButtonStyle.secondary),
     "rest": ("Accept this and the rest", "✅", discord.ButtonStyle.secondary),
+    "file": ("Download what I found", "📥", discord.ButtonStyle.secondary),
 }
 
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
@@ -111,6 +126,7 @@ class Pending:
     applied: Applied = field(default_factory=Applied)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     file_name: str | None = None  # an upload's name: where its new rules say they came from
+    found_text: str = ""  # what the AI found, in the numbered format, to download (#2377)
 
 
 class Pendings:
@@ -166,6 +182,8 @@ def offer_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     actions = [] if pending.big else ["all"]
     actions += ["review", "ignore" if pending.from_link else "dismiss"]
+    if pending.found_text:
+        actions.append("file")
     for action in actions:
         view.add_item(HouseSyncButton(guild_id, key, action, 0, pending.removals))
     return view
@@ -184,7 +202,7 @@ def review_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
 class HouseSyncButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
-        r"dmbot:hrs:(?P<action>all|review|ignore|dismiss|accept|skip|rest):"
+        r"dmbot:hrs:(?P<action>all|review|ignore|dismiss|accept|skip|rest|file):"
         r"(?P<guild>[0-9]{1,20}):(?P<key>[0-9a-f]{8}):(?P<n>[0-9]{1,4})"
     ),
 ):
@@ -296,7 +314,15 @@ async def press(
         if action in ("accept", "skip", "rest") and n != pending.index:
             await interaction.response.send_message(STALE, ephemeral=True)
             return
-        if action == "review":
+        if action == "file":  # what the AI found, in the numbered format (#2377)
+            await interaction.response.send_message(
+                file=discord.File(
+                    io.BytesIO(pending.found_text.encode()),
+                    filename=house_file.filename(campaign.name),
+                ),
+                ephemeral=True,
+            )
+        elif action == "review":
             await _show(interaction, review_text(pending), review_view(guild_id, key, pending))
         elif action in ("dismiss", "ignore"):
             if action == "ignore":
@@ -368,6 +394,14 @@ async def _checker(interaction: discord.Interaction, bot: Any, guild_id: int, pe
 # ---- comparing -----------------------------------------------------------------------
 
 
+_ai_busy: set[int] = set()  # servers with a file being read by the AI right now
+_ai_reads: dict[tuple[int, str], int] = {}  # (server, day) -> files read by the AI
+
+
+def _ai_may_read(bot: Any, campaign: Campaign) -> bool:
+    return getattr(bot, "house_file_ai", None) is not None
+
+
 async def compare_text(
     bot: Any,
     campaign: Campaign,
@@ -381,10 +415,36 @@ async def compare_text(
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
     (the files match, or the file can't be used), else None. A version of a linked file the
-    DM chose to ignore is skipped unless `respect_ignore` is off (the DM asked to look)."""
+    DM chose to ignore is skipped unless `respect_ignore` is off (the DM asked to look).
+
+    A file in DMbot's numbered format with nothing odd in it is read by code, with no AI call.
+    Anything else goes to one AI call that lists the rules it finds, kept only if their quote is
+    really in the file (#2377); with no AI, the numbered reading is all there is."""
     if len(text) > house_file.MAX_FILE_CHARS:  # (parse would refuse it too)
         return TOO_BIG
     parsed = await asyncio.to_thread(house_file.parse, text)
+    if parsed.rules and not parsed.problems:
+        return await _compare_numbered(
+            bot, campaign, parsed, send, from_link, respect_ignore, file_name
+        )
+    if not _ai_may_read(bot, campaign):
+        if parsed.rules:
+            return await _compare_numbered(
+                bot, campaign, parsed, send, from_link, respect_ignore, file_name
+            )
+        return no_rules(len(parsed.problems))
+    return await _compare_found(bot, campaign, text, send, from_link, respect_ignore, file_name)
+
+
+async def _compare_numbered(
+    bot: Any,
+    campaign: Campaign,
+    parsed: house_file.Parsed,
+    send: Send,
+    from_link: bool,
+    respect_ignore: bool,
+    file_name: str | None,
+) -> str | None:
     unreadable = len(parsed.problems)
     if not parsed.rules:
         return no_rules(unreadable)
@@ -415,11 +475,100 @@ async def compare_text(
         big,
         file_name=file_name,
     )
+    return await _offer(bot, campaign, pending, send)
+
+
+async def _offer(bot: Any, campaign: Campaign, pending: Pending, send: Send) -> str | None:
     bot.house_syncs.drop_campaign(campaign.guild_id, campaign.id)  # the older ones are stale
     key = bot.house_syncs.add(pending)
     if not await send(offer_text(pending), offer_view(campaign.guild_id, key, pending)):
         bot.house_syncs.drop(key)
     return None
+
+
+def _found_summary(found: house_ai.Found, source: str) -> str:
+    count = len(found.rules)
+    many = f"{count} house rule" + ("" if count == 1 else "s")
+    skipped = found.repeats
+    extra = f" ({skipped} already in your list)" if skipped else ""
+    return f"**I found {many} in {source}**{extra}. Nothing is saved until you press a button."
+
+
+async def _compare_found(
+    bot: Any,
+    campaign: Campaign,
+    text: str,
+    send: Send,
+    from_link: bool,
+    respect_ignore: bool,
+    file_name: str | None,
+) -> str | None:
+    """A file that is not in the numbered format: one AI call lists its rules (#2377)."""
+    gid = campaign.guild_id
+    allows = getattr(bot, "plan_allows", None)
+    if allows is not None and not await allows("ai", gid, campaign):
+        return NOT_READ  # a plan without the AI cannot read this kind of file
+    store = bot.house_rules
+    links = bot.house_file_links
+    if store is None:
+        return FAILED
+    fingerprint = house_reader.fingerprint_of(text)
+    link = await links.get(gid, campaign.id) if from_link and links is not None else None
+    if link is not None:
+        if link.read == fingerprint:  # the file is as the AI last read it: no call
+            return None if respect_ignore else UNCHANGED
+        if respect_ignore and link.ignored == fingerprint:
+            return None
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    if gid in _ai_busy:
+        return BUSY
+    if _ai_reads.get((gid, day), 0) >= HOUSE_AI_READS_PER_DAY:
+        return TOO_MANY_READS
+    _ai_busy.add(gid)
+    for old in [k for k in _ai_reads if k[1] != day]:
+        del _ai_reads[old]  # only today counts
+    _ai_reads[(gid, day)] = _ai_reads.get((gid, day), 0) + 1
+    try:
+        mine = await store.list(gid, campaign.id)
+        found = await house_ai.read(
+            bot.house_file_ai.complete, text, [(r.rule, r.supersedes) for r in mine]
+        )
+    finally:
+        _ai_busy.discard(gid)
+    if found.unread:
+        return NOT_READ
+    if link is not None and links is not None:  # read once per change, found anything or not
+        await links.set_read(gid, campaign.id, fingerprint)
+    if found.published_book:
+        return BOOK
+    if not found.rules:
+        return NOTHING_FOUND
+    first = max((r.number for r in mine), default=0) + 1
+    added = tuple(
+        house_file.FileRule(first + i, c.text, c.instead_of) for i, c in enumerate(found.rules)
+    )
+    source = "your file" if file_name is None else f"**{_md(file_name)}**"
+    pending = Pending(
+        gid,
+        campaign.id,
+        house_file_sync.items_of(house_file.Diff(added=added)),
+        fingerprint,
+        _found_summary(found, source),
+        from_link,
+        file_name=file_name,
+        found_text=_found_file(campaign, added),
+    )
+    return await _offer(bot, campaign, pending, send)
+
+
+def _found_file(campaign: Campaign, rules: Sequence[house_file.FileRule]) -> str:
+    """What was found, in DMbot's numbered format (a file the DM can check, keep or upload)."""
+
+    class _Row:  # the shape `house_file.write` reads
+        def __init__(self, r: house_file.FileRule) -> None:
+            self.number, self.rule, self.supersedes = r.number, r.rule, r.supersedes
+
+    return house_file.write(campaign.name, [_Row(r) for r in rules])  # type: ignore[misc]
 
 
 async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | None]:
@@ -433,11 +582,12 @@ async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | Non
         got = await fetch.fetch(link.link)
     except fetch.LinkError as exc:
         return None, couldnt_read(str(exc))
-    if not got.filename.endswith(".txt"):
-        return None, NOT_TEXT
-    if len(got.data) > READ_MAX_BYTES:  # before decoding anything
+    if got.filename.endswith(".txt") and len(got.data) > READ_MAX_BYTES:  # before decoding anything
         return None, TOO_BIG
-    return got.data.decode("utf-8", errors="replace"), None
+    try:
+        return await house_reader.read_file(got.filename, got.data), None
+    except DocumentError as exc:
+        return None, couldnt_read(str(exc))
 
 
 async def check_linked(bot: Any, campaign: Campaign, send: Send, *, quiet_if_same: bool) -> None:

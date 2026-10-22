@@ -19,8 +19,9 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
-from dmbot.rules import house_file
+from dmbot.rules import house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
 
 log = logging.getLogger(__name__)
@@ -95,10 +96,11 @@ PICK_FIRST = (
 GONE = "That campaign isn't here any more. Use `/dmbot houserules` to start again."
 NOT_READY = "The house-rules file isn't available right now. Please try again in a moment."
 NOT_LINKED = (
-    "📄 **House-rules file**\nNo file is connected yet. Keep your house rules in a Google Doc "
-    "(or a Dropbox or OneDrive text file) and DMbot compares it with its own list at the "
-    "start of every session.\nBefore you paste its web address, set sharing to “Anyone with "
-    "the link can view”. Or upload a file for one comparison (it isn't kept).\n"
+    "📄 **House-rules file**\nNo file is connected yet. Keep your house rules in a PDF, Word, "
+    "Excel or text file, a Google Doc or Sheet, or a web page, and DMbot reads it at the start "
+    "of every session and offers what's new.\nBefore you paste its web address, set sharing to "
+    "“Anyone with the link can view”. Or upload a file for one reading (it isn't kept).\n"
+    "Your own house rules only. For a published book, use Share a rulebook.\n"
     "Nothing changes unless you press a button."
 )
 
@@ -162,6 +164,7 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
     await _send(interaction, text, FileMenu(current, linked=link is not None))
 
 
+MAX_UPLOAD_BYTES = MAX_DOCUMENT_BYTES  # 10 MB, as for a names file
 COOLDOWN_S = 30.0  # between two comparisons of one campaign's file asked for by hand
 _busy: set[tuple[int, str]] = set()  # campaigns being compared right now
 _last: dict[tuple[int, str], float] = {}  # when each was last compared by hand
@@ -237,7 +240,9 @@ async def link_file(interaction: discord.Interaction, campaign: Campaign, link: 
 class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
     link: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
         label="Web address of your rules file",  # 45 characters at most
-        placeholder="In Google Docs: Share, then “Anyone with the link”, then Copy link.",
+        placeholder=(
+            "A Google Doc or Sheet, Dropbox, OneDrive or web page. Sharing: “Anyone with the link”."
+        ),
         max_length=2000,
     )
 
@@ -251,7 +256,7 @@ class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
 
 class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
     file: discord.ui.Label[UploadForm] = discord.ui.Label(
-        text="Your house-rules file (a .txt file)",  # 45 characters at most
+        text="Your rules (PDF, Word, Excel, text)",  # 45 characters at most
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -271,7 +276,7 @@ class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
             await _tell(interaction, f"No file was added. Press {UPLOAD_LABEL} and pick one.")
             return
         attachment = upload.values[0]
-        if attachment.size > house_sync.READ_MAX_BYTES:
+        if attachment.size > MAX_UPLOAD_BYTES:
             await _tell(interaction, house_sync.TOO_BIG)
             return
         wait = _take(current)
@@ -285,10 +290,15 @@ class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
             await _tell(interaction, "DMbot couldn't download that file. Try again.")
             return
         try:
+            try:
+                text = await house_reader.read_file(attachment.filename, data)
+            except DocumentError as exc:  # a scanned PDF, an empty or damaged file: said plainly
+                await _tell(interaction, str(exc))
+                return
             words = await house_sync.compare_text(
                 _bot(interaction),
                 current,
-                data.decode("utf-8", errors="replace"),
+                text,
                 _private_send(interaction),
                 from_link=False,
                 file_name=attachment.filename,

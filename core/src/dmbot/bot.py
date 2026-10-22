@@ -1290,6 +1290,11 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.house_file_ai = (  # house rules found in any file or link (#2377)
+            self.ai_client.tier(FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES)
+            if self.ai_client
+            else None
+        )
         # Which disagreeing house rule wins, as the DM decided; set where the database is known.
         self.house_wins: WinsStore | None = None
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
