@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "Pin what is 100% true",
+    what: "On a connection's card, a game master can press 📌 Pin as 100% truth. When you upload campaign lore you choose once whether it is just what the story says, or 100% truth, and the connections you keep are pinned. If a session then says something that goes against a pinned connection, DMbot tells you privately on the DM screen, with the line. It only points; you decide what is true. Players never see a pin.",
+    reason: "In review (#2447); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "New names wait until they are said",
     what: "A name you add by hand, add from a list or read from your backstory, and a connection from your backstory, stays hidden from your players until you press 👁️ Show to players. On the website, your full view shows them dimmed.",
     reason: "In review (slice 2 of #2404); held until dev1 deploys it. Saying a name at the table will show it automatically in the next step.",

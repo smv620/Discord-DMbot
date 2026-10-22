@@ -69,6 +69,7 @@ describe("What's new", () => {
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
       "One way in for your campaign's words", // until #2447 merges and dev1 deploys it
+      "Pin what is 100% true", // until #2447 merges and dev1 deploys it
       "New names wait until they are said", // until #2404 slice 2 merges and dev1 deploys it
       "Every recap says which session it is", // until #2418 merges and dev1 deploys it
       "A page for each campaign", // until #2416 merges, its API field is live and dev1 deploys it
