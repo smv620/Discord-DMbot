@@ -321,7 +321,7 @@ class ThePath(NamesTest):
             it = self.it()
             await ui_bg.offer(it, self.campaign.id, Upload(TEXT, "your background"))
             offer = it.response.sent[0][1]["view"]
-            self.assertIn("Asserted", str(it.response.sent[0][0]))
+            self.assertIn("May change in play", str(it.response.sent[0][0]))
             if truth:
                 flip = self.it()
                 await offer._flip(flip)
@@ -334,6 +334,23 @@ class ThePath(NamesTest):
             (rel,) = await self.relations()
             pinned = await self.memory.pinned_connections(GUILD, self.campaign.id)
             self.assertEqual(pinned, {rel.id} if truth else set())
+
+    async def test_a_pair_already_waiting_takes_the_truth_word_of_a_later_upload(self) -> None:
+        ids = await self.ids()
+        await self.read()
+        waiting = await self.waiting()
+        first = waiting[0]
+        again = NewLink(first.subject_id, first.predicate, first.object_id, "q", False, True)
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [again]), 0)
+        (same,) = [
+            w
+            for w in await self.waiting()
+            if w.subject_id == first.subject_id
+            and w.predicate == first.predicate
+            and w.object_id == first.object_id
+        ]
+        self.assertTrue(same.truth)
+        del ids
 
     async def test_only_a_dm_flips_the_truth_switch(self) -> None:
         it = self.it()

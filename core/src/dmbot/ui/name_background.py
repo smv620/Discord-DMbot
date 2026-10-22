@@ -226,28 +226,27 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
     await _send(interaction, offer_text(upload, False), BackgroundOffer(campaign.id, upload))
 
 
-TRUTH_OFF = "Story: asserted"
-TRUTH_ON = "Story: 📌 100% truth"
+TRUTH_OFF = "Lore: may change"
+TRUTH_ON = "Lore: 📌 100% truth"
 
 
 def offer_text(upload: Upload, truth: bool) -> str:
-    """The question before the AI reads a lore upload. The switch is asked once per upload
-    (#2447): asserted lore is what the story says, which play can still change; 📌 100% truth is
-    the DM's word, and DMbot tells the DM when a session says otherwise."""
+    """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
+    may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
+    a session goes against it."""
     cents = bg.estimate_cents(len(upload.text))
     how = (
-        "📌 **100% truth**: the connections you keep are pinned. DMbot tells you, privately, if "
-        "a session says otherwise."
+        "📌 **100% truth.** Connections you keep are pinned, and DMbot tells you privately if a "
+        "session goes against one."
         if truth
-        else "**Asserted**: the story says so, and play can still change it."
+        else "**May change in play.** (Default)"
     )
     return (
         f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
         "allowance. Nothing is added until you say yes.\n"
-        "DMbot's AI reads it and suggests names (people, places, groups, gods…) and the "
-        "connections your text states, each with its line from the text. You check each one: "
-        "the names in 📝 Check new names, then the connections.\n"
-        f"Is this lore {how} Press the story button to switch.\n"
+        "DMbot's AI suggests names and the connections your text states, each with its line. "
+        "You check each one.\n\n"
+        f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
         f"{rights_text()}"
     )
 
@@ -257,7 +256,7 @@ class BackgroundOffer(_Menu):
         super().__init__()
         self.campaign_id = campaign_id
         self.upload = upload
-        self.truth = False  # asked once per upload (#2447): "Asserted" by default
+        self.truth = False  # asked once per upload (#2447): "may change in play" by default
         self.add_item(_Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary))
         self.switch = _Button(self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary)
         self.add_item(self.switch)
@@ -286,6 +285,7 @@ class BackgroundOffer(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
+        truth = self.truth  # as it was when Find names was pressed, not when the AI is done
         bot = _bot(interaction)
         ai = bot.background_ai
         memory = _memory(interaction)
@@ -349,7 +349,7 @@ class BackgroundOffer(_Menu):
             )
             stored = await store(memory, campaign, found)
             queued = await queue_links(
-                bot, memory, campaign, found, [p.links for p in both], set(own), truth=self.truth
+                bot, memory, campaign, found, [p.links for p in both], set(own), truth=truth
             )
             cut = any(p.cut for p in both)
             log.info(
@@ -743,10 +743,6 @@ class ConnectionOffer(_Menu):
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                     unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
                 )  # fmt: skip
-                if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
-                    await memory.pin(
-                        campaign.guild_id, campaign.id, kept.value[0].id, True, source=DM
-                    )
             except MemoryRuleError:
                 log.info("A connection from a background was refused")
                 await _tell(
@@ -754,6 +750,13 @@ class ConnectionOffer(_Menu):
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
                 )
                 return
+            if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
+                try:
+                    await memory.pin(
+                        campaign.guild_id, campaign.id, kept.value[0].id, True, source=DM
+                    )
+                except MemoryRuleError:  # kept all the same: pinning is one tap on its card
+                    log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
             self.kept += 1

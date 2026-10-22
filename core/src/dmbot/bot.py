@@ -9329,8 +9329,9 @@ class DMBot(commands.AutoShardedBot):
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
         (#1320), the DM screen says how many, never what, with a button only the DM can use.
-        Nothing is posted below the critical mass or with nothing waiting (which is always the
-        case while the extractor is off); this step makes no AI call."""
+        Nothing is posted below the critical mass (except a clash with a connection the DM pinned
+        as 100% truth, #2447) or with nothing waiting (always the case while the extractor
+        is off); this step makes no AI call."""
         if self.memory is None or table.campaign_id is None:
             return
         gid, cid = table.guild_id, table.campaign_id

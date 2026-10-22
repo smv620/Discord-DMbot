@@ -324,8 +324,8 @@ class OneConnection(_Menu):
             await _tell(interaction, f"Couldn't change that. {exc}")
             return
         note = (
-            f"📌 Pinned as 100% truth: {_said(found)}. DMbot will tell you if a session says "
-            "otherwise. Press 📌 Unpin to take it back."
+            f"📌 Pinned: {_said(found)}. DMbot will tell you if a session goes against it. "
+            "📌 Unpin takes it back."
             if target
             else f"📌 Unpinned: {_said(found)}."
         )

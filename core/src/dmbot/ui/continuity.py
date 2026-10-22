@@ -53,10 +53,10 @@ def waiting_text(count: int, pinned: int = 0) -> str:
     """For the DM screen after a session: how many, never what. `pinned`: how many of them go
     against something the DM pinned as 100% truth (#2447), said as a number only."""
     what = "heads-up" if count == 1 else "heads-ups"
-    off = f" 📌 {pinned} of them go against something you pinned." if pinned else ""
+    off = f" 📌 {pinned} go against a pin." if pinned else ""
     return (
-        f"⚠️ **{count} {what} from this session.** Something said at the table may clash with "
-        f"your story.{off} Nothing changes until you decide. Only you can see the list."
+        f"⚠️ **{count} {what} from this session.**{off} Something said at the table may clash "
+        "with your story. Nothing changes until you decide. Only you can see the list."
     )
 
 
@@ -91,7 +91,7 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         return f"⚠️ **{level}:** {name} {ended}{when}{quote}. {now}"
     before = _md(conflict.earlier_words) or "earlier in your story"
     if conflict.pinned:  # the DM's own 100% truth: said plainly, as a question and not a ruling
-        return f"📌 **Off the rails? {name}.** You pinned: {before}{quote}. {now}"
+        return f"📌 **Check: {name}.** You pinned: {before}{quote}. {now} ({conflict.level})"
     return f"⚠️ **{level}: {name}.** Before{when}: {before}{quote}. {now}"
 
 
@@ -116,6 +116,8 @@ def page_text(
         "**Wasn't real:** a joke or a mistake; DMbot forgets it. "
         "**Ignore:** leave it for now."
     ]
+    if any(c.pinned for c in page):
+        lines[0] += " **Story changed** on a 📌 line takes the pin off."
     for number, conflict in enumerate(page, 1):
         done = answered.get(conflict.claim.id)
         lines.append(f"{number}. {line_text(conflict, numbers) if done is None else done}")

@@ -279,7 +279,7 @@ class Cards(base.NamesTest):
         self.assertIn("📌 Pin as 100% truth", self.labels(page))
         it = self.it()
         await page._pin(it)
-        self.assertIn("Pinned as 100% truth", it.response.edited[0][0])
+        self.assertIn("Pinned:", it.response.edited[0][0])
         (relation,) = await self.relations()
         self.assertEqual(
             await self.memory.pinned_connections(GUILD, self.campaign.id), {relation.id}

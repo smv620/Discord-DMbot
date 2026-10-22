@@ -1827,7 +1827,7 @@ names panel nor the speech-to-text hints can be a fixed list.
       the connections kept from that upload are pinned. It is a `pinned` flag on the truth belief
       (`memory_beliefs.pinned`), so Undo, backups and isolation work as for any belief; the web graph
       shows it to a DM in Full View only. After a session, a claim that clashes with a pinned connection
-      is a heads-up even before the campaign has enough story for the others, worded "Off the rails?"
+      is a heads-up even before the campaign has enough story for the others, worded as a "Check" line
       with the line; the DM screen says only how many. Code finds it with the same rules as the other
       heads-ups, never the AI, and DMbot only points: the DM decides.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,

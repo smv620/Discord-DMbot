@@ -83,6 +83,13 @@ class BackstoryLinks:
                      link.quote[:QUOTE_MAX], link.secret, link.truth, now),
                 )  # fmt: skip
                 added += cur.rowcount
+                if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
+                    await conn.execute(
+                        "UPDATE backstory_links SET truth = true WHERE guild_id = %s"
+                        " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
+                        " AND object_id = %s",
+                        (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
+                    )
         return added
 
     async def count(self, guild_id: int, campaign_id: str) -> int:
