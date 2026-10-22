@@ -454,10 +454,12 @@ from dmbot.ui.transcripts import (
     download_view,
     ended_no_download_text,
     ended_text,
+    lookup_members,
     transcript_command,
 )
 from dmbot.web import accounts
 
+MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
 
@@ -811,6 +813,9 @@ class Table:
     after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
+    # Speakers whose display names are kept with this session's transcript (#2337), so a name is
+    # looked up once for each person, not on every save.
+    named_speakers: set[int] = field(default_factory=set)
     transcript_warned: bool = False  # told the DM saving isn't working
     listening_message: discord.Message | None = None  # carries the Stop button (#108)
     # Is anyone here? (#2034) The watch for the automatic stop, and the warning's message. A
@@ -3745,6 +3750,9 @@ class DMBot(commands.AutoShardedBot):
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
         self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
+        self._background.append(
+            asyncio.create_task(self._name_old_speakers(), name="speaker-names")
+        )
 
     async def _note_present(self, first: bool) -> None:
         """Write a row for every server the bot is in; at start-up also mark the ones it was
@@ -11396,6 +11404,52 @@ class DMBot(commands.AutoShardedBot):
             stopped = [i for i, x in zip(ids, batch, strict=True) if x.user_id not in still]
             if stopped:
                 await self.transcripts.remove_lines(gid, session_id, stopped)
+            fresh = {x.user_id for x in batch if x.user_id in still}
+            fresh -= table.named_speakers
+            if fresh:
+                try:
+                    table.named_speakers |= await self._keep_speaker_names(gid, session_id, fresh)
+                except Exception:  # the names are a nicety: never hold up the lines
+                    log.exception("Couldn't keep the speakers' names")
+
+    async def _keep_speaker_names(self, gid: int, session_id: str, user_ids: set[int]) -> set[int]:
+        """Keep these people's display names, as they are now, with the session's transcript so the
+        website can show them (#2337). Returns the people settled: found, or not in the server
+        (kept as not found). Anyone Discord could not answer for just now, and everyone when the
+        server isn't there to ask, is left out, so they are tried again. Counts in the log, never
+        names."""
+        assert self.transcripts is not None
+        guild = self.get_guild(gid)
+        if guild is None:
+            return set()
+        settled: set[int] = set()
+        wanted = sorted(user_ids)
+        for start in range(0, len(wanted), MAX_SPEAKER_NAMES):
+            ids = tuple(wanted[start : start + MAX_SPEAKER_NAMES])
+            found, gone = await lookup_members(guild, ids)
+            names: dict[int, str | None] = {u: n for u, n in found.items()}
+            names.update({u: None for u in gone})
+            await self.transcripts.record_names(gid, session_id, names)
+            settled |= set(names)
+        log.info("Kept %d speaker name(s) of %d asked", len(settled), len(wanted))
+        return settled
+
+    async def _name_old_speakers(self) -> None:
+        """Once at start-up: keep the names of speakers in sessions saved before names were kept,
+        or cut short by a restart, where DMbot can still find them (#2337). The name is the one they
+        have now, and it includes people who stopped being recorded later but kept their past
+        lines (as the save path does). A person who left the server is kept as not found, so this
+        finds nothing the next time."""
+        for guild in list(self.guilds):
+            with log_context(guild_id=guild.id):
+                try:
+                    if self.transcripts is None:
+                        return
+                    for session_id, ids in await self.transcripts.unnamed(guild.id):
+                        await self._keep_speaker_names(guild.id, session_id, set(ids))
+                except Exception:
+                    log.exception("Couldn't keep the names of an older session's speakers")
+                await asyncio.sleep(1)  # a few servers a second, not all at once
 
     def _note_dropped(self, table: Table) -> None:
         if table.unsaved.dropped and not table.dropped_logged:
