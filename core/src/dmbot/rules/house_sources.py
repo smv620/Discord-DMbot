@@ -47,10 +47,15 @@ class Source:
         return f"{count} · {kind}{self.title}{by}{when}"
 
 
-def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = None) -> list[Source]:
+def group(
+    rules: Sequence[HouseRule],
+    publishers: Mapping[str, str] | None = None,
+    linked_site: str | None = None,
+) -> list[Source]:
     """The rules by source, in the order a DM reads them: the linked file, uploads (newest
     first), added in Discord, then followed sets. A source with no rules is not listed.
-    `publishers`: a followed set's name to its publisher."""
+    `publishers`: a followed set's name to its publisher. `linked_site`: the site the linked file
+    is on (never its address), which the linked group is named by (#2377)."""
     publishers = publishers or {}
     linked: list[HouseRule] = []
     uploads: dict[str, list[HouseRule]] = {}
@@ -71,7 +76,8 @@ def group(rules: Sequence[HouseRule], publishers: Mapping[str, str] | None = Non
             discord_rules.append(rule)
     out: list[Source] = []
     if linked:
-        out.append(Source("linked", "linked", LINKED_TITLE, tuple(linked)))
+        title = f"from {linked_site}" if linked_site else LINKED_TITLE
+        out.append(Source("linked", "linked", title, tuple(linked)))
     for name, group_rules in sorted(
         uploads.items(), key=lambda kv: max(r.created_at for r in kv[1]), reverse=True
     ):

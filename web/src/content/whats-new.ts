@@ -237,6 +237,18 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "Bring your house rules in any file",
+    what: "Upload your house rules as a PDF, Word, Excel, CSV or text file, or link a Google Doc, Google Sheet or web page, and DMbot reads them and shows what it found. It keeps only rules it can point to in your file. Nothing is saved until you press a button, and you can download what it found.",
+    reason: "In review (#2377); held until dev1 deploys it and has read a real file.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Upload your campaign's backstory from the main menu",
+    what: "Upload your campaign's backstory from the main menu: DMbot suggests its names and how they're connected, and you keep what's right.",
+    reason: "In review (#2380); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Recaps are shorter",
     what: "Recaps are shorter, so the game starts sooner: about 150 words for a one-hour game, 300 for three hours, and 450 at most.",
     reason: "In review (#2368); held until dev1 deploys it.",

@@ -502,13 +502,13 @@ class Reading(SyncTest):
             await self.check()
         self.assertEqual(self.sent[0][0], hs.TOO_BIG)
 
-    async def test_a_file_that_is_not_plain_text_is_said(self) -> None:
+    async def test_a_damaged_pdf_is_said_in_plain_words(self) -> None:
         self.links.link = DOC
         with patch.object(
             fetch, "fetch", AsyncMock(return_value=fetch.Fetched(b"%PDF", "link.pdf"))
         ):
             await self.check()
-        self.assertEqual(self.sent[0][0], hs.NOT_TEXT)
+        self.assertIn("couldn't open that file", self.sent[0][0])
 
     async def test_nothing_ever_raises_into_the_session(self) -> None:
         self.links.link = DOC
@@ -677,7 +677,7 @@ class Uploading(SyncTest):
         none = self.interaction()
         await self.form(None).on_submit(none)
         self.assertIn("No file was added", none.followup.send.await_args.args[0])
-        big = self.form(b"x", size=hs.READ_MAX_BYTES + 1)
+        big = self.form(b"x", size=file_ui.MAX_UPLOAD_BYTES + 1)
         it = self.interaction()
         await big.on_submit(it)
         self.assertEqual(it.followup.send.await_args.args[0], hs.TOO_BIG)

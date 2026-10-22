@@ -16,6 +16,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.rules import house_file, house_sources
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
+from dmbot.rules.house_file_link import FileLink
 from dmbot.ui import house_sources as ui
 from tests.pg import DatabaseTest
 from tests.test_house_rules_ui import DM, GUILD, PLAYER, UITest, campaign
@@ -108,19 +109,27 @@ class TheList(UITest):
             it = self.it(user)
             await ui.open_sources(it, campaign())
             text = it.followup.send.await_args.args[0]
-            self.assertIn(house_sources.LINKED_TITLE, text)
+            self.assertIn(house_sources.LINKED_TITLE, text)  # (no link record: no site to name)
             view = it.followup.send.await_args.kwargs["view"]
             self.assertEqual(len(view.pick.options), 1)
 
+    async def test_the_linked_file_is_named_by_its_site(self) -> None:
+        rules = [rule(1, "linked")]
+        named = house_sources.group(rules, linked_site="docs.google.com")
+        self.assertEqual(named[0].title, "from docs.google.com")
+        self.assertIn("1 rule · from docs.google.com", named[0].line)
+        self.assertEqual(house_sources.group(rules)[0].title, house_sources.LINKED_TITLE)
+
     async def test_a_player_never_gets_the_linked_files_address(self) -> None:
-        get = AsyncMock(return_value=SimpleNamespace(link="https://docs.example.com/d/abc"))
+        get = AsyncMock(return_value=FileLink("https://docs.example.com/d/abc", None, 7, 1))
         self.bot.house_file_links = SimpleNamespace(get=get)
         it = self.it(PLAYER)
         await ui.open_sources(it, campaign())
         view = it.followup.send.await_args.kwargs["view"]
         self.assertFalse([c for c in view.children if isinstance(c, discord.ui.Button)])
-        get.assert_not_awaited()
-        self.assertNotIn("docs.example.com", str(it.followup.send.await_args))
+        # The site is said (the list is for the whole server); the address never is.
+        self.assertIn("from docs.example.com", str(it.followup.send.await_args))
+        self.assertNotIn("/d/abc", str(it.followup.send.await_args))
 
     async def test_two_long_names_that_share_their_start_get_their_own_downloads(self) -> None:
         shared = "x" * 110
@@ -165,7 +174,7 @@ class TheList(UITest):
         self.assertEqual([r.number for r in house_file.parse(text).rules], [1])
 
     async def test_the_linked_file_gets_an_open_button(self) -> None:
-        link = SimpleNamespace(link="https://docs.example.com/d/abc")
+        link = FileLink("https://docs.example.com/d/abc", None, 7, 1)
         self.bot.house_file_links = SimpleNamespace(get=AsyncMock(return_value=link))
         it = self.it()
         await ui.open_sources(it, campaign())
@@ -174,7 +183,7 @@ class TheList(UITest):
         self.assertEqual([b.url for b in buttons], ["https://docs.example.com/d/abc"])
 
     async def test_an_address_that_cannot_be_a_button_is_left_out(self) -> None:
-        link = SimpleNamespace(link="https://docs.example.com/" + "a" * 600)
+        link = FileLink("https://docs.example.com/" + "a" * 600, None, 7, 1)
         self.bot.house_file_links = SimpleNamespace(get=AsyncMock(return_value=link))
         it = self.it()
         await ui.open_sources(it, campaign())
