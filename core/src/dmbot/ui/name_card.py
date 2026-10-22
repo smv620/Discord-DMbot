@@ -93,8 +93,8 @@ ONLY_ONE = "☝️ Only one of these exists (you said so)."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 # A state the DM flips (#2321): the label says what pressing does, not what is now.
 HIDE_BUTTON = "🙈 Hide from players"
-SHOW_BUTTON = "👁 Players know them now"
-HIDDEN_LINE = "🙈 Players don't know this one yet. Only you see it."
+SHOW_BUTTON = "👁 Players know it now"
+HIDDEN_LINE = "🙈 Hidden from players. Only you see it."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
 THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
@@ -869,7 +869,10 @@ class NameCard(_Menu):
         if not sees_secrets(campaign, interaction.user.id):  # checked on every press
             await _tell(interaction, "Only the DM can change that.")
             return
-        hide = not self.hidden
+        now = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        hide = not (
+            now.hidden_from_players if now is not None else self.hidden
+        )  # (not a stale card)
         try:
             await memory.set_hidden_from_players(
                 campaign.guild_id, campaign.id, self.entity_id, hide, source=DM
@@ -879,9 +882,9 @@ class NameCard(_Menu):
             return
         changed(interaction, campaign)
         note = (
-            f"🙈 **{_md(name)}** is hidden from the players until you say they know it."
+            f"🙈 **{_md(name)}** is hidden. Only you can see it."
             if hide
-            else f"👁 The players know **{_md(name)}** now."
+            else f"👁 Players can see **{_md(name)}** now."
         )
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

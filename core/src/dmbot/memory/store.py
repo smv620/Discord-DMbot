@@ -1290,7 +1290,14 @@ class MemoryStore:
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            await _entity_row(w, entity_id)
+            current = await _entity_row(w, entity_id)
+            if hidden and (
+                current["type"] == PERSON
+                or current["party"]
+                or current["role"] == PLAYER_CHARACTER
+                or current["played_by"] is not None
+            ):  # a player's character is named in the transcript file and the table list
+                raise MemoryRuleError("A player's character can't be hidden from the players.")
             row = await w.update(ENTITIES, entity_id, {"hidden_from_players": hidden})
             return Written(_entity(row), w.batch)
 
@@ -1415,6 +1422,8 @@ class MemoryStore:
             raise MemoryRuleError("Only the DM can say that.")
         check_named(type, name)
         type, role = resolve_kind(type, role)
+        if hidden_from_players and (role == PLAYER_CHARACTER or played_by is not None):
+            raise MemoryRuleError("A player's character can't be hidden from the players.")
         if type == PERSON:
             raise MemoryRuleError(PERSON_NOT_LISTED)  # only DMbot makes these
         _check_choice(status, LIVE, "entity status")

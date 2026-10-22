@@ -47,6 +47,29 @@ class Hidden(ConfirmedMemoryTest):
         await self.memory.set_hidden_from_players(GUILD_A, self.c, self.shadow, False, source="dm")
         self.assertFalse((await self.entity(self.shadow)).hidden_from_players)
 
+    async def test_a_players_character_can_never_be_hidden(self) -> None:
+        pc = await self.add("Cerric", type="character", role="player_character", played_by=5)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_hidden_from_players(GUILD_A, self.c, pc, True, source="dm")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_entity(
+                GUILD_A, self.c, type="character", name="Kesh", source="dm",
+                role="player_character", hidden_from_players=True,
+            )  # fmt: skip
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, pc, False, source="dm")
+
+    async def test_the_recap_doors_keep_their_pinned_search_path(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT proname, proconfig::text AS cfg, prosecdef FROM pg_proc"
+                " WHERE proname IN ('dmbot_recap_check_names', 'dmbot_recap_shared')"
+            )
+            rows = await cur.fetchall()
+        self.assertGreaterEqual(len(rows), 2)  # (one pair for each test schema)
+        for row in rows:
+            self.assertIn("search_path", row["cfg"] or "", row["proname"])
+            self.assertTrue(row["prosecdef"], row["proname"])
+
     async def test_an_entry_added_hidden_starts_hidden(self) -> None:
         written = await self.memory.add_entity(
             GUILD_A, self.c, type="character", name="Vex", source="dm", status="confirmed",
