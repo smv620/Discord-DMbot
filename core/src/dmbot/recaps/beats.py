@@ -33,7 +33,8 @@ MAX_TOKENS = WINDOW_BEATS * BEAT_TOKENS + 400  # (a ceiling, not a spend: paid f
 
 def room(attempt: int) -> int:
     """The output room of a beat-sheet call: double on each retry, so an answer that was cut off
-    gets a try with twice the room, never the same limit again (#2341)."""
+    gets a try with twice the room, never the same limit again (#2341). (The beat sheet retries
+    once, so attempt 1 is the last; the cap only stops a runaway.)"""
     return MAX_TOKENS << min(attempt, 2)
 
 

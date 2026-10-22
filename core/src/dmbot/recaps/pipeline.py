@@ -1744,7 +1744,13 @@ class RecapWorker:
             named = ", ".join(cl.kinds(problems))
             log.info("Recap: failed checks at %s: %s", job.state, named)
             return await self._fail(
-                gid, cid, job, TOO_LONG if too_long else FAILED_CHECKS, error=named, check=named
+                gid,
+                cid,
+                job,
+                TOO_LONG if too_long else FAILED_CHECKS,
+                error=named,
+                check=named,
+                ours=True,
             )
         await self._store.update(
             gid, cid, job.session_at, attempt=job.attempt + 1, problems=list(problems)
@@ -1765,7 +1771,7 @@ class RecapWorker:
         """Something outside failed: wait, longer each time, and fail on the third."""
         errors = job.errors + 1
         if errors >= len(BACKOFF_S):
-            return await self._fail(gid, cid, job, why, error=error)
+            return await self._fail(gid, cid, job, why, error=error, ours=why == SERVICE)
         extra = {} if calls is None else {"calls": calls, "spent": spent}
         await self._store.update(
             gid,
@@ -1805,13 +1811,22 @@ class RecapWorker:
         log.info("Recap: a critics call failed (%s), %d so far", error, errors)
 
     async def _fail(
-        self, gid: int, cid: str, job: Job, why: str, *, error: str = "", check: str = ""
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        why: str,
+        *,
+        error: str = "",
+        check: str = "",
+        ours: bool = False,
     ) -> Job | None:
         log.info("Recap: failed at %s (%s)", job.state, error or "plain reason")
         self._forget(gid, cid, job)
         # A failure on our side (the writing, a check, the service) does not use up one of the
-        # DM's Try agains (#2341); no one speaking, no money or a stopped player is not ours.
-        if why not in (NOTHING, FUNDS, STOPPED, TOO_LITTLE) and job.tries > 0:
+        # DM's Try agains (#2341). Only the callers that say `ours` give it back: a limit, the
+        # allowance or a stopped player are the DM's, so the cap on tries still holds.
+        if ours and job.tries > 0:
             await self._store.give_back_try(gid, cid, job.session_at)
         reason = f"{why} (check: {check})" if check else why
         await self._store.update(gid, cid, job.session_at, state="failed", last_error=reason[:200])

@@ -65,3 +65,35 @@ class TheRequeue(WorkerHarness):
         )
         self.assertFalse(await self.store.requeue(1, self.one.id, 999))
         self.assertEqual(recap_requeue.parse_args(["1", "c", "100"]).session_at, 100)
+
+
+class TheGiveBack(WorkerHarness):
+    async def tries_after(self, **fail: object) -> int:
+        await self.setUpWorker(fx.Canned(), fx.Canned())
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET tries = 2")
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        await self.worker._fail(1, self.one.id, job, pl.SERVICE, **fail)  # type: ignore[arg-type]
+        after = await self.store.get(1, self.one.id, 100)
+        assert after is not None
+        return after.tries
+
+    async def test_a_failure_of_ours_gives_one_try_back(self) -> None:
+        self.assertEqual(await self.tries_after(ours=True), 1)
+
+    async def test_a_limit_or_the_allowance_keeps_the_try(self) -> None:
+        self.assertEqual(await self.tries_after(), 2)  # (the cap, the day's limit, the allowance)
+
+    async def test_failing_twice_gives_back_only_once(self) -> None:
+        self.assertEqual(await self.tries_after(ours=True), 1)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        await self.worker._fail(1, self.one.id, job, pl.SERVICE, ours=True)
+        again = await self.store.get(1, self.one.id, 100)
+        assert again is not None
+        self.assertEqual(again.tries, 1)
+
+    async def test_a_good_recap_is_never_started_over(self) -> None:
+        await self.setUpWorker(fx.Canned(), fx.Canned())
+        self.assertFalse(await self.store.requeue(1, self.one.id, 100))  # still queued, not failed

@@ -691,8 +691,8 @@ class RecapStore:
     async def requeue(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """Start one session's recap job over (#2341): back to the queue with its tries, errors
         and half-done work cleared, so a failure on our side (fixed since) costs the DM nothing.
-        Only a recap not yet posted or dropped. Used by the `recap_requeue` devtool, which dev1
-        runs on the server; the worker picks it up on its next round. False: no such recap."""
+        Only a failed recap that is still a draft (a good one is never wiped). Used by the
+        `recap_requeue` devtool, which dev1 runs on the server; the worker picks it up next round. False: no such recap."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET state = 'queued', attempt = 0, errors = 0, restarts = 0,"
@@ -701,7 +701,7 @@ class RecapStore:
                 " tries = 0, approved_by = 0, approved_at = 0, approved_hash = '',"
                 " audio_choice = ''"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
-                " AND status IN ('draft', 'queued')",
+                " AND status = 'draft' AND state = 'failed'",
                 (guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
@@ -711,7 +711,9 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE recap_jobs SET tries = GREATEST(tries - 1, 0) WHERE guild_id = %s"
-                " AND campaign_id = %s AND session_at = %s",
+                # (not once more for a job already failed: a restart between the give-back and the
+                # failing must not give a second try back)
+                " AND campaign_id = %s AND session_at = %s AND state <> 'failed'",
                 (guild_id, campaign_id, session_at),
             )
 
