@@ -118,11 +118,30 @@ describe("merging the ticked names", () => {
     expect(screen.getByText(w.mergeManyAsk("Mira Voss and Aldric Thorn", "Brother Anselm"))).toBeTruthy();
   });
 
+  it("says the most-mentioned is first only when the API sent mentions", async () => {
+    await ask("Mira Voss", "Brother Anselm");
+    expect(screen.getByText(w.mergeManyOrder)).toBeTruthy();
+    cleanup();
+    const api = mockApi("table");
+    const list = api.allNames!.bind(api);
+    api.allNames = async (ref, q) => {
+      const page = await list(ref, q);
+      return { ...page, names: page.names.map(({ mentions: _gone, ...row }) => row) };
+    };
+    open(DM, api);
+    await ready();
+    tick("Mira Voss");
+    tick("Brother Anselm");
+    fireEvent.click(screen.getByRole("button", { name: w.mergeSelected }));
+    await screen.findByRole("heading", { name: w.mergeManyHeading });
+    expect(screen.queryByText(w.mergeManyOrder)).toBeNull();
+  });
+
   it("sends merge-many for the kept name, waits, and says it with where Undo is", async () => {
     const api = await ask("Mira Voss", "Brother Anselm");
     fireEvent.click(screen.getByRole("button", { name: w.mergeManyYes }));
     expect(await screen.findByText(w.mergedMany("Brother Anselm"))).toBeTruthy();
-    expect(merges(api)).toEqual([`changeName:100.cmp1:n14:${JSON.stringify({ action: "merge-many", others: ["n1"] })}`]);
+    expect(merges(api)).toEqual([`changeName:100.cmp1:n14:${JSON.stringify({ action: "merge-many", keep: "n14", others: ["n1"] })}`]);
     // The list is read again: the merged name is off it, and nothing stays ticked.
     await waitFor(() => expect(screen.queryByLabelText(w.pickLabel("Mira Voss"))).toBeNull());
     expect(screen.queryByRole("button", { name: w.mergeSelected })).toBeNull();
@@ -134,7 +153,7 @@ describe("merging the ticked names", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Mira Voss/ }));
     fireEvent.click(screen.getByRole("button", { name: w.mergeManyYes }));
     await screen.findByText(w.mergedMany("Mira Voss"));
-    expect(merges(api)[0]).toContain(`:n1:{"action":"merge-many","others":["n14"]}`);
+    expect(merges(api)[0]).toContain(`:n1:{"action":"merge-many","keep":"n1","others":["n14"]}`);
   });
 
   it("warns when the kinds differ, and not when they don't", async () => {

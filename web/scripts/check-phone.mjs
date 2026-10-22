@@ -192,7 +192,7 @@ const pages = [
     await page.getByLabel("Select Mira Voss").check();
     await page.getByLabel("Select Brynwater Crossing").check();
     await page.getByRole("button", { name: /Merge selected/ }).click();
-    await page.getByRole("button", { name: "Merge", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Yes, merge them" }).waitFor();
   }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],

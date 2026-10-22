@@ -79,7 +79,9 @@ export const namesPage = {
   mergeSelected: "🔗 Merge selected",
   clearSelected: "Clear ticks",
   mergeManyHeading: "Keep which name?",
-  mergeManyLead: "The other names come off the list and are added to the one you keep as other names it also goes by. We put the most-mentioned first; change it if you like. You can undo it on the name's card in Discord.",
+  mergeManyLead: "The other names come off the list and are added to the one you keep as other names it also goes by. You can undo it on the name's card in Discord.",
+  // Said only when the API sent how often each name was heard, so it is never claimed without it.
+  mergeManyOrder: "We put the most-mentioned first; change it if you like.",
   mentionsOf: (n: number): string => `${n} ${n === 1 ? "mention" : "mentions"}`,
   mergeManyKinds: (kinds: string, keepKind: string): string => `Check: these are different kinds (${kinds}). The one you keep stays ${keepKind}.`,
   mergeManyAsk: (others: string, keep: string): string => `Merge ${others} into ${keep}? ${keep} will also go by their names.`,

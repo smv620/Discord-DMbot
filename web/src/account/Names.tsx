@@ -163,7 +163,11 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     mergeFlight.current = true;
     setMergeBusy(true);
     try {
-      await api.changeName(ref, keep.id, { action: "merge-many", others: others.map((r) => r.id) });
+      await api.changeName(ref, keep.id, {
+        action: "merge-many",
+        keep: keep.id,
+        others: others.map((r) => r.id),
+      });
       setPicked([]);
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
@@ -441,6 +445,9 @@ function MergeMany({
         {words.mergeManyHeading}
       </h3>
       <p class="small muted">{words.mergeManyLead}</p>
+      {ordered.some((r) => r.mentions !== undefined) && (
+        <p class="small muted">{words.mergeManyOrder}</p>
+      )}
       <div role="radiogroup" aria-labelledby="merge-many-heading" class="stack">
         {ordered.map((r) => (
           <label class="choice" key={r.id}>
