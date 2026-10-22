@@ -509,7 +509,7 @@ async def approve_recap(
     given for it counts, as in the bot. The secret names and the plan are checked again by the
     audio step before any paid call. `audio_in_plan`: from the campaign owner's plan; an audio
     choice without it is refused ("not_in_plan"), and one made while `audio_unavailable` says why
-    it can't be ("not_set_up", "allowance") is refused ("audio_unavailable").
+    it can't be ("not_set_up", "allowance", "unavailable") is refused ("audio_unavailable").
     `post` (#2419, "Approve and post text only"): approve a text-only choice and hand it to the bot
     to post in the same transaction, so a failure leaves nothing approved and half-posted; it is
     only for the text-only choice, since audio is made and reviewed before anything is posted."""
@@ -517,7 +517,7 @@ async def approve_recap(
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
         raise RecapError("not_in_plan")
-    if choice != TEXT and audio_unavailable in ("not_set_up", "allowance"):
+    if choice != TEXT and audio_unavailable in ("not_set_up", "allowance", "unavailable"):
         raise RecapError("audio_unavailable")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, row = await _one(conn, ref, session, marks=False)

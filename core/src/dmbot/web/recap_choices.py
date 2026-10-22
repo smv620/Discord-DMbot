@@ -69,16 +69,17 @@ async def read_choices(
     *,
     now: int,
     enforce_plans: bool,
-    recaps_on: bool = True,
+    audio_on: bool = True,
     audio_allowed: int | None = None,
 ) -> dict[str, Any]:
     """The three choices and whether the narration may be offered. A player, another campaign's DM
     and a server manager who is no DM get "not found". `audioUnavailable` says why narration can't
-    be made right now, for the recap page's greyed button (#2419): "not_set_up" (`recaps_on` is
-    false: nothing on this server makes it), "plan" (the owner's plan has none) or "allowance" (the
-    month's narrated recaps are used up, `audio_allowed`, for a campaign the bot holds to it);
-    empty when it can be made. It is advice for the page: the bot checks again before any paid
-    call."""
+    be made right now, for the recap page's greyed button (#2419): "not_set_up" (`audio_on` is
+    false: this server has no voice, or recaps are off), "plan" (the owner's plan has none) or
+    "allowance" (the month's narrated recaps are used up, `audio_allowed`, for a campaign the bot
+    holds to it); empty when it can be made. Only the campaign's owner, who holds the plan, is
+    told "plan" or "allowance"; a co-DM gets "unavailable" (co-DMs never learn the owner's plan,
+    #1470). The bot checks again before any paid call."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -93,7 +94,7 @@ async def read_choices(
     facts = await _audio_facts(db, found.get("owner"), now, enforce_plans=enforce_plans)
     limited = bool(facts.pop("limited"))
     why = ""
-    if not recaps_on:
+    if not audio_on:
         why = "not_set_up"
     elif not facts["canAudio"]:
         why = "plan"
@@ -102,6 +103,8 @@ async def read_choices(
             await _scoped(conn, guild_id)
             if await _narrated_this_month(conn, guild_id, campaign_id, now) >= audio_allowed:
                 why = "allowance"
+    if why in ("plan", "allowance") and found.get("owner") != str(session.user_id):
+        why = "unavailable"  # said to the plan's holder only
     return {
         "text": bool(found["text"]),
         "email": bool(found["email"]),

@@ -945,7 +945,7 @@ def create_app(
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),
                 enforce_plans=settings.enforce_plans,
-                recaps_on=settings.recaps_on,
+                audio_on=settings.recap_audio_on,
                 audio_allowed=settings.recap_audio_per_month,
             )  # fmt: skip
             return await approve_recap(
@@ -1138,7 +1138,7 @@ def create_app(
                 ref,
                 now=clock(),
                 enforce_plans=settings.enforce_plans,
-                recaps_on=settings.recaps_on,
+                audio_on=settings.recap_audio_on,
                 audio_allowed=settings.recap_audio_per_month,
             )
         except RecapError as err:

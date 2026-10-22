@@ -416,7 +416,8 @@ export interface RecapChoices {
   audioUnavailable?: AudioUnavailable | "";
 }
 
-export type AudioUnavailable = "plan" | "allowance" | "not_set_up";
+// "unavailable" is what a co-DM is told instead of "plan" or "allowance" (they never learn the owner's plan).
+export type AudioUnavailable = "plan" | "allowance" | "not_set_up" | "unavailable";
 
 export type RecapChoice = "text" | "audio" | "email";
 

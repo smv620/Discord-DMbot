@@ -170,7 +170,7 @@ describe("the three ways to approve", () => {
 });
 
 describe("🎙️ approve and make audio to review", () => {
-  async function withReason(why: "plan" | "allowance" | "not_set_up" | "") {
+  async function withReason(why: "plan" | "allowance" | "not_set_up" | "unavailable" | "") {
     live.audio = true;
     const api = mockApi("table");
     const choices = api.recapChoices!.bind(api);
@@ -180,7 +180,7 @@ describe("🎙️ approve and make audio to review", () => {
   }
 
   it("is greyed with its reason for each way it can't be made", async () => {
-    for (const why of ["plan", "allowance", "not_set_up"] as const) {
+    for (const why of ["plan", "allowance", "not_set_up", "unavailable"] as const) {
       cleanup();
       await withReason(why);
       const button = screen.getByRole("button", { name: w.makeAudio }) as HTMLButtonElement;

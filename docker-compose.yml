@@ -114,6 +114,11 @@ services:
       # Which speech-to-text the bot uses, so the approval check counts only the consent that
       # holds for it (the same setting as the bot's; no key).
       TRANSCRIBER: ${TRANSCRIBER:-whisper-local}
+      # Whether the bot has a voice for recap narration, so the recap page greys its audio button
+      # when it does not (#2419). `:+1` passes "1" when the setting exists and never the value:
+      # the speech key stays out of this container.
+      RECAP_AUDIO_KEY_SET: ${ELEVENLABS_API_KEY:+1}
+      RECAP_AUDIO_VOICE_SET: ${ELEVENLABS_VOICE_ID:+1}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its

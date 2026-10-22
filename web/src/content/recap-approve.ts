@@ -17,6 +17,7 @@ export const approveWords = {
     plan: "Audio isn't in your plan, so the audio button is off.",
     allowance: "You've used all your audio for this month, so the audio button is off. You get more on the 1st.",
     not_set_up: "Audio isn't available yet, so the audio button is off.",
+    unavailable: "Audio isn't available for this campaign right now, so the audio button is off.",
   } satisfies Record<AudioUnavailable, string>,
   /** The plan lookup failed, which is not the same as having no audio. */
   audioUnknown: "We couldn't check whether audio is available, so the audio button is off. Reload the page to try again.",

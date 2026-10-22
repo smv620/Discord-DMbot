@@ -182,7 +182,7 @@ class Choices(Base):
 
         await self.give_plan(ALICE.id, "guild")
         self.assertEqual(await why(), "")
-        self.assertEqual(await why(recaps_on=False), "not_set_up")
+        self.assertEqual(await why(audio_on=False), "not_set_up")
         self.assertEqual(await why(audio_allowed=0), "allowance")  # none left this month
         self.assertEqual(await why(audio_allowed=8), "")
         await self.give_plan(ALICE.id, "table")  # no narration in this plan
@@ -192,6 +192,26 @@ class Choices(Base):
             self.web, self.session, self.cref, now=NOW, enforce_plans=False, audio_allowed=0
         )
         self.assertEqual(got["audioUnavailable"], "")
+
+    async def test_a_co_dm_is_never_told_the_owners_plan_or_allowance(self) -> None:
+        """(#2419) The owner gets the exact reason; a co-DM gets only "unavailable" (or the
+        server-wide "not_set_up"), so the plan stays the owner's to know."""
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        bob = await self.session_of(BOB)
+
+        async def why(who: Any, **more: Any) -> str:
+            got = await read_choices(self.web, who, self.cref, now=NOW, enforce_plans=True, **more)
+            return str(got["audioUnavailable"])
+
+        await self.give_plan(ALICE.id, "table")  # no narration in this plan
+        self.assertEqual(await why(self.session, audio_allowed=8), "plan")
+        self.assertEqual(await why(bob, audio_allowed=8), "unavailable")
+        await self.give_plan(ALICE.id, "guild")
+        self.assertEqual(await why(self.session, audio_allowed=0), "allowance")
+        self.assertEqual(await why(bob, audio_allowed=0), "unavailable")
+        self.assertEqual(await why(bob, audio_allowed=8), "")
+        for who in (self.session, bob):  # set-up is the same for everyone
+            self.assertEqual(await why(who, audio_on=False), "not_set_up")
 
     async def test_a_plan_that_does_not_work_does_not_offer_the_narration(self) -> None:
         await self.give_plan(ALICE.id, "guild")
@@ -237,7 +257,9 @@ class Choices(Base):
         bob = await self.session_of(BOB)
         await self.give_plan(ALICE.id, "guild")
         got = await self.read(bob)
-        self.assertEqual(set(got), {"text", "audio", "email", "canAudio", "audioHow"})
+        self.assertEqual(
+            set(got), {"text", "audio", "email", "canAudio", "audioHow", "audioUnavailable"}
+        )
         shown = repr(got).casefold()
         for secret in (str(ALICE.id), "guild", "sub_1", "active", "fake"):
             self.assertNotIn(secret, shown.replace("part of your plan", ""))
