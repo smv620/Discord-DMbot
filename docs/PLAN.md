@@ -2046,7 +2046,7 @@ names panel nor the speech-to-text hints can be a fixed list.
   menu opens and applies to the next connection saved); a secret connection never shows on players'
   cards or Show all, and the DM's cards mark it 🤫; a name found through a secret name makes the
   connection secret by itself; and a
-  **Remove a connection…** menu (with Undo, ten minutes) takes one back, secret ones listed, marked 🤫, only to DMs), and a **Show all ▾** select when a
+  **✏️ Edit a connection…** menu (#2323; it replaced the separate Remove and Hide-or-show menus) changes the words, hides or shows it, or takes one back, with Undo for ten minutes on a removal, secret ones listed, marked 🤫, only to DMs), and a **Show all ▾** select when a
   section is cut. Decided while building: a card groups connections by how they read from that
   name's side ("is a member of **Frostwolf tribe**"; on the tribe's card "has as
   members **Ulfgar**"; ally, enemy and family read the same both ways); a connection is

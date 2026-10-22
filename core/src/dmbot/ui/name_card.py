@@ -194,12 +194,24 @@ def _more(items: list[str], sep: str = ", ") -> str:
     return shown + (f" … and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
 
 
-def _groups(
+@dataclass(frozen=True)
+class Row:
+    """One connection as the card reads it from this name's side."""
+
+    id: str
+    words: str  # "is a member of"
+    other: str  # the other name, as typed
+    secret: bool
+    relation: Relation
+
+
+def _rows(
     lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
-) -> dict[str, list[str]]:
-    """Connections grouped by how they're connected, read from this name's side: "is a member of
-    **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
-    groups: dict[str, list[str]] = {}
+) -> list[Row]:
+    """The connections the card shows, in its order: those that read the same together, in the
+    order each reading first appears. A secret one is left out unless `secrets`. This is the one
+    list the card, Show all and the Edit a connection menu all read, so they never disagree."""
+    found: dict[str, list[Row]] = {}
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
@@ -218,8 +230,27 @@ def _groups(
                 else CARD_BACK.get(r.predicate, "is connected to")
             )
         )
-        groups.setdefault(words, []).append(f"**{_md(other.name)}**" + (" 🤫" if r.secret else ""))
+        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r))
+    return [row for group in found.values() for row in group]
+
+
+def _groups(
+    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+) -> dict[str, list[str]]:
+    """Connections grouped by how they're connected, read from this name's side: "is a member of
+    **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
+    groups: dict[str, list[str]] = {}
+    for row in _rows(lookup, entity_id, connections, secrets):
+        groups.setdefault(row.words, []).append(
+            f"**{_md(row.other)}**" + (" 🤫" if row.secret else "")
+        )
     return groups
+
+
+def connection_line(row: Row) -> str:
+    """ "is a member of **Frostwolf tribe**", with " 🤫" only when it is secret (a known one has no
+    icon: the quiet case stays quiet)."""
+    return f"{row.words} **{_md(row.other)}**" + (" 🤫" if row.secret else "")
 
 
 # What Show all can open, in the card's order: key -> how the select names it.
@@ -256,14 +287,34 @@ def cut_sections(
 ) -> list[tuple[str, str]]:
     """(key, "Other names (12)") for each section the card shows only the start of."""
     full = sections(lookup, entity_id, connections, secrets=secrets)
-    groups = _groups(lookup, entity_id, connections, secrets)
-    cut_keys = [
-        key
-        for key, lines in full.items()
-        if (key != LINKS and len(lines) > SHOWN)
-        or (key == LINKS and any(len(who) > SHOWN for who in groups.values()))
-    ]
+    # (the connections are one line each and the card cuts them only at Discord's limit, where
+    # show_card offers every section)
+    cut_keys = [key for key, lines in full.items() if key != LINKS and len(lines) > SHOWN]
     return [(key, f"{SECTION_WORDS[key]} ({len(full[key])})") for key in cut_keys]
+
+
+def _more_connections(left: int, url: str) -> str:
+    return f"• …and {left} more" + (f". All of them: <{url}>" if url else "")
+
+
+def _with_connections(head: str, rows: list[Row], limit: int, url: str) -> str:
+    """`head`, then "Connections:" and one line each, as many as fit one message; the rest are
+    "and N more" with the website's page for them. Never cuts inside a line (#2323)."""
+    lines = [f"• {connection_line(row)}" for row in rows]
+    top = f"{head}\n**Connections:**"
+    used = len(top)
+    take = 0
+    for n, line in enumerate(lines, 1):  # the most lines whose message, with its tail, fits
+        used += 1 + len(line)
+        if used > limit:
+            break
+        tail = 1 + len(_more_connections(len(lines) - n, url)) if n < len(lines) else 0
+        if used + tail <= limit:
+            take = n
+    shown = lines[:take]
+    if take < len(lines):
+        shown.append(_more_connections(len(lines) - take, url))
+    return "\n".join([top, *shown])
 
 
 def card_text(
@@ -278,10 +329,12 @@ def card_text(
     item: bool | None = None,
     thread_lines: list[str] | None = None,
     book_line: str | None = None,
+    more_url: str = "",
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
-    kind or one a campaign added under it (None: only the core kind counts)."""
+    kind or one a campaign added under it (None: only the core kind counts). `more_url`: the
+    website page that lists every connection, for the ones that don't fit (#2323)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -336,11 +389,10 @@ def card_text(
         lines.append(f"**Also called:** {_more(others)}")
     if secrets and hidden:
         lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
-    groups = _groups(lookup, entity_id, connections, secrets)
-    if groups:
-        said = "; ".join(f"{words} {_more(who)}" for words, who in groups.items())
-        lines.append(f"**Connections:** {said}")
     text = "\n".join(lines)
+    rows = _rows(lookup, entity_id, connections, secrets)
+    if rows:
+        text = _with_connections(text, rows, limit, more_url)
     return cut(text, limit)
 
 
@@ -462,6 +514,7 @@ async def show_card(
                     _md(m.name[:60]) + (f" ({_md(m.chapter[:60])})" if m.chapter else "")
                     for m in mine[:3]
                 )
+    site = str(getattr(getattr(_bot(interaction), "settings", None), "site_url", "") or "")
     text = card_text(
         names,
         entity_id,
@@ -473,6 +526,7 @@ async def show_card(
         item=is_item,
         thread_lines=lines_of_thread,
         book_line=book_line,
+        more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -965,24 +1019,25 @@ class NameCard(_Menu):
         if names is None or memory is None:
             return
         secrets = sees_secrets(campaign, interaction.user.id)
-        removable = []
-        for r in await memory.relations(
-            campaign.guild_id,
-            campaign.id,
-            entity_id=self.entity_id,
-            confirmed_only=True,
-            include_secret=secrets,
-        ):
-            said = sentence(names, r)
-            if said is not None:
-                removable.append((r.id, said + (" 🤫" if r.secret else "")))
+        rows = _rows(
+            names,
+            self.entity_id,
+            await memory.relations(
+                campaign.guild_id,
+                campaign.id,
+                entity_id=self.entity_id,
+                confirmed_only=True,
+                include_secret=secrets,
+            ),
+            secrets,
+        )
         self.stop()
-        back = " Or take one back with Remove a connection." if removable else ""
+        back = " Or change one that is there with Edit a connection." if rows else ""
         await _replace(
             interaction,
             f"**How is {_md(name)} connected?** Pick how, then the other name.{back}"
             + (" 🤫 hides it from players." if secrets else ""),
-            Connect(self.campaign_id, self.entity_id, name, removable, secrets=secrets),
+            Connect(self.campaign_id, self.entity_id, name, rows, secrets=secrets),
         )
 
     async def _fix(self, interaction: discord.Interaction) -> None:
@@ -2310,7 +2365,7 @@ class Connect(_Menu):
         campaign_id: str,
         entity_id: str,
         name: str,
-        removable: list[tuple[str, str]],
+        rows: list[Row],
         *,
         secrets: bool = False,
     ) -> None:
@@ -2328,36 +2383,16 @@ class Connect(_Menu):
             ],
         )
         self.add_item(self.how)
-        if removable:
-            self.remove = _Select(
-                self._remove_picked,
-                placeholder="Remove a connection…",
-                options=[
-                    discord.SelectOption(label=logic.shorten(said, logic.OPTION_LABEL_MAX), value=r)
-                    for r, said in removable[: logic.SELECT_OPTIONS_MAX]
-                ],
+        if rows:  # one menu for what is already there, in the card's order and words (#2323)
+            from dmbot.ui.connection_edit import choices  # (it builds on this module)
+
+            self.edit = _Select(
+                self._edit_picked,
+                placeholder="✏️ Edit a connection…",
+                options=choices(rows),
                 row=1,
             )
-            self.add_item(self.remove)
-        if removable and secrets:  # who sees an existing connection, flipped in place (#2321)
-            self.flip = _Select(
-                self._flip_picked,
-                placeholder="🤫 Hide or show a connection…",
-                options=[
-                    discord.SelectOption(
-                        label=logic.shorten(said, logic.OPTION_LABEL_MAX),
-                        # The state it is changed TO, taken from what the menu showed: a double
-                        # press or a stale menu must never turn a secret back into a public one.
-                        value=f"{r}:{'show' if said.endswith('🤫') else 'hide'}",
-                        description="Secret now. Press to show players"
-                        if said.endswith("🤫")
-                        else "Players see it. Press to hide it",
-                    )
-                    for r, said in removable[: logic.SELECT_OPTIONS_MAX]
-                ],
-                row=2,
-            )
-            self.add_item(self.flip)
+            self.add_item(self.edit)
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=3))
         if secrets:  # only the campaign's DMs deal in secrets, as with secret names
             # After Back, so a thumb on the left edge doesn't flip a privacy setting.
@@ -2388,94 +2423,16 @@ class Connect(_Menu):
             secret=self.secret, replacing=self,
         )  # fmt: skip
 
-    async def _remove_picked(self, interaction: discord.Interaction) -> None:
-        await _answer_first(interaction, in_place=True)
-        found = await _current(interaction, self.campaign_id, self.entity_id)
-        memory = _memory(interaction)
-        if found is None or memory is None:
-            return
-        campaign = found[0]
-        names = await _names(interaction, campaign)
-        if names is None:
-            return
-        wanted = self.remove.values[0]
-        mine = await memory.relations(
-            campaign.guild_id,
-            campaign.id,
-            entity_id=self.entity_id,
-            confirmed_only=True,
-            include_secret=sees_secrets(campaign, interaction.user.id),
-        )
-        relation = next((r for r in mine if r.id == wanted), None)
-        if relation is None:
-            await _tell(interaction, "That connection isn't there any more.")
-            return
-        try:
-            written = await memory.update_relation(
-                campaign.guild_id, campaign.id, relation.id, status=REJECTED, source=DM
-            )
-        except MemoryRuleError:
-            await _tell(interaction, "That connection isn't there any more.")
-            return
-        changed(interaction, campaign)
-        self.stop()
-        said = sentence(names, relation) or "that connection"
-        note = f"Removed: {_md(said)}. Wrong? Press **Undo** within 10 minutes."
-        await show_card(
-            interaction,
-            campaign.id,
-            self.entity_id,
-            replace=True,
-            note=note,
-            undo_connection=written.batch,
-        )
+    async def _edit_picked(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import connection_edit  # (it builds on this module)
 
-    async def _flip_picked(self, interaction: discord.Interaction) -> None:
-        """Secret to public, or public to secret, for a connection that is already there."""
-        await _answer_first(interaction, in_place=True)
-        found = await _current(interaction, self.campaign_id, self.entity_id)
-        memory = _memory(interaction)
-        if found is None or memory is None:
+        if connection_edit.want_website(self.edit.values):  # more than the menu can hold
+            await connection_edit.website(interaction, self.campaign_id)
             return
-        campaign = found[0]
-        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
-            await _tell(interaction, SECRET_DENIED_PRESS)
-            return
-        names = await _names(interaction, campaign)
-        if names is None:
-            return
-        mine = await memory.relations(
-            campaign.guild_id,
-            campaign.id,
-            entity_id=self.entity_id,
-            confirmed_only=True,
-            include_secret=True,
-        )
-        wanted_id, _, action = self.flip.values[0].rpartition(":")
-        relation = next((r for r in mine if r.id == wanted_id), None)
-        if relation is None:
-            await _tell(interaction, "That connection isn't there any more. Press Back to see it.")
-            return
-        make_secret = action == "hide"
-        if relation.secret == make_secret:  # already so (a second press, or another DM did it)
-            await _tell(interaction, "It's already like that. Press Back to see the card.")
-            return
-        try:
-            await memory.update_relation(
-                campaign.guild_id, campaign.id, relation.id, secret=make_secret, source=DM
-            )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change that. {exc}")
-            return
-        changed(interaction, campaign)
         self.stop()
-        said = sentence(names, relation) or "that connection"
-        note = (
-            f"👁 Players can see it now: {_md(said)}."
-            if relation.secret
-            else f"🤫 Hidden from players: {_md(said)}."
+        await connection_edit.show_one(
+            interaction, self.campaign_id, self.entity_id, self.edit.values[0]
         )
-        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()

@@ -739,6 +739,12 @@ export const held: Held[] = [
     what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
     reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
   },
+  {
+    date: "2026-10-22",
+    title: "Connections on a name's card, one to a line",
+    what: "A name's card now lists its connections one to a line, like \"is a member of Frostwolf tribe\". Only a secret one has the 🤫 icon. A new ✏️ Edit a connection… menu lets a game master change the words of a connection, hide it from players or show it, or take it back (with Undo). A long list ends with \"and 12 more\" and a link to the website.",
+    reason: "Held until dev1 deploys it and has seen it on the test server (#2323).",
+  },
 ];
 
 const months = [

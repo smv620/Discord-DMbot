@@ -1,0 +1,337 @@
+"""The name card's connections and ✏️ Edit a connection… (#2323): the card's one line each, the
+menu in the same order and words, each change, Undo, and the website choice past 25."""
+
+from __future__ import annotations
+
+import dataclasses
+import re
+from typing import Any
+
+import discord
+
+from dmbot.memory.models import CONFIRMED
+from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.ui import connection_edit, name_card
+from dmbot.ui import names as ui
+from tests import test_memory_names as base
+
+GUILD, DM, MANAGER, PLAYER = base.GUILD, base.DM, base.MANAGER, base.PLAYER
+SITE = "https://dmbot.example.com"
+
+
+class Cards(base.NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.memory.lookup import LookupCache
+
+        self.bot.lookup = LookupCache(self.memory)
+        self.bell = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+
+    def fresh(self) -> None:
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+
+    async def know(self, name: str, *, secret: bool = False, predicate: str = "knows") -> Any:
+        other = await ui.save_name(self.memory, self.campaign, name, "npc", [], [])
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bell.id, predicate, other.id,
+            source="dm", confidence=1.0, status=CONFIRMED, secret=secret,
+        )  # fmt: skip
+        self.fresh()
+        return other
+
+    async def card(self, who: int = DM, *, site: str = "") -> tuple[str, Any]:
+        self.bot.settings = dataclasses.replace(self.bot.settings, site_url=site)
+        it = self.it(who)
+        await name_card.show_card(it, self.campaign.id, self.bell.id)
+        text, kw = it.response.sent[0]
+        return text, kw["view"]
+
+    async def connect_menu(self, who: int = DM) -> Any:
+        it = self.it(who)
+        await name_card.NameCard(self.campaign.id, self.bell.id)._connect(it)
+        return it.response.edited[0][1]
+
+    async def relations(self, *, secrets: bool = True) -> list[Any]:
+        return await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=self.bell.id, include_secret=secrets
+        )
+
+    # ---- the card ----
+
+    async def test_one_line_each_with_the_icon_only_on_a_secret_one(self) -> None:
+        await self.know("Kesh")
+        await self.know("Vessa", secret=True)
+        text, _ = await self.card()
+        self.assertIn("• knows **Kesh**\n", text + "\n")  # (no icon at the end of a known one)
+        self.assertIn("• knows **Vessa** 🤫", text)
+        self.assertEqual(text.count("🤫"), 1)  # a known connection has no icon
+
+    async def test_a_player_card_view_never_names_a_secret_connection(self) -> None:
+        await self.know("Kesh")
+        await self.know("Vessa", secret=True)
+        text, _ = await self.card(MANAGER)  # (someone who is not a DM)
+        self.assertIn("• knows **Kesh**", text)
+        self.assertNotIn("Vessa", text)
+        self.assertNotIn("🤫", text)
+
+    async def test_connections_that_read_alike_sit_together(self) -> None:
+        await self.know("Kesh")
+        await self.know("Hollis", predicate="serves")
+        await self.know("Orla")
+        text, _ = await self.card()
+        lines = [ln for ln in text.split("\n") if ln.startswith("• ")]
+        self.assertEqual(
+            sorted(lines),
+            sorted(["• knows **Kesh**", "• knows **Orla**", "• works for **Hollis**"]),
+        )
+        reading = [ln.split(" **")[0] for ln in lines]
+        self.assertIn(
+            reading, (["• knows", "• knows", "• works for"], ["• works for", "• knows", "• knows"])
+        )
+
+    async def fill(self, n: int) -> None:
+        for k in range(n):
+            await self.know(f"Friend number {k:03} " + "x" * 30)
+
+    async def test_past_the_limit_it_says_how_many_more_and_where_to_see_them(self) -> None:
+        await self.fill(70)
+        text, _ = await self.card(site=SITE)
+        self.assertLessEqual(len(text), name_card.CARD_MAX)
+        shown = [ln for ln in text.split("\n") if ln.startswith("• knows")]
+        last = text.split("\n")[-1]
+        match = re.fullmatch(r"• …and (\d+) more\. All of them: <(https://[^>]+)>", last)
+        assert match is not None
+        self.assertEqual(len(shown) + int(match[1]), 70)
+        self.assertEqual(match[2], f"{SITE}/account/names/{GUILD}.{self.campaign.id}")
+        for line in shown:  # never cut inside a line
+            self.assertTrue(line.endswith("x" * 30 + "**"), line)
+
+    async def test_without_a_website_the_rest_is_still_counted(self) -> None:
+        await self.fill(70)
+        text, view = await self.card(site="")
+        last = text.split("\n")[-1]
+        self.assertRegex(last, r"^• …and \d+ more$")
+        self.assertNotIn("http", text)
+        # the whole message did not fit, so Show all is offered with the connections in it
+        select = next(
+            c for c in view.children if getattr(c, "placeholder", "") == name_card.SHOW_ALL
+        )
+        self.assertIn("Connections (70)", [o.label for o in select.options])
+
+    async def test_a_note_and_the_rest_of_the_card_make_room_first(self) -> None:
+        await self.fill(70)
+        self.bot.settings = dataclasses.replace(self.bot.settings, site_url=SITE)
+        it = self.it()
+        await name_card.show_card(it, self.campaign.id, self.bell.id, note="✅ " + "y" * 600)
+        self.assertLessEqual(len(it.response.sent[0][0]), 2000)
+
+    # ---- the menu ----
+
+    async def test_the_menu_lists_them_in_the_cards_order_and_words(self) -> None:
+        await self.know("Kesh")
+        await self.know("Hollis", predicate="serves")
+        await self.know("Vessa", secret=True)
+        text, _ = await self.card()
+        view = await self.connect_menu()
+        labels = [o.label for o in view.edit.options]
+        on_card = [ln[2:].replace("**", "") for ln in text.split("\n") if ln.startswith("• ")]
+        self.assertEqual(labels, on_card)
+        self.assertTrue(any(label.endswith("🤫") for label in labels))
+        self.assertEqual(view.edit.placeholder, "✏️ Edit a connection…")
+
+    async def test_a_manager_is_not_offered_a_secret_one(self) -> None:
+        await self.know("Kesh")
+        await self.know("Vessa", secret=True)
+        view = await self.connect_menu(MANAGER)
+        self.assertEqual([o.label for o in view.edit.options], ["knows Kesh"])
+
+    async def test_no_menu_when_there_is_nothing_to_edit(self) -> None:
+        view = await self.connect_menu()
+        self.assertFalse(hasattr(view, "edit"))
+
+    async def test_twenty_five_fit_and_more_end_with_the_website(self) -> None:
+        await self.fill(25)
+        view = await self.connect_menu()
+        options = view.edit.options
+        self.assertEqual(len(options), 25)
+        self.assertNotIn(connection_edit.ALL_LABEL, [o.label for o in options])
+        await self.know("One more")
+        view = await self.connect_menu()
+        options = view.edit.options
+        self.assertEqual(len(options), 25)
+        self.assertEqual(options[-1].label, connection_edit.ALL_LABEL)
+        self.assertEqual(options[-1].value, connection_edit.ALL_VALUE)
+        self.assertEqual(sum(o.value == connection_edit.ALL_VALUE for o in options), 1)
+
+    async def test_the_website_choice_answers_with_a_link_and_changes_nothing(self) -> None:
+        self.bot.settings = dataclasses.replace(self.bot.settings, site_url=SITE)
+        before = await self.relations()
+        it = self.it()
+        await connection_edit.website(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertEqual(text, connection_edit.WEBSITE_LINE)
+        (button,) = kw["view"].children
+        self.assertEqual(button.url, f"{SITE}/account/names/{GUILD}.{self.campaign.id}")
+        self.assertEqual(await self.relations(), before)
+        self.bot.settings = dataclasses.replace(self.bot.settings, site_url="")
+        again = self.it()
+        await connection_edit.website(again, self.campaign.id)
+        self.assertIn("no website link", again.response.sent[0][0])
+
+    async def test_choosing_a_connection_opens_its_page_and_the_last_choice_the_website(
+        self,
+    ) -> None:
+        kesh = await self.know("Kesh")
+        view = await self.connect_menu()
+        (rel,) = await self.relations()
+        view.edit._values = [rel.id]
+        it = self.it()
+        await view._edit_picked(it)
+        text, page = it.response.edited[0]
+        self.assertIn("Belleros knows Kesh", text)
+        self.assertIsInstance(page, connection_edit.OneConnection)
+        self.assertTrue(view.is_finished())
+        self.assertTrue(kesh)
+        again = await self.connect_menu()
+        again.edit._values = [connection_edit.ALL_VALUE]
+        link = self.it()
+        await again._edit_picked(link)
+        self.assertFalse(again.is_finished())  # the menu stays; the link is a private reply
+
+    # ---- one connection ----
+
+    async def page(self, who: int = DM) -> Any:
+        (rel,) = await self.relations()
+        return await self.page_of_relation(rel.id, who)
+
+    async def page_of_relation(self, relation_id: str, who: int = DM) -> Any:
+        found = await connection_edit._find(
+            self.it(who), self.campaign.id, self.bell.id, relation_id
+        )
+        return (
+            connection_edit.OneConnection(self.campaign.id, self.bell.id, found) if found else None
+        )
+
+    def labels(self, page: Any) -> list[str]:
+        return [getattr(c, "label", "") for c in page.children]
+
+    async def test_change_the_words_keeps_who_sees_it_and_says_what_it_reads_now(self) -> None:
+        await self.know("Kesh", secret=True)
+        (old,) = await self.relations()
+        page = await self.page()
+        words = {o.value: o.label for o in page.words.options}
+        self.assertNotIn("knows", words)  # (it already says that)
+        self.assertEqual(words["enemy_of"], "Belleros is an enemy of Kesh")
+        page.words._values = ["enemy_of"]
+        it = self.it()
+        await page.words.callback(it)
+        self.assertIn(
+            "Changed. It now reads: Belleros is an enemy of Kesh.", it.response.edited[0][0]
+        )
+        (now,) = await self.relations()
+        self.assertEqual((now.predicate, now.secret), ("enemy_of", True))
+        self.assertNotEqual(now.id, old.id)
+
+    async def test_other_words_through_the_form(self) -> None:
+        await self.know("Kesh")
+        page = await self.page()
+        form = connection_edit.OtherWords(self.campaign.id, self.bell.id, page.relation_id, page)
+        form.words._value = "  sworn   on the ashes of "
+        it = self.it()
+        await form.on_submit(it)
+        (now,) = await self.relations()
+        self.assertEqual((now.predicate, now.detail), (FALLBACK_PREDICATE, "sworn on the ashes of"))
+        self.assertIn("sworn on the ashes of", it.response.edited[0][0])
+        again = connection_edit.OtherWords(self.campaign.id, self.bell.id, now.id, page)
+        again.words._value = "   "
+        empty = self.it()
+        await again.on_submit(empty)
+        self.assertIn("Type the words", empty.response.sent[0][0])
+        (still,) = await self.relations()
+        self.assertEqual(still.id, now.id)
+
+    async def test_the_same_words_change_nothing(self) -> None:
+        await self.know("Kesh")
+        page = await self.page()
+        before = await self.relations()
+        it = self.it()
+        await page._new_words(it, "knows", "")
+        self.assertIn("already says that", str(it.response.sent or it.followup.send.await_args))
+        self.assertEqual(await self.relations(), before)
+
+    async def test_hide_and_show_use_what_the_page_showed(self) -> None:
+        await self.know("Kesh")
+        page = await self.page()
+        self.assertIn("🤫 Hide from players", self.labels(page))
+        it = self.it()
+        await page._flip(it)
+        self.assertIn("Hidden from players", it.response.edited[0][0])
+        (hidden,) = await self.relations()
+        self.assertTrue(hidden.secret)
+        shown = await self.page()
+        self.assertIn("👁 Show players", self.labels(shown))
+
+    async def test_a_manager_has_no_flip_and_cannot_press_a_dm_pages(self) -> None:
+        await self.know("Kesh")
+        mine = await self.page(MANAGER)
+        self.assertFalse([x for x in self.labels(mine) if "players" in x.lower()])
+        dm_page = await self.page()
+        await dm_page._flip(self.it(MANAGER))
+        (still,) = await self.relations()
+        self.assertFalse(still.secret)
+
+    async def test_remove_asks_once_then_undo_puts_it_back_exactly(self) -> None:
+        await self.know("Kesh", secret=True)
+        (before,) = await self.relations()
+        page = await self.page()
+        it = self.it()
+        await page._remove(it)
+        text, ask = it.response.edited[0]
+        self.assertIn("Remove **Belleros knows Kesh**?", text)
+        self.assertEqual(await self.relations(), [before])  # asking changes nothing
+        self.assertIsInstance(ask, connection_edit.ConfirmRemove)
+        keep = self.it()
+        await ask._keep(keep)
+        self.assertEqual(await self.relations(), [before])
+        yes = self.it()
+        await ask._yes(yes)
+        note, card = yes.response.edited[0]
+        self.assertIn("Removed: Belleros knows Kesh. Wrong? Press **Undo**", note)
+        self.assertEqual(await self.relations(), [])
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        back = self.it()
+        await undo.callback(back)
+        self.assertEqual(await self.relations(), [before])
+
+    async def test_every_press_checks_again(self) -> None:
+        await self.know("Kesh")
+        page = await self.page()
+        (rel,) = await self.relations()
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, rel.id, status="rejected", source=base.DM_SOURCE
+        )  # another DM took it back meanwhile
+        self.fresh()
+        for press in (page._flip, page._remove):
+            it = self.it()
+            await press(it)
+            self.assertIn(
+                connection_edit.GONE_LINK, str(it.response.sent or it.followup.send.await_args)
+            )
+        form = connection_edit.OtherWords(self.campaign.id, self.bell.id, rel.id, page)
+        form.words._value = "owes"
+        it = self.it()
+        await form.on_submit(it)
+        self.assertIn(
+            connection_edit.GONE_LINK, str(it.response.sent or it.followup.send.await_args)
+        )
+        self.assertEqual(await self.relations(), [])
+        outsider = self.it(PLAYER)  # someone who may not manage names is turned away at the door
+        await connection_edit.show_one(outsider, self.campaign.id, self.bell.id, rel.id)
+        self.assertFalse(outsider.response.edited)
+
+    async def test_the_menu_labels_are_plain_and_within_discords_limit(self) -> None:
+        await self.know("K" * 100)
+        view = await self.connect_menu()
+        (label,) = [o.label for o in view.edit.options]
+        self.assertLessEqual(len(label), 100)
+        self.assertIsInstance(view.edit, discord.ui.Select)

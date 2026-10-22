@@ -146,6 +146,7 @@ describe("What's new", () => {
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
       "See how your names are connected", // until #2323 merges and dev1 deploys it
+      "Connections on a name's card, one to a line", // until dev1 deploys it (#2323)
     ]);
     for (const h of held) {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
