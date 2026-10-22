@@ -576,6 +576,15 @@ class MemoryStore:
                 )
                 if r["subject_id"] in live and r["object_id"] in live
             ]
+            # The DM's confirmed secret connections, apart from the rest: only a DM's view of the
+            # name dropdown's order reads them (#2321).
+            secret_relations = [
+                r
+                for r in await scope.select(
+                    RELATIONS, " AND status = 'confirmed' AND secret ORDER BY id"
+                )
+                if r["subject_id"] in live and r["object_id"] in live
+            ]
             # Counts follow merges (a merged-away name counts for the one it became).
             cur = await conn.execute(
                 "SELECT coalesce(e.merged_into, h.entity_id) AS entity_id,"
@@ -611,6 +620,7 @@ class MemoryStore:
                 recent,
                 tuple(_rule_link(r) for r in links),
                 tuple(_alias(r) for r in people_aliases),
+                tuple(_relation(r) for r in secret_relations),
             )
 
     async def corrections(self, guild_id: int, campaign_id: str) -> list[Correction]:
