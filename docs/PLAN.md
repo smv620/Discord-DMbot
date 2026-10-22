@@ -1823,6 +1823,12 @@ names panel nor the speech-to-text hints can be a fixed list.
         👀 Players can peek."
       - The API re-checks the visibility and the person on every call; the switch alone never unlocks
         anything.
+  *Built (#2404, slice 1, migration 0186):* `GET /me/campaigns/<ref>/web?view=players|full` (and `/web/size`).
+  The door decides on every call: a DM gets Full View unless they ask for `players` (read-only); anyone else
+  gets the players' view unless they ask for `full` and the campaign's DM-screen visibility is `peek` or
+  `open`, else 403 `peek_off`. The answer carries `view`, `visibility` and `canPeek`. `POST .../web/peek`
+  (after the page's warning) records the visit; the bot posts "<name> peeked at the relationship web" once
+  for each visit on the DM screen. Revealed names and their automatic changes are slice 2.
 - **Merging names, the easy way** (owner, 2026-10-22, after the NPC list showed one creature under four
   spellings). Today a merge is one pair at a time (🔗 Same as… on a card, typing the other name). Three
   easier ways, all the same merge underneath, so the kept name collects the others as "Also called", their

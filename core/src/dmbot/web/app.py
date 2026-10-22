@@ -1057,7 +1057,11 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/web")
     async def me_campaign_web(
-        ref: str, signed: Signed, center: str | None = None, hops: str = "2"
+        ref: str,
+        signed: Signed,
+        center: str | None = None,
+        hops: str = "2",
+        view: str | None = None,
     ) -> dict[str, Any]:
         """The relationship web around one name (#2323): names within `hops` steps and the
         connections among them. A DM gets everything (secret flagged); any other member of the
@@ -1065,20 +1069,28 @@ def create_app(
         session, _token = signed
         try:
             steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0  # (0 is refused)
-            return await relationships.read_web(db, session, ref, center=center, hops=steps)
+            return await relationships.read_web(
+                db, session, ref, center=center, hops=steps, view=view
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/web/size")
     async def me_campaign_web_size(
-        ref: str, signed: Signed, center: str | None = None, hops: str = "2"
+        ref: str,
+        signed: Signed,
+        center: str | None = None,
+        hops: str = "2",
+        view: str | None = None,
     ) -> dict[str, int]:
         """How many names the web around one name would draw, so the page can warn first."""
         session, _token = signed
         try:
             steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0
-            return await relationships.read_size(db, session, ref, center=center, hops=steps)
+            return await relationships.read_size(
+                db, session, ref, center=center, hops=steps, view=view
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1086,6 +1098,9 @@ def create_app(
     relationship_refusals = {
         "not_found": (404, "not_found"),
         "bad_hops": (400, "bad_hops"),
+        "bad_view": (400, "bad_view"),
+        "bad_visit": (400, "bad_visit"),
+        "peek_off": (403, "peek_off"),
         "not_allowed": (403, "not_allowed"),
         "bad_action": (400, "bad_action"),
         "bad_name": (400, "bad_name"),
@@ -1094,6 +1109,18 @@ def create_app(
         "bad_target": (400, "bad_target"),
         "too_soon": (429, "too_soon"),
     }
+
+    @app.post("/me/campaigns/{ref}/web/peek")
+    async def me_campaign_web_peek(ref: str, signed: Signed) -> dict[str, Any]:
+        """A player turns the peek behind the DM screen on (#2404), after the page's warning: the
+        DM is told once for this visit. 403 `peek_off` when the DM screen is private; the API
+        re-checks the person and the visibility on every call, so the switch unlocks nothing."""
+        session, _token = signed
+        try:
+            return await relationships.peek(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/campaigns/{ref}/web/links", status_code=202)
     async def me_campaign_web_link_add(

@@ -421,6 +421,29 @@ class TheRoute(Web):
             gone = await client.get(f"/me/campaigns/{self.g}.nope/web")
             self.assertEqual(gone.status_code, 404)
 
+    async def test_the_view_switch_and_the_peek_over_http(self) -> None:
+        from dmbot.campaigns import CampaignStore
+
+        async with await self.client(self.player) as client:
+            base = f"/me/campaigns/{self.cref}/web"
+            got = await client.get(base, params={"view": "full", "hops": "1"})
+            self.assertEqual((got.status_code, got.json()["view"]), (200, "full"))  # peek is on
+            bad = await client.get(base, params={"view": "everything"})
+            self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_view"))
+            noted = await client.post(f"{base}/peek")
+            self.assertEqual((noted.status_code, noted.json()), (200, {"noted": True}))
+            again = await client.post(f"{base}/peek")
+            self.assertEqual(again.json(), {"noted": False})
+            await CampaignStore(self.db).set_dm_screen_visibility(self.g, self.one.id, "private")
+            off = await client.get(base, params={"view": "full"})
+            self.assertEqual((off.status_code, off.json()["error"]), (403, "peek_off"))
+            off_peek = await client.post(f"{base}/peek")
+            self.assertEqual((off_peek.status_code, off_peek.json()["error"]), (403, "peek_off"))
+            normal = await client.get(base, params={"hops": "1"})
+            self.assertEqual((normal.status_code, normal.json()["canPeek"]), (200, False))
+            cross = await client.post(f"/me/campaigns/{self.g}.nope/web/peek")
+            self.assertEqual(cross.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

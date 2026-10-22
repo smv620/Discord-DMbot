@@ -35,6 +35,9 @@ def label_of(links: list[dict[str, Any]]) -> dict[str, Any]:
     return (known or links)[-1]
 
 
+VIEWS = ("players", "full")  # the switch: what a player sees, or everything (a DM's, or a peek)
+
+
 def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
@@ -81,7 +84,9 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
     return out
 
 
-def _refuse_bad(center: str | None, hops: int) -> None:
+def _refuse_bad(center: str | None, hops: int, view: str | None = None) -> None:
+    if view is not None and view not in VIEWS:
+        raise RecapError("bad_view")
     if center is not None and not ID_PATTERN.match(center):
         raise RecapError("not_found")
     if not 1 <= hops <= MAX_HOPS:
@@ -96,47 +101,89 @@ async def _door(
     hops: int,
     *,
     size_only: bool,
+    view: str | None = None,
 ) -> dict[str, Any]:
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    _refuse_bad(center, hops)
+    _refuse_bad(center, hops, view)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        if view is not None:  # asked for; the door decides whether this person may have it
+            await conn.execute("SELECT set_config('dmbot.web_view', %s, true)", (view,))
         cur = await conn.execute(
             "SELECT dmbot_web_relationships(%s, %s, %s, %s, %s, %s) AS r",
             (guild_id, campaign_id, center, hops, MAX_NODES, size_only),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
+    if got is not None and got["status"] == "peek_off":
+        raise RecapError("peek_off")  # a peek the DM screen does not allow
     if got is None or got["status"] != "ok":
         raise RecapError("not_found")
     return dict(got)
 
 
 async def read_web(
-    db: Database, session: Session, ref: str, *, center: str | None = None, hops: int = 2
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    center: str | None = None,
+    hops: int = 2,
+    view: str | None = None,
 ) -> dict[str, Any]:
     """The names within `hops` steps of `center` (the most connected name when none is given) and
     the confirmed connections among them. Past `MAX_NODES` the nearest are kept and `truncated` is
-    true."""
-    got = await _door(db, session, ref, center, hops, size_only=False)
+    true. `view`: "players" (what a player sees, for anyone) or "full" (everything: a DM's, or a
+    player's peek, refused with `peek_off` unless the campaign's DM screen lets players peek);
+    none means the person's own. `visibility` and `canPeek` let the page grey out the switch."""
+    got = await _door(db, session, ref, center, hops, size_only=False, view=view)
     nodes = [{k: v for k, v in n.items() if k != "secret" or v is not None} for n in got["nodes"]]
     return {
         "center": got["center"],
         "nodes": nodes,
-        "edges": edges_from(got["edges"], can_edit=bool(got["canEdit"])),
+        "edges": edges_from(got["edges"], can_edit=bool(got["seesAll"])),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,
         "canEdit": bool(got["canEdit"]),
+        "view": got["view"],
+        "visibility": got["visibility"],
+        "canPeek": bool(got["canPeek"]),
     }
 
 
 async def read_size(
-    db: Database, session: Session, ref: str, *, center: str | None = None, hops: int = 2
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    center: str | None = None,
+    hops: int = 2,
+    view: str | None = None,
 ) -> dict[str, int]:
     """How many names are within `hops` steps, so the page can warn before drawing."""
-    got = await _door(db, session, ref, center, hops, size_only=True)
+    got = await _door(db, session, ref, center, hops, size_only=True, view=view)
     return {"names": int(got["names"])}
+
+
+async def peek(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """A player turned the peek on (after the page's warning): the DM is told once for this visit,
+    on the DM screen, by the bot. Refused with `peek_off` when the campaign's DM screen is private;
+    a DM needs no peek. The first call for a visit says `noted`; a visit is one sign-in."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_peek(%s, %s, %s) AS r", (guild_id, campaign_id, session.id_hash)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return {"noted": bool(got["noted"])}
 
 
 # ---- the DM's edits: queued for the bot, read back by polling (#2323) ---------------------------
