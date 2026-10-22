@@ -750,11 +750,11 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, bram.id)
-        self.assertIn("**Connections:** carries **Heartseeker**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• carries **Heartseeker**", it.response.sent[0][0])
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, bow.id)
-        self.assertIn("**Connections:** is carried by **Bram**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• is carried by **Bram**", it.response.sent[0][0])
         self.assertNotIn("is connected to", it.response.sent[0][0])
 
     async def test_a_second_holder_of_a_one_of_a_kind_item_gets_the_plain_note(self) -> None:
@@ -787,20 +787,34 @@ class NameCards(NamesTest):
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, tribe.id)
-        self.assertIn("**Connections:** members include **Ulfgar**", it.response.sent[0][0])
+        self.assertIn("**Connections:**\n• members include **Ulfgar**", it.response.sent[0][0])
         self.fresh()
         it = self.it()
         await name_card.show_card(it, self.campaign.id, ulfgar.id)
-        self.assertIn("**Connections:** is a member of **Frostwolf tribe**", it.response.sent[0][0])
+        self.assertIn(
+            "**Connections:**\n• is a member of **Frostwolf tribe**", it.response.sent[0][0]
+        )
         (relation,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id)
-        view = name_card.Connect(self.campaign.id, ulfgar.id, "Ulfgar", [(relation.id, "x")])
-        view.remove = SimpleNamespace(values=[relation.id])  # type: ignore[assignment]
-        it = self.it()
-        await view._remove_picked(it)
+        it = await self.remove_by_menu(ulfgar.id, relation.id)
         self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe.", it.response.edited[0][0])
         self.assertEqual(
             await self.memory.relations(GUILD, self.campaign.id, entity_id=ulfgar.id), []
         )
+
+    async def remove_by_menu(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """The DM's Remove on a connection's page, then Yes (the one question)."""
+        from dmbot.ui import connection_edit
+
+        it = self.it(who)
+        await connection_edit.ConfirmRemove(self.campaign.id, entity_id, relation_id)._yes(it)
+        return it
+
+    async def page_of(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """A connection's page as `who` would be shown it (None if they can't see it)."""
+        from dmbot.ui import connection_edit
+
+        found = await connection_edit._find(self.it(who), self.campaign.id, entity_id, relation_id)
+        return connection_edit.OneConnection(self.campaign.id, entity_id, found) if found else None
 
     async def removed_connection(self, *, secret: bool) -> tuple[Any, Any, Any]:
         """Ulfgar is a member of the tribe (secret or not); the DM removes it. Returns the
@@ -817,12 +831,7 @@ class NameCards(NamesTest):
         (before,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=ulfgar.id, include_secret=True
         )
-        view = name_card.Connect(
-            self.campaign.id, ulfgar.id, "Ulfgar", [(before.id, "x")], secrets=True
-        )
-        view.remove = SimpleNamespace(values=[before.id])  # type: ignore[assignment]
-        it = self.it()
-        await view._remove_picked(it)
+        it = await self.remove_by_menu(ulfgar.id, before.id)
         note, card = it.response.edited[0]
         self.assertIn("Removed: Ulfgar is a member of Frostwolf tribe. Wrong? Press **Undo**", note)
         (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
@@ -980,40 +989,31 @@ class NameCards(NamesTest):
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(rel.secret)
-        view = name_card.Connect(
-            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
-        )
-        view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
+        view = await self.page_of(corin.id, rel.id)
         it = self.it()
-        await view._flip_picked(it)
+        await view._flip(it)
         self.assertIn("Hidden from players", it.response.edited[0][0])
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
         self.assertTrue(now.secret)
-        view = name_card.Connect(
-            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
-        )
-        view.flip = SimpleNamespace(values=[f"{rel.id}:show"])  # type: ignore[assignment]
+        view = await self.page_of(corin.id, rel.id)
         again = self.it()
-        await view._flip_picked(again)
+        await view._flip(again)
         self.assertIn("Players can see it now", again.response.edited[0][0])
         (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(shown.secret)
 
-    async def test_a_second_press_or_a_stale_menu_never_makes_a_secret_public(self) -> None:
+    async def test_a_second_press_or_a_stale_page_never_makes_a_secret_public(self) -> None:
         from dmbot.ui import name_card
 
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
-        for _ in range(2):  # the same "hide" twice, as a double tap or a stale menu would
-            view = name_card.Connect(
-                self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
-            )
-            view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
+        view = await self.page_of(corin.id, rel.id)  # one page, pressed twice (a double tap)
+        for _ in range(2):
             it = self.it()
-            await view._flip_picked(it)
+            await view._flip(it)
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
@@ -1031,13 +1031,22 @@ class NameCards(NamesTest):
         await card._same(self.it())
         self.assertTrue(card.is_finished())
 
-    async def test_the_flip_options_carry_the_state_they_change_to(self) -> None:
+    async def test_the_page_offers_the_flip_in_the_words_of_what_it_will_do(self) -> None:
         from dmbot.ui import name_card
 
-        view = name_card.Connect(
-            self.campaign.id, self.bell.id, "Belleros", [("r1", "a 🤫"), ("r2", "b")], secrets=True
+        corin, _ = await self.two_names()
+        await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
+
+        def labels(view: Any) -> list[str]:
+            return [getattr(c, "label", "") for c in view.children]
+
+        self.assertIn("🤫 Hide from players", labels(await self.page_of(corin.id, rel.id)))
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
         )
-        self.assertEqual([o.value for o in view.flip.options], ["r1:show", "r2:hide"])
+        self.fresh()
+        self.assertIn("👁 Show players", labels(await self.page_of(corin.id, rel.id)))
 
     async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
         self,
@@ -1099,13 +1108,10 @@ class NameCards(NamesTest):
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
-        plain = name_card.Connect(self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")])
-        self.assertFalse(hasattr(plain, "flip"))
-        view = name_card.Connect(
-            self.campaign.id, self.bell.id, "Belleros", [(rel.id, "x")], secrets=True
-        )
-        view.flip = SimpleNamespace(values=[f"{rel.id}:hide"])  # type: ignore[assignment]
-        await view._flip_picked(self.it(MANAGER))  # (a press from someone who is not a DM)
+        plain = await self.page_of(corin.id, rel.id, MANAGER)
+        self.assertNotIn("🤫 Hide from players", [getattr(c, "label", "") for c in plain.children])
+        view = await self.page_of(corin.id, rel.id)  # the DM's page, pressed by a manager
+        await view._flip(self.it(MANAGER))
         (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(same.secret)
 
@@ -1254,8 +1260,13 @@ class NameCards(NamesTest):
             it = self.it(who)
             await name_card.NameCard(self.campaign.id, self.bell.id)._connect(it)
             view = it.response.edited[0][1]
-            options = [o.label for o in view.remove.options] if hasattr(view, "remove") else []
+            options = [o.label for o in view.edit.options] if hasattr(view, "edit") else []
             self.assertEqual(any("🤫" in label for label in options), listed)
+        # and a manager who asks for the secret one by its id is told it isn't there
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
+        )
+        self.assertIsNone(await self.page_of(corin.id, rel.id, MANAGER))
         # The copy the overview, the type-ahead, the scans and the recall read leaves secret
         # connections out altogether.
         data = await self.memory.lookup_data(GUILD, self.campaign.id)
@@ -1397,8 +1408,9 @@ class NameCards(NamesTest):
         before = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
         it = self.it()
         await name_card.show_card(it, self.campaign.id, self.bell.id)
-        select = self.select(it.response.sent[0][1])
-        self.assertEqual([o.label for o in select.options], ["Connections (5)"])
+        for k in range(5):  # one line each, all on the card: nothing is cut, so no Show all
+            self.assertIn(f"• knows **Friend {k}**", it.response.sent[0][0])
+        self.assertIsNone(self.select(it.response.sent[0][1]))
         it = self.it()
         await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
         text = it.response.sent[0][0]
@@ -1435,26 +1447,20 @@ class NameCards(NamesTest):
             await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
             self.assertNotIn("Hidden", str(it.response.sent))
 
-    async def test_a_group_of_three_is_not_cut_and_a_group_of_four_is(self) -> None:
+    async def test_connections_are_one_line_each_and_never_cut_by_group(self) -> None:
         from dmbot.ui import name_card
 
-        await self.friends(3)
+        await self.friends(4)  # four of one reading used to be "cut" into a Show all
+        await self.friends(1, predicate="serves")
         names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
         rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
         self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
-        await self.friends(1, predicate="serves")  # a second group; each is still three or fewer
-        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
-        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
-        self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
-        await self.friends(1, predicate="serves")
-        await self.friends(1, predicate="serves")
-        await self.friends(1, predicate="serves")  # now one group holds four
-        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
-        rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
-        self.assertEqual(
-            [label for _, label in name_card.cut_sections(names, self.bell.id, rel, secrets=False)],
-            ["Connections (7)"],  # the count covers every connection, not only the cut group
-        )
+        text = name_card.card_text(names, self.bell.id, rel, secrets=False)
+        assert text is not None
+        lines = text.split("\n")
+        self.assertIn("**Connections:**", lines)
+        self.assertEqual(len([ln for ln in lines if ln.startswith("• ")]), 5)
+        self.assertNotIn("🤫", text)  # a known connection carries no icon
 
     async def test_an_unknown_section_or_a_gone_name_says_so(self) -> None:
         from dmbot.ui import name_card

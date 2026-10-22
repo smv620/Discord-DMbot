@@ -474,6 +474,17 @@ class Settings(unittest.TestCase):
         "WEB_API_URL": "https://api.dmbot.example",
     }
 
+    def test_narration_is_on_only_with_recaps_on_and_a_voice_set(self) -> None:
+        """(#2419) Compose passes whether the speech key and voice are set ("1"), never the key."""
+        on = {**self.ENV, "DMBOT_RECAPS": "1"}
+        both = {"RECAP_AUDIO_KEY_SET": "1", "RECAP_AUDIO_VOICE_SET": "1"}
+        self.assertFalse(load_web_settings(self.ENV).recap_audio_on)
+        self.assertFalse(load_web_settings({**on}).recap_audio_on)  # recaps on, no voice
+        self.assertFalse(load_web_settings({**on, "RECAP_AUDIO_KEY_SET": "1"}).recap_audio_on)
+        self.assertFalse(load_web_settings({**on, "RECAP_AUDIO_VOICE_SET": "1"}).recap_audio_on)
+        self.assertFalse(load_web_settings({**self.ENV, **both}).recap_audio_on)  # recaps off
+        self.assertTrue(load_web_settings({**on, **both}).recap_audio_on)
+
     def test_reads_the_settings(self) -> None:
         loaded = load_web_settings(self.ENV)
         self.assertEqual(loaded.site_origin, "https://dmbot.example")

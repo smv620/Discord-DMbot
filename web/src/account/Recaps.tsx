@@ -564,7 +564,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         setRecap(optimisticTryAgain(next));
       } else setRecap(next);
       setEditing(false);
-      // Post and Don't post are said by the status lines above; only Try again needs a note.
+      // Posting is said by the status lines above; only Try again needs a note.
       if (action === "again") setNote({ ok: true, message: text.tryingAgain });
     } catch (error) {
       setNote({ ok: false, message: messageFor(error) });
@@ -754,7 +754,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
-      {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <RecapApprove
+          key={recap.ref}
+          api={api}
+          recap={recap}
+          onRecap={setRecap}
+          pageFocus={() => headingRef.current}
+        />}
       {!editing && (
         <RecapShareControls
           key={`share-${recap.ref}`}
@@ -769,11 +775,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         !recap.working &&
-        (recap.canEdit ||
-          recap.canPost ||
-          recap.canTryAgain ||
-          recap.canDrop ||
-          !decided) && (
+        (recap.canEdit || recap.canTryAgain || !decided) && (
           <div class="row">
             {recap.canEdit && (
               <button
@@ -785,16 +787,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 {text.edit}
               </button>
             )}
-            {recap.canPost && (
-              <button
-                type="button"
-                class="button"
-                onClick={() => decide("post")}
-                disabled={busy !== null}
-              >
-                {busy === "post" ? text.busy : text.post}
-              </button>
-            )}
             {!decided && (
               <button
                 type="button"
@@ -803,16 +795,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 disabled={busy !== null || !recap.canTryAgain}
               >
                 {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
-              </button>
-            )}
-            {recap.canDrop && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={() => decide("drop")}
-                disabled={busy !== null}
-              >
-                {busy === "drop" ? text.busy : text.drop}
               </button>
             )}
           </div>
