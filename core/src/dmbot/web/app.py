@@ -65,6 +65,7 @@ from dmbot.web.accounts import (
     user_of_dmbot_id,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
+from dmbot.web.campaign_page import read_campaign
 from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
@@ -1027,6 +1028,16 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}")
+    async def me_campaign(ref: str, signed: Signed) -> dict[str, Any]:
+        """One campaign's own page (#2416): its name and the person's role in it. Anyone not in the
+        campaign's server, and a campaign that isn't there, get the same 404."""
+        session, _token = signed
+        try:
+            return await read_campaign(db, session, ref, imports_for=settings.imports_enabled_for)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
