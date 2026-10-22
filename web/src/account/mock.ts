@@ -308,6 +308,7 @@ export function mockRecaps(): Recap[] {
     state: "ready",
     working: false,
     error: "",
+    recapEmail: { address: "dm@example.com", source: "signin", on: true } as const,
     audio: {
       state: "off",
       error: "",
@@ -560,6 +561,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const fixLooks = new Map<string, number>();
   const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
+  // A recap asked to try again is "being made" for one more read, then ready (the real API takes
+  // minutes; the page polls). The page must show the working state at once, not the old failure.
+  const writing = new Map<string, number>();
+  const settle = (r: Recap): void => {
+    writing.delete(r.ref);
+    Object.assign(r, { working: false, state: "ready", canTryAgain: r.status === "draft" && r.triesLeft > 0 });
+  };
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
     signedIn();
@@ -578,7 +586,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     async recap(ref) {
       calls.push(`recap:${ref}`);
-      return { ...(await find(ref)) };
+      const r = await find(ref);
+      const left = writing.get(ref);
+      if (left !== undefined) {
+        if (left <= 1) settle(r);
+        else writing.set(ref, left - 1);
+      }
+      return { ...r };
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);
@@ -1157,6 +1171,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (r.status !== "draft")
         Object.assign(r, { canTryAgain: false, canDrop: false });
       else r.canTryAgain = r.triesLeft > 0;
+      if (action === "again") {
+        Object.assign(r, { working: true, state: "working", canTryAgain: false, canDrop: false });
+        writing.set(ref, 1);
+      }
       return { ...r };
     },
     async me() {

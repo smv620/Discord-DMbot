@@ -408,7 +408,9 @@ class Working(WorkerHarness):
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, invented), fx.Canned(invented, invented))
         job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+        self.assertEqual(job.state, "failed")
+        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
+        self.assertIn("(check: ", job.last_error)
         self.assertEqual(job.summary, "")  # a failed draft is never kept
 
     async def test_a_recap_a_little_long_is_accepted_only_on_the_third_try_and_says_so(
@@ -440,7 +442,9 @@ class Working(WorkerHarness):
         )
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
         job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+        self.assertEqual(job.state, "failed")
+        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
+        self.assertIn("(check: ", job.last_error)
 
     async def test_a_third_prose_try_happens_only_after_two_failures(self) -> None:
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
@@ -637,7 +641,9 @@ class Working(WorkerHarness):
         short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, short), fx.Canned(short, short))
         job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+        self.assertEqual(job.state, "failed")
+        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
+        self.assertIn("(check: ", job.last_error)
 
     async def test_a_grader_that_fails_never_stops_a_recap_that_passed_its_checks(self) -> None:
         await self.setUpWorker(

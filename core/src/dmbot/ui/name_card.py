@@ -90,6 +90,11 @@ FLAG_WHY = {
     "too_many": "That's more than one place at once",
 }
 ONLY_ONE = "☝️ Only one of these exists (you said so)."
+# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
+# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves.
+PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
+SPELLING_ONLY = "That looks like how to say the name. Type only how it's spelled here."
+SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it box below."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
@@ -112,8 +117,8 @@ NOTHING_CHANGED = (
 CARD_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 SHOWN = 3  # per section, then "… and N more"
 # A state, not an action: it is a setting that stays until pressed again.
-SECRET_OFF = "🤫 Secret: no"
-SECRET_ON = "🤫 Secret: yes"
+SECRET_OFF = "🤫 Next one is public"
+SECRET_ON = "🤫 Next one is secret"
 SECRET_FORCED = "You found it by a secret name, so this one is secret too."
 SECRET_DENIED_PRESS = "Only the campaign's DM can keep a connection secret."
 SECRET_DENIED_SAVE = (
@@ -688,7 +693,7 @@ class NameCard(_Menu):
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
-        if undo_connection is not None:  # last row but one: out of the way of the edits
+        if undo_connection is not None:  # rows 0 and 1, because row 4 is Show all's (#2339)
             self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
         if undo_spelling is not None:
             self.add_item(UndoSpellingButton(campaign_id, entity_id, undo_spelling))
@@ -747,6 +752,10 @@ class NameCard(_Menu):
                 options=[discord.SelectOption(label=label, value=key) for key, label in cut],
                 row=4,
             )
+            # Row 4 is the menu's alone (a select takes a whole row): the Undo and Finish buttons
+            # sit on rows 0 and 1, which have room, because one on row 4, or on row 3 beside a
+            # thread's five buttons, made the card fail to build (#2339: "item would not fit at
+            # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
 
     async def _book(self, interaction: discord.Interaction) -> None:
@@ -915,12 +924,10 @@ class NameCard(_Menu):
         )
 
     async def _same(self, interaction: discord.Interaction) -> None:
-        found = await _current(interaction, self.campaign_id, self.entity_id)
-        if found:
-            self.origin = None  # the form's answer replaces this message; cancel keeps it
-            await interaction.response.send_modal(
-                PickForm(self.campaign_id, self.entity_id, SAME, f"{found[1]} is the same as…")
-            )
+        from dmbot.ui.name_dropdown import show_dropdown  # (it builds on this module)
+
+        # A list to pick from; "Type a name" there keeps the old search (#2321).
+        await show_dropdown(interaction, self.campaign_id, self.entity_id, SAME, replacing=self)
 
     async def _connect(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -1199,6 +1206,9 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
             return
         campaign, old = found
         new = " ".join(self.name.value.split())
+        if PRONOUNCED.search(new):  # how to say it is not how to spell it (#2332)
+            await _tell(interaction, SPELLING_AND_SOUND if self.spoken else SPELLING_ONLY)
+            return
         if name_key(new) != name_key(old):
             clash = await known_as(memory, campaign, new)
             if clash is not None and name_key(clash) != name_key(old):
@@ -1571,7 +1581,7 @@ class UndoConnectionButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unconn:{campaign_id}:{entity_id}:{batch}",
-                row=3,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1630,7 +1640,7 @@ class UndoSpellingButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unspell:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1711,7 +1721,7 @@ class FinishPastButton(
                 label="Finish the past transcripts",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"dmbot:finish:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=1,
             )
         )
         self.campaign_id = campaign_id
@@ -2106,6 +2116,53 @@ async def show_picks(
     )
 
 
+async def choose_other(
+    interaction: discord.Interaction,
+    view: _Menu,
+    other_id: str,
+    campaign_id: str,
+    entity_id: str,
+    how: str,
+    *,
+    secret: bool,
+    hidden: frozenset[str] = frozenset(),
+) -> None:
+    """The other name was picked (from the search results or the name dropdown): Same as…
+    asks which name to keep, Connect to… saves the connection. `view` is stopped when it is
+    taken over."""
+    await _answer_first(interaction, in_place=True)
+    if how == SAME:
+        found = await _current(interaction, campaign_id, entity_id)
+        other = await _current(interaction, campaign_id, other_id) if found else None
+        if found is None or other is None:
+            return
+        found_names = await _names(interaction, found[0])
+        if found_names is None:
+            return
+        view.stop()
+        name, other_name = found[1], other[1]
+        await _replace(
+            interaction,
+            f"Make **{_md(name)}** and **{_md(other_name)}** one? Their other names and "
+            "connections go together. Which name should it keep?\n"
+            "Is one of them a disguise? Press **No**, then press "
+            f"{ALSO_CALLED} on the real one to add it as a secret name.",
+            SameConfirm(
+                campaign_id,
+                entity_id,
+                other_id,
+                _who(found_names, entity_id),
+                _who(found_names, other_id),
+            ),
+        )
+        return
+    view.stop()
+    await connect(
+        interaction, campaign_id, entity_id, how, other_id,
+        secret=secret or other_id in hidden, forced=other_id in hidden,
+    )  # fmt: skip
+
+
 class PickOther(_Menu):
     def __init__(
         self,
@@ -2134,37 +2191,9 @@ class PickOther(_Menu):
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
-        other_id = self.pick.values[0]
-        await _answer_first(interaction, in_place=True)
-        if self.how == SAME:
-            found = await _current(interaction, self.campaign_id, self.entity_id)
-            other = await _current(interaction, self.campaign_id, other_id) if found else None
-            if found is None or other is None:
-                return
-            found_names = await _names(interaction, found[0])
-            if found_names is None:
-                return
-            self.stop()
-            name, other_name = found[1], other[1]
-            await _replace(
-                interaction,
-                f"Make **{_md(name)}** and **{_md(other_name)}** one? Their other names and "
-                "connections go together. Which name should it keep?\n"
-                "Is one of them a disguise? Press **No**, then press "
-                f"{ALSO_CALLED} on the real one to add it as a secret name.",
-                SameConfirm(
-                    self.campaign_id,
-                    self.entity_id,
-                    other_id,
-                    _who(found_names, self.entity_id),
-                    _who(found_names, other_id),
-                ),
-            )
-            return
-        self.stop()
-        await connect(
-            interaction, self.campaign_id, self.entity_id, self.how, other_id,
-            secret=self.secret or other_id in self.hidden, forced=other_id in self.hidden,
+        await choose_other(
+            interaction, self, self.pick.values[0], self.campaign_id, self.entity_id, self.how,
+            secret=self.secret, hidden=self.hidden,
         )  # fmt: skip
 
     async def _again(self, interaction: discord.Interaction) -> None:
@@ -2285,11 +2314,30 @@ class Connect(_Menu):
                 row=1,
             )
             self.add_item(self.remove)
-        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
+        if removable and secrets:  # who sees an existing connection, flipped in place (#2321)
+            self.flip = _Select(
+                self._flip_picked,
+                placeholder="🤫 Hide or show a connection…",
+                options=[
+                    discord.SelectOption(
+                        label=logic.shorten(said, logic.OPTION_LABEL_MAX),
+                        # The state it is changed TO, taken from what the menu showed: a double
+                        # press or a stale menu must never turn a secret back into a public one.
+                        value=f"{r}:{'show' if said.endswith('🤫') else 'hide'}",
+                        description="Secret now. Press to show players"
+                        if said.endswith("🤫")
+                        else "Players see it. Press to hide it",
+                    )
+                    for r, said in removable[: logic.SELECT_OPTIONS_MAX]
+                ],
+                row=2,
+            )
+            self.add_item(self.flip)
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=3))
         if secrets:  # only the campaign's DMs deal in secrets, as with secret names
             # After Back, so a thumb on the left edge doesn't flip a privacy setting.
             self.toggle = _Button(
-                self._toggle_secret, label=SECRET_OFF, style=discord.ButtonStyle.secondary, row=2
+                self._toggle_secret, label=SECRET_OFF, style=discord.ButtonStyle.secondary, row=3
             )
             self.add_item(self.toggle)
 
@@ -2308,18 +2356,12 @@ class Connect(_Menu):
         await interaction.response.edit_message(view=self)
 
     async def _how_picked(self, interaction: discord.Interaction) -> None:
-        how = self.how.values[0]
-        if await _current(interaction, self.campaign_id, self.entity_id):
-            self.origin = None  # the form's answer replaces this message; cancel keeps it
-            await interaction.response.send_modal(
-                PickForm(
-                    self.campaign_id,
-                    self.entity_id,
-                    how,
-                    _asked(self.name, how),
-                    secret=self.secret,
-                )
-            )
+        from dmbot.ui.name_dropdown import show_dropdown  # (it builds on this module)
+
+        await show_dropdown(
+            interaction, self.campaign_id, self.entity_id, self.how.values[0],
+            secret=self.secret, replacing=self,
+        )  # fmt: skip
 
     async def _remove_picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2362,6 +2404,53 @@ class Connect(_Menu):
             note=note,
             undo_connection=written.batch,
         )
+
+    async def _flip_picked(self, interaction: discord.Interaction) -> None:
+        """Secret to public, or public to secret, for a connection that is already there."""
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign = found[0]
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        names = await _names(interaction, campaign)
+        if names is None:
+            return
+        mine = await memory.relations(
+            campaign.guild_id,
+            campaign.id,
+            entity_id=self.entity_id,
+            confirmed_only=True,
+            include_secret=True,
+        )
+        wanted_id, _, action = self.flip.values[0].rpartition(":")
+        relation = next((r for r in mine if r.id == wanted_id), None)
+        if relation is None:
+            await _tell(interaction, "That connection isn't there any more. Press Back to see it.")
+            return
+        make_secret = action == "hide"
+        if relation.secret == make_secret:  # already so (a second press, or another DM did it)
+            await _tell(interaction, "It's already like that. Press Back to see the card.")
+            return
+        try:
+            await memory.update_relation(
+                campaign.guild_id, campaign.id, relation.id, secret=make_secret, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        said = sentence(names, relation) or "that connection"
+        note = (
+            f"👁 Players can see it now: {_md(said)}."
+            if relation.secret
+            else f"🤫 Hidden from players: {_md(said)}."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()

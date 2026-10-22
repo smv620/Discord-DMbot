@@ -200,12 +200,23 @@ export interface SupportTicket {
   turnstile: string;
 }
 
+/** Whose address an email goes to: `payment` is the email on the payment account, `signin` the one the
+ * person signed in with, `none` no address at all (#2334, #2349). */
+export type EmailSource = "payment" | "signin" | "none";
+
 /** The address DMbot emails this person at (#2349). `pending` is a new address that has been sent a
  * confirmation link and has not been confirmed yet. */
 export interface MyEmail {
   address: string | null;
-  source: "payment" | "signin" | "none";
+  source: EmailSource;
   pending: string | null;
+}
+
+/** Which address a recap's email goes to, and whether the DM's own email choice is on. */
+export interface RecapEmail {
+  address: string | null;
+  source: EmailSource;
+  on: boolean;
 }
 
 /** One session recap the DM reviews (#1382, #1386). The words come from the API already clean of
@@ -234,6 +245,9 @@ export interface Recap {
   waitingForNames?: boolean;
   /** How many of those questions are left. */
   namesToAnswer?: number;
+  /** Where this recap's email goes, for the signed-in DM only and about themselves only (#2334, #2335).
+   * Missing from an API older than that: then the page names no address. */
+  recapEmail?: RecapEmail;
   /** Written, and waiting for the checks to be able to run (#2280, #2297). While `working` is also
    * true, the page says so in one steady line instead of "still writing". Missing from an older API. */
   waitingForCheck?: boolean;

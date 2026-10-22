@@ -210,7 +210,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         formatting = fx.Canned(*[bad] * 6)
         out = await self.go(creative, formatting, fast=fx.Canned(fx.BEATS_ANSWER))
         self.assertEqual(out.job.state, "failed")
-        self.assertEqual(out.job.last_error, pl.FAILED_CHECKS)  # not the call limit
+        self.assertTrue(out.job.last_error.startswith(pl.FAILED_CHECKS))  # not the call limit
         self.assertLessEqual(out.job.calls, pl.MAX_CALLS)
 
     async def test_the_call_limits_leave_room_for_the_extra_formatting_calls(self) -> None:
