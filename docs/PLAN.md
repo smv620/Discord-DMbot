@@ -4239,6 +4239,11 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     It can still be posted later.
   - **Try again** stays. "Don't post" (setting a recap aside unread) is gone; a recap the DM doesn't approve
     simply stays a draft.
+  - **While it goes out, the page shows it working** (owner, 2026-10-22): after any button that posts or makes
+    audio, the page shows "Getting it ready for Discord…" (or "Making the audio…") with a running clock (0:42)
+    and the step it's on (the last check, then posting). It updates by itself until it ends: "Posted to your
+    table" with a link to the message in Discord, or what went wrong and what to do next. Leaving and coming
+    back shows the same clock, counted from when it started.
 - **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
   page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
   number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21
