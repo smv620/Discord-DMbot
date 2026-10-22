@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 
-from dmbot.recaps.store import RecapStore
+from dmbot.recaps.store import Job
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import Base
 
@@ -22,7 +22,7 @@ class TheClock(Base):
         )
         return at
 
-    async def job(self, at: int = 100, campaign: str | None = None) -> object:
+    async def job(self, at: int = 100, campaign: str | None = None) -> Job:
         found = await self.store.get(1, campaign or self.one.id, at)
         assert found is not None
         return found
@@ -38,7 +38,7 @@ class TheClock(Base):
         self.assertTrue(await self.store.decide(1, self.one.id, at, "post"))
         job = await self.job(at)
         self.assertEqual((job.status, job.posting_step), ("posting", "check"))
-        self.assertIsInstance(job.posting_since, int)
+        assert job.posting_since is not None
         self.assertGreaterEqual(job.posting_since, before)
         self.assertLessEqual(job.posting_since, int(time.time()) + 1)
 
@@ -176,7 +176,3 @@ class TheClock(Base):
                     async with conn.transaction():
                         await conn.execute(statement)
         self.assertEqual((await self.job(at)).posted_url, "")
-
-
-def test_store_is_the_recap_store() -> None:
-    assert RecapStore

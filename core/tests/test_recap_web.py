@@ -434,22 +434,28 @@ class TheDmsPage(Base):
         with self.assertRaises(RecapError):  # no edits once it is on its way
             await edit_recap(self.web, self.session, self.ref, summary="x", housekeeping=[])
 
-    async def test_the_answer_carries_the_posting_clock_in_whole_seconds(self) -> None:
-        """#2435: nothing before a post; after it, the start, the step and the server's own time,
-        all whole Unix seconds; the link stays null until the bot has posted."""
-        before = await read_recap(self.web, self.session, self.ref)
-        self.assertEqual(
-            (before["postingSince"], before["postingStep"], before["postedUrl"]),
-            (None, None, None),
-        )
-        self.assertIsInstance(before["serverNow"], int)
-        shown = await decide(self.web, self.session, self.ref, "post")
-        self.assertIsInstance(shown["postingSince"], int)
-        self.assertEqual((shown["postingStep"], shown["postedUrl"]), ("check", None))
-        self.assertLessEqual(shown["postingSince"], shown["serverNow"] + 1)
-        # another campaign's recap, which this DM does not run, is not exposed at all
-        with self.assertRaises(RecapError):
-            await read_recap(self.web, self.session, self.other)
+    async def test_the_stored_posting_clock_is_readable_by_the_web_role(self) -> None:
+        """#2435: the website's role can read the three columns (#2436 puts them in the answer);
+        another DM's campaign is not readable at all."""
+        await decide(self.web, self.session, self.ref, "post")
+
+        async def stored(campaign: str) -> Any:
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                cur = await conn.execute(
+                    "SELECT posting_since, posting_step, posted_url FROM recap_jobs"
+                    " WHERE campaign_id = %s",
+                    (campaign,),
+                )
+                return await cur.fetchall()
+
+        (mine,) = await stored(self.one.id)
+        self.assertEqual(mine["posting_step"], "check")
+        self.assertIsInstance(mine["posting_since"], int)
+        self.assertIsNone(mine["posted_url"])
+        self.assertEqual(await stored(self.two.id), [])  # not Alice's campaign: no row at all
 
     async def test_dont_post_leaves_it_out_for_good(self) -> None:
         shown = await decide(self.web, self.session, self.ref, "drop")
@@ -1581,12 +1587,21 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         kwargs = bot.sent.send.await_args.kwargs
         self.assertEqual(kwargs["allowed_mentions"].users, False)
 
-    async def test_the_clock_moves_to_post_before_the_send_and_the_link_is_kept(self) -> None:
-        """#2435: the step is 'post' once the checks pass and before anything is sent; the link of
-        the first message is what is kept when it is marked posted."""
+    async def test_the_clock_moves_to_post_before_the_consent_read_and_the_link_is_kept(
+        self,
+    ) -> None:
+        """#2435: the step is 'post' before the audio lookup and the consent read, so the consent
+        read stays the last await before the send; the first message's link is what is kept."""
         order: list[str] = []
         bot = fake_bot(self.job())
         bot.recaps.posting_step.side_effect = lambda *a: order.append(f"step {a[-1]}")
+        real_consent = bot.consent.consenting
+
+        async def consent(*a: Any) -> Any:
+            order.append("consent")
+            return await real_consent(*a)
+
+        bot.consent.consenting = consent
         first = SimpleNamespace(jump_url="https://discord.com/channels/1/2/3")
         later = SimpleNamespace(jump_url="https://discord.com/channels/1/2/4")
         replies = iter([first, later, later, later])
@@ -1597,11 +1612,17 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
 
         bot.sent.send = send
         await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
-        self.assertEqual(order[0], "step post")
-        self.assertEqual(order[1], "send")
+        self.assertEqual(order[:3], ["step post", "consent", "send"])  # consent, then the send
         self.assertEqual(
             bot.recaps.posted.await_args.kwargs["url"], "https://discord.com/channels/1/2/3"
         )
+
+    async def test_a_failed_step_write_never_stops_the_post(self) -> None:
+        bot = fake_bot(self.job())
+        bot.recaps.posting_step.side_effect = RuntimeError("database hiccup")
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        bot.recaps.posted.assert_awaited_once()
+        bot.recaps.back_to_draft.assert_not_awaited()
 
     async def test_a_check_that_stops_the_post_never_reaches_the_post_step(self) -> None:
         bot = fake_bot(

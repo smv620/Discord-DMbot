@@ -9123,6 +9123,11 @@ class DMBot(commands.AutoShardedBot):
         text = recap_post.to_the_table(job)
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
             return await back("It names something you keep secret. Change the text, then post.")
+        try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits
+            # between the consent read and the send, which must stay back to back)
+            await self.recaps.posting_step(gid, cid, at, "post")
+        except Exception:
+            log.warning("Recap: couldn't move the progress step to post", exc_info=True)
         # The audio is looked up first, so the consent read below is the last await before the send.
         audio, audio_note = await self._recap_audio_files(gid, campaign, job, channel)
         agreed = await self.consent.consenting(gid)
@@ -9134,7 +9139,6 @@ class DMBot(commands.AutoShardedBot):
                 "Write a new recap, or leave this one out."
             )
         # Sent first and marked posted after, so a failed send is never recorded as a post.
-        await self.recaps.posting_step(gid, cid, at, "post")  # the checks are done (#2435)
         link = ""
         try:
             parts = recap_post.parts_of(text)
