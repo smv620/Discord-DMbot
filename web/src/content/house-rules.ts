@@ -1,10 +1,12 @@
 // The words of the house-rules pages (#1521). They are the table's rules: anyone in the Discord
 // server may read them (`/dmbot houserules`), so this is for players as much as DMs, and the DM
 // changes them on the DM screen, never here.
+import { houseRulesCard } from "./account-cards";
+
 export const text = {
-  heading: "House rules",
-  link: "Read your table's house rules",
-  lead: "The rules your table plays by. Anyone in the Discord server can read them. Only your DM can change them, on the DM screen in Discord.",
+  heading: houseRulesCard.heading,
+  link: houseRulesCard.link,
+  lead: houseRulesCard.lead,
   leadOneCampaign: "These are your table's rules. Anyone in the Discord server can read them. Only your DM can change them, on the DM screen in Discord.",
   loading: "Loading…",
   empty: "No house rules yet. Your DM adds them on the DM screen in Discord.",

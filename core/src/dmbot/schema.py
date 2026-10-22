@@ -10271,6 +10271,39 @@ RECAP_ADDRESS_CO_DM = """
     REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
 """
 
+# The recap posting clock (#2435): when a post or a narration began, at which step, and the posted
+# message's link, for the website's progress clock. New nullable columns: no row changes. The status
+# change itself starts and stops the clock (a trigger), so every writer of `status` (the bot, the
+# DM screen's buttons, the website) is covered at one place, and a failed or finished post can never
+# leave a clock running. The audio worker sets and clears the 'audio' step (recaps/store.py).
+RECAP_POSTING_CLOCK = r"""
+    ALTER TABLE recap_jobs ADD COLUMN posting_since BIGINT CHECK (posting_since > 0);
+    ALTER TABLE recap_jobs ADD COLUMN posting_step TEXT
+        CHECK (posting_step IN ('check', 'post', 'audio'));
+    ALTER TABLE recap_jobs ADD COLUMN posted_url TEXT
+        CHECK (posted_url ~ '^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$'
+               AND char_length(posted_url) <= 200);
+    ALTER TABLE recap_jobs ADD CONSTRAINT recap_jobs_posting_pair
+        CHECK ((posting_since IS NULL) = (posting_step IS NULL));
+
+    CREATE FUNCTION dmbot_recap_posting_clock() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+    BEGIN
+        IF NEW.status = 'posting' AND OLD.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+            NEW.posting_step := 'check';
+            NEW.posted_url := NULL;
+        ELSIF OLD.status = 'posting' AND NEW.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := NULL;  -- posted, put back as a draft or dropped: the clock stops
+            NEW.posting_step := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER recap_jobs_posting_clock BEFORE UPDATE OF status ON recap_jobs
+        FOR EACH ROW EXECUTE FUNCTION dmbot_recap_posting_clock();
+"""
+
 BELIEFS = (
     f"""
     -- Assertions, perspectives and evidence (#2409; docs/STORY_MEMORY.md, section 9). A connection
@@ -10401,6 +10434,92 @@ BELIEFS = (
         FOR EACH ROW EXECUTE FUNCTION dmbot_campaign_perspectives();
     """
 )
+
+SHARED_RECAP_SESSION = """
+    -- A shared recap says which session it was and how long it ran (#2418), the same two facts the
+    -- DM's page shows. The public door reads them from the transcripts' own sessions, so the
+    -- number is the one the transcripts show. It needs one more read-only policy, tied (like the
+    -- others in RECAP_SHARE) to the one recap's server and campaign the function itself found;
+    -- only the number and the length leave the function, never a line or a speaker.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY recap_share_read ON transcript_sessions FOR SELECT TO %I
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND campaign_id = dmbot_recap_share_campaign())',
+            current_user);
+    END
+    $do$;
+
+    CREATE OR REPLACE FUNCTION dmbot_recap_shared(tok TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        sess_number BIGINT;
+        sess_seconds BIGINT;
+        out JSONB;
+    BEGIN
+        IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
+        SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND status = 'posted';
+        IF NOT FOUND THEN
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
+        -- Which session it was and how long it ran, as the transcripts page numbers and times it
+        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
+        -- sessions, those whose transcripts were deleted by retention included). Only these two
+        -- numbers leave: nothing of the transcript itself.
+        SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
+            SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
+                   CASE WHEN t.ended_at IS NULL THEN NULL
+                        ELSE GREATEST(t.ended_at - t.started_at, 0) END AS seconds
+            FROM transcript_sessions t
+            WHERE t.guild_id = job.guild_id AND t.campaign_id = job.campaign_id
+              AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) x
+        WHERE x.started_at = job.session_at ORDER BY x.number LIMIT 1;
+        out := jsonb_build_object(
+            'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
+            'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'sessionNumber', sess_number, 'sessionSeconds', sess_seconds,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb));
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_shared(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+"""
 
 # The relationship web's door reads what The party believes (#2409 part B): a member sees the
 # connections the players hold as fact, where it used to test the `secret` flag. Until guesses
@@ -10870,7 +10989,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
     ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
     ("0179_beliefs", BELIEFS),  # perspectives, beliefs and the backfill (#2409)
+    ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)

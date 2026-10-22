@@ -5,11 +5,8 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
+import { homebrewCard, houseRulesCard, recapCard, transcriptsCard } from "../content/account-cards";
 import { RECAPS_LIVE } from "../content/recap-words";
-import { text as homebrewText } from "../content/homebrew";
-import { text as houseRulesText } from "../content/house-rules";
-import { text as recapText } from "../content/recaps";
-import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { keepFocus } from "./focus";
@@ -1055,7 +1052,7 @@ function CampaignsSection({ me }: { me: Me }) {
           {open ? text.showFewer : text.showOlder(older.length)}
         </button>
       )}
-      {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
+      {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapCard.linkToList}</a>}
     </section>
   );
 }
@@ -1065,9 +1062,9 @@ function CampaignsSection({ me }: { me: Me }) {
 function HouseRulesSection() {
   return (
     <section aria-labelledby="house-rules-heading" class="panel">
-      <h2 id="house-rules-heading">{houseRulesText.heading}</h2>
-      <p>{houseRulesText.lead}</p>
-      <a href="/account/house-rules">{houseRulesText.link}</a>
+      <h2 id="house-rules-heading">{houseRulesCard.heading}</h2>
+      <p>{houseRulesCard.lead}</p>
+      <a href="/account/house-rules">{houseRulesCard.link}</a>
     </section>
   );
 }
@@ -1077,9 +1074,9 @@ function HouseRulesSection() {
 function HomebrewSection() {
   return (
     <section aria-labelledby="homebrew-heading" class="panel">
-      <h2 id="homebrew-heading">{homebrewText.heading}</h2>
-      <p>{homebrewText.lead}</p>
-      <a href="/account/homebrew">{homebrewText.link}</a>
+      <h2 id="homebrew-heading">{homebrewCard.heading}</h2>
+      <p>{homebrewCard.lead}</p>
+      <a href="/account/homebrew">{homebrewCard.link}</a>
     </section>
   );
 }
@@ -1089,9 +1086,9 @@ function HomebrewSection() {
 function TranscriptsSection() {
   return (
     <section aria-labelledby="transcripts-heading" class="panel">
-      <h2 id="transcripts-heading">{transcriptText.heading}</h2>
-      <p>{transcriptText.lead}</p>
-      <a href="/account/transcripts">{transcriptText.link}</a>
+      <h2 id="transcripts-heading">{transcriptsCard.heading}</h2>
+      <p>{transcriptsCard.lead}</p>
+      <a href="/account/transcripts">{transcriptsCard.link}</a>
     </section>
   );
 }
