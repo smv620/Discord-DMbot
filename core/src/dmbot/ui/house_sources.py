@@ -65,20 +65,23 @@ async def _load(
         except Exception:
             log.exception("Couldn't read the followed sets for the sources list")
     link = ""
+    site: str | None = None
     links = getattr(bot, "house_file_links", None)
-    if with_link and links is not None and any(r.source == "linked" for r in rules):
+    if links is not None and any(r.source == "linked" for r in rules):
         try:
             found = await links.get(campaign.guild_id, campaign.id)
         except Exception:
             log.exception("Couldn't read the linked file for the sources list")
             found = None
-        if (
-            found is not None
-            and found.link.startswith("https://")
-            and len(found.link) <= LINK_BUTTON_MAX
-        ):
-            link = found.link
-    return house_sources.group(rules, publishers), link
+        if found is not None:
+            site = found.site  # where the file is, never its address
+            if (
+                with_link
+                and found.link.startswith("https://")
+                and len(found.link) <= LINK_BUTTON_MAX
+            ):
+                link = found.link
+    return house_sources.group(rules, publishers, site), link
 
 
 TITLE_SHOWN = 60  # a long file or set name is cut in the list; the menu and file keep it

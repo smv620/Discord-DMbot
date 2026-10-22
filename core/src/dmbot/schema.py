@@ -9690,6 +9690,14 @@ NAME_GATE = (
 )
 
 
+HOUSE_FILE_READ = """
+    -- The linked house-rules file read by the AI (#2377): a hash of the file's text as it was
+    -- when last read (spacing and case ignored), so the AI is asked again only when the file
+    -- changes. Never the text. A new link forgets it. Added with no default, so no row changes.
+    ALTER TABLE house_rules_file ADD COLUMN read_fingerprint TEXT
+        CHECK (read_fingerprint IS NULL OR read_fingerprint ~ '^[0-9a-f]{64}$');
+"""
+
 NAME_ACTIONS = (
     f"""
     -- What a DM did on the website's All names page (#2294), waiting for the bot. The website has
@@ -10082,6 +10090,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0172_house_file_read", HOUSE_FILE_READ),  # the AI's last read of a linked file (#2377)
     ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
