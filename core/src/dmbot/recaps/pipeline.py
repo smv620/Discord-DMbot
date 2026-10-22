@@ -147,7 +147,6 @@ PLOT_TOKENS_PER_SENTENCE = 50  # a change names its sentence, its kind and the r
 PLOT_ROOM_MAX = 12_000  # after doubling too
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
-HOLD_WAITS_MAX = 8  # waits (about 3 days) of a draft whose critics cannot be read before it fails
 CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
 # Why the loop stopped before any draft was read: the recap then waits for its check (below),
 # or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
@@ -1404,12 +1403,17 @@ class RecapWorker:
             if raw is not None and raw.cut and not raw.refused:
                 # Cut off at the limit: asked once more with twice the room (#2365), as the fact
                 # check is (#2345). A second cut ends as any unreadable answer does: it waits.
-                log.info("Recap: PlotBot's answer was cut off at %d tokens", room)
-                room = min(room * 2, PLOT_ROOM_MAX)
-                raw = await self._call(
-                    gid, cid, job, self._careful, cr.plot_system(), message,
-                    room, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
-                )  # fmt: skip
+                # The retry is one more call, so the job's ceiling is looked at again first (the
+                # check at the top of the step is before the first call): a recap that waits for
+                # its check is off the job's calls, one that does not must keep the reserve.
+                fresh = await self._store.get(gid, cid, job.session_at) or job
+                if waiting or fresh.calls < self._ceiling(fresh) - CRITIC_RESERVE:
+                    log.info("Recap: PlotBot's answer was cut off at %d tokens", room)
+                    room *= 2  # (`plot_room` is at most half of PLOT_ROOM_MAX)
+                    raw = await self._call(
+                        gid, cid, job, self._careful, cr.plot_system(), message,
+                        room, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
+                    )  # fmt: skip
             if raw is None:
                 return await self._store.get(gid, cid, job.session_at)
             if not set(job.speakers) <= set(await consenting()):
@@ -1618,20 +1622,6 @@ class RecapWorker:
         )  # fmt: skip
         return await self._store.get(gid, cid, job.session_at)
 
-    async def _hold_or_give_up(
-        self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str
-    ) -> Job | None:
-        """A draft with a failed check whose critics cannot be read waits for its check (#2365),
-        but not for ever: answers that stay unreadable (declined, cut off at the cap) would
-        otherwise be asked again every 12 hours without end and free of the job's calls. After
-        `HOLD_WAITS_MAX` waits it fails, on our side, so the DM's Try again is given back."""
-        if loop.waits >= HOLD_WAITS_MAX:
-            log.info(
-                "Recap: the check never got through (%s), %d waits: giving up", why, loop.waits
-            )
-            return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
-        return await self._hold(gid, cid, job, loop, why)
-
     async def _stop_critics(
         self, gid: int, cid: str, job: Job, loop: cr.Loop, inputs: Inputs, why: str
     ) -> Job | None:
@@ -1666,8 +1656,10 @@ class RecapWorker:
         if best.hard:
             if best.unfixable:
                 if ours:
-                    return await self._hold_or_give_up(gid, cid, job, loop, why)
-                return await self._fail(gid, cid, job, FAILED_CHECKS)
+                    return await self._hold(gid, cid, job, loop, why)
+                return await self._fail(
+                    gid, cid, job, FAILED_CHECKS, check="unfixable", ours=why != STOP_CEILING
+                )
             prose = rd.cut_sentences(prose, best.cuts)
             problems = rd.check_prose(
                 prose, beats=sheet, transcript=transcript,
@@ -1683,8 +1675,13 @@ class RecapWorker:
                     cl.kinds(problems),
                 )
                 if ours:
-                    return await self._hold_or_give_up(gid, cid, job, loop, why)
-                return await self._fail(gid, cid, job, FAILED_CHECKS)
+                    return await self._hold(gid, cid, job, loop, why)
+                # A failed check is our side's (the writing), as in the prose stage (#2341): only
+                # the job's own ceiling is not, and the rule names go in the reason.
+                return await self._fail(
+                    gid, cid, job, FAILED_CHECKS,
+                    check=", ".join(cl.kinds(problems)), ours=why != STOP_CEILING,
+                )  # fmt: skip
             cut = len(best.cuts)
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
