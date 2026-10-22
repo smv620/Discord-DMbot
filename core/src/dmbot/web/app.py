@@ -1077,7 +1077,61 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
-    relationship_refusals = {"not_found": (404, "not_found"), "bad_hops": (400, "bad_hops")}
+    relationship_refusals = {
+        "not_found": (404, "not_found"),
+        "bad_hops": (400, "bad_hops"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_name": (400, "bad_name"),
+        "too_long": (400, "too_long"),
+        "needs_confirm": (400, "needs_confirm"),
+        "bad_target": (400, "bad_target"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/web/links", status_code=202)
+    async def me_campaign_web_link_add(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Add a connection between two names (DM only, re-checked every call). Queued for the bot;
+        the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_add(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/links/{link_id}", status_code=202)
+    async def me_campaign_web_link_edit(
+        ref: str, link_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Change the words of a connection, make it secret or known, or remove it."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_edit(db, session, ref, link_id, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/answers/{answer}")
+    async def me_campaign_web_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where one of the signed-in DM's own connection edits stands, with the edge as it now
+        stands once it is done."""
+        session, _token = signed
+        try:
+            return await relationships.read_answer(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     name_refusals = {
         "not_found": (404, "not_found"),

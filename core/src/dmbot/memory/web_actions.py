@@ -272,14 +272,17 @@ async def _do(
     return _failed(FAILED)
 
 
-async def _link(
-    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action
-) -> Outcome:
+async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action) -> Outcome:
     """The relationship web's edits (#2323), through the calls the name card makes. The outcome
     names the pair, so the page can draw the edge as it now stands."""
     if a.action == "link-add":
         other = await memory.entity(guild_id, cid, a.target_id)
-        if other is None or other.status != CONFIRMED or other.type == PERSON or other.id == entity_id:
+        if (
+            other is None
+            or other.status != CONFIRMED
+            or other.type == PERSON
+            or other.id == entity_id
+        ):
             return _failed(BAD_TARGET)
         predicate, detail = predicate_for(a.text)
         try:

@@ -130,3 +130,123 @@ async def read_size(
     """How many names are within `hops` steps, so the page can warn before drawing."""
     got = await _door(db, session, ref, center, hops, size_only=True)
     return {"names": int(got["names"])}
+
+
+# ---- the DM's edits: queued for the bot, read back by polling (#2323) ---------------------------
+
+WORDS_MAX = 100  # a connection's words: the same limit as a name
+
+
+def _words(value: object) -> str:
+    if not isinstance(value, str):
+        raise RecapError("bad_name")
+    clean = " ".join(value.split())
+    if not clean or not clean.isprintable():
+        raise RecapError("bad_name")
+    if len(clean) > WORDS_MAX:
+        raise RecapError("too_long")
+    return clean
+
+
+async def _queue(
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    entity: str | None,
+    action: str,
+    target: str,
+    text: str,
+    flag: bool,
+) -> str:
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, entity, action, "", target, text, flag),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
+async def queue_add(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue a new connection `{a, b, words, secret}` and return the answer's id. DM only; the
+    names, the words and the secret switch are checked here, by the door and again by the bot."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    a, b = str(body.get("a") or ""), str(body.get("b") or "")
+    if not ID_PATTERN.match(a) or not ID_PATTERN.match(b):
+        raise RecapError("not_found")
+    if not isinstance(body.get("secret"), bool):
+        raise RecapError("bad_action")
+    return await _queue(
+        db, session, ref, entity=a, action="link-add", target=b,
+        text=_words(body.get("words")), flag=bool(body["secret"]),
+    )  # fmt: skip
+
+
+async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
+    """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
+    secret}` or `{action: "remove", confirm: true}`. Returns the answer's id."""
+    if not ID_PATTERN.match(link_id):
+        raise RecapError("not_found")
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action = body.get("action")
+    if action == "words":
+        return await _queue(
+            db, session, ref, entity=None, action="link-words", target=link_id,
+            text=_words(body.get("words")), flag=False,
+        )  # fmt: skip
+    if action == "secret":
+        if not isinstance(body.get("secret"), bool):
+            raise RecapError("bad_action")
+        return await _queue(
+            db, session, ref, entity=None, action="link-secret", target=link_id,
+            text="", flag=bool(body["secret"]),
+        )  # fmt: skip
+    if action == "remove":
+        if body.get("confirm") is not True:
+            raise RecapError("needs_confirm")
+        return await _queue(
+            db, session, ref, entity=None, action="link-remove", target=link_id,
+            text="", flag=True,
+        )  # fmt: skip
+    raise RecapError("bad_action")
+
+
+async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
+    """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
+    failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
+    stands (or `removed` when its last connection went)."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not ID_PATTERN.match(answer):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_read(%s, %s, %s) AS r", (guild_id, campaign_id, answer)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or not str(got["action"]).startswith("link-"):
+        raise RecapError("not_found")
+    edge = None
+    if got["state"] == "done" and got["resultId"] and got["resultOther"]:
+        around = await read_web(db, session, ref, center=got["resultId"], hops=1)
+        pair = sorted((got["resultId"], got["resultOther"]))
+        edge = next((e for e in around["edges"] if [e["a"], e["b"]] == pair), None)
+    return {
+        "state": got["state"],
+        "error": got["error"],
+        "edge": edge,
+        "removed": got["state"] == "done" and edge is None,
+    }
