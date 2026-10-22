@@ -144,7 +144,7 @@ class WithTheStore(MemoryTest):
 
 
 def fake_bot(memory: Any, lines: list[Line], agreed: set[int]) -> Any:
-    bot = SimpleNamespace(
+    bot: Any = SimpleNamespace(
         memory=memory,
         lookup=SimpleNamespace(drop=MagicMock()),
         transcripts=SimpleNamespace(
@@ -229,7 +229,11 @@ class AfterTheSession(WithTheStore):
             order.append("write")
             return await real(*a)
 
-        bot.consent.consenting = AsyncMock(side_effect=lambda gid: order.append("consent") or set())
+        async def asked(gid: int) -> set[int]:
+            order.append("consent")
+            return set()
+
+        bot.consent.consenting = asked
         bot.memory = SimpleNamespace(
             reveal_said=held_names,
             waiting_connections=self.memory.waiting_connections,
