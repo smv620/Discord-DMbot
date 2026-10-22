@@ -77,7 +77,7 @@ CUT_NOTE = (
 )
 CONNECTIONS_NOTE = (
     '\n📜 {count} connection{s} found too (like "A is the boss of B"). You\'ll be asked about '
-    "each one after both its names are answered, or press 📜 Connections."
+    "each one after both its names are answered, or press 📜 Check the connections."
 )
 
 
@@ -526,7 +526,7 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
-    kept = bg.keep_connections(answers, found, ends, skip=known)
+    kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret)
         for c in kept
@@ -538,6 +538,20 @@ async def queue_links(
 async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
     onto = await memory.ontology(campaign.guild_id, campaign.id)
     return {p.key for p in onto.predicates.values() if p.symmetric}
+
+
+async def ask_connections(interaction: discord.Interaction, campaign_id: str) -> None:
+    """The 📜 button (on the names summary and on the 📇 Names card): the connections that are
+    ready, or why none is."""
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+    if not await offer_ready(interaction, campaign_id):
+        await _tell(
+            interaction,
+            "None to check yet. Each connection waits until both its names are answered. "
+            "Answer more names (✅ Add all, or 📝 Check new names), then press 📜 Check the "
+            "connections again.",
+        )
 
 
 async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> bool:
@@ -681,15 +695,18 @@ class ConnectionOffer(_Menu):
             if campaign is None or memory is None or store is None or self.current is None:
                 return
             c = await self._same(interaction, campaign)
-            if c is None or (c.secret and not secret):
+            if c is None:
                 return
+            # A card that turned secret since it was drawn (an end became a name the players
+            # don't know) is kept as secret whichever button was pressed: never a public
+            # connection naming a hidden end.
             try:
                 await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                 )  # fmt: skip
-            except MemoryRuleError as exc:
-                log.info("A connection from a background was refused: %s", exc)
+            except MemoryRuleError:
+                log.info("A connection from a background was refused")
                 await _tell(
                     interaction,
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
@@ -767,7 +784,7 @@ class BulkConfirm(_Menu):
             self.add_item(
                 _Button(
                     self._connections,
-                    label="📜 Connections",
+                    label="📜 Check the connections",
                     style=discord.ButtonStyle.secondary,
                     row=1,
                 )
@@ -788,14 +805,7 @@ class BulkConfirm(_Menu):
         await start_review(interaction, self.campaign_id)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
-        if not await offer_ready(interaction, self.campaign_id):
-            await _tell(
-                interaction,
-                "None to check yet. Each connection waits until both its names are answered. "
-                "Answer more names (✅ Add all, or 📝 Check new names), then press 📜 Connections "
-                "again.",
-            )
+        await ask_connections(interaction, self.campaign_id)
 
     async def _all(self, kind: str, interaction: discord.Interaction) -> None:
         await interaction.response.defer()  # many writes follow (#351)

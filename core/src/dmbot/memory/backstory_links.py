@@ -83,6 +83,18 @@ class BackstoryLinks:
                 added += cur.rowcount
         return added
 
+    async def count(self, guild_id: int, campaign_id: str) -> int:
+        """How many connections wait for this campaign, without cleaning the queue (the 📇 Names
+        card shows it; the clean-up happens when they are asked)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM backstory_links"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def waiting(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
     ) -> list[Waiting]:

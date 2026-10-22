@@ -249,7 +249,7 @@ class ThePath(NamesTest):
         summary = press.edit_original_response.await_args.kwargs
         self.assertIn("3 connections found too", summary["content"])
         labels = [getattr(b, "label", "") for b in summary["view"].children]
-        self.assertIn("📜 Connections", labels)
+        self.assertIn("📜 Check the connections", labels)
 
     async def test_they_are_not_asked_while_a_name_is_still_waiting(self) -> None:
         await self.read()
@@ -261,7 +261,7 @@ class ThePath(NamesTest):
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
         it = self.it()
-        await self.button(view, "📜 Connections").callback(it)
+        await self.button(view, "📜 Check the connections").callback(it)
         self.assertIn("None to check yet", it.followup.send.await_args.args[0])
 
     async def test_add_all_offers_the_connections_whose_names_it_answered(self) -> None:
@@ -403,6 +403,200 @@ class ThePath(NamesTest):
         self.assertNotIn("raw words", said)
         self.assertIn("❌ No", said)
         self.assertEqual(len(await self.waiting()), 3)
+
+    # ---- a lasting way back, and what the wiring must keep ------------------------------------
+
+    async def test_a_fresh_review_with_no_new_names_reaches_the_connections(self) -> None:
+        await self.read()
+        await self.confirm_all()  # the names were answered elsewhere: nothing proposed is left
+        it = self.it()
+        await names_ui.start_review(it, self.campaign.id)
+        asked = it.followup.send.await_args
+        self.assertIsNotNone(asked)
+        self.assertIn("Keep this?", asked.args[0])
+
+    async def test_the_names_card_carries_a_lasting_button_while_any_wait(self) -> None:
+        from dmbot.memory.lookup import LookupCache
+
+        self.bot.lookup = LookupCache(self.memory)
+        await self.read()
+        await self.confirm_all()
+        shown = self.it()
+        await names_ui.show_home(shown, self.campaign.id)
+        view = shown.response.sent[0][1]["view"]
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("📜 Check the connections (3)", labels)
+        pressed = self.it()
+        await next(
+            b for b in view.children if getattr(b, "label", "") == "📜 Check the connections (3)"
+        ).callback(pressed)
+        self.assertIn("Keep this?", pressed.followup.send.await_args.args[0])
+
+    async def test_the_names_card_has_no_such_button_when_none_wait(self) -> None:
+        from dmbot.memory.lookup import LookupCache
+
+        self.bot.lookup = LookupCache(self.memory)
+        shown = self.it()
+        await names_ui.show_home(shown, self.campaign.id)
+        view = shown.response.sent[0][1]["view"]
+        labels = [str(getattr(b, "label", "")) for b in view.children]
+        self.assertFalse(any("connections" in label for label in labels))
+
+    async def test_a_card_that_turns_secret_before_the_press_is_kept_as_secret(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        shown = view.current
+        ids = await self.ids()
+        for name in (shown.subject, shown.object):  # one end becomes a name the players don't know
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, ids[name], True, source="dm"
+            )
+        await self.button(view, "✅ Keep").callback(self.it())
+        (rel,) = await self.relations()
+        self.assertTrue(rel.secret)  # never stored as a public connection naming a hidden end
+
+    async def test_a_text_with_a_secret_spelling_queues_a_secret_connection(self) -> None:
+        text = "Belleros is really the hooded stranger. The hooded stranger lives in Vale Keep."
+        names = [
+            {"name": "Belleros", "kind": "person", "also": [], "secret": ["the hooded stranger"],
+             "quote": "Belleros is really the hooded stranger"},
+            {"name": "Vale Keep", "kind": "place", "also": [], "secret": [],
+             "quote": "lives in Vale Keep"},
+        ]  # fmt: skip
+        one = [
+            link("the hooded stranger", "in", "Vale Keep", "The hooded stranger lives in Vale Keep")
+        ]
+        self.ai.complete.return_value = Reply(
+            json.dumps({"names": names, "connections": one}), False
+        )
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        (queued,) = await self.waiting()
+        self.assertTrue(queued.secret)
+
+    async def test_a_pair_the_campaign_has_is_neither_queued_nor_counted(self) -> None:
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Mirelle", "npc", CONFIRMED),
+             NewName("Order of the Grey Hand", "faction", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        mira, order = made.value
+        assert mira and order
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, mira, "serves", order, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        press = await self.read()
+        self.assertEqual(len(await self.waiting()), 2)  # not the one it already holds
+        self.assertIn("2 connections found too", shown(press))
+
+    async def test_an_end_that_is_no_entry_of_the_campaign_is_not_queued(self) -> None:
+        from dmbot.memory.background import Connection, Found
+
+        queued = await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign,
+            [Found("Ghost", "npc", (), (), ""), Found("Zed", "npc", (), (), "")],
+            [[Connection("Ghost", "knows", "Zed", "q")]], set(),
+        )  # fmt: skip
+        self.assertEqual(queued, 0)  # neither was stored as a name: nothing to point at
+
+    async def test_pairs_that_cannot_be_asked_do_not_use_up_the_cap(self) -> None:
+        # the cap counts what will really be asked: a pair the campaign has, or one with an end
+        # that was never stored, is left out before it, so it can't crowd out a good one
+        from dmbot.memory.background import Connection, Found
+
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Mirelle", "npc", CONFIRMED), NewName("Order", "faction", CONFIRMED),
+             NewName("Oakmere", "place", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        mira, order, oak = made.value
+        assert mira and order and oak
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, mira, "serves", order, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        found = [Found("Ghost", "npc", (), (), "")]  # (never stored: no entry to point at)
+        answers = [[
+            Connection("Ghost", "knows", "Mirelle", "q1"),
+            Connection("Mirelle", "serves", "Order", "q2"),
+            Connection("Mirelle", "knows", "Oakmere", "q3"),
+        ]]  # fmt: skip
+        with patch.object(bg, "MAX_CONNECTIONS", 1):
+            queued = await ui_bg.queue_links(
+                self.bot, self.memory, self.campaign, found, answers, set()
+            )
+        self.assertEqual(queued, 1)
+        (kept,) = await self.waiting()
+        self.assertEqual((kept.subject, kept.object), ("Mirelle", "Oakmere"))
+
+    async def test_a_second_campaign_in_the_server_sees_none_of_the_first_ones(self) -> None:
+        await self.read()
+        other = await self.campaigns.create(GUILD, "Other", DM)
+        self.assertEqual(await self.store.waiting(GUILD, other.id), [])
+        self.assertEqual(await self.store.count(GUILD, other.id), 0)
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 3)
+
+    async def test_deleting_the_campaign_deletes_its_waiting_connections(self) -> None:
+        await self.read()
+        await self.campaigns.delete(GUILD, self.campaign.id)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM backstory_links")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_skip_the_rest_leaves_what_the_message_never_listed(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        ids = await self.ids()
+        await self.store.add(  # a connection that turned ready after this message was drawn
+            GUILD, self.campaign.id, [NewLink(ids["Brannoch"], "knows", ids["Oakmere"], "later")]
+        )
+        await self.button(view, "⏭️ Skip the rest").callback(self.it())
+        (left,) = await self.waiting()
+        self.assertEqual((left.subject, left.object, left.quote), ("Brannoch", "Oakmere", "later"))
+
+    async def test_no_connections_beyond_the_limit_wait_for_one_campaign(self) -> None:
+        from dmbot.memory import backstory_links as store_module
+
+        await self.read()
+        ids = await self.ids()
+        with patch.object(store_module, "MAX_WAITING", 4):
+            added = await self.store.add(
+                GUILD, self.campaign.id,
+                [NewLink(ids["Brannoch"], "knows", ids["Oakmere"], "a"),
+                 NewLink(ids["Mirelle"], "knows", ids["Oakmere"], "b"),
+                 NewLink(ids["Mirelle"], "knows", ids["Vale Keep"], "c")],
+            )  # fmt: skip
+        self.assertEqual(added, 1)  # three wait already; room for one more
+
+    async def test_a_two_way_kind_held_the_other_way_round_is_already_known(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Mirelle"], "kin_of", ids["Brannoch"], source="dm",
+            confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        (held,) = [r for r in await self.relations() if r.predicate == "kin_of"]
+        for link_ in await self.waiting():
+            await self.store.remove(GUILD, self.campaign.id, link_)
+        # the text says it the other way round from how the campaign stores it
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(held.object_id, "kin_of", held.subject_id, "q")]
+        )
+        # told nothing about two-way kinds, the reverse is a different pair and stays
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+        # told that it reads both ways, it is the one the campaign holds, and goes
+        two_way = await self.store.waiting(GUILD, self.campaign.id, symmetric={"kin_of"})
+        self.assertEqual(two_way, [])
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
 
     async def test_plain_keep_is_off_for_a_connection_that_uses_a_secret_name(self) -> None:
         view = ui_bg.ConnectionOffer(self.campaign.id)
