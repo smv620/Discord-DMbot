@@ -41,7 +41,7 @@ from dmbot.rules.homebrew import (
 )
 from dmbot.rules.homebrew_import import ImportRefused, Preview, Refresh
 from dmbot.rules.site_urls import normalise_domain, normalise_url
-from dmbot.ui import logic
+from dmbot.ui import homebrew_sources, logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -371,6 +371,7 @@ class ListMenu(_Menu):
         self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=3))
         self.add_item(_Button(self._load, label=LOAD_LABEL, row=3))
         self.add_item(_Button(self._sites, label=SITES_LABEL, row=3))
+        self.add_item(_Button(self._sources, label=homebrew_sources.SOURCES_LABEL, row=3))
         shown = entries[page * PAGE_ENTRIES : (page + 1) * PAGE_ENTRIES]
         if shown:
             self.pick = _Select(
@@ -413,11 +414,18 @@ class ListMenu(_Menu):
         self.add_item(_Button(self._download, label=DOWNLOAD_LABEL, row=row))
         self.add_item(_Button(self._sites, label=SITES_LABEL, row=row))
         self.add_item(_Button(self._packs, label=PACKS_LABEL, row=row + 1))
+        self.add_item(_Button(self._sources, label=homebrew_sources.SOURCES_LABEL, row=row + 1))
         for gone in removed[-UNDO_SHOWN:]:  # the newest removal (the note says which)
             self.add_item(_Button(partial(self._undo, gone), label=_undo_label(gone), row=row + 1))
 
     async def _open_kind(self, kind: str, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, kind=kind)
+
+    async def _sources(self, interaction: discord.Interaction) -> None:
+        if not await _is_dm(interaction, self.campaign):
+            await _tell(interaction, ONLY_DMS)
+            return
+        await homebrew_sources.open_sources(interaction, self.campaign)
 
     async def _all_kinds(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign)
