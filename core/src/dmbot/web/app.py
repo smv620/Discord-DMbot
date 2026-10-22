@@ -35,6 +35,7 @@ from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
+    all_names,
     email_signin,
     entitlements_writer,
     feedback,
@@ -627,6 +628,8 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
+        "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
+        "bad_sort": (400, "bad_sort"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -934,6 +937,59 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}/all-names")
+    async def me_campaign_all_names(
+        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: int = 1
+    ) -> dict[str, Any]:
+        """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
+        server manager who is not a DM gets no secret names; anyone else gets "not found"."""
+        session, _token = signed
+        try:
+            return await all_names.read_page(db, session, ref, q=q, kind=kind, sort=sort, page=page)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    name_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_name": (400, "bad_name"),
+        "bad_kind": (400, "bad_kind"),
+        "too_long": (400, "too_long"),
+        "needs_confirm": (400, "needs_confirm"),
+        "bad_target": (400, "bad_target"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/all-names/{entity_id}", status_code=202)
+    async def me_campaign_all_names_act(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One DM action on a name (#2294): queued for the bot, which applies it the way the
+        Discord name card does. The answer is polled at `.../all-names/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await all_names.queue_action(db, session, ref, entity_id, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/all-names/answers/{answer}")
+    async def me_campaign_all_names_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in DM's own action stands: waiting, working, done (with the changed
+        name's row) or failed (with why)."""
+        session, _token = signed
+        try:
+            return await all_names.read_action(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/names")
     async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:
