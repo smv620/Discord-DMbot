@@ -10412,7 +10412,9 @@ ALL_NAMES_SAID = """
     CREATE FUNCTION dmbot_web_all_names_said(g BIGINT, c TEXT, ids TEXT[]) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
-        IF dmbot_current_guild() IS DISTINCT FROM g
+        -- (a page is 20 names; a longer list is no page's, so it gets nothing)
+        IF cardinality(ids) > 100
+           OR dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
            OR NOT EXISTS (SELECT 1 FROM campaign_dms d
                           WHERE d.guild_id = g AND d.campaign_id = c

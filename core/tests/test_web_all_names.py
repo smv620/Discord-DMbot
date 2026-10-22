@@ -370,8 +370,8 @@ class TheSaying(Listing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.bob = await self.signed(BOB, THURSDAY)
+        # (adding an entry also makes its own name, which is the main name the page edits)
         self.zeth = await self.add("Ka'zeth", "npc")
-        await self.alias(self.zeth, "Ka'zeth")  # the entry's own name, as the narrator reads it
         await self.alias(self.zeth, "the Pale King")
 
     async def rows(self, who: Any = None) -> dict[str, dict[str, Any]]:
@@ -401,20 +401,54 @@ class TheSaying(Listing):
         assert found is not None
         self.assertEqual(found["text"], "Ka'zeth")
 
-    async def test_an_entry_with_no_main_name_has_neither_key(self) -> None:
-        row = (await self.rows())["Dawnbreaker"]  # added without an alias of its own name
+    async def test_an_entry_with_no_public_main_name_has_neither_key(self) -> None:
+        # its own name made secret: no public name reads like the entry's, so nothing to edit
+        await self.sql(
+            "UPDATE memory_aliases SET secret = true WHERE entity_id = %s AND lower(text) = %s",
+            self.sword,
+            "dawnbreaker",
+        )
+        row = (await self.rows())["Dawnbreaker"]
         self.assertNotIn("aliasId", row)
         self.assertNotIn("saidAs", row)
 
-    async def test_a_secret_main_name_has_neither_key_and_its_spelling_is_never_sent(self) -> None:
+    async def test_a_secret_main_name_has_neither_key_and_a_public_look_alike_does_not_change_that(
+        self,
+    ) -> None:
         vecnor = await self.add("Vecnor", "npc")
-        await self.alias(vecnor, "Vecnor", secret=True)
         await self.sql(
-            "UPDATE memory_aliases SET said_as = NULL WHERE entity_id = %s", vecnor
-        )  # (a secret name may not hold one: the table's own check)
+            "UPDATE memory_aliases SET secret = true WHERE entity_id = %s AND lower(text) = %s",
+            vecnor,
+            "vecnor",
+        )
         row = (await self.rows())["Vecnor"]
         self.assertNotIn("aliasId", row)
         self.assertNotIn("saidAs", row)
+
+    async def test_there_is_one_main_name_per_entry_even_with_another_name_that_reads_the_same(
+        self,
+    ) -> None:
+        await self.alias(self.zeth, "KA'ZETH")  # a second public name that reads the same
+        row = (await self.rows())["Ka'zeth"]
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_aliases WHERE entity_id = %s", (self.zeth,)
+            )
+            counted = await cur.fetchone()
+        assert counted is not None
+        self.assertGreaterEqual(counted["n"], 2)
+        self.assertRegex(row["aliasId"], r"^[0-9a-f]{32}$")  # one of them, never two rows
+
+    async def test_a_list_of_more_than_100_ids_gets_nothing(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_all_names_said(%s, %s, %s) AS r",
+                (self.g, self.one.id, [self.zeth] * 101),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["r"])
 
     async def test_another_campaigns_entry_gets_no_keys_even_when_asked_for_by_id(self) -> None:
         other = await self.memory.add_entity(
