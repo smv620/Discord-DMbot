@@ -173,6 +173,25 @@ class TheLookAlikes(Spellings):
         self.assertNotIn("Beleros", names)  # merged away
         self.assertNotIn("Bel Eros the Elder", names)  # forgotten
 
+    async def test_the_groups_follow_every_change_even_though_they_are_kept(self) -> None:
+        self.assertEqual(len(await self.groups()), 1)
+        self.assertEqual(len(await self.groups()), 1)  # (kept)
+        extra = await self.add("Belleroz", "npc")
+        self.assertIn("Belleroz", [n for g in await self.groups() for n in g])
+        await self.memory.set_entity_status(
+            self.g, self.one.id, extra, "rejected", source=DM_SOURCE
+        )
+        await self.memory.not_the_same(
+            self.g, self.one.id, [self.b1, self.b2, self.b3, self.b4], user_id=ALICE.id
+        )
+        self.assertNotIn("Beleros", [n for g in await self.groups() for n in g])
+
+    async def test_not_the_same_takes_up_to_fifty_one_names(self) -> None:
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.not_the_same(
+                self.g, self.one.id, [f"{i:032x}" for i in range(52)], user_id=ALICE.id
+            )
+
     async def test_not_the_same_is_remembered_and_not_offered_again(self) -> None:
         added = await self.memory.not_the_same(
             self.g, self.one.id, [self.b1, self.b2, self.b3, self.b4], user_id=ALICE.id

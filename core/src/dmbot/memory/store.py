@@ -345,6 +345,11 @@ class MemoryStore:
         # and every table question ask for it, and it only changes with the campaign's memory.
         # Bounded: the oldest entry goes past PEOPLE_CACHE_MAX campaigns.
         self._people: dict[tuple[int, str], tuple[int, list[tuple[int, list[str], list[str]]]]] = {}
+        # The look-alike groups of a campaign (#2426), kept while its names are the same: the
+        # names panel asks every time a DM opens it, and finding them takes a moment.
+        self._look_alikes: dict[
+            tuple[int, str], tuple[tuple[int, int, int], list[list[LookAlikeName]]]
+        ] = {}
 
     @asynccontextmanager
     async def _write(
@@ -2430,6 +2435,12 @@ class MemoryStore:
         (a card shows the look-alikes of its own name). For the DM; the caller checks."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             cur = await scope.conn.execute(
+                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s",
+                scope.ids,
+            )
+            row = await cur.fetchone()
+            version = int(row["memory_version"]) if row else -1
+            cur = await scope.conn.execute(
                 "SELECT e.id, e.name, (SELECT count(*) FROM memory_mentions m"
                 " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
                 " AND m.entity_id = e.id) AS heard FROM memory_entities e"
@@ -2446,7 +2457,18 @@ class MemoryStore:
                 scope.ids,
             )
             apart = {(str(r["a_id"]), str(r["b_id"])) for r in await cur.fetchall()}
-        found = find_look_alikes(names, apart=apart)
+        key = (guild_id, campaign_id)
+        stamp = (version, len(names), len(apart))
+        cached = self._look_alikes.get(key)
+        if cached is not None and cached[0] == stamp:
+            found = cached[1]
+        else:
+            # Off the event loop: a campaign of thousands of names takes a moment, and the
+            # bot's other work (voice, consent) must not wait for it.
+            found = await asyncio.to_thread(lambda: find_look_alikes(names, apart=apart))
+            if len(self._look_alikes) > 64:
+                self._look_alikes.clear()
+            self._look_alikes[key] = (stamp, found)
         if only is not None:
             wanted = set(only)
             found = [g for g in found if wanted & {n.id for n in g}]
@@ -2459,6 +2481,9 @@ class MemoryStore:
         the look-alike finder never offers it again. Returns how many pairs were new. Not in the
         change log (there is nothing to undo: the DM can still merge them by hand)."""
         keep = list(dict.fromkeys(ids))
+        if len(keep) > MERGE_MANY_MAX + 1:
+            raise MemoryRuleError(f"Pick up to {MERGE_MANY_MAX + 1} names at a time.")
+        self._look_alikes.pop((guild_id, campaign_id), None)
         pairs = [not_same_pair(a, b) for i, a in enumerate(keep) for b in keep[i + 1 :]]
         if not pairs:
             return 0

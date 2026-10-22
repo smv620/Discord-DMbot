@@ -1834,7 +1834,7 @@ names panel nor the speech-to-text hints can be a fixed list.
      name? ▾** (the most-used one first), then **🔗 Merge** with one confirmation. **Not the same** stops that
      group from being offered again. DMbot never merges by itself (two confirmed names are never merged
      automatically).
-  2. **🔗 Merge several…** on a name card: a menu of up to 25 names (search first if there are more) to fold
+  2. **🔗 Join several…** on a name card: a menu of up to 25 names (search first if there are more) to fold
      into this one, in one go.
   3. **On the website's All names page:** tick names, then **Merge selected**, pick the name to keep, and
      confirm.
@@ -1848,7 +1848,7 @@ names panel nor the speech-to-text hints can be a fixed list.
   beyond; never below 5 letters, never when a number or a one-letter last word differs, the linker's rule),
   sound alike (names of 5 letters or more), or one inside the other as whole words ("Belleros" and
   "Belleros the Elder"). "Not the same" is kept per pair in `name_not_same` (the DM's alone, not in backups,
-  gone with either name). 🔗 Merge several… sits on the Same as… screen, because the card's rows are full. The
+  gone with either name). 🔗 Join several… sits on the Same as… screen, because the card's rows are full. The
   website's door is the all-names action `merge-many {others[]}` on the kept name.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs

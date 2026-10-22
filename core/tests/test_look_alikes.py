@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from unittest.mock import patch
 
 from dmbot.memory import lookalikes as la
 from dmbot.memory.lookalikes import Name
@@ -86,14 +87,33 @@ class WhatLooksAlike(unittest.TestCase):
         found = groups("Oskar Vance", "Oskar Vence", "Belleros", "Beleros", "Bel Eros")
         self.assertEqual([len(g) for g in found], [3, 2])
 
-    def test_five_thousand_names_are_quick(self) -> None:
+    def test_five_thousand_names_are_quick_even_when_they_share_a_word_and_a_letter(self) -> None:
         names = [
-            Name(f"{i:032x}", f"{chr(97 + i % 26)}{'xyz' * (i % 5)}{i}ington", 0)
+            Name(f"{i:032x}", f"Captain {chr(98 + i % 3)}{i:04}x{i * 7 % 997}", 0)
             for i in range(5000)
         ]
+        calls = 0
+        real = la._alike
+
+        def counted(a: object, b: object) -> bool:
+            nonlocal calls
+            calls += 1
+            return real(a, b)  # type: ignore[arg-type]
+
         start = time.perf_counter()
-        la.find(names)
-        self.assertLess(time.perf_counter() - start, 5.0)
+        with patch.object(la, "_alike", counted):
+            la.find(names)
+        self.assertLess(calls, 500_000)  # not the 12 million pairs of comparing everyone
+        self.assertLess(time.perf_counter() - start, 15.0)
+
+    def test_empty_one_and_unreadable_names(self) -> None:
+        self.assertEqual(la.find([]), [])
+        self.assertEqual(la.find([Name("a" * 32, "Belleros")]), [])
+        odd = [Name(f"{i:032x}", n) for i, n in enumerate(["!!!", "???", "…", "龍", "龍"])]
+        self.assertTrue(all(len(g) > 1 for g in la.find(odd)))
+
+    def test_the_same_spelling_twice_groups(self) -> None:
+        self.assertEqual(groups("Belleros", "Belleros"), [["Belleros", "Belleros"]])
 
 
 if __name__ == "__main__":

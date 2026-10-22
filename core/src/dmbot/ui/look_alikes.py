@@ -1,11 +1,11 @@
-"""🔗 Look-alikes and 🔗 Merge several… (#2426): the easy way to make many spellings one name.
+"""🔗 Look-alikes and 🔗 Join several… (#2426): the easy way to make many spellings one name.
 
 The names panel's **🔗 Look-alikes (N)** shows the groups DMbot found (`memory/lookalikes.py`,
 no AI), one group per message: every name ticked, **Keep which name?** (the most heard first),
-then **🔗 Merge** with one confirmation that names them all, or **Not the same** (remembered, so
-the group is not offered again), or **Next group**. A name's card has **🔗 Merge several…**: tick
-up to 25 other names for it. Both end in `MemoryStore.merge_many`: one change, one **Undo** for
-all of it, nothing deleted.
+then **🔗 Join** with one confirmation that names them all, or **Not the same** (remembered, so
+the group is not offered again), or **Next group**. The Same as… screen of a name's card has
+**🔗 Join several…**: tick up to 25 other names for it. Both end in `MemoryStore.merge_many`:
+one change, one **Undo** for all of it, nothing deleted.
 
 The DM's alone (the same rule as the card's Same as…): the finder reads every confirmed name,
 secret ones included, and the merge moves a secret name as a secret name.
@@ -18,7 +18,7 @@ import logging
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.lookalikes import Name, by_use
+from dmbot.memory.lookalikes import Name, by_use, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
 from dmbot.ui import logic
@@ -44,10 +44,10 @@ log = logging.getLogger(__name__)
 
 PAGE = 25  # what one Discord menu holds
 BUTTON = "🔗 Look-alikes"
-MERGE_SEVERAL = "🔗 Merge several…"
-NOT_THE_DM = "Only the DM can join names."
-NONE_FOUND = "No look-alikes right now: no names that look or sound alike are waiting."
-NOTHING_CHANGED = "Something broke on DMbot's side. Nothing was changed. Try once more."
+MERGE_SEVERAL = "🔗 Join several…"
+NOT_THE_DM = "Only the DM can join names. Ask your DM to do it."
+NONE_FOUND = "That's all the groups. No more look-alikes right now."
+NOTHING_CHANGED = "That didn't work, and nothing was changed. Please try again."
 
 
 def label(count: int) -> str:
@@ -62,7 +62,7 @@ def _kind_of(kinds: dict[str, str], name: Name) -> str:
 def group_text(
     names: list[Name], kinds: dict[str, str], *, number: int, of: int, extra: int = 0
 ) -> str:
-    head = "**These may be one name:**" + (f" ({number} of {of})" if of > 1 else "")
+    head = "**DMbot thinks these may be one name:**" + (f" ({number} of {of})" if of > 1 else "")
     lines = [
         f"• **{_md(n.name)}** ({_kind_of(kinds, n)}"
         + (f", heard {n.mentions} times" if n.mentions > 1 else "")
@@ -75,21 +75,22 @@ def group_text(
             head,
             *lines,
             *more,
-            "Untick any that are a different name, pick the one to keep, then press 🔗 Merge. "
-            "DMbot only suggests; you decide.",
+            f"I'd keep **{_md(names[0].name)}**, the one heard most. Untick any that are "
+            "different, change the one to keep if you like, then press 🔗 Join.",
         ]
     )
 
 
 def _options(
-    names: list[Name], kinds: dict[str, str], *, ticked: bool
+    names: list[Name], kinds: dict[str, str], *, ticked: bool, only: str | None = None
 ) -> list[discord.SelectOption]:
+    """One option per name. `ticked`: all start ticked; `only`: just that one starts chosen."""
     return [
         discord.SelectOption(
             label=logic.shorten(n.name, logic.OPTION_LABEL_MAX),
             value=n.id,
-            description=_kind_of(kinds, n) + (f" · heard {n.mentions}" if n.mentions else ""),
-            default=ticked,
+            description=_kind_of(kinds, n),
+            default=ticked or n.id == only,
         )
         for n in names
     ]
@@ -98,17 +99,16 @@ def _options(
 def confirm_text(keep: Name, others: list[Name], kinds: dict[str, str]) -> str:
     """The one confirmation, naming every name it joins."""
     joined = ", ".join(f"**{_md(n.name)}**" for n in others)
-    differ = sorted({_kind_of(kinds, n) for n in [keep, *others]})
-    kind_line = (
-        f"\nThey are not all the same kind ({', '.join(differ)}); it keeps the kind of "
-        f"**{_md(keep.name)}** ({_kind_of(kinds, keep)})."
-        if len(differ) > 1
-        else ""
-    )
+    kind_line = ""
+    if len({_kind_of(kinds, n) for n in [keep, *others]}) > 1:
+        kind_line = (
+            f"\nThey are not all the same kind. It keeps the kind of **{_md(keep.name)}** "
+            f"({_kind_of(kinds, keep)})."
+        )
     return (
-        f"Make {joined} and **{_md(keep.name)}** one name? The others become "
-        f"**{_md(keep.name)}**'s other names, and their connections, notes and mentions go "
-        f"together. Nothing is deleted, and you can undo it.{kind_line}"
+        f"Join {joined} into **{_md(keep.name)}**? They become other names for "
+        f"**{_md(keep.name)}**. Connections, notes and mentions go together. Nothing is "
+        f"deleted, and you can undo it.{kind_line}"
     )
 
 
@@ -196,7 +196,7 @@ class LookAlikeGroup(_Menu):
         self.kinds = kinds
         self.names = by_use(groups[index])[:PAGE]
         self.ticked = {n.id for n in self.names}
-        self.keep: str | None = None
+        self.keep: str | None = self.names[0].id  # the most heard, unless the DM picks another
         self.members = _Select(
             self._ticked,
             placeholder="These are the same name…",
@@ -209,16 +209,16 @@ class LookAlikeGroup(_Menu):
         self.chooser = _Select(
             self._kept,
             placeholder="Keep which name? ▾",
-            options=_options(self.names, kinds, ticked=False),
+            options=_options(self.names, kinds, ticked=False, only=self.names[0].id),
             row=1,
         )
         self.add_item(self.chooser)
         grey = discord.ButtonStyle.secondary
         self.add_item(
-            _Button(self._merge, label="🔗 Merge", style=discord.ButtonStyle.primary, row=2)
+            _Button(self._merge, label="🔗 Join", style=discord.ButtonStyle.primary, row=2)
         )
         self.add_item(_Button(self._apart, label="Not the same", style=grey, row=2))
-        if len(groups) > 1:
+        if index + 1 < len(groups):
             self.add_item(_Button(self._next, label="Next group ▸", style=grey, row=2))
         self.add_item(_Button(self._done, label="Done", style=grey, row=2))
 
@@ -236,11 +236,13 @@ class LookAlikeGroup(_Menu):
     async def _merge(self, interaction: discord.Interaction) -> None:
         chosen = self._chosen()
         if len(chosen) < 2:
-            await _tell(interaction, "Tick at least two names to join.")
+            await _tell(
+                interaction, "Only one name is ticked. Tick another, or press Not the same."
+            )
             return
         keep = next((n for n in chosen if n.id == self.keep), None)
         if keep is None:
-            await _tell(interaction, "Pick the name to keep first, from the ticked ones.")
+            await _tell(interaction, "The name to keep is unticked. Pick another name to keep.")
             return
         others = [n for n in chosen if n.id != keep.id]
         self.stop()
@@ -254,7 +256,7 @@ class LookAlikeGroup(_Menu):
         await _answer_first(interaction, in_place=True)
         chosen = self._chosen()
         if len(chosen) < 2:
-            await _tell(interaction, "Tick at least two names that are not the same.")
+            await _tell(interaction, "Tick the names that are not the same (at least two).")
             return
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
@@ -281,7 +283,9 @@ class LookAlikeGroup(_Menu):
             rest,
             min(self.index, max(len(rest) - 1, 0)),
             self.kinds,
-            note="👍 Noted: those won't be suggested together again.",
+            note="👍 Noted: "
+            + ", ".join(f"**{_md(n.name)}**" for n in chosen)
+            + " won't be suggested together again. Here is the next group.",
         )
 
     async def _next(self, interaction: discord.Interaction) -> None:
@@ -291,14 +295,14 @@ class LookAlikeGroup(_Menu):
             interaction,
             self.campaign_id,
             self.groups,
-            (self.index + 1) % len(self.groups),
+            self.index + 1,
             self.kinds,
         )
 
     async def _done(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         self.stop()
-        await _replace(interaction, "Closed. Open the names panel again any time.", None)
+        await _replace(interaction, "Closed. Any that are left wait under 🔗 Look-alikes.", None)
 
 
 async def _reload(memory: MemoryStore, campaign: Campaign) -> list[list[Name]]:
@@ -380,7 +384,13 @@ class ConfirmMerge(_Menu):
             note=note,
         )
         await send_undo(
-            interaction, campaign.id, self.others[0].id, written.batch, memory, self.keep.name
+            interaction,
+            campaign.id,
+            self.others[0].id,
+            written.batch,
+            memory,
+            self.keep.name,
+            len(self.others),
         )
 
 
@@ -391,25 +401,27 @@ async def send_undo(
     batch: int | None,
     memory: MemoryStore,
     keep_name: str,
+    count: int,
 ) -> None:
     """Its own message, so Undo outlives the menu (and a restart): one press takes the whole
     merge back, because it was one change."""
-    from dmbot.ui.name_card import UndoButton
+    from dmbot.ui.name_card import UndoButton, UndoManyButton
 
     if batch is None:
         return
     view = discord.ui.View(timeout=None)
-    view.add_item(UndoButton(campaign_id, gone_id, batch))
+    view.add_item((UndoManyButton if count > 1 else UndoButton)(campaign_id, gone_id, batch))
+    which = "both names" if count == 1 else f"all {count + 1} names"
     await interaction.followup.send(
-        f"Wrong? Press **Undo** within {days(memory.keep_days)} to split them all from "
-        f"**{_md(keep_name)}** again.",
+        f"Wrong? **Undo** splits {which} from **{_md(keep_name)}** again "
+        f"(it works for {days(memory.keep_days)}).",
         view=view,
         ephemeral=True,
         allowed_mentions=discord.AllowedMentions.none(),
     )
 
 
-# ---- 🔗 Merge several… (a name's card) ----------------------------------------------------
+# ---- 🔗 Join several… (a name's card) ----------------------------------------------------
 
 
 async def show_merge_several(
@@ -432,7 +444,10 @@ async def show_merge_several(
     if names is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    pool = sorted(candidates(names, entity_id), key=lambda c: c[1].casefold())
+    # Look-alikes of this name first, then A to Z, so the DM rarely needs the search.
+    pool = sorted(
+        candidates(names, entity_id), key=lambda c: (not look_alike(name, c[1]), c[1].casefold())
+    )
     wanted = typed.strip().casefold()
     if wanted:
         pool = [c for c in pool if wanted in c[1].casefold()]
@@ -440,7 +455,9 @@ async def show_merge_several(
     if not shown:
         await _replace(
             interaction,
-            f"No other name like **{_md(typed)}**. Search again." if typed else NOT_AVAILABLE,
+            f"No other name like **{_md(typed)}**. Search again."
+            if typed
+            else "There are no other names to join yet.",
             MergeSeveral(campaign_id, entity_id, name, []),
         )
         return
@@ -530,7 +547,7 @@ class MergeSeveral(_Menu):
 
 
 class ConfirmCard(_Menu):
-    """The confirmation of Merge several… on a card: the card's name is the one kept."""
+    """The confirmation of Join several… on a card: the card's name is the one kept."""
 
     def __init__(self, campaign_id: str, keep: Name, others: list[Name]) -> None:
         super().__init__()
@@ -577,5 +594,11 @@ class ConfirmCard(_Menu):
         )
         await show_card(interaction, campaign.id, self.keep.id, replace=True, note=note)
         await send_undo(
-            interaction, campaign.id, self.others[0].id, written.batch, memory, self.keep.name
+            interaction,
+            campaign.id,
+            self.others[0].id,
+            written.batch,
+            memory,
+            self.keep.name,
+            len(self.others),
         )

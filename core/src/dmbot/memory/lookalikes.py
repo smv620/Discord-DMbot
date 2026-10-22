@@ -85,6 +85,22 @@ def _form(run: str) -> tuple[str, frozenset[str]]:
     return run, frozenset(sound_codes(run)) if len(run) >= MIN_SOUND_LETTERS else frozenset()
 
 
+MAX_FILE = 200  # names under one spelling or sound; more than this is no clue to anything
+
+
+def _spellings(run: str) -> set[str]:
+    """The run itself and the runs with one letter taken out (and, for a run long enough to be
+    two letters off a longer name, two letters out): two names a letter or two apart share one."""
+    found = {run}
+    if len(run) < MIN_LETTERS:
+        return found
+    once = {run[:k] + run[k + 1 :] for k in range(len(run))}
+    found |= once
+    if len(run) >= SHORT_NAME - 1:
+        found |= {r[:k] + r[k + 1 :] for r in once for k in range(len(r))}
+    return found
+
+
 def _tidy(name: str) -> _Tidy:
     ws = words(name)
     run = "".join(ws)
@@ -155,18 +171,45 @@ def find(names: Iterable[Name], *, apart: Collection[tuple[str, str]] = ()) -> l
             i = parent[i]
         return i
 
-    # Only names sharing a first letter can be close or sound alike, and only names sharing a
-    # (not small) word can contain one another, so only those are compared: 5000 names stay fast.
+    # Only names that could match are compared (5000 names must stay quick). A letter or two
+    # apart means the two share a spelling with one (or two) letters taken out ("symmetric
+    # delete"), so names are filed under those spellings and under their sound codes; pairs
+    # meet only inside a file. Containment is found by looking up each name's whole-word runs.
     candidates: set[tuple[int, int]] = set()
-    groups: dict[str, list[int]] = {}
+    files: dict[str, list[int]] = {}
     for i, t in enumerate(tidy):
-        groups.setdefault("L" + t.run[:1], []).append(i)
-        for w in set(t.words) - SMALL_WORDS:
-            groups.setdefault("W" + w, []).append(i)
-    for members in groups.values():
+        for run, sounds in t.forms:
+            if not run:
+                continue
+            for key in _spellings(run):
+                files.setdefault(key, []).append(i)
+            for code in sounds:
+                files.setdefault("~" + code, []).append(i)
+    # Containment: look each name's whole-word runs up among the other names' words, so a
+    # common word ("Captain") never makes thousands of pairs.
+    by_words: dict[tuple[str, ...], list[int]] = {}
+    for i, t in enumerate(tidy):
+        by_words.setdefault(t.words, []).append(i)
+    contained_pairs: list[tuple[int, int]] = []
+    for i, t in enumerate(tidy):
+        n = len(t.words)
+        for size in range(1, n):
+            for at in range(n - size + 1):
+                for j in by_words.get(t.words[at : at + size], ()):
+                    contained_pairs.append((i, j))
+
+    def add(i: int, j: int) -> None:
+        if i != j:
+            candidates.add((i, j) if i < j else (j, i))
+
+    for members in files.values():
+        if len(members) > MAX_FILE:  # a spelling this common says nothing
+            continue
         for x, i in enumerate(members):
             for j in members[x + 1 :]:
-                candidates.add((i, j) if i < j else (j, i))
+                add(i, j)
+    for i, j in contained_pairs:
+        add(i, j)
     for i, j in candidates:
         if pair(items[i].id, items[j].id) in apart:
             continue

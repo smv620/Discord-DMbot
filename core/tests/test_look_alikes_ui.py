@@ -1,4 +1,4 @@
-"""🔗 Look-alikes and 🔗 Merge several… (#2426): the group message, the one confirmation that names
+"""🔗 Look-alikes and 🔗 Join several… (#2426): the group message, the one confirmation that names
 every name, Discord's limits (25 options, 5 rows, 25-letter labels), and who may press what."""
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ def selects(view: discord.ui.View) -> list[discord.ui.Select[Any]]:
 class TheGroupMessage(unittest.TestCase):
     def test_every_name_is_listed_with_its_kind_and_how_often_it_was_heard(self) -> None:
         text = la.group_text(NAMES, KINDS, number=2, of=5)
-        self.assertIn("These may be one name", text)
+        self.assertIn("DMbot thinks these may be one name", text)
         self.assertIn("(2 of 5)", text)
         self.assertIn("**Belleros** (NPC, heard 9 times)", text)
         self.assertIn("**the Belleros** (place)", text)
-        self.assertIn("DMbot only suggests; you decide", text)
+        self.assertIn("I'd keep **Belleros**, the one heard most", text)
 
     def test_a_group_of_a_kind_of_one_needs_no_number(self) -> None:
         self.assertNotIn(" of ", la.group_text(NAMES, KINDS, number=1, of=1).splitlines()[0])
@@ -77,7 +77,7 @@ class TheGroupView(unittest.TestCase):
         view = self.view()
         ticked, keep = selects(view)
         self.assertTrue(all(o.default for o in ticked.options))
-        self.assertFalse(any(o.default for o in keep.options))
+        self.assertEqual([o.default for o in keep.options], [True, False, False])  # most heard
         self.assertEqual([o.label for o in keep.options], ["Name 000", "Name 001", "Name 002"])
         self.assertEqual(keep.placeholder, "Keep which name? ▾")
 
@@ -210,7 +210,7 @@ class TheMerge(unittest.IsolatedAsyncioTestCase):
         memory.merge_many.side_effect = RuntimeError("boom")
         asked, reply, _ = await self.run_yes(memory)
         self.assertIn(
-            "Nothing was changed", " ".join(str(c.args[1]) for c in reply.await_args_list)
+            "nothing was changed", " ".join(str(c.args[1]) for c in reply.await_args_list)
         )
         asked.followup.send.assert_not_awaited()
 
