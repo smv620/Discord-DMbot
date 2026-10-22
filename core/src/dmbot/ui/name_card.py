@@ -103,7 +103,7 @@ SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it bo
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 # A state the DM flips (#2321): the label says what pressing does, not what is now.
 HIDE_BUTTON = "🙈 Hide from players"
-SHOW_BUTTON = "👀 Players know it now"
+SHOW_BUTTON = "👁️ Reveal to players"
 HIDDEN_LINE = "🙈 Hidden from players. Only you see it."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
@@ -348,11 +348,13 @@ def card_text(
     others = [
         _md(e.text) + (" (old spelling)" if e.kind == "old" else "")
         for e in mine
-        if not e.secret and e.key != own
+        if (not e.secret or e.entry_hidden) and e.key != own
     ]
     # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
     hidden = [
-        _md(e.text) for e in mine if e.secret and not (entity.unseen_by_players and e.key == own)
+        _md(e.text)
+        for e in mine
+        if e.secret and not e.entry_hidden and not (entity.unseen_by_players and e.key == own)
     ]
     heard = lookup.heard.get(entity_id)
     when = (

@@ -198,7 +198,8 @@ class Doors(unittest.TestCase):
     def test_only_a_dm_gets_the_switch_on_the_kind_step(self) -> None:
         self.assertFalse(hasattr(names.KindPicker("c" * 32, "Kesh", [], []), "hide"))
         view = names.KindPicker("c" * 32, "Kesh", [], [], can_hide=True)
-        self.assertEqual(view.hide.label, names.PLAYERS_KNOW)
+        self.assertTrue(view.hidden)  # a name the DM adds starts unrevealed (#2404)
+        self.assertEqual(view.hide.label, names.PLAYERS_DONT_KNOW)
         self.assertIsInstance(view.hide, discord.ui.Button)
 
 

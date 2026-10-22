@@ -507,7 +507,8 @@ async def queue_links(
     ends: dict[str, str] = {}
     for key, entries in lookup.by_key.items():
         for e in entries:
-            if e.confirmed and not e.secret and not e.person:
+            # (a name the players don't know yet is still the DM's to connect, #2404)
+            if e.confirmed and (not e.secret or e.entry_hidden) and not e.person:
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
 
     def entry(name: str) -> str | None:
@@ -704,6 +705,7 @@ class ConnectionOffer(_Menu):
                 await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
+                    unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
                 )  # fmt: skip
             except MemoryRuleError:
                 log.info("A connection from a background was refused")

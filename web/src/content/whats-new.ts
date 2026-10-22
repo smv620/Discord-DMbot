@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "New names wait until they are said",
+    what: "A name you add by hand, add from a list or read from your backstory, and a connection from your backstory, stays hidden from your players until you press 👁️ Reveal to players. On the website, the game master's full view shows these dimmed.",
+    reason: "In review (slice 2 of #2404); held until dev1 deploys it. Saying a name at the table will show it automatically in the next step.",
+  },
+  {
+    date: "2026-10-22",
     title: "See where a new name was said",
     what: "When DMbot asks you to check a name it heard, it now shows two short bits of what was said around it, with who said each line and when. A 🔎 More places button shows more, and 📜 Open in transcript opens that session on the website.",
     reason: "In review (#2329); held until dev1 deploys it.",

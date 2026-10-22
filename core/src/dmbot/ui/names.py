@@ -745,12 +745,14 @@ class KindPicker(_Menu):
         self.name = name
         self.others = others
         self.secret = secret
-        self.hidden = False
+        # A name the DM adds by hand starts unrevealed (#2404): the players meet it when it is
+        # said at the table, or when the DM shows it.
+        self.hidden = can_hide
         if can_hide:  # only a DM keeps an entry back from the players
             self.hide = _Button(
                 self._flip_hidden,
-                label=PLAYERS_KNOW,
-                style=discord.ButtonStyle.secondary,
+                label=PLAYERS_DONT_KNOW,
+                style=discord.ButtonStyle.success,
                 row=1,
             )
             self.add_item(self.hide)
@@ -768,7 +770,9 @@ class KindPicker(_Menu):
     def prompt(self) -> str:
         """The question, and (to a DM) whether the name will be kept from the players."""
         text = f"**What is {_md(self.name)}?** Pick one to save it."
-        return text + ("\n🙈 Hidden from players. Only you will see it." if self.hidden else "")
+        if self.hidden:
+            text += "\n🙈 Hidden from players until it is said at the table. Only you see it."
+        return text
 
     async def _flip_hidden(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)

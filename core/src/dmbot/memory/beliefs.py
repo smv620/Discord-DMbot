@@ -144,7 +144,10 @@ async def believe_in(
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
     if perspective["kind"] == PARTY and (
-        confidence < KNOWN or relation["secret"] or relation["status"] != CONFIRMED
+        confidence < KNOWN
+        or relation["secret"]
+        or relation["unrevealed"]
+        or relation["status"] != CONFIRMED
     ):
         # Until guesses arrive (#2412, with their own rules for readers), what the players hold is
         # exactly the connections shown to them: a reveal or a hide goes through the connection's
@@ -166,7 +169,9 @@ async def follow(w: Changes, relation: dict[str, Any]) -> None:
     newest = await _newest(w, [relation["id"]])
     truth = newest.get((relation["id"], ids[TRUTH]))
     party = newest.get((relation["id"], ids[PARTY]))
-    secret = bool(relation["secret"])
+    # A connection the story is holding back (#2404) is kept from the party exactly like a secret
+    # one: the players' readers see only what The party believes, so no reader had to change.
+    secret = bool(relation["secret"]) or bool(relation.get("unrevealed", False))
     truth_status = SECRET_PLOT if secret else REVEALED_FACT
     # The truth is written from the secret flag only while it still says what the flag said (a
     # Secret Plot or a Revealed Fact): a belief the DM set another way (False Evidence, a
@@ -202,7 +207,8 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
         "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id, relation_id,"
         " confidence, status, session_at, evidence_ids, seq, recorded_at)"
         " SELECT r.guild_id, r.campaign_id, md5(p.id || r.id || 'truth'), p.id, r.id, 1.0,"
-        "        CASE WHEN r.secret THEN 'secret_plot' ELSE 'revealed_fact' END,"
+        "        CASE WHEN r.secret OR r.unrevealed THEN 'secret_plot'"
+        "             ELSE 'revealed_fact' END,"
         "        NULL, '{}', 0, %s::bigint"
         "   FROM memory_relations r"
         "   JOIN memory_perspectives p ON p.guild_id = r.guild_id"
@@ -222,7 +228,7 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
         "   JOIN memory_perspectives p ON p.guild_id = r.guild_id"
         "    AND p.campaign_id = r.campaign_id AND p.kind = 'party'"
         "  WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'"
-        "    AND NOT r.secret"
+        "    AND NOT r.secret AND NOT r.unrevealed"
         "    AND NOT EXISTS (SELECT 1 FROM memory_beliefs b WHERE b.guild_id = r.guild_id"
         "     AND b.campaign_id = r.campaign_id AND b.relation_id = r.id"
         "     AND b.perspective_id = p.id)",
@@ -266,7 +272,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
         same = mine is not None and shape(mine) == shape(belief)
         if same:
             continue
-        if perspective_id == party and new["secret"]:
+        if perspective_id == party and (new["secret"] or new["unrevealed"]):
             continue  # (the flag decides what the players know; see `follow`)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],

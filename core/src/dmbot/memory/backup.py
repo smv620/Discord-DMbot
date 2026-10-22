@@ -202,6 +202,7 @@ def _valid(column: str, value: object) -> bool:
         "party",
         "hidden_from_players",
         "made_before_name_gate",
+        "unrevealed",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -420,7 +421,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             top = known.get(name, 1) if isinstance(name, str) else 1
             if isinstance(version, int) and not isinstance(version, bool) and version > top:
                 version = 1
-            raw = {**raw, "definition_version": version}
+            # from before #2404: every connection a file holds had been shown to the players
+            raw = {"unrevealed": False, **raw, "definition_version": version}
         out.append(raw)
     return out
 

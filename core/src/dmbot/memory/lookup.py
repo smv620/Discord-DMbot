@@ -86,6 +86,10 @@ class NameEntry:
     codes: tuple[str, ...]
     person: bool = False  # a name of someone at the table, not of a story character
     said_as: str | None = None  # the DM's spelling for the recap's narrator (#1419)
+    # `secret` only because its entry is "Players don't know this one yet" (#2321); the name itself
+    # is not a secret one. A name a DM adds starts so (#2404), and a new spelling joined to it stays
+    # hidden with it, so a DM's list may still match it and the card calls it an ordinary name.
+    entry_hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +138,7 @@ class CampaignLookup:
                 sound_codes(a.text),  # the same function as for heard words
                 False,
                 a.said_as,
+                not a.secret and entities[a.entity_id].hidden_from_players,
             )
             for a in data.aliases
             if a.entity_id in entities and not is_dm_word(a.text)

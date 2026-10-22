@@ -10577,6 +10577,31 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+
+# A connection the DM's story holds back from the players until it is said at the table (#2404):
+# a backstory connection starts unrevealed. The column has a default and is added, not updated,
+# so every existing connection reads as revealed and no row-level security needs opening. The
+# party's belief in it (`beliefs.follow`) stays the one thing the players' readers look at; this
+# flag only decides whether `follow` gives the party that belief. The graph door also says, for
+# the full view, which names and connections the players have not been shown yet.
+UNREVEALED_CONNECTIONS = """
+    ALTER TABLE memory_relations ADD COLUMN unrevealed BOOLEAN NOT NULL DEFAULT false;
+    """ + (
+    _door.replace(
+        "'id', e.id, 'name', e.name,\n",
+        "'id', e.id, 'name', e.name,\n"
+        "                    'revealed', NOT (e.hidden_from_players OR e.audience_limited),\n",
+        1,
+    ).replace(
+        "'detail', r.detail, 'secret', r.secret, 'at', r.created_at)",
+        "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,\n"
+        "                    'revealed', " + _PARTY_KNOWS_R + ")",
+        1,
+    )
+)
+assert "'revealed', NOT (e.hidden" in UNREVEALED_CONNECTIONS
+assert "'revealed', EXISTS" in UNREVEALED_CONNECTIONS
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10784,6 +10809,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
+    ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -148,8 +148,10 @@ class BackstoryLinks:
                 if moved:  # it follows the merge: the same connection, on the name that stayed
                     move.append((a, predicate, b, r))
                 ready = entities[a]["status"] == "confirmed" == entities[b]["status"]
-                hidden = any(entities[x]["hidden_from_players"] or entities[x]["audience_limited"]
-                             for x in (a, b))  # fmt: skip
+                # A clue only some people know makes it secret. A name merely not shown to the
+                # players yet (#2321; every new name starts so, #2404) does not: a backstory
+                # connection is kept unrevealed instead, and cannot be shown before both names are.
+                hidden = any(entities[x]["audience_limited"] for x in (a, b))
                 out.append(
                     Waiting(
                         a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,

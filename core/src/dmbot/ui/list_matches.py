@@ -286,7 +286,7 @@ def _near(
 
 
 def _usable(entry: NameEntry, key: str) -> bool:
-    return entry.confirmed and entry.key != key and not entry.secret
+    return entry.confirmed and entry.key != key and (not entry.secret or entry.entry_hidden)
 
 
 def _sounds_known(names: CampaignLookup, name: str) -> bool:
@@ -294,7 +294,7 @@ def _sounds_known(names: CampaignLookup, name: str) -> bool:
     as a suggestion for the DM to check."""
     key = name_key(name)
     return any(
-        entry.confirmed and not entry.secret and entry.key != key
+        entry.confirmed and (not entry.secret or entry.entry_hidden) and entry.key != key
         for code in sound_codes(name)
         for entry in names.by_sound.get(code, ())
     )

@@ -217,7 +217,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
-        r["secret"], r["created_at"], r["definition_version"],
+        r["secret"], r["created_at"], r["definition_version"], r["unrevealed"],
     )  # fmt: skip
 
 
@@ -239,6 +239,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "secret": rel.secret,
         "created_at": rel.created_at,
         "definition_version": rel.definition_version,
+        "unrevealed": rel.unrevealed,
     }
 
 
@@ -1644,6 +1645,9 @@ class MemoryStore:
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
                         "unique_item": None,
+                        # Names from a list, or read from the DM's story, start unrevealed
+                        # (#2404): the table's first mention of one shows it to the players.
+                        "hidden_from_players": True,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -3090,16 +3094,18 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool = False,
         mention_ids: Sequence[str] = (),
+        unrevealed: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
         upgraded (the DM's confirmation, or secret=True); one the DM rejected stays
-        rejected unless the DM says it again."""
+        rejected unless the DM says it again. `unrevealed`: the story holds it back from the
+        players until the table has said it (#2404), the DM's to say."""
         async with self._write(guild_id, campaign_id, source) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
-                secret=secret, mention_ids=mention_ids,
+                secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3117,11 +3123,14 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool = False,
         mention_ids: Sequence[str] = (),
+        unrevealed: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
         campaign."""
         source = w.source
+        if unrevealed and source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
         _check_choice(status, LIVE, "relation status")
         check_status_change(None, status, source)
         _check_confidence(confidence)
@@ -3166,7 +3175,7 @@ class MemoryStore:
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version,
+            pred.version, unrevealed,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(new, existing)
@@ -3190,9 +3199,11 @@ class MemoryStore:
         status: str | None = None,
         to_session_at: int | None = None,
         secret: bool | None = None,
+        unrevealed: bool | None = None,
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
-        fact replaces it rather than overwriting it)."""
+        fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
+        to players on a connection (#2404): both its ends must be shown to the players first."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
@@ -3208,6 +3219,20 @@ class MemoryStore:
                 if current["secret"] and not secret and source != DM:
                     raise MemoryRuleError("Only the DM can stop keeping that secret.")
                 changes["secret"] = secret
+            if unrevealed is not None and unrevealed != current["unrevealed"]:
+                if source != DM:
+                    raise MemoryRuleError("Only the DM can say that.")
+                if not unrevealed:
+                    ends = await w.select(
+                        ENTITIES,
+                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited",
+                        [[current["subject_id"], current["object_id"]]],
+                    )
+                    if len(ends) < 2:
+                        raise MemoryRuleError(
+                            "Show both names to the players first, then this connection."
+                        )
+                changes["unrevealed"] = unrevealed
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
@@ -3318,6 +3343,7 @@ class MemoryStore:
             new, _ = await self.add_relation_in(
                 w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+                unrevealed=bool(current["unrevealed"]),
             )  # fmt: skip
             if new.id == relation_id:
                 return Written(new, w.batch)
