@@ -1327,7 +1327,7 @@ so the docs always show names the way Discord does. For the campaign
   DM confirmed that are true now. Because players can peek here and the list sits in view all
   session, it is built by `RecallService.roster`, which applies the **players** audience's rules
   and not a second copy: never a secret name or a name only misheard, an entry the DM marked
-  "Players don't know yet" (#2321, Supervisor-approved wording below), a limited clue or anything
+  "Players don't know yet" (#2321, see "Players don't know this one yet" below), a limited clue or anything
   that points to one, a story thread, a deed or standing, the DM's note (so there is **no
   description line**: the only description an entry has is the DM's note), a condition such as
   dead or missing (the table may not know yet), or anything from the adventure plan. Groups
@@ -4799,3 +4799,6 @@ audience to track: `memory_entities.hidden_from_players`, read everywhere as
 `Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
 recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
 DM sets it. The relationship-level secret is separate and already exists (a secret connection).
+A player's character, the party and DMbot's own player entries can't be hidden. A hidden name is
+treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
+until the DM shows it.
