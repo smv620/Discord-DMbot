@@ -361,7 +361,8 @@ class Travelling(MemoryTest):
         )
         async with self.db.guild(GUILD_A) as conn:
             for table in ALL:
-                if table.name in ("memory_predicates", "memory_changes"):
+                # (every campaign has The truth and The party from the start: no story in them)
+                if table.name in ("memory_predicates", "memory_changes", "memory_perspectives"):
                     continue
                 cur = await conn.execute(
                     f"SELECT count(*) AS n FROM {table.name} WHERE campaign_id = %s", (other,)
