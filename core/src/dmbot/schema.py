@@ -10874,7 +10874,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
-    ("0188_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
