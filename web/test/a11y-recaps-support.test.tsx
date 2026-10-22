@@ -227,18 +227,17 @@ describe("focus after a button was pressed", () => {
     await waitFor(() => expect(document.activeElement).toBe(save));
   });
 
-  it("goes to the recap's heading after Post to the table (the button is gone)", async () => {
+  it("goes to the recap's heading after Approve and post (the buttons are gone)", async () => {
     const base = mockApi("table");
     const api = {
       ...base,
-      decideRecap: async (ref: string, action: "post" | "again" | "drop") => {
+      approveRecap: async (ref: string, choice: "text", options?: { post?: boolean }) => {
         (document.activeElement as HTMLElement | null)?.blur();
-        const done = await base.decideRecap!(ref, action);
-        return done;
+        return base.approveRecap!(ref, choice, options);
       },
     } as unknown as AccountApi;
     render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
-    const post = await screen.findByRole("button", { name: /Post to the table/ });
+    const post = await screen.findByRole("button", { name: /Approve and post text only/ });
     post.focus();
     fireEvent.click(post);
     await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));

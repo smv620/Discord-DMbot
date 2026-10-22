@@ -549,6 +549,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     email: true,
     canAudio: true,
     audioHow: "part of your plan",
+    audioUnavailable: "",
   };
   // The campaign's public names, as the API lists them (#1451).
   const names: CampaignName[] = [
@@ -599,12 +600,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
     },
-    async approveRecap(ref, choice) {
-      calls.push(`approveRecap:${ref}:${choice}`);
+    async approveRecap(ref, choice, options) {
+      calls.push(`approveRecap:${ref}:${choice}${options?.post ? ":post" : ""}`);
       const r = await find(ref);
       if (!r.approval?.canApprove) throw new ApiError("not-allowed");
       if (choice !== "text" && !choices.canAudio) throw new ApiError("not-in-plan");
+      if (choice !== "text" && choices.audioUnavailable) throw new ApiError("audio-unavailable");
       r.approval = { approved: true, choice, approvedAt: 1791000100, canApprove: false };
+      // As the API does: an audio choice queues the audio, which the page then waits for.
+      if (choice !== "text")
+        r.audio = { state: "queued", error: "", current: false, canAskAgain: false };
+      if (options?.post) {
+        // As the API does in the same call: handed to the bot, so nothing is left to edit or post.
+        Object.assign(r, {
+          status: "posting",
+          canEdit: false,
+          canPost: false,
+          canDrop: false,
+          canTryAgain: false,
+        });
+      }
       return { ...r };
     },
     // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric

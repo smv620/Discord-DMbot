@@ -410,7 +410,13 @@ export interface RecapChoices {
   email: boolean;
   canAudio: boolean;
   audioHow: string;
+  /** Why the narration can't be made right now (#2419), for the greyed button: "plan" (not in the
+   * plan), "allowance" (this month's are used up) or "not_set_up" (nothing here makes it); "" when
+   * it can be made. Missing from an older API, which the page reads as "no reason known". */
+  audioUnavailable?: AudioUnavailable | "";
 }
+
+export type AudioUnavailable = "plan" | "allowance" | "not_set_up";
 
 export type RecapChoice = "text" | "audio" | "email";
 
@@ -908,6 +914,7 @@ export type ApiErrorKind =
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
+  | "audio-unavailable" // the narration can't be made here, or this month's are used up (#2419)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
@@ -980,7 +987,9 @@ export interface AccountApi {
   ): Promise<Recap>;
   /** Approve the text and pick what to make: voice-over, music, both or text only (#2083). The
    * API checks the cues again and refuses with `bad-cues`; any choice but text queues audio. */
-  approveRecap?(ref: string, choice: ApproveChoice): Promise<Recap>;
+  /** `post`: approve the text-only choice and hand it to the bot to post, in one call (#2419). An
+   * older API ignores it and leaves the recap approved and not posted. */
+  approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1187,6 +1196,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_ending: "not-ending",
   use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
+  audio_unavailable: "audio-unavailable",
   audio_off: "audio-off",
   bad_choice: "bad-choice",
   too_big: "too-big",
@@ -1511,10 +1521,11 @@ export function httpApi(
           housekeeping,
         }),
       ),
-    approveRecap: async (ref, choice) =>
+    approveRecap: async (ref, choice, options) =>
       recapFrom(
         await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, {
           choice,
+          ...(options?.post ? { post: true } : {}),
         }),
       ),
     recapAudioLinks: async (ref) =>
