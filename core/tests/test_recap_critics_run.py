@@ -203,6 +203,60 @@ class Criticising(WorkerHarness):
         loop = cr.loop_from_json(job.critics)
         self.assertEqual((loop.done, loop.round), (True, 0))  # no reading ever counted
 
+    def test_plotbots_room_grows_with_the_recap_and_is_capped(self) -> None:
+        self.assertEqual(pl.plot_room(0), pl.PLOT_TOKENS)
+        self.assertGreater(pl.plot_room(60), pl.PLOT_TOKENS)
+        self.assertEqual(pl.plot_room(10_000) * 2, pl.PLOT_ROOM_MAX)
+
+    async def test_a_plotbot_answer_cut_off_is_asked_again_with_twice_the_room(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [{"sentence": 1, "kind": "mis', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        with patch.object(pl, "PLOT_TOKENS_PER_SENTENCE", 400):  # so this short recap needs more
+            job = await self.go()
+        self.assertEqual(job.state, "ready")
+        first, second = careful.tokens[1], careful.tokens[2]
+        with patch.object(pl, "PLOT_TOKENS_PER_SENTENCE", 400):
+            self.assertEqual(first, pl.plot_room(len(rd.sentences_of(job.summary))))
+        self.assertGreater(first, pl.PLOT_TOKENS)
+        self.assertEqual(second, first * 2)
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round), (True, 1))  # the second answer was the reading
+
+    async def test_a_plotbot_answer_cut_off_twice_waits_and_never_fails_the_recap(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [{"sentence": 1', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, cut)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        job = await self.go()
+        self.assertNotEqual(job.state, "failed")
+        self.assertEqual(careful.tokens[2], careful.tokens[1] * 2)
+        self.clock.now += 1000
+        careful.answers[:] = [AGREE]  # the service answers in time
+        job = await self.settle(await self.go())
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+
+    async def test_critics_stopped_by_unreadable_answers_do_not_fail_a_draft_with_a_failed_check(
+        self,
+    ) -> None:
+        fast = self.fast_for(WITH_MOTIVE)
+        careful = fx.Canned(NO_NOTES, "not json", "not json")
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        real = rd.check_prose
+
+        def ending_fails(*a: Any, **k: Any) -> list[str]:
+            return (
+                ["the recap must end exactly where the session stopped"]
+                if k.get("last")
+                else real(*a, **k)
+            )
+
+        with patch.object(rd, "check_prose", ending_fails):
+            job = await self.settle(await self.go(), times=3)
+        self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
+        self.assertEqual(job.last_error, pl.CHECK_WAIT)
+
     async def test_critics_that_never_agree_stop_at_four_readings_and_leave_notes(self) -> None:
         fast = self.fast_for(grades=4)
         ask = change(0, "weight", "elaborate considerably", MEMORY.id)

@@ -128,6 +128,13 @@ def facts_room(sentences: int) -> int:
     return min(max(FACTS_TOKENS, FACTS_TOKENS_PER_SENTENCE * sentences + 400), FACTS_ROOM_MAX // 2)
 
 
+def plot_room(sentences: int) -> int:
+    """PlotBot's output room: never below the old 1200, and more for a long recap, whose changes
+    are many and each one names its sentence (#2365). A cut answer is asked for again with twice
+    this."""
+    return min(max(PLOT_TOKENS, PLOT_TOKENS_PER_SENTENCE * sentences + 600), PLOT_ROOM_MAX // 2)
+
+
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
@@ -135,7 +142,9 @@ SIG_TOKENS = 1500  # room for up to twelve notes and four details as JSON
 SIG_RESERVE = 6  # calls kept for the writer, formatter, facts, grader, title and a retry
 SIG_ERRORS_MAX = 2  # service errors at PlotBot's notes before the recap goes on without them
 SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
-PLOT_TOKENS = 1200  # room for up to eight changes as JSON
+PLOT_TOKENS = 1200  # room for up to eight changes as JSON (the least: see `plot_room`)
+PLOT_TOKENS_PER_SENTENCE = 50  # a change names its sentence, its kind and the reason in words
+PLOT_ROOM_MAX = 12_000  # after doubling too
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
 CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
@@ -1385,18 +1394,31 @@ class RecapWorker:
             except Exception as exc:  # optional context: the type, never the text
                 log.warning("Recap: couldn't read the story memory (%s)", type(exc).__name__)
         if sg.worth_asking(memory, inputs.previous):
+            room = plot_room(len(sentences))
+            message = cr.plot_message(sheet, memory, inputs.previous, sentences)
             raw = await self._call(
-                gid, cid, job, self._careful, cr.plot_system(),
-                cr.plot_message(sheet, memory, inputs.previous, sentences),
-                PLOT_TOKENS, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
+                gid, cid, job, self._careful, cr.plot_system(), message,
+                room, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
             )  # fmt: skip
+            if raw is not None and raw.cut and not raw.refused:
+                # Cut off at the limit: asked once more with twice the room (#2365), as the fact
+                # check is (#2345). A second cut ends as any unreadable answer does: it waits.
+                log.info("Recap: PlotBot's answer was cut off at %d tokens", room)
+                room = min(room * 2, PLOT_ROOM_MAX)
+                raw = await self._call(
+                    gid, cid, job, self._careful, cr.plot_system(), message,
+                    room, schema=cr.PLOT_SCHEMA, stage="plotbot", soft=True, free=waiting,
+                )  # fmt: skip
             if raw is None:
                 return await self._store.get(gid, cid, job.session_at)
             if not set(job.speakers) <= set(await consenting()):
                 return await self._restart(gid, cid, job)
             parsed = None if unusable(raw) else cr.parse_plot(raw.text)
             if parsed is None:  # an answer that cannot be read is not "nothing to change"
-                self._annotate(gid, cid, job, "plotbot", checks=["shape"])
+                # Said as what it was, so the report shows the cause: declined, cut off, or an
+                # answer in the wrong shape (#2365).
+                kind = "declined" if raw.refused else "cut off" if raw.cut else "shape"
+                self._annotate(gid, cid, job, "plotbot", checks=[kind])
                 return await self._unreadable(gid, cid, job, "plotbot")
             if parsed is not None:
                 vocabulary = sg.known_words(
@@ -1622,17 +1644,32 @@ class RecapWorker:
             return await self._hold(gid, cid, job, loop, why)
         prose = rd.Prose(best.summary, best.music)
         cut = 0
+        # The critics stopped because the service did not answer (or the day's tally): that is ours,
+        # so what would fail the recap waits for its check instead, and is tried again (#2365). Only
+        # the job's own ceiling still ends in a failure.
+        ours = why in (STOP_ERRORS, STOP_TALLY)
         if best.hard:
             if best.unfixable:
-                return await self._fail(gid, cid, job, FAILED_CHECKS)
+                if ours:
+                    return await self._hold(gid, cid, job, loop, why)
+                return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
             prose = rd.cut_sentences(prose, best.cuts)
-            if rd.check_prose(
+            problems = rd.check_prose(
                 prose, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=[], style=inputs.style, corrections=inputs.corrections,
-            ):  # fmt: skip
-                return await self._fail(gid, cid, job, FAILED_CHECKS)
+            )  # fmt: skip
+            if problems:
+                # The rule that failed, by name, so a run that ends here says why (#2365).
+                log.info(
+                    "Recap: after the critics stopped (%s) the draft fails: %s",
+                    why,
+                    cl.kinds(problems),
+                )
+                if ours:
+                    return await self._hold(gid, cid, job, loop, why)
+                return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
             cut = len(best.cuts)
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
