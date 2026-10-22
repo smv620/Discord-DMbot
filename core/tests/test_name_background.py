@@ -296,7 +296,9 @@ class ThePath(NamesTest):
         self.assertIn("Cost: about", text)
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
-        self.assertEqual([b.label for b in view.children], ["🤖 Find names", "Cancel"])
+        self.assertEqual(
+            [b.label for b in view.children], ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel"]
+        )
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
 
     async def test_only_a_dm_gets_the_offer(self) -> None:
