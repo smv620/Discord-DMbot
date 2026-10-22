@@ -37,6 +37,7 @@ TIMEOUT_S = 30
 MAX_REDIRECTS = 3
 FETCHING = asyncio.Semaphore(3)  # links opened at once, across all servers
 _GDOC = re.compile(r"^/document/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
+_GSHEET = re.compile(r"^/spreadsheets/d/([A-Za-z0-9_-]{20,})")
 _GDRIVE = re.compile(r"^/file/(?:u/\d+/)?d/([A-Za-z0-9_-]{20,})")
 # File hosts whose web pages (not files) mean "sign in" or "not shared with everyone".
 _FILE_HOSTS = (
@@ -59,14 +60,15 @@ _DRIVE_HOSTS = ("drive.google.com", "drive.usercontent.google.com")
 _TYPES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/msword": ".doc",
     "text/plain": ".txt",
     "text/markdown": ".txt",
-    "text/csv": ".txt",
+    "text/csv": ".csv",
     "text/html": ".html",
     "application/xhtml+xml": ".html",
 }
-_ENDINGS = (".pdf", ".docx", ".doc", ".txt", ".md", ".csv", ".html", ".htm")
+_ENDINGS = (".pdf", ".docx", ".xlsx", ".doc", ".txt", ".md", ".csv", ".html", ".htm")
 
 
 class LinkError(Exception):
@@ -180,6 +182,11 @@ def direct_url(link: str) -> yarl.URL:
     host = url.host.casefold()
     if host == "docs.google.com" and (m := _GDOC.match(url.path)):
         return yarl.URL(f"https://docs.google.com/document/d/{m[1]}/export?format=txt")
+    if host == "docs.google.com" and (m := _GSHEET.match(url.path)):
+        # The sheet's first tab as CSV (a link to another tab keeps its `gid`).
+        gid = url.query.get("gid") or (url.fragment.removeprefix("gid=") if url.fragment else "")
+        tab = f"&gid={gid}" if gid.isdigit() else ""
+        return yarl.URL(f"https://docs.google.com/spreadsheets/d/{m[1]}/export?format=csv{tab}")
     if host == "drive.google.com" and (m := _GDRIVE.match(url.path)):
         return yarl.URL(f"https://drive.google.com/uc?export=download&id={m[1]}")
     if _host_is(host, "dropbox.com"):
@@ -289,7 +296,7 @@ def _ending(resp: aiohttp.ClientResponse, url: yarl.URL) -> str | None:
     for name in names:
         for ending in _ENDINGS:
             if name.endswith(ending):
-                return {".md": ".txt", ".csv": ".txt", ".htm": ".html"}.get(ending, ending)
+                return {".md": ".txt", ".htm": ".html"}.get(ending, ending)
     return None
 
 
