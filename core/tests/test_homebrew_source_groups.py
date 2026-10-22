@@ -145,6 +145,37 @@ class TheList(unittest.IsolatedAsyncioTestCase):
         self.assertIn(ui.CUT_NOTE, text)
         self.assertLessEqual(len(text), 2000)
 
+    async def test_the_list_counts_each_entry_once_and_says_how_many(self) -> None:
+        it = self.it()
+        await ui.open_sources(it, campaign())
+        text = it.followup.send.await_args.args[0]
+        self.assertIn("2 entries · Linked from dndbeyond.com", text)
+        self.assertIn("1 entry · Typed in Discord", text)  # not doubled by the reader's copy
+        self.assertIn("1 entry · Pack: Frost Pack homebrew, v2", text)
+
+    async def test_a_player_pressing_the_menu_button_gets_no_list(self) -> None:
+        from dmbot.ui import homebrew as hb
+
+        menu = hb.ListMenu(campaign(), MIX[:1], 0, [])
+        press = self.it(PLAYER)
+        press.client.campaigns = SimpleNamespace(get=AsyncMock(return_value=campaign()))
+        await menu._sources(press)
+        self.assertEqual(press.response.sent[0][0], hb.ONLY_DMS)
+        press.client.homebrew.list.assert_not_awaited()
+
+    async def test_an_upload_with_no_credit_reads_uploaded_files_once(self) -> None:
+        (only,) = homebrew_groups.group([entry(1, source_kind="upload")])
+        self.assertEqual(only.title, "Uploaded files")
+
+    async def test_only_five_pages_are_listed_under_a_site(self) -> None:
+        pages = [
+            entry(i, source_kind="link", credit_domain="x.example.com", page_url=f"https://x/{i}")
+            for i in range(1, 9)
+        ]
+        text = ui._text(homebrew_groups.group(pages))
+        self.assertEqual(text.count("   <https://x/"), ui.PAGES_SHOWN)
+        self.assertIn("…and 3 more pages", text)
+
     async def test_an_empty_homebrew_says_so(self) -> None:
         self.bot.homebrew.list.return_value = []
         self.bot.homebrew_reader.list.return_value = []

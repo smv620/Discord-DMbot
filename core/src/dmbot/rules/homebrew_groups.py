@@ -17,7 +17,7 @@ from dmbot.rules import homebrew_file
 from dmbot.rules.homebrew import Homebrew, credit_label
 
 TYPED_TITLE = "Typed in Discord"
-UPLOAD_TITLE = "Uploaded files"
+UPLOAD_TITLE = "Uploaded files"  # an upload with no credit
 MAX_SOURCES = 25  # what one Discord menu can hold
 
 
@@ -52,14 +52,15 @@ def group(entries: Sequence[Homebrew]) -> list[Group]:
         elif e.source_kind == "link":
             links.setdefault(e.credit_domain or "a website", []).append(e)
         elif e.source_kind == "upload":
-            uploads.setdefault(credit_label(e) or UPLOAD_TITLE, []).append(e)
+            uploads.setdefault(credit_label(e), []).append(e)
         else:
             typed.append(e)
     out: list[Group] = []
     if typed:
         out.append(Group("typed", "typed", TYPED_TITLE, tuple(typed)))
     for label, rows in uploads.items():
-        out.append(Group(f"upload:{label}", "upload", f"Upload, {label}", tuple(rows)))
+        title = f"Upload, {label}" if label else UPLOAD_TITLE
+        out.append(Group(f"upload:{label}", "upload", title, tuple(rows)))
     for site, rows in links.items():
         out.append(Group(f"link:{site}", "link", f"Linked from {site}", tuple(rows)))
     for name, rows in packs.items():
