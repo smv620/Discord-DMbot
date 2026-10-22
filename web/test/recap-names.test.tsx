@@ -10,6 +10,7 @@ import { ApiError, type AccountApi, type CampaignName } from "../src/account/api
 import { mockApi } from "../src/account/mock";
 import RecapNames, { campaignRefOf } from "../src/account/RecapNames";
 import Recaps from "../src/account/Recaps";
+import { sayIt as sayWords } from "../src/content/say-it-words";
 import { nameWords as words } from "../src/content/recap-names";
 
 const live = vi.hoisted(() => ({ recaps: true, audio: true }));
@@ -40,6 +41,12 @@ function open() {
   fireEvent(details, new Event("toggle"));
 }
 
+// The part keeps an (empty) alert for each name, so the one that says something is the one to read.
+async function alertNow(): Promise<HTMLElement> {
+  await waitFor(() => expect(screen.getAllByRole("alert").some((a) => a.textContent)).toBe(true));
+  return screen.getAllByRole("alert").find((a) => a.textContent)!;
+}
+
 function box(label: string) {
   return screen.getByLabelText(label) as HTMLInputElement;
 }
@@ -64,13 +71,21 @@ describe("the part", () => {
     expect(screen.getByText(words.secret)).toBeTruthy();
   });
 
+  it("says how Say it works once for the whole list, not under every name", async () => {
+    render(<RecapNames api={mockApi("table")} recapRef={REF} />);
+    open();
+    await screen.findByLabelText(words.label("Ka'zeth"));
+    expect(screen.getAllByRole("textbox").length).toBeGreaterThan(1);
+    expect(screen.getAllByText(sayWords.how)).toHaveLength(1);
+  });
+
   it("saves one name with a one-line confirmation, and sends the tidied words", async () => {
     const api = mockApi("table");
     render(<RecapNames api={api} recapRef={REF} />);
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "  Kah-zeth  " } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect(await screen.findByText(words.saved)).toBeTruthy();
     expect((api as { calls: string[] }).calls).toContain(
       `saveSaidAs:200000000000000001.cmp1:${"a".repeat(32)}:Kah-zeth`,
@@ -83,7 +98,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Brynwater"));
     fireEvent.input(input, { target: { value: "" } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
     expect(await screen.findByText(words.cleared)).toBeTruthy();
   });
 
@@ -93,8 +108,8 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "x".repeat(81) } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
-    expect((await screen.findByRole("alert")).textContent).toBe(words.tooLong);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
+    expect((await alertNow()).textContent).toBe(words.tooLong);
     expect((api as { calls: string[] }).calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false);
   });
 
@@ -115,8 +130,8 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
-    fireEvent.click(input.parentElement!.querySelector("button")!);
-    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    fireEvent.click(input.parentElement!.querySelector("button[id^='save-said-as']")!);
+    expect((await alertNow()).textContent).toBe(message);
   });
 
   it("sends one request for two quick taps", async () => {
@@ -133,7 +148,7 @@ describe("the part", () => {
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
-    const button = input.parentElement!.querySelector("button")!;
+    const button = input.parentElement!.querySelector("button[id^='save-said-as']")!;
     fireEvent.click(button);
     fireEvent.click(button);
     expect(calls).toBe(1);
@@ -150,7 +165,7 @@ describe("the part", () => {
     };
     const { unmount } = render(<RecapNames api={failing} recapRef={REF} />);
     open();
-    expect((await screen.findByRole("alert")).textContent).toBe(words.loadFailed);
+    expect((await alertNow()).textContent).toBe(words.loadFailed);
     unmount();
     const none: AccountApi = { ...mockApi("table"), campaignNames: async (): Promise<CampaignName[]> => [] };
     render(<RecapNames api={none} recapRef={REF} />);

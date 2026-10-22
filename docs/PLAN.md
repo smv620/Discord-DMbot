@@ -550,6 +550,12 @@ always; DMbot never picks one.
   set), the DM's sidebar quotes both with their numbers and asks "Which one applies?", with buttons
   for each that record the answer. It never chooses. A player's table question gets "That's one for
   your DM.", and the DM is told privately.
+- **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
+  backups first; the answer-time question after. At save, a rule accepted from the linked file that
+  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
+  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  was not checked. Editing or removing a rule forgets what was decided about it, in the same
+  transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
   follows, then homebrew, then the book rules. The check above is only for rules at the same level.
 - **Cost:** one fast call per saved rule. A file accept with many rules checks them in one call.
@@ -1453,7 +1459,7 @@ Code changes: #87.
     stop, saying it stopped listening and why. The DM's message also says where to change it:
     ⚙️ Settings → Stop when quiet. A person whose private messages are closed is skipped; the DM screen
     line still says why it stopped.
-    *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
+    *Built (2026-10-19, #2034; auto-stop private messages #2288):* when DMbot stops by itself it also sends the campaign's DM a private message with the reason and where Settings is, and each other person still in the voice channel a short one (anyone there, opted in or not: it is a notice, not capture; a closed inbox is skipped and only counted in the log). `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132; since #2288 migration 0166 makes the choices 5, 10, 15 and 30 minutes, default 10, with no Off, and moves any campaign that was on Off, 60 or 90 to 30); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -4676,6 +4682,17 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address and per connection. No passwords, ever. *The account's email* is the one Stripe has
   for its payments (Checkout and the customer portal keep it up to date); an account that never
   paid has the email Discord gave the website, if it signed in there.
+- **Changing the email DMbot uses** (Supervisor, 2026-10-22, #2349: the recap page names the
+  address, so people need a way to fix it). The account page shows the address. A **payment
+  email** changes only in Stripe (the customer portal; `customer.updated` brings it back). Any
+  other email, or none, is changed on the account page: DMbot emails a link to the new address
+  and nothing changes until it is opened. The link is `/account#email-confirm=<token>` (in the
+  hash, so no server log holds it and a mail scanner opening it confirms nothing); the page
+  sends it back by POST, and it works only while signed in to **the same account** that asked.
+  One use, 15 minutes, like sign-in links; a new request replaces a waiting one, and a waiting
+  one can be cancelled. An address another account already uses is refused (sign-in by email
+  needs one address per account). Once changed, the **old** address gets a short note, so a
+  stolen session can't quietly move email sign-in. API shape: the comment on #2349.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
@@ -4789,3 +4806,11 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   #227)
 
 *Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.
+
+### Recap output room and Try again (#2341, 2026-10-22)
+The beat-sheet call's output room is sized for a full window of beats (`beats.room`) and doubles on the
+retry, so an answer cut off at the first limit is never asked for again at the same one. A recap that
+fails on our side (a cut-off answer, a check, the service) gives back the DM's Try again; one that fails
+for no speakers, funds or stopped recording does not. The failing check's fixed name is in `last_error`
+(`(check: length)`) and the log. dev1 starts a session over with
+`python -m dmbot.devtools.recap_requeue GUILD CAMPAIGN SESSION_AT`.

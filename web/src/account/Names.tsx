@@ -176,6 +176,9 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       <section class="stack" aria-labelledby="names-campaign">
         <h2 id="names-campaign">{data.campaign}</h2>
         <p class="muted small">{words.lead}</p>
+        <a class="button secondary" href={`/account/web/${encodeURIComponent(ref)}`}>
+          {words.webLink}
+        </a>
         {data.canEdit ? (
           <p class="small muted">{words.undoNote}</p>
         ) : (
