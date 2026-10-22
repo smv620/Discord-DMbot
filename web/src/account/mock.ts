@@ -1007,6 +1007,27 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return names.map((n) => ({ ...n }));
     },
+    // "How to say it" (#2317): a made-up respelling, the first half in capitals (suggest) or the second
+    // (from a recording), so the two can be told apart in a demo.
+    async suggestSaidAs(campaignRef, nameId) {
+      calls.push(`suggestSaidAs:${campaignRef}:${nameId}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      const half = Math.ceil(found.text.length / 2);
+      return `${found.text.slice(0, half).toUpperCase()}-${found.text.slice(half).toLowerCase()}`;
+    },
+    async respellFromVoice(campaignRef, nameId, clip) {
+      calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
+      await reachable();
+      signedIn();
+      const found = names.find((n) => n.id === nameId);
+      if (!found) throw new ApiError("not-found");
+      if (clip.size === 0) throw new ApiError("bad-clip");
+      const half = Math.ceil(found.text.length / 2);
+      return `${found.text.slice(0, half).toLowerCase()}-${found.text.slice(half).toUpperCase()}`;
+    },
     async saveSaidAs(campaignRef, nameId, saidAs) {
       calls.push(`saveSaidAs:${campaignRef}:${nameId}:${saidAs ?? ""}`);
       await reachable();

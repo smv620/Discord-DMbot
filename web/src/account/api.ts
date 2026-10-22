@@ -803,6 +803,7 @@ export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
+  | "voice-off" // turning a recording into letters is switched off on the server (#2316)
   | "no-consent" // the DM has not agreed to be recorded
   | "signed-out" // the session ended
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
@@ -995,6 +996,12 @@ export interface AccountApi {
     nameId: string,
     saidAs: string | null,
   ): Promise<void>;
+  /** "How to say it" (#2317, API #2316): a respelling of the written name, for the DM to take, change or
+   * ignore. Missing from an API older than that. */
+  suggestSaidAs?(campaignRef: string, nameId: string): Promise<string>;
+  /** One short recording of the DM saying the name (webm or ogg, at most 10 seconds and 1 MB); the
+   * API turns it into a respelling and deletes the clip. Resolves with the respelling, unsaved. */
+  respellFromVoice?(campaignRef: string, nameId: string, clip: Blob): Promise<string>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
@@ -1119,6 +1126,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   sort_failed: "sort-failed",
   bad_type: "bad-type",
   bad_clip: "bad-clip",
+  voice_off: "voice-off",
   no_consent: "no-consent",
   not_a_dm: "not-allowed",
   not_on_a_paid_plan: "no-paid-plan",
@@ -1400,6 +1408,23 @@ export function httpApi(
           `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
         )) as { names: CampaignName[] }
       ).names,
+    suggestSaidAs: async (campaignRef, nameId) =>
+      (
+        (await call(
+          "POST",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/suggest`,
+        )) as { suggestion: string }
+      ).suggestion,
+    respellFromVoice: async (campaignRef, nameId, clip) =>
+      (
+        (await call(
+          "POST",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/from-voice`,
+          undefined,
+          false,
+          clip,
+        )) as { respelling: string }
+      ).respelling,
     saveSaidAs: async (campaignRef, nameId, saidAs) => {
       await call(
         "PUT",
