@@ -202,6 +202,26 @@ class Refusals(Editing):
             await self.refused_edit(link=self.links["mira-keep"], action="secret"), "bad_action"
         )
 
+    async def test_the_door_itself_asks_for_the_confirmation_and_checks_the_link(self) -> None:
+        async def door(*args: Any) -> Any:
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+                cur = await conn.execute(
+                    "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                    (self.g, self.one.id, *args),
+                )
+                return (await cur.fetchone())["r"]  # type: ignore[index]
+
+        link = self.links["mira-keep"]
+        sure = await door(None, "link-remove", "", link, "", False)
+        self.assertEqual(sure["status"], "needs_confirm")  # straight to the door: still refused
+        gone = await door(None, "link-remove", "", "f" * 32, "", True)
+        self.assertEqual(gone["status"], "not_found")
+        pair = await door(self.mira, "link-add", "", self.mira, "knows", False)
+        self.assertEqual(pair["status"], "bad_target")  # not with itself
+        junk = await door(None, "link-words", "", link, "knows", True)
+        self.assertEqual(junk["status"], "bad_text")  # (a words change has no switch)
+
     async def test_a_connection_gone_by_the_time_the_bot_gets_to_it_is_not_found(self) -> None:
         link = self.links["rook-keep"]
         queued = await self.edit(link, action="secret", secret=True)
