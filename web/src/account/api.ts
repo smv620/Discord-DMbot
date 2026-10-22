@@ -226,6 +226,17 @@ export interface Recap {
   waitingForNames?: boolean;
   /** How many of those questions are left. */
   namesToAnswer?: number;
+  /** Written, and waiting for the checks to be able to run (#2280, #2297). While `working` is also
+   * true, the page says so in one steady line instead of "still writing". Missing from an older API. */
+  waitingForCheck?: boolean;
+  /** Notes from the checks about a recap that still had things they were unsure of: the DM's copy
+   * only, never posted or in a shared link (#2280). Missing from an older API. */
+  criticNotes?: string[];
+  /** Unix seconds the recap first waited for its check, 0 when it isn't waiting, and the numbers of
+   * the sentences nothing has read (#2280). The page for reading and approving such a draft needs
+   * #2305 and is not built yet. */
+  uncheckedSince?: number;
+  uncheckedSentences?: number[];
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -1136,9 +1147,16 @@ export function httpApi(
       } catch {
         // No JSON body: a plain server error.
       }
+      // A 404 whose code isn't a known one is a route or page the server doesn't have (an older API:
+      // FastAPI's own answer is {"detail":"Not Found"}; or the proxy's page): that is "not found", not
+      // an outage. A 404 with a known code keeps what the code says (errorKinds is read first).
       const kind =
         errorKinds[code] ??
-        (response.status === 403 ? "not-allowed" : "server");
+        (response.status === 403
+          ? "not-allowed"
+          : response.status === 404
+            ? "not-found"
+            : "server");
       // Cue problems are the page's answer, unless the recap can't be changed at all: then the
       // reload that goes with "not-allowed" and "not-editable" matters more.
       if (
