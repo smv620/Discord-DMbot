@@ -37,6 +37,7 @@ from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     all_names,
+    email_change,
     email_signin,
     entitlements_writer,
     feedback,
@@ -273,7 +274,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=[settings.site_origin],  # exactly the website, never echoed back
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],  # every method a route uses (#2415)
         allow_headers=[REQUEST_HEADER, CSRF_HEADER, "Content-Type"],
         max_age=600,
     )
@@ -573,6 +574,94 @@ def create_app(
             recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
             imports_for=settings.imports_enabled_for,
         )
+
+    change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
+
+    async def mail_change_link(user_id: int, new: str, token: str) -> bool:
+        """Mail the confirm link to the NEW address. False if it could not be sent."""
+        if mailer is None:
+            return False
+        result = await mailer.send(
+            user_id=user_id,
+            kind=f"email-change:{email_change.link_id(token)}",
+            to=new,
+            subject="Confirm your new DMbot email",
+            body=(
+                "Someone asked to use this address for a DMbot account. To confirm, open this "
+                f"link while you are signed in to that account:\n\n{account_page}"
+                f"#email-confirm={token}\n\nIt works once and ends after 15 minutes. If you "
+                "didn't ask for it, ignore this email and nothing changes."
+            ),
+        )
+        if result != "sent":
+            log.warning("An email-change link was not sent: %s", result)
+        return result == "sent"
+
+    @app.get("/me/email")
+    async def me_email(signed: Signed) -> dict[str, Any]:
+        """The address DMbot emails this person at, where it came from, and a change waiting
+        for its link (#2349). Their own only."""
+        session, _token = signed
+        now = await email_change.read(db, session.user_id, now=int(clock()))
+        return {"address": now.address, "source": now.source, "pending": now.pending}
+
+    @app.put("/me/email")
+    async def change_me_email(signed: Signed, request: Request) -> dict[str, Any]:
+        """Ask to use another address: `{"address": "..."}`. A link goes to the new one and
+        nothing changes until it is confirmed. A payment email is changed in Stripe."""
+        session, _token = signed
+        taken = change_limit.take(str(session.user_id))
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        made = await email_change.ask(
+            db, session.user_id, (await small_json(request)).get("address"), now=int(clock())
+        )
+        if made is None:
+            return {"pending": None}  # it is already the address in use
+        if isinstance(made, str):
+            status = {"bad_email": 400, "not_allowed": 403, "in_use": 409}[made]
+            raise HTTPException(status_code=status, detail=made)
+        new, token = made
+        if not await mail_change_link(session.user_id, new, token):
+            await email_change.cancel(db, session.user_id)
+            raise HTTPException(status_code=502, detail="email_failed")
+        log.info("An email change was asked for by user %s", session.user_id)
+        return {"pending": new}
+
+    @app.post("/me/email/confirm")
+    async def confirm_me_email(signed: Signed, request: Request) -> dict[str, Any]:
+        """The link's token (it came after a `#`, so no server saw it), posted by the signed-in
+        account that asked: only that account can use it. One use, 15 minutes."""
+        session, _token = signed
+        done = await email_change.confirm(
+            db, session.user_id, (await small_json(request)).get("token"), now=int(clock())
+        )
+        if done == "in_use":
+            raise HTTPException(status_code=409, detail="in_use")
+        if done is None:
+            raise HTTPException(status_code=400, detail="bad_link")
+        old, new = done
+        if old and mailer is not None and old.lower() != new.lower():
+            # Told to the OLD address: a stolen session cannot quietly move email sign-in.
+            await mailer.send(
+                user_id=session.user_id,
+                kind=f"email-changed:{email_change.link_id(new + str(int(clock())))}",
+                to=old,
+                subject="Your DMbot email was changed",
+                body=(
+                    f"Your DMbot email was changed to {new}. If this wasn't you, sign in with "
+                    f"Discord and sign out everywhere on your account page, then change it back: "
+                    f"{account_page}"
+                ),
+            )
+        log.info("An email change was confirmed by user %s", session.user_id)
+        return {"address": new}
+
+    @app.delete("/me/email/pending", status_code=204)
+    async def cancel_me_email(signed: Signed) -> Response:
+        session, _token = signed
+        await email_change.cancel(db, session.user_id)
+        return Response(status_code=204)
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:

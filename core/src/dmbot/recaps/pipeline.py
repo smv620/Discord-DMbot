@@ -151,6 +151,9 @@ CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not 
 # Why the loop stopped before any draft was read: the recap then waits for its check (below),
 # or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
 STOP_ERRORS, STOP_CEILING, STOP_TALLY = "service errors", "job ceiling", "day's tally"
+# The revision could not be had or checked (cut off, declined, or its fact check unavailable): ours,
+# like a service error, so the recap waits for its check and never fails for it (#2370).
+STOP_REVISION = "revision unavailable"
 CHECK_TALLY_RETRY_S = 3600  # and this long after the day's tally was reached (it is a rolling day)
 CHECK_WAIT = cr.CHECK_WAIT  # (the words live with the loop's other fixed wording)
 
@@ -1017,7 +1020,14 @@ class RecapWorker:
         )  # fmt: skip
 
     async def _shape(
-        self, gid: int, cid: str, job: Job, written: str, length: rd.Length, soft: bool = False
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        written: str,
+        length: rd.Length,
+        soft: bool = False,
+        free: bool = False,
     ) -> rd.Prose | str:
         """The written text cut into the schema's sections by the formatting model, or why it
         could not be (#2074). The check is in code: the formatted narration's words must be the
@@ -1037,6 +1047,7 @@ class RecapWorker:
                 schema=rd.prose_schema(),
                 stage="format",
                 soft=soft,
+                free=free,
             )
             if reply is None:
                 return ""
@@ -1184,6 +1195,7 @@ class RecapWorker:
         prose: rd.Prose,
         names: Collection[str] = (),
         corrections: Sequence[str] = (),
+        free: bool = False,
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -1191,7 +1203,7 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections)
+        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections, free)
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
@@ -1205,16 +1217,19 @@ class RecapWorker:
         shown: Sequence[bt.Beat],
         prose: rd.Prose,
         corrections: Sequence[str] = (),
+        free: bool = False,
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
         it cannot be had (a failed or unreadable call): like the grader, it never stops a recap
-        that passed every check."""
+        that passed every check. `free`: a try of a recap that waits for its check, off the job's
+        calls and its ceiling (#2370)."""
+        step = 0 if free else 1
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= self._ceiling(fresh) - 1:  # the last call is the title's: keep it
+        if not free and fresh.calls >= self._ceiling(fresh) - 1:  # the last is the title's
             return None
         await self._store.update(
-            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+            gid, cid, job.session_at, calls=fresh.calls + step, spent=fresh.spent + 1
         )
         # Room for a number pair for every sentence, not a fixed 800: a long recap's answer was
         # cut off, unreadable, and the check then skipped (#2345). A cut-off answer is asked for
@@ -1224,11 +1239,11 @@ class RecapWorker:
         for again in (False, True):
             if again:
                 fresh = await self._store.get(gid, cid, job.session_at) or job
-                if fresh.calls >= self._ceiling(fresh) - 1:
+                if not free and fresh.calls >= self._ceiling(fresh) - 1:
                     break  # (the room reported stays the one the cut answer had)
                 room = min(room * 2, FACTS_ROOM_MAX)
                 await self._store.update(
-                    gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+                    gid, cid, job.session_at, calls=fresh.calls + step, spent=fresh.spent + 1
                 )
             try:
                 reply = await self._careful.complete(
@@ -1294,15 +1309,16 @@ class RecapWorker:
         return cut
 
     async def _grade(
-        self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str
-    ) -> dict[str, int]:
+        self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str,
+        free: bool = False,
+    ) -> dict[str, int]:  # fmt: skip
         """The grader's numbers, or none: a grader that fails never stops a recap that passed
-        every check."""
+        every check. `free`: a try of a recap that waits, off the job's calls (#2370)."""
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= self._ceiling(fresh):
+        if not free and fresh.calls >= self._ceiling(fresh):
             return {}  # the job's ceiling holds for the grader too
         await self._store.update(
-            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+            gid, cid, job.session_at, calls=fresh.calls + (0 if free else 1), spent=fresh.spent + 1
         )
         try:
             reply = await self._fast.complete(
@@ -1335,7 +1351,9 @@ class RecapWorker:
         today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
         if job.errors >= CRITIC_ERRORS_MAX:
             return await self._stop_critics(gid, cid, job, loop, inputs, STOP_ERRORS)
-        if job.calls >= self._ceiling(job) - CRITIC_RESERVE:
+        # (not for a recap that waits: its tries are off the job's calls, so this ceiling can only
+        # be the one it was already at when it began to wait, and waiting never fails it, #2370)
+        if loop.waits == 0 and job.calls >= self._ceiling(job) - CRITIC_RESERVE:
             return await self._stop_critics(gid, cid, job, loop, inputs, STOP_CEILING)
         if today >= DAILY_CALLS - CRITIC_RESERVE:  # what the title step needs is kept
             return await self._stop_critics(gid, cid, job, loop, inputs, STOP_TALLY)
@@ -1355,7 +1373,8 @@ class RecapWorker:
             )  # (the grader failed on this one)
             return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=unchecked))
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
-        if loop.round >= cr.MAX_ROUNDS or job.calls > room:
+        # (a revision that waits for its try is off the job's calls, so the room is not looked at)
+        if loop.round >= cr.MAX_ROUNDS or (job.calls > room and loop.waits == 0):
             return await self._stop_critics(gid, cid, job, loop, inputs, "no agreement")
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
@@ -1363,9 +1382,12 @@ class RecapWorker:
 
     async def _save_loop(self, gid: int, cid: str, job: Job, loop: cr.Loop) -> Job | None:
         # (errors back to none: a step of the loop got through)
+        # A step got through: a "waiting for its check" note is over, and so is the waiting,
+        # whichever step it was (#2370); only `_hold` counts a wait.
+        loop = replace(loop, waits=0, since=0, told=False)
         await self._store.update(
             gid, cid, job.session_at, critics=loop.to_json(), errors=0, last_error=""
-        )  # (a step got through: a "waiting for its check" note is over)
+        )
         return await self._store.get(gid, cid, job.session_at)
 
     async def _read(
@@ -1416,9 +1438,6 @@ class RecapWorker:
                 loop,
                 motives=tuple(found),
                 best=first if loop.best is None else loop.best,
-                waits=0,  # a reading got through: the waiting is over
-                since=0,
-                told=False,
             )
             await self._save_loop(gid, cid, job, loop)
             job = await self._store.get(gid, cid, job.session_at) or job
@@ -1539,16 +1558,20 @@ class RecapWorker:
             schema=None if self._two else rd.prose_schema(),
             stage="revise",
             soft=True,
+            free=loop.waits > 0,  # a try of a recap that waits has its own budget (#2370)
         )  # fmt: skip
         if raw is None and kept is None:
             return await self._store.get(gid, cid, job.session_at)
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         revised: rd.Prose | None = None
+        unavailable = kept is None and raw is not None and bool(unusable(raw))  # cut or declined
         if kept is not None or (raw is not None and not unusable(raw)):
             written = kept if kept is not None else (raw.text if raw is not None else "")
             if self._two:
-                shaped = await self._shape(gid, cid, job, written, length, soft=True)
+                shaped = await self._shape(
+                    gid, cid, job, written, length, soft=True, free=loop.waits > 0
+                )
                 if shaped == "":  # the formatter's call failed; the loop will try again
                     self._written[key] = written  # without paying for the writing twice
                     return await self._store.get(gid, cid, job.session_at)
@@ -1579,17 +1602,18 @@ class RecapWorker:
                 facts, asked = await self._facts(
                     gid, cid, job, rd.pick_beats(sheet, length.beats), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                    inputs.corrections,
+                    inputs.corrections, loop.waits > 0,
                 )  # fmt: skip
             except AIOutOfFunds:
                 return await self._fail(gid, cid, job, FUNDS)
             if not asked:  # a revision that could not be checked is not shipped
                 revised = None
+                unavailable = True
             elif facts is not None and not facts.clean:
                 revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
             if revised is not None:
                 try:
-                    grade = await self._grade(gid, cid, job, sheet, revised.summary)
+                    grade = await self._grade(gid, cid, job, sheet, revised.summary, loop.waits > 0)
                 except AIOutOfFunds:
                     return await self._fail(gid, cid, job, FUNDS)
                 if facts is not None and grade:
@@ -1598,13 +1622,16 @@ class RecapWorker:
             return await self._restart(gid, cid, job)
         if revised is None:
             log.info("Recap: a critics revision did not pass the checks; the best draft stands")
-            return await self._stop_critics(gid, cid, job, loop, inputs, "revision failed")
+            why = STOP_REVISION if unavailable else "revision failed"
+            return await self._stop_critics(gid, cid, job, loop, inputs, why)
         await self._store.update(
             gid, cid, job.session_at,
             summary=revised.summary, original=revised.summary, music=list(revised.music),
             grade=grade, errors=0,
             to_confirm=self._to_confirm(revised.summary, sheet, transcript, inputs),
-            critics=replace(loop, pending=None, motives=None).to_json(),
+            critics=replace(
+                loop, pending=None, motives=None, waits=0, since=0, told=False
+            ).to_json(),
         )  # fmt: skip
         self._forget_draft(key)
         return await self._store.get(gid, cid, job.session_at)
@@ -1635,9 +1662,10 @@ class RecapWorker:
         """No draft could be read (the service, or the day's tally): the recap waits for its check
         and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
         hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
-        (`cr.wait_budget`, kept out of the job's calls). After 3 days the DM is told once that
-        DMbot hasn't been able to finish checking it and keeps trying; players never see an
-        unchecked draft."""
+        (`cr.wait_budget`: a reading's batches and PlotBot's two calls, or a revision's
+        `cr.WAIT_REVISE_CALLS`; kept out of the job's calls and its ceiling). After 3 days the DM is
+        told once that DMbot hasn't been able to finish checking it and keeps trying; players
+        never see an unchecked draft."""
         now = int(self._now())
         since = loop.since or now
         delay = cr.wait_for(loop.waits)
@@ -1691,7 +1719,7 @@ class RecapWorker:
         # The critics stopped because the service did not answer (or the day's tally): that is ours,
         # so what would fail the recap waits for its check instead, and is tried again (#2365). Only
         # the job's own ceiling still ends in a failure.
-        ours = why in (STOP_ERRORS, STOP_TALLY)
+        ours = why in (STOP_ERRORS, STOP_TALLY, STOP_REVISION)
         if best.hard:
             if best.unfixable:
                 if ours:
@@ -1736,6 +1764,9 @@ class RecapWorker:
                 done=True,
                 pending=None,
                 motives=None,
+                waits=0,
+                since=0,
+                told=False,
                 notes=best.notes + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
                 cut=cut,
             ).to_json(),
