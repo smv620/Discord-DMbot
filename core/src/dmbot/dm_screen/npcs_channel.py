@@ -305,6 +305,17 @@ def _out_of_place(order: list[str], wanted_keys: list[str]) -> int:
     return len(order) - len(tails)
 
 
+def _swap(now: npc_pages.Look, wanted: npc_pages.Look) -> bool:
+    """Whether the message must be replaced (it cannot gain or lose the v2 flag by an edit)."""
+    return now.layout != wanted.layout and "v2" in (now.layout, wanted.layout)
+
+
+def _swaps(have: dict[str, discord.Message], looks: dict[str, npc_pages.Look]) -> bool:
+    return any(
+        _swap(npc_pages.look_of(m), looks[k]) for k, m in have.items() if k in looks and k != _MORE
+    )
+
+
 async def sync_roster(
     channel: discord.TextChannel,
     me_id: int,
@@ -321,8 +332,9 @@ async def sync_roster(
     time (`left_for_next_time`). A new entry goes at the end. With `reorder` the list is put in
     order again, but only when `REORDER_MIN` or more messages are out of place: whatever follows
     the first message out of place is deleted (in bulk) and posted again. Idempotent. With a
-    `site_url` each entry's message carries a 📖 Open link button to its page (#2265); a message
-    gains, changes or loses it by an edit, like its text, within the same limits."""
+    `site_url` each entry's message is its name as a link button to its page, with the other lines
+    beside it (#2425); a message in the other layout is replaced once (new posted, then the old
+    deleted, in order), within the same limits. A name taken away goes first, by an edit."""
     result = SyncResult()
     wanted = wanted_messages(entries)
     links = {
@@ -366,7 +378,7 @@ async def sync_roster(
             for key in order[keep:]:
                 extras.append(have.pop(key))
             missing = [key for key, _ in wanted if key not in have]
-    elif missing and _MORE in have:
+    elif _MORE in have and (missing or _swaps(have, looks)):
         extras.append(have.pop(_MORE))  # it is last, so it moves behind the new messages
         missing = [key for key, _ in wanted if key not in have]
     deletes_left = False
@@ -378,7 +390,10 @@ async def sync_roster(
         result.left_for_next_time += left
         deletes_left = left > 0 or stopped
         await mapping.forget(guild_id, campaign_id, [k for k, m in key_of_messages(mapped, gone)])
-    changes: list[tuple[str, discord.Message, npc_pages.Look]] = []
+    # (key, message, how it looks now, scrub): `scrub` is an edit that only takes a name away from
+    # a message that is about to be replaced, so a name made secret goes at once, not when the
+    # replacement's turn comes
+    changes: list[tuple[str, discord.Message, npc_pages.Look, bool]] = []
     replacing: list[tuple[str, discord.Message]] = []  # a message can't gain or lose the v2 flag
     for key in order:
         if key not in have:
@@ -387,19 +402,28 @@ async def sync_roster(
         now = npc_pages.look_of(message)
         if now == looks[key]:
             continue
-        if now.layout != looks[key].layout and "v2" in (now.layout, looks[key].layout):
+        if _swap(now, looks[key]):
             replacing.append((key, message))
+            if _removes_text(now, looks[key]):
+                changes.append((key, message, now, True))
         else:
-            changes.append((key, message, now))
+            changes.append((key, message, now, False))
     changes.sort(key=lambda c: not _removes_text(c[2], looks[c[0]]))
     edits = 0
-    for key, message, _now in changes:
+    for key, message, now, scrub in changes:
         if edits >= MAX_EDITS:
             result.left_for_next_time += 1
             continue
         edits += 1
         try:
-            if looks[key].layout == "v2":
+            if scrub:  # the old layout, with the name gone; the replacement follows
+                entry = by_key[key]
+                if now.layout == "v2":
+                    layout = npc_pages.layout_for(entry, other_lines(entry), now.link)
+                    await message.edit(view=layout, allowed_mentions=NO_PINGS)
+                else:
+                    await message.edit(content=entry_text(entry), allowed_mentions=NO_PINGS)
+            elif looks[key].layout == "v2":
                 layout = npc_pages.layout_for(by_key[key], other_lines(by_key[key]), links[key])
                 await message.edit(view=layout, allowed_mentions=NO_PINGS)
             else:  # (text, and no button: the old 📖 Open one goes with the address)
@@ -410,7 +434,7 @@ async def sync_roster(
             if isinstance(exc, discord.Forbidden):
                 break
             continue
-        result.edited += 1
+        result.edited += 0 if scrub else 1
     if deletes_left:  # a new message now would land before ones still to be reposted
         result.left_for_next_time += len(missing) + len(replacing)
         return result
@@ -429,8 +453,12 @@ async def sync_roster(
         await mapping.save(guild_id, campaign_id, key, sent.id)
         result.sent += 1
         result.replaced += 1
-        gone, _stopped = await _delete_messages(channel, [old])
+        gone, stopped = await _delete_messages(channel, [old])
         result.deleted += len(gone)
+        if stopped:  # no right to delete: stop posting copies; the rest waits
+            result.stopped = True
+            result.left_for_next_time += 1
+            break
     if result.stopped:
         return result
     for key in missing:

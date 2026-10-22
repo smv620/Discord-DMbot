@@ -76,6 +76,7 @@ class Look:
     text: str = ""
     label: str = ""
     link: str = ""
+    mark: str = ""  # the button's icon: a person or a group
 
 
 def wanted_look(entry: RosterEntry, other_lines: str, url: str, full_text: str) -> Look:
@@ -83,7 +84,11 @@ def wanted_look(entry: RosterEntry, other_lines: str, url: str, full_text: str) 
     it when there are any) when there is a page to open, else today's text."""
     if not url:
         return Look("text", full_text)
-    return Look("v2", other_lines, button_label(entry.name, entry.kind), url)
+    return Look("v2", other_lines, button_label(entry.name, entry.kind), url, mark_of(entry))
+
+
+def mark_of(entry: RosterEntry) -> str:
+    return GROUP_MARK if entry.is_group else PERSON_MARK
 
 
 def layout_for(entry: RosterEntry, other_lines: str, url: str) -> discord.ui.LayoutView:
@@ -92,7 +97,7 @@ def layout_for(entry: RosterEntry, other_lines: str, url: str) -> discord.ui.Lay
     emoji. Components v2: the message has no `content`."""
     button: discord.ui.Button[Any] = discord.ui.Button(
         label=button_label(entry.name, entry.kind),
-        emoji=GROUP_MARK if entry.is_group else PERSON_MARK,
+        emoji=mark_of(entry),
         url=url,
     )
     view = discord.ui.LayoutView(timeout=None)
@@ -103,27 +108,28 @@ def layout_for(entry: RosterEntry, other_lines: str, url: str) -> discord.ui.Lay
     return view
 
 
-def _walk(components: Sequence[Any]) -> tuple[list[str], str, str]:
-    """(text pieces, button label, button address) from a message's components, whatever their
-    shape (a Section's text and accessory, a row's buttons)."""
+def _walk(components: Sequence[Any]) -> tuple[list[str], str, str, str]:
+    """(text pieces, button label, button address, button icon) from a message's components,
+    whatever their shape (a Section's text and accessory, a row's buttons)."""
     texts: list[str] = []
-    label = url = ""
+    label = url = mark = ""
     for part in components:
         content = getattr(part, "content", None)
         if isinstance(content, str):
             texts.append(content)
         for sub in getattr(part, "children", None) or []:
-            more, l2, u2 = _walk([sub])
+            more, l2, u2, m2 = _walk([sub])
             texts += more
-            label, url = label or l2, url or u2
+            label, url, mark = label or l2, url or u2, mark or m2
         accessory = getattr(part, "accessory", None)
         if accessory is not None:
-            _, l2, u2 = _walk([accessory])
-            label, url = label or l2, url or u2
+            _, l2, u2, m2 = _walk([accessory])
+            label, url, mark = label or l2, url or u2, mark or m2
         link = getattr(part, "url", None)
         if isinstance(link, str) and link:
             label, url = label or str(getattr(part, "label", "") or ""), url or link
-    return texts, label, url
+            mark = mark or str(getattr(part, "emoji", "") or "")
+    return texts, label, url, mark
 
 
 def look_of(message: discord.Message) -> Look:
@@ -131,9 +137,9 @@ def look_of(message: discord.Message) -> Look:
     components = list(getattr(message, "components", None) or [])
     flags = getattr(message, "flags", None)
     if getattr(flags, "components_v2", False):
-        texts, label, url = _walk(components)
-        return Look("v2", "\n".join(texts), label, url)
-    _, _, url = _walk(components)
+        texts, label, url, mark = _walk(components)
+        return Look("v2", "\n".join(texts), label, url, mark)
+    _, _, url, _ = _walk(components)
     return Look("text", message.content, "", url)
 
 

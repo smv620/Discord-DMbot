@@ -730,6 +730,52 @@ class TheButton(WithNpcs):
         self.assertEqual(chan.messages[0].content, nc.entry_text(named))
         self.assertEqual(npg.message_link(cast(Any, chan.messages[0])), "")
 
+    async def test_a_secret_name_leaves_the_old_message_at_once_when_the_swap_is_cut_short(
+        self,
+    ) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [replace(entry(n, f"Name {n}"), also_called=(f"Alias {n}",)) for n in range(1, 8)]
+        await self.run_sync(chan, mapping, entries, "")
+        entries[5] = replace(entries[5], also_called=())  # the DM made "Alias 6" secret
+        with patch.object(nc, "MAX_SENDS", 2):
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        shown = [npg.look_of(cast(Any, m)).text for m in chan.messages]
+        self.assertFalse([t for t in shown if "Alias 6" in t])  # gone at once, swapped or not
+        self.assertTrue(any("Alias 7" in t for t in shown))  # the others are still there
+
+    async def test_the_more_message_stays_last_after_the_swap(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, nc.MAX_ENTRIES + 4)]
+        with patch.object(nc, "MAX_SENDS", 1000):
+            await self.run_sync(chan, mapping, entries, "")
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        last = chan.messages[-1]
+        self.assertIn("+3 more", last.content)
+        self.assertEqual(len(chan.messages), nc.MAX_ENTRIES + 1)
+
+    async def test_a_changed_icon_is_noticed(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        person = entry(1, "Ash")
+        await self.run_sync(chan, mapping, [person], "https://dmbot.example")
+        group = replace(person, is_group=True)
+        done = await self.run_sync(chan, mapping, [group], "https://dmbot.example")
+        self.assertEqual(done.edited, 1)
+        self.assertEqual(npg.look_of(cast(Any, chan.messages[0])).mark, "👥")
+
+    async def test_no_right_to_delete_stops_the_swap_instead_of_posting_copies(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, 5)]
+        await self.run_sync(chan, mapping, entries, "")
+
+        async def refuse(self: Any) -> None:
+            raise discord.Forbidden(SimpleNamespace(status=403, reason="no"), "no")
+
+        with patch.object(V2Message, "delete", refuse):
+            done = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertTrue(done.stopped)
+        self.assertEqual(done.replaced, 1)  # one copy, then it stopped
+
     async def test_an_entry_with_a_button_shows_players_only_what_the_list_shows(self) -> None:
         chan, mapping = V2Channel(), MemMap()
         listed = RosterEntry(
