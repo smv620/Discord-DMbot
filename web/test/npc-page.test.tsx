@@ -17,10 +17,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const MEMBER = "/campaigns/100.cmp1/npcs/e1";
-const DM = "/campaigns/100.cmp1.npc-dm/npcs/e1";
-const OUTSIDE = "/campaigns/100.cmp1.npc-outside/npcs/e1";
-const GONE = "/campaigns/100.cmp1/npcs/gone";
+const MEMBER = "/account/npc/100.cmp1/e1";
+const DM = "/account/npc/100.cmp1.npc-dm/e1";
+const OUTSIDE = "/account/npc/100.cmp1.npc-outside/e1";
+const GONE = "/account/npc/100.cmp1/gone";
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 
 function open(path = MEMBER, api = mockApi("table")) {
@@ -30,9 +30,21 @@ function open(path = MEMBER, api = mockApi("table")) {
 const box = () => screen.findByLabelText(w.notesLabel) as Promise<HTMLTextAreaElement>;
 
 describe("the address", () => {
+  it("reads exactly the address Discord's 📖 Open builds", () => {
+    const entry = "0123456789abcdef0123456789abcdef";
+    expect(npcFromPath(`/account/npc/5.${entry}/${entry}`)).toEqual({ ref: `5.${entry}`, entry });
+  });
+
+  it("carries the person back here after Discord sign-in", () => {
+    window.history.pushState({}, "", "/account/npc/100.cmp1/e1");
+    const url = httpApi("https://api.example").signInUrl();
+    expect(url).toBe("https://api.example/auth/discord/start?next=%2Faccount%2Fnpc%2F100.cmp1%2Fe1");
+    window.history.pushState({}, "", "/");
+  });
+
   it("reads the campaign and the NPC", () => {
     expect(npcFromPath(MEMBER)).toEqual({ ref: "100.cmp1", entry: "e1" });
-    expect(npcFromPath("/campaigns/100.cmp1/npcs/")).toBeNull();
+    expect(npcFromPath("/account/npc/100.cmp1/")).toBeNull();
     expect(npcFromPath("/account/names/100.cmp1")).toBeNull();
   });
 });
@@ -45,9 +57,17 @@ describe("the page", () => {
     expect(screen.getByText(/the Ferrywoman/)).toBeTruthy();
     expect(screen.getByText("The Brynwater Ferrymen")).toBeTruthy();
     expect(screen.getByText(w.more(2))).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.recapLink("The night on the ferry", "12 Oct") })).toBeTruthy();
+    // A player sees the recap's title and day, but no link: the recap page is for the DMs.
+    expect(screen.getByText(w.recapLink("The night on the ferry", "12 Oct"))).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /night on the ferry/ })).toBeNull();
     expect(screen.getByText(w.notesWho)).toBeTruthy();
     expect(screen.queryByText(w.dmNote)).toBeNull();
+  });
+
+  it("links the recaps for a DM", async () => {
+    open(DM);
+    const link = (await screen.findByRole("link", { name: /night on the ferry/ })) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/account/recaps/100.cmp1.npc-dm.1791000000");
   });
 
   it("gives a DM their own note, which a member never sees", async () => {
@@ -152,10 +172,14 @@ describe("My notes", () => {
 });
 
 describe("all my notes", () => {
-  it("lists notes on names no longer listed, with the days they are kept", async () => {
-    open();
+  it("lists only the notes on names no longer listed, with the days they are kept", async () => {
+    const api = mockApi("table");
+    await api.saveNpcNote!("100.cmp1", "e1", "a listed one"); // "Mira Voss" is listed
+    open(MEMBER, api);
     await screen.findByText(w.unlistedHeading);
-    expect(screen.getByText("Old Tam")).toBeTruthy();
+    const heading = screen.getByText(w.unlistedHeading);
+    expect(heading.parentElement!.textContent).toContain("Old Tam");
+    expect(heading.parentElement!.textContent).not.toContain("Mira Voss");
     expect(screen.getByText(w.unlistedNote)).toBeTruthy();
   });
 
@@ -292,8 +316,60 @@ describe("try again", () => {
 describe("the site's rules for the page", () => {
   const read = (f: string) => readFileSync(`${process.cwd()}/public/${f}`, "utf8");
   it("serves every NPC from the one page, and never stores or indexes it", () => {
-    expect(read("_redirects")).toContain("/campaigns/*/npcs/*  /campaigns/npcs  200");
-    expect(read("_headers")).toMatch(/\/campaigns\/\*\n {2}Cache-Control: no-store\n {2}X-Robots-Tag: noindex, nofollow/);
+    expect(read("_redirects")).toContain("/account/npc/*  /account/npc  200");
+    expect(read("_headers")).toMatch(/\/account\/npc\*\n {2}Cache-Control: no-store\n {2}X-Robots-Tag: noindex, nofollow/);
+  });
+});
+
+describe("focus around the delete question", () => {
+  it("goes into the question, back on Keep, and to the status after a delete", async () => {
+    open();
+    const opener = await screen.findByRole("button", { name: w.deleteAsk });
+    fireEvent.click(opener);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: w.deleteNo })));
+    fireEvent.click(screen.getByRole("button", { name: w.deleteNo }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: w.deleteAsk })));
+    fireEvent.click(screen.getByRole("button", { name: w.deleteAsk }));
+    fireEvent.click(await screen.findByRole("button", { name: w.deleteYes }));
+    const said = await screen.findByText(w.deleted(1));
+    await waitFor(() => expect(document.activeElement).toBe(said));
+  });
+});
+
+describe("typing", () => {
+  it("drops control characters as they are pasted", async () => {
+    open();
+    const field = await box();
+    fireEvent.input(field, { target: { value: "a\u0000b\u0007c\nd" } });
+    expect(field.value).toBe("abc\nd");
+  });
+
+  it("does not send words typed during a save whose save failed", async () => {
+    const api = mockApi("table");
+    let release: () => void = () => {};
+    api.saveNpcNote = async () => {
+      await new Promise<void>((go) => (release = go));
+      throw new ApiError("too-soon");
+    };
+    const spy = vi.spyOn(api, "saveNpcNote");
+    open(MEMBER, api);
+    const field = await box();
+    fireEvent.input(field, { target: { value: "one" } });
+    fireEvent.blur(field);
+    fireEvent.input(field, { target: { value: "one two" } });
+    release();
+    await screen.findByText(w.tooSoon);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("kinds", () => {
+  it("shows a kind it does not know as Other", async () => {
+    const api = mockApi("table");
+    const read = api.npcPage!.bind(api);
+    api.npcPage = async (r, e) => ({ ...(await read(r, e)), kind: "mystery" });
+    open(MEMBER, api);
+    expect(await screen.findByText("Other")).toBeTruthy();
   });
 });
 

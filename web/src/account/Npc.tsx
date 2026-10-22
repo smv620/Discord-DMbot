@@ -8,9 +8,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { NOTE_LIMIT, npcPage as words } from "../content/npc-words";
 import { type AccountApi, ApiError, type MyNpcNote, type NpcPage } from "./api";
 
-/** The campaign and NPC in the address: `/campaigns/<server>.<campaign>/npcs/<entry>`. */
+/** The campaign and NPC in the address: `/account/npc/<server>.<campaign>/<entry>` (the one Discord links to). */
 export function npcFromPath(path: string): { ref: string; entry: string } | null {
-  const match = /^\/campaigns\/([^/]+)\/npcs\/([^/]+)\/?$/.exec(path);
+  const match = /^\/account\/npc\/([^/]+)\/([^/]+)\/?$/.exec(path);
   if (!match) return null;
   try {
     return { ref: decodeURIComponent(match[1] ?? ""), entry: decodeURIComponent(match[2] ?? "") };
@@ -18,6 +18,9 @@ export function npcFromPath(path: string): { ref: string; entry: string } | null
     return null; // a broken %-escape is just a name that isn't there
   }
 }
+
+// Same set as core's `_CONTROL` (web/npc_pages.py): everything below a space except tab and line breaks.
+const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 
 type View = "loading" | "ok" | "none" | "outside" | "down" | "signed-out";
 
@@ -104,9 +107,14 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
           <ul>
             {page.recaps.map((r) => (
               <li key={r.ref}>
-                <a href={`/account/recaps/${encodeURIComponent(r.ref)}`}>
-                  {words.recapLink(r.title, r.day)}
-                </a>
+                {/* The recap page is for the campaign's DMs; a player gets the title and day only. */}
+                {page.isDm ? (
+                  <a href={`/account/recaps/${encodeURIComponent(r.ref)}`}>
+                    {words.recapLink(r.title, r.day)}
+                  </a>
+                ) : (
+                  words.recapLink(r.title, r.day)
+                )}
               </li>
             ))}
           </ul>
@@ -184,10 +192,12 @@ function MyNotes({
     busy.current = true;
     setState("saving");
     const sent = text;
+    let ok = false;
     try {
       await api.saveNpcNote(refId, entry, sent);
       saved.current = sent;
       setState("saved");
+      ok = true;
       onSaved();
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
@@ -195,8 +205,9 @@ function MyNotes({
     } finally {
       busy.current = false;
     }
-    // Words typed while that save was out: send them too, so leaving the box never drops them.
-    if (latest.current !== saved.current && latest.current.length <= NOTE_LIMIT) {
+    // Words typed while that save was out: send them too, so leaving the box never drops them (only
+    // after a save that worked; a refusal is for the person to read first).
+    if (ok && latest.current !== saved.current && latest.current.length <= NOTE_LIMIT) {
       const again = latest.current;
       busy.current = true;
       try {
@@ -234,7 +245,8 @@ function MyNotes({
           value={text}
           aria-describedby="npc-count"
           onInput={(e) => {
-            setText((e.target as HTMLTextAreaElement).value);
+            // The API refuses control characters (other than a line break or tab); drop them as typed.
+            setText((e.target as HTMLTextAreaElement).value.replace(CONTROL, ""));
             setState("idle");
           }}
           onBlur={() => void save()}
@@ -278,6 +290,22 @@ function AllNotes({
   const [asking, setAsking] = useState(false);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const busy = useRef(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const status = useRef<HTMLParagraphElement>(null);
+  // Keyboard focus follows the confirmation: into it when it opens, back to the opener on Keep, and
+  // to the status line after a delete (the opener is gone from the screen while it asks).
+  const focusNext = useRef<"keep" | "opener" | "status" | null>(null);
+  const seen = useRef<{ asking: boolean; said: unknown }>({ asking, said });
+  useEffect(() => {
+    // Act only when the question opened or closed or something was said: an effect left over from an
+    // earlier render must not use up the request before the new screen is there.
+    if (seen.current.asking === asking && seen.current.said === said) return;
+    seen.current = { asking, said };
+    const where = focusNext.current;
+    focusNext.current = null;
+    (where === "keep" ? keep : where === "opener" ? opener : where === "status" ? status : null)?.current?.focus();
+  }, [asking, said]);
 
   async function refresh() {
     if (!api.myNpcNotes) return;
@@ -321,6 +349,7 @@ function AllNotes({
     busy.current = true;
     try {
       const n = await api.deleteMyNpcNotes!(refId);
+      focusNext.current = "status";
       setAsking(false);
       setNotes([]);
       onWiped();
@@ -356,8 +385,12 @@ function AllNotes({
           <button
             type="button"
             class="button secondary"
+            ref={opener}
             disabled={notes !== null && notes.length === 0}
-            onClick={() => setAsking(true)}
+            onClick={() => {
+              focusNext.current = "keep";
+              setAsking(true);
+            }}
           >
             {words.deleteAsk}
           </button>
@@ -365,16 +398,24 @@ function AllNotes({
       </div>
       {asking && (
         <div class="panel" role="group" aria-label={words.deleteAsk}>
-          <p>{words.deleteSure((notes ?? []).length)}</p>
+          <p>{notes === null ? words.deleteSureUnknown : words.deleteSure(notes.length)}</p>
           <button type="button" class="button" onClick={() => void remove()}>
             {words.deleteYes}
           </button>{" "}
-          <button type="button" class="button secondary" onClick={() => setAsking(false)}>
+          <button
+            type="button"
+            class="button secondary"
+            ref={keep}
+            onClick={() => {
+              focusNext.current = "opener";
+              setAsking(false);
+            }}
+          >
             {words.deleteNo}
           </button>
         </div>
       )}
-      <p role="status" class={said && !said.ok ? "warn" : "muted"}>
+      <p role="status" tabIndex={-1} ref={status} class={said && !said.ok ? "warn" : "muted"}>
         {said?.text ?? ""}
       </p>
     </section>

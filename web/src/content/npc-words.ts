@@ -23,7 +23,7 @@ export const npcPage = {
   notFound: "We couldn't find that name. Go back to Discord and press 📖 Open again.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
-  kindOf: (kind: string): string => kindWords[kind] ?? kind,
+  kindOf: (kind: string): string => kindWords[kind] ?? "Other",
   alsoCalled: "Also called",
   groups: "Groups",
   ties: "Close ties",
@@ -53,6 +53,7 @@ export const npcPage = {
     n === 1
       ? "Delete your 1 note in this campaign? This can't be undone."
       : `Delete your ${n} notes in this campaign? This can't be undone.`,
+  deleteSureUnknown: "Delete your notes in this campaign? This can't be undone.",
   deleteYes: "Yes, delete my notes",
   deleteNo: "Keep them",
   deleted: (n: number): string => (n === 1 ? "Deleted 1 note." : `Deleted ${n} notes.`),
