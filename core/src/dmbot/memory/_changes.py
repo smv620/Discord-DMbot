@@ -75,8 +75,10 @@ ENTITIES = Table(
         "unique_item",
         "audience_limited",
         "party",
+        "hidden_from_players",
     ),
-    defaults={"audience_limited": False, "party": False},  # a clue's switch (#1649), the party
+    # a clue's switch (#1649), the party, and "players don't know this one yet" (#2321)
+    defaults={"audience_limited": False, "party": False, "hidden_from_players": False},
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
 # each entry, a new condition closes it.
@@ -556,7 +558,12 @@ class Changes(Scope):
 _ADDED_LATER: dict[str, dict[str, Any]] = {
     "memory_relations": {"definition_version": 1},
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
-    "memory_entities": {"unique_item": None, "audience_limited": False, "party": False},
+    "memory_entities": {
+        "unique_item": None,
+        "audience_limited": False,
+        "party": False,
+        "hidden_from_players": False,
+    },
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,
