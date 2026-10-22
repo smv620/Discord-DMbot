@@ -51,7 +51,6 @@ from dmbot.dm_screen.buttons import may_change_screen, save_visibility
 from dmbot.dm_screen.clock import ClockButton
 from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
-from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_panel import RecapsButton
@@ -232,8 +231,11 @@ def _unpin(item: discord.ui.Item[Any]) -> None:
     item.row = None
 
 
-def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) -> discord.ui.View:
-    """The card's buttons. `viewer`: who it's for (it's private). The rarely used choices are a
+def settings_view(
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int, site_url: str = ""
+) -> discord.ui.View:
+    """The card's buttons. `viewer`: who it's for (it's private). `site_url`: the website, for the
+    📥 Import sessions link. The rarely used choices are a
     tap away: 👁️ Who can see the DM screen, and (when the viewer has anything in it) 🗂️ Campaign
     management."""
     view = discord.ui.View(timeout=None)
@@ -256,8 +258,13 @@ def settings_view(campaign: Campaign, offer: HandoverOffer | None, viewer: int) 
         view.add_item(NamesButton(campaign.id, row=4))  # names home (#1986)
         view.add_item(FeaturesButton(campaign.id, row=1))  # what is switched on (#1831)
         view.add_item(story_mode.StoryButton(campaign.id, row=0))  # Shared story (#1692)
-        if import_button.enabled(campaign.guild_id):  # only where importing is on (#2154, #2259)
-            view.add_item(ImportButton(campaign.id))
+        # One tap to the website's import page, with no private reply in between (#2300). A link
+        # runs no code: the website's sign-in and the API's DM check are the gate. Only where
+        # importing is on (#2154, #2259) and there is a website to open.
+        if import_button.enabled(campaign.guild_id):
+            url = import_button.page_url(site_url, campaign.guild_id, campaign.id)
+            if url:
+                view.add_item(import_button.link(url))
     return view
 
 
@@ -322,15 +329,20 @@ async def _may(
     )
 
 
+def _site(interaction: discord.Interaction) -> str:
+    """The website address the bot was set up with (empty: none)."""
+    return str(getattr(getattr(interaction.client, "settings", None), "site_url", "") or "")
+
+
 def _drawn(
-    campaign: Campaign, offer: HandoverOffer | None, viewer: int, card: str
+    campaign: Campaign, offer: HandoverOffer | None, viewer: int, card: str, site_url: str = ""
 ) -> tuple[str, discord.ui.View]:
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
         return visibility_text(campaign), visibility_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
-    return settings_text(campaign, offer, viewer), settings_view(campaign, offer, viewer)
+    return settings_text(campaign, offer, viewer), settings_view(campaign, offer, viewer, site_url)
 
 
 async def _redraw(
@@ -339,7 +351,7 @@ async def _redraw(
     """Show the card as saved now (the press was deferred as an update). If the card
     can't be redrawn (it's too old), the change still is saved: say so."""
     offer = await _open_offer(interaction, campaign.id)
-    text, view = _drawn(campaign, offer, interaction.user.id, card)
+    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction))
     try:
         await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:
@@ -383,7 +395,7 @@ class SettingsButton(
             return
         await interaction.response.send_message(
             settings_text(campaign, offer, interaction.user.id),
-            view=settings_view(campaign, offer, interaction.user.id),
+            view=settings_view(campaign, offer, interaction.user.id, _site(interaction)),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -860,17 +872,22 @@ class LevelButton(
 
 class QuietStopButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:quietstop:{_ID}:(?P<to>0|30|60|90)",
+    template=rf"dmbot:quietstop:{_ID}:(?P<to>[0-9]{{1,2}})",
 ):
-    """Stop when quiet (#2034): one tap goes to the next choice (30, 60, 90 minutes, Off) and the
-    card shows it. The button's ID carries the choice a press saves, so it works after a restart."""
+    """Stop when quiet (#2034, #2288): one tap goes to the next choice (5, 10, 15, 30 minutes,
+    then 5 again; there is no Off) and the card shows it. The button's ID carries the choice a
+    press saves, so it works after a restart. A button on an old card (60, 90 or 0) is read as
+    30 and saves the choice after it."""
 
     def __init__(self, campaign_id: str, minutes: int) -> None:
         self.campaign_id = campaign_id
-        self.next = QUIET_STOP_CHOICES[(QUIET_STOP_CHOICES.index(minutes) + 1) % 4]
+        shown = minutes if minutes in QUIET_STOP_CHOICES else 30
+        self.next = QUIET_STOP_CHOICES[
+            (QUIET_STOP_CHOICES.index(shown) + 1) % len(QUIET_STOP_CHOICES)
+        ]
         super().__init__(
             discord.ui.Button(
-                label=f"Stop when quiet: {quiet_stop.quiet_label(minutes)}",
+                label=f"Stop when quiet: {quiet_stop.quiet_label(shown)}",
                 emoji="🔇",
                 style=discord.ButtonStyle.secondary,
                 row=0,
@@ -883,8 +900,10 @@ class QuietStopButton(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> QuietStopButton:
         # What is saved is the choice in the ID; the label is redrawn from the saved value.
-        button = cls(match["campaign"], int(match["to"]))
-        button.next = int(match["to"])
+        wanted = int(match["to"])
+        button = cls(match["campaign"], wanted)
+        # A button from before #2288 may carry 0, 60 or 90, which are no longer choices: save 30.
+        button.next = wanted if wanted in QUIET_STOP_CHOICES else 30
         return button
 
     async def callback(self, interaction: discord.Interaction) -> Any:
@@ -953,7 +972,7 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
         return
     campaign = allowed[0]
     offer = await _open_offer(interaction, campaign_id) if card != "visibility" else None
-    text, view = _drawn(campaign, offer, interaction.user.id, card)
+    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction))
     try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"

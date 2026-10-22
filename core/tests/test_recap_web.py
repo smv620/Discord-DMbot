@@ -1219,6 +1219,28 @@ class TheApproval(Base):
             )
             self.assertIsNone((await cur.fetchone() or {})["r"])  # Bob is no DM of One
 
+    async def test_the_names_door_counts_a_name_the_players_dont_know_yet_as_secret(self) -> None:
+        """#2321: the DM's "Players don't know yet" entries are secret to the recap check."""
+        from dmbot.memory.store import MemoryStore
+
+        memory = MemoryStore(self.db)
+        g, c = THURSDAY.id, self.one.id
+        for name in ("Jack", "The Shadow"):
+            await memory.add_entity(
+                g, c, type="character", name=name, source="dm", status="confirmed",
+                hidden_from_players=name == "The Shadow",
+            )  # fmt: skip
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(g),))
+            cur = await conn.execute(
+                "SELECT dmbot_recap_check_names(%s, %s, %s, NULL) AS r", (g, c, TERMS_VERSION)
+            )
+            got = (await cur.fetchone() or {})["r"]
+        assert got is not None
+        self.assertIn("The Shadow", got["secret"])
+        self.assertNotIn("The Shadow", got["allowed"])
+        self.assertIn("Jack", got["allowed"])
+
     async def test_consent_given_under_old_terms_does_not_count(self) -> None:
         """The website reads consent the way the bot does (`consent._select`): the current terms
         version, and the outside engine in use when there is one."""

@@ -157,9 +157,7 @@ async def check(
                 max_tokens=answer_tokens(len(fresh)),
                 schema=SCHEMA,
             )
-    except (
-        Exception
-    ):  # (a timeout is one)  # the AI service, the network: the rule is saved without the check
+    except Exception:  # the AI service, the network, a timeout: the rule is saved without the check
         return Checked(unchecked=True)
     if reply.refused or reply.cut:
         return Checked(unchecked=True)

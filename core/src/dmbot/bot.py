@@ -165,6 +165,8 @@ from dmbot.dm_screen.quiet_stop import (
     KeepListeningButton,
     idle_warning_text,
     keep_view,
+    stopped_dm_text,
+    stopped_player_text,
     stopped_text,
 )
 from dmbot.dm_screen.recap_panel import PlanFacts, RecapsButton, audio_how
@@ -6436,11 +6438,13 @@ class DMBot(commands.AutoShardedBot):
         lookup = await self._names_now(table)  # fresh: a name may have just been made secret
         if lookup is None:
             return asked
-        secret = {  # a clue only some people know is as secret as a secret name
+        # A clue only some people know, or an entry the players haven't been told of (#2321), is as
+        # secret as a secret name.
+        secret = {
             entry.key
             for entry in lookup.names
             if entry.secret
-            or getattr(lookup.entities.get(entry.entity_id), "audience_limited", False)
+            or getattr(lookup.entities.get(entry.entity_id), "unseen_by_players", False)
         }
         agreed = [
             t for _, who, t in table.recent.spoken if self.consent.has_consent(table.guild_id, who)
@@ -10421,6 +10425,11 @@ class DMBot(commands.AutoShardedBot):
             elif verdict.action == "stop" and verdict.reason is not None:
                 log.info("Idle: stopping the session (%s)", verdict.reason)
                 await self._remove_idle_warning(table)
+                # Who was there when it stopped, and who runs the table: read before the stop
+                # clears the table (#2288).
+                in_voice = self._people_in_voice(table)
+                dms = {table.dm_user_id, *table.dm_user_ids}
+                name = table.campaign_name
                 result = await self.stop_session(
                     table.guild_id,
                     table.dm_user_id,
@@ -10433,8 +10442,52 @@ class DMBot(commands.AutoShardedBot):
                 # session, answers with something else and nothing is said about it.
                 if result.startswith("Stopped listening"):
                     await self.post(table.screen_channel_id, stopped_text(verdict.reason, minutes))
+                    # Then private messages, in a task of their own: they never delay the stop
+                    # and a closed inbox never breaks it (#2288). Not sent for a DM's own Stop.
+                    self._track(
+                        self._tell_auto_stop(
+                            table.guild_id, table.campaign_id, name, verdict.reason, minutes,
+                            dms, in_voice,
+                        ),
+                        "auto-stop messages",
+                    )  # fmt: skip
             elif table.idle_message is not None and table.idle.warned_at is None:
                 await self._remove_idle_warning(table, CANCELLED)  # people are back, or spoke
+
+    async def _tell_auto_stop(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        name: str,
+        reason: str,
+        minutes: int,
+        dms: set[int],
+        in_voice: list[int],
+    ) -> None:
+        """Say privately that DMbot stopped by itself (#2288): the campaign's DM with where to
+        change it, and each other person who was in the voice channel. A closed inbox is skipped
+        and only counted in the log (counts, never names or IDs)."""
+        where = "with `/dmbot settings`"
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+        except Exception:
+            campaign = None
+            log.exception("Couldn't read the campaign for the auto-stop message")
+        if campaign is not None and campaign.dm_bot_channel_id:
+            where = f"in <#{campaign.dm_bot_channel_id}>"
+        sent = skipped = 0
+        for user_id in sorted(dms):
+            text = stopped_dm_text(name, reason, minutes, where)
+            if await self._dm_user(user_id, text):
+                sent += 1
+            else:
+                skipped += 1
+        for user_id in dict.fromkeys(u for u in in_voice if u not in dms):
+            if await self._dm_user(user_id, stopped_player_text(name, reason, minutes)):
+                sent += 1
+            else:
+                skipped += 1
+        log.info("Auto-stop messages: %d sent, %d skipped (closed inbox)", sent, skipped)
 
     @staticmethod
     async def _remove_idle_warning(table: Table, text: str | None = None) -> None:
