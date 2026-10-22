@@ -3029,6 +3029,65 @@ EMAIL_SIGN_IN = (
     """
 )
 
+EMAIL_CHANGES = """
+    -- A waiting change of the email DMbot uses (#2349): one row per account (a new ask replaces the
+    -- last one), holding the address asked for and only the SHA-256 of the confirm link's token,
+    -- like a session cookie. Own row only; the link works for the account that asked.
+    CREATE TABLE email_changes (
+        user_id     BIGINT PRIMARY KEY REFERENCES web_users ON DELETE CASCADE,
+        new_email   TEXT NOT NULL,
+        token_hash  TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL
+    );
+    -- When the person chose their address on the account page: a Discord sign-in keeps it from
+    -- then on instead of putting Discord's address back (no existing row changes).
+    ALTER TABLE web_users ADD COLUMN email_chosen_at BIGINT;
+    ALTER TABLE email_changes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_changes FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_changes
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+
+    -- Whether another account already uses an address (sign-in by email needs one address per
+    -- account). The person is the one signed in; the function runs with its owner's rights to
+    -- read the other rows, opened by the same setting and policy as dmbot_user_by_email, and
+    -- answers only yes or no.
+    CREATE FUNCTION dmbot_email_taken(addr TEXT) RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BOOLEAN;
+        me BIGINT := dmbot_current_user();
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF me IS NULL OR addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        -- Two accounts confirming the same address at once would both pass the check below: one
+        -- lock per address, held until the caller's transaction ends, makes the second one wait
+        -- and then see the first one's row.
+        PERFORM pg_advisory_xact_lock(hashtextextended(lower(addr), 2349));
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        SELECT EXISTS (
+            SELECT 1 FROM web_users
+            WHERE user_id <> me
+              AND (lower(email) = lower(addr) OR lower(payment_email) = lower(addr))
+        ) INTO found;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_email_taken(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_email_taken(TEXT) FROM PUBLIC;
+"""
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -3041,6 +3100,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     # Sign-in by emailed link (#1231).
     ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    # Whether another account has an address, for the signed-in person's change of email (#2349).
+    ("dmbot_email_taken", "dmbot_email_taken(TEXT)"),
     # Experience points (#1228): the one door to the person's all-time minutes.
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
@@ -3136,6 +3197,17 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
     ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
+    # The All names page's actions, queued for the bot and read back by the DM who made them.
+    (
+        "dmbot_web_name_action_add",
+        "dmbot_web_name_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)",
+    ),
+    ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
+    # The All names page's list (#2294): DMs, and managers without what only a DM sees.
+    (
+        "dmbot_web_all_names",
+        "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)",
+    ),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -3214,6 +3286,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
     ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
     ("UPDATE (used_at)", ("email_sign_in_links",)),
+    # A waiting change of the account's email (#2349): made, replaced, read, confirmed (deleted).
+    ("SELECT, INSERT, UPDATE, DELETE", ("email_changes",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
@@ -8148,6 +8222,131 @@ HOUSE_RULE_SOURCE = """
             CHECK (source_name IS NULL OR char_length(source_name) BETWEEN 1 AND 200);
 """
 
+HIDDEN_FROM_PLAYERS = """
+    -- A name the players don't know yet (#2321): the DM's switch on any entry ("Players don't
+    -- know this one yet"), apart from a clue's audience (`audience_limited`, who knows a clue),
+    -- which keeps its own meaning. Off for every existing entry, so no row changes; the column
+    -- has a default and is added, not updated, so no row-level security needs opening.
+    ALTER TABLE memory_entities ADD COLUMN hidden_from_players BOOLEAN NOT NULL DEFAULT false;
+
+    -- A player's character is named to everyone (the transcript file's labels, the table list),
+    -- so it can never be hidden: whichever path makes an entry a player's character (an import,
+    -- a change of kind, the "plays" answer, a merge) clears the flag in the same write. One
+    -- trigger covers them all, the SQL functions that set `played_by` included. It only edits
+    -- the row being written, so it needs no extra rights.
+    CREATE FUNCTION dmbot_unhide_player_characters() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF NEW.hidden_from_players AND (
+            NEW.played_by IS NOT NULL OR NEW.party OR NEW.role = 'player_character'
+        ) THEN
+            NEW.hidden_from_players := false;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER memory_entities_unhide_players
+        BEFORE INSERT OR UPDATE ON memory_entities
+        FOR EACH ROW EXECUTE FUNCTION dmbot_unhide_player_characters();
+
+    -- The two recap functions that list the names a recap's text is checked against, and the
+    -- names of a shared recap page, now count such an entry as secret. CREATE OR REPLACE resets
+    -- a function's own settings, so each one's search_path is set again below.
+    CREATE OR REPLACE FUNCTION dmbot_recap_check_names(g BIGINT, c TEXT, terms INT, outside TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb),
+            'recorded', COALESCE((
+                SELECT jsonb_agg(c2.user_id) FROM consent c2
+                WHERE c2.guild_id = g AND c2.terms_version = terms
+                  AND (outside IS NULL OR c2.outside_to = outside)), '[]'::jsonb));
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_recap_shared(tok TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        out JSONB;
+    BEGIN
+        IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
+        SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND status = 'posted';
+        IF NOT FOUND THEN
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
+        out := jsonb_build_object(
+            'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
+            'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb));
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_shared(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+"""
+
 RECAP_HOLDS = f"""
     -- A session's recap held until the DM has answered DMbot's name questions (#2169). A hold is
     -- a row here, not a job state: the recap job is made when the hold is released (the last
@@ -9290,6 +9489,335 @@ INSTALLS_LEFT_EXCEPT = r"""
     REVOKE ALL ON FUNCTION dmbot_installs_left_except(BIGINT[]) FROM PUBLIC;
 """
 
+ALL_NAMES_PAGE = r"""
+    -- The website's All names page (#2294): one page of a campaign's confirmed names, searched and
+    -- filtered, with the count of each kind. Answers a DM of the campaign (everything) and a server
+    -- manager who is not one (the same names without what only a DM sees: the entries the players
+    -- don't know yet, a clue only some know, the story threads and deeds, and any name whose own
+    -- spelling is secret, and no secret spellings). NULL for anyone else, so the page says "not
+    -- found" exactly as for a missing campaign. The website's role has no grant on the memory
+    -- tables; this door is its only way to read them.
+    CREATE FUNCTION dmbot_web_all_names(
+        g BIGINT, c TEXT, q TEXT, k TEXT, newest BOOLEAN, pg INT, size INT, only_id TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        cname TEXT;
+        needle TEXT := NULLIF(lower(btrim(COALESCE(q, ''))), '');
+        kind_ TEXT := NULLIF(k, '');
+        result JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c
+                           AND d.user_id = dmbot_current_user());
+        IF NOT is_dm AND NOT (g = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT name INTO cname FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        WITH base AS (
+            SELECT e.id, e.name, e.created_at,
+                   CASE WHEN e.type = 'character' THEN
+                            CASE e.role WHEN 'player_character' THEN 'player_character'
+                                        WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                        ELSE 'character' END
+                        ELSE e.type END AS kind,
+                   EXISTS (SELECT 1 FROM memory_aliases a
+                           WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,
+                   (e.audience_limited OR e.hidden_from_players) AS hidden
+            FROM memory_entities e
+            WHERE e.guild_id = g AND e.campaign_id = c
+              AND e.status = 'confirmed' AND e.type <> 'person'
+              AND (is_dm OR (NOT e.audience_limited AND NOT e.hidden_from_players
+                             AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                                'promise', 'deed')))
+        ), vis AS (
+            SELECT * FROM base WHERE is_dm OR NOT secret
+        ), hit AS (
+            SELECT v.* FROM vis v
+            WHERE (kind_ IS NULL OR v.kind = kind_)
+              AND (only_id IS NULL OR v.id = only_id)
+              AND (needle IS NULL
+                   OR position(needle IN lower(v.name)) > 0
+                   OR EXISTS (SELECT 1 FROM memory_aliases a
+                              WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = v.id
+                                AND a.status = 'confirmed' AND (is_dm OR NOT a.secret)
+                                AND position(needle IN lower(a.text)) > 0))
+        ), pageful AS (
+            SELECT h.* FROM hit h
+            ORDER BY CASE WHEN newest THEN NULL ELSE lower(h.name) END,
+                     CASE WHEN newest THEN h.created_at END DESC, h.id
+            LIMIT GREATEST(size, 1) OFFSET GREATEST(pg - 1, 0)::BIGINT * GREATEST(size, 1)
+        )
+        SELECT jsonb_build_object(
+            'campaign', cname,
+            'canEdit', is_dm,
+            'total', (SELECT count(*) FROM hit),
+            'kinds', COALESCE((SELECT jsonb_object_agg(kind, n)
+                               FROM (SELECT kind, count(*) AS n FROM vis GROUP BY kind) t),
+                              '{}'::jsonb),
+            'names', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', p.id, 'name', p.name, 'kind', p.kind, 'secret', p.secret,
+                    'hidden', p.hidden,
+                    'others', COALESCE((
+                        SELECT jsonb_agg(a.text ORDER BY lower(a.text), a.id)
+                        FROM memory_aliases a
+                        WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = p.id
+                          AND a.status = 'confirmed' AND NOT a.secret
+                          AND lower(a.text) <> lower(p.name)), '[]'::jsonb),
+                    'secretOthers', CASE WHEN is_dm THEN COALESCE((
+                        SELECT jsonb_agg(a.text ORDER BY lower(a.text), a.id)
+                        FROM memory_aliases a
+                        WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = p.id
+                          AND a.status = 'confirmed' AND a.secret
+                          AND lower(a.text) <> lower(p.name)), '[]'::jsonb)
+                        ELSE '[]'::jsonb END,
+                    'npcId', CASE WHEN p.kind = 'npc' AND EXISTS (
+                        SELECT 1 FROM npc_roster r
+                        WHERE r.guild_id = g AND r.campaign_id = c AND r.entry_id = p.id)
+                        THEN p.id END)
+                    ORDER BY CASE WHEN newest THEN NULL ELSE lower(p.name) END,
+                             CASE WHEN newest THEN p.created_at END DESC, p.id)
+                FROM pageful p), '[]'::jsonb))
+        INTO result;
+        RETURN result;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
+        FROM PUBLIC;
+"""
+# The All names door again (#2376, migration 0174): the check for an entry whose own spelling is
+# also a secret name ran once per entry over all of its names, which took seconds on a big campaign
+# before the database had statistics (right after a restore or an import). It is now found from the
+# secret names alone and joined once. The result is the same. 0170 is already applied everywhere,
+# so this redefines the door; a redefined function loses its pinned settings, so they are set again.
+_SECRET_EACH = """                   EXISTS (SELECT 1 FROM memory_aliases a
+                           WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,"""
+_SECRET_ONCE = """                   (e.id IN (SELECT s.entity_id FROM secret_own s)) AS secret,"""
+_SECRET_CTE = """        WITH secret_own AS (
+            SELECT DISTINCT a.entity_id
+            FROM memory_aliases a
+            JOIN memory_entities en ON en.guild_id = a.guild_id AND en.campaign_id = a.campaign_id
+                                   AND en.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.secret AND a.status <> 'rejected'
+              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+        ), base AS ("""
+assert _SECRET_EACH in ALL_NAMES_PAGE and ALL_NAMES_PAGE.count("        WITH base AS (") == 1
+ALL_NAMES_SPEED = (
+    ALL_NAMES_PAGE.replace(
+        "CREATE FUNCTION dmbot_web_all_names(", "CREATE OR REPLACE FUNCTION dmbot_web_all_names(", 1
+    )
+    .replace(_SECRET_EACH, _SECRET_ONCE, 1)
+    .replace("        WITH base AS (", _SECRET_CTE, 1)
+)
+# Which suggested names were made before pronouns were kept out of them (#2358). The default
+# marks every existing row (a constant default is stored as metadata: no UPDATE runs, so no
+# row-level-security policy is opened) and is then changed, so every row written from now on is
+# false with no insert path changed. The recap page's door tells the website which are old.
+_NAMES_READ = NAME_ANSWERS[
+    NAME_ANSWERS.index("    CREATE FUNCTION dmbot_recap_names_read") : NAME_ANSWERS.index(
+        "    -- Queue the DM's answer"
+    )
+]
+NAME_GATE = (
+    """
+    ALTER TABLE memory_entities
+        ADD COLUMN made_before_name_gate BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE memory_entities ALTER COLUMN made_before_name_gate SET DEFAULT false;
+    """
+    + _NAMES_READ.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION").replace(
+        "'id', e.id, 'name', e.name,",
+        # the same rule as `hidden_old_pronoun`: never the DM's own entry
+        "'id', e.id, 'name', e.name,"
+        " 'old', (e.made_before_name_gate AND e.source IS DISTINCT FROM 'dm'),",
+    )
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_names_read(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    """
+)
+
+
+NAME_ACTIONS = (
+    f"""
+    -- What a DM did on the website's All names page (#2294), waiting for the bot. The website has
+    -- no right on the memory tables, so its door only checks the signed-in DM and queues the
+    -- action here; the bot applies it through the same MemoryStore paths as Discord's name card
+    -- (so the change log, Undo and every list agree), re-checks that the sender is still a DM of
+    -- the campaign and that the name is still there, and marks the row. Applied in the order made
+    -- (`seq`), so a "spell" then a "merge" never run backwards. `text` is a spelling or another
+    -- name (at most 100), `flag` the secret switch or the remove confirmation. `result_id` is the
+    -- name whose row the page shows afterwards (the survivor of a merge). `secret` marks or unmarks
+    -- one other name (`text`); `hide` is the whole entry's "players don't know yet" (`flag`). A row
+    -- lives an hour at most and its words are never logged. Gone with its campaign, left out of
+    -- backups, isolated per server, and read back only by the DM who made it.
+    CREATE TABLE name_actions (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
+        entity_id   TEXT NOT NULL CHECK (char_length(entity_id) <= 32),
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        action      TEXT NOT NULL CHECK (action IN
+            ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')),
+        kind        TEXT NOT NULL DEFAULT '' CHECK (char_length(kind) <= 40),
+        target_id   TEXT NOT NULL DEFAULT '' CHECK (char_length(target_id) <= 32),
+        text        TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= 100),
+        flag        BOOLEAN NOT NULL DEFAULT false,
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        result_id   TEXT NOT NULL DEFAULT '' CHECK (char_length(result_id) <= 32),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX name_actions_open ON name_actions (guild_id, seq)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("name_actions")
+    + r"""
+    -- Queue one action. The door checks what it can see: the caller is a DM of the campaign, the
+    -- name is a confirmed one of it (not a person at the table), the words are within their
+    -- limits, a merge target is another confirmed name, a removal carries its confirmation, and
+    -- the campaign's queue is not full. The bot checks the rest when it applies it. Answers
+    -- 'ok' with the id, or 'bad_action', 'bad_text', 'bad_target', 'needs_confirm', 'not_found'
+    -- or 'too_soon'; NULL for anyone who is not a DM of the campaign.
+    CREATE FUNCTION dmbot_web_name_action_add(
+        g BIGINT, c TEXT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        clean TEXT := btrim(regexp_replace(COALESCE(txt, ''), '[[:space:]]+', ' ', 'g'));
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN
+               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')
+        THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF clean ~ '[[:cntrl:]]' OR char_length(clean) > 100
+           OR (act IN ('spell', 'add-other', 'remove-other', 'secret') AND clean = '')
+           OR (act IN ('kind', 'hide', 'merge', 'remove') AND clean <> '')
+           OR (act = 'kind' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
+           OR (act <> 'kind' AND COALESCE(kd, '') <> '')
+           OR (act = 'merge' AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
+           OR (act <> 'merge' AND COALESCE(tgt, '') <> '')
+           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF act = 'remove' AND fl IS NOT TRUE THEN
+            RETURN jsonb_build_object('status', 'needs_confirm');
+        END IF;
+        IF ent IS NULL OR NOT EXISTS (
+               SELECT 1 FROM memory_entities e
+               WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ent
+                 AND e.status = 'confirmed' AND e.type <> 'person') THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF act = 'merge' AND (tgt = ent OR NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person')) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('name_action:' || g::TEXT || c, 0));
+        DELETE FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 30
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action, kind,
+                                  target_id, text, flag, created_at)
+            VALUES (g, c, rid, ent, dmbot_current_user(), act, COALESCE(kd, ''),
+                    COALESCE(tgt, ''), clean, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- The state of one action, for the DM who made it (nobody else's): 'waiting', 'working',
+    -- 'done' or 'failed' with its reason word, and the name to show afterwards. NULL when there is
+    -- no such action of the caller's in this campaign.
+    CREATE FUNCTION dmbot_web_name_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r name_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'action', r.action,
+                                  'resultId', r.result_id);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -9481,6 +10009,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0164_house_rule_wins", HOUSE_RULE_WINS),  # which of two disagreeing rules wins (#2284)
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
+    ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
+    ("0168_email_changes", EMAIL_CHANGES),  # a waiting change of the account email (#2349)
+    ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
+    ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
+    ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -9552,6 +10086,7 @@ ISOLATED_TABLES = (
     "recap_requests",
     "recap_name_checks",
     "name_answers",
+    "name_actions",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),
@@ -9563,6 +10098,7 @@ USER_ISOLATED_TABLES = (
     "payment_events",
     "web_sessions",
     "email_sign_in_links",
+    "email_changes",
     "installs",
     # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
     "account_id_history",

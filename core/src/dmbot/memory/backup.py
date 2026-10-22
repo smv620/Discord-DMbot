@@ -183,6 +183,8 @@ def _valid(column: str, value: object) -> bool:
         "unique_item",
         "audience_limited",
         "party",
+        "hidden_from_players",
+        "made_before_name_gate",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -349,7 +351,14 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
     for raw in rows:
         if isinstance(raw, dict) and raw.get("table") == "entity":
             # from before one-of-a-kind items (#1267) and before a clue's audience (#1649)
-            raw = {"unique_item": None, "audience_limited": False, "party": False, **raw}
+            raw = {
+                "unique_item": None,
+                "audience_limited": False,
+                "party": False,
+                "hidden_from_players": False,  # from before #2321
+                "made_before_name_gate": True,  # a file from before the gate holds old rows (#2358)
+                **raw,
+            }
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":

@@ -18,6 +18,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
@@ -35,6 +36,8 @@ from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
+    all_names,
+    email_change,
     email_signin,
     entitlements_writer,
     feedback,
@@ -572,6 +575,94 @@ def create_app(
             imports_for=settings.imports_enabled_for,
         )
 
+    change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
+
+    async def mail_change_link(user_id: int, new: str, token: str) -> bool:
+        """Mail the confirm link to the NEW address. False if it could not be sent."""
+        if mailer is None:
+            return False
+        result = await mailer.send(
+            user_id=user_id,
+            kind=f"email-change:{email_change.link_id(token)}",
+            to=new,
+            subject="Confirm your new DMbot email",
+            body=(
+                "Someone asked to use this address for a DMbot account. To confirm, open this "
+                f"link while you are signed in to that account:\n\n{account_page}"
+                f"#email-confirm={token}\n\nIt works once and ends after 15 minutes. If you "
+                "didn't ask for it, ignore this email and nothing changes."
+            ),
+        )
+        if result != "sent":
+            log.warning("An email-change link was not sent: %s", result)
+        return result == "sent"
+
+    @app.get("/me/email")
+    async def me_email(signed: Signed) -> dict[str, Any]:
+        """The address DMbot emails this person at, where it came from, and a change waiting
+        for its link (#2349). Their own only."""
+        session, _token = signed
+        now = await email_change.read(db, session.user_id, now=int(clock()))
+        return {"address": now.address, "source": now.source, "pending": now.pending}
+
+    @app.put("/me/email")
+    async def change_me_email(signed: Signed, request: Request) -> dict[str, Any]:
+        """Ask to use another address: `{"address": "..."}`. A link goes to the new one and
+        nothing changes until it is confirmed. A payment email is changed in Stripe."""
+        session, _token = signed
+        taken = change_limit.take(str(session.user_id))
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        made = await email_change.ask(
+            db, session.user_id, (await small_json(request)).get("address"), now=int(clock())
+        )
+        if made is None:
+            return {"pending": None}  # it is already the address in use
+        if isinstance(made, str):
+            status = {"bad_email": 400, "not_allowed": 403, "in_use": 409}[made]
+            raise HTTPException(status_code=status, detail=made)
+        new, token = made
+        if not await mail_change_link(session.user_id, new, token):
+            await email_change.cancel(db, session.user_id)
+            raise HTTPException(status_code=502, detail="email_failed")
+        log.info("An email change was asked for by user %s", session.user_id)
+        return {"pending": new}
+
+    @app.post("/me/email/confirm")
+    async def confirm_me_email(signed: Signed, request: Request) -> dict[str, Any]:
+        """The link's token (it came after a `#`, so no server saw it), posted by the signed-in
+        account that asked: only that account can use it. One use, 15 minutes."""
+        session, _token = signed
+        done = await email_change.confirm(
+            db, session.user_id, (await small_json(request)).get("token"), now=int(clock())
+        )
+        if done == "in_use":
+            raise HTTPException(status_code=409, detail="in_use")
+        if done is None:
+            raise HTTPException(status_code=400, detail="bad_link")
+        old, new = done
+        if old and mailer is not None and old.lower() != new.lower():
+            # Told to the OLD address: a stolen session cannot quietly move email sign-in.
+            await mailer.send(
+                user_id=session.user_id,
+                kind=f"email-changed:{email_change.link_id(new + str(int(clock())))}",
+                to=old,
+                subject="Your DMbot email was changed",
+                body=(
+                    f"Your DMbot email was changed to {new}. If this wasn't you, sign in with "
+                    f"Discord and sign out everywhere on your account page, then change it back: "
+                    f"{account_page}"
+                ),
+            )
+        log.info("An email change was confirmed by user %s", session.user_id)
+        return {"address": new}
+
+    @app.delete("/me/email/pending", status_code=204)
+    async def cancel_me_email(signed: Signed) -> Response:
+        session, _token = signed
+        await email_change.cancel(db, session.user_id)
+        return Response(status_code=204)
+
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:
         """Whether DMbot may use the signed-in person's words to improve itself (#1609)."""
@@ -627,6 +718,8 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
+        "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
+        "bad_sort": (400, "bad_sort"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -934,6 +1027,66 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}/all-names")
+    async def me_campaign_all_names(
+        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
+    ) -> dict[str, Any]:
+        """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
+        server manager who is not a DM gets no secret names; anyone else gets "not found". A page
+        that is not a number is the same plain refusal as one past the end (400 "bad_page"), not
+        FastAPI's own 422 (#2376)."""
+        session, _token = signed
+        try:
+            # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
+            # pages, and must not reach int() (which would raise a 500).
+            number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
+            return await all_names.read_page(
+                db, session, ref, q=q, kind=kind, sort=sort, page=number
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    name_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_name": (400, "bad_name"),
+        "bad_kind": (400, "bad_kind"),
+        "too_long": (400, "too_long"),
+        "needs_confirm": (400, "needs_confirm"),
+        "bad_target": (400, "bad_target"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/all-names/{entity_id}", status_code=202)
+    async def me_campaign_all_names_act(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One DM action on a name (#2294): queued for the bot, which applies it the way the
+        Discord name card does. The answer is polled at `.../all-names/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await all_names.queue_action(db, session, ref, entity_id, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/all-names/answers/{answer}")
+    async def me_campaign_all_names_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in DM's own action stands: waiting, working, done (with the changed
+        name's row) or failed (with why)."""
+        session, _token = signed
+        try:
+            return await all_names.read_action(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/names")
     async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:

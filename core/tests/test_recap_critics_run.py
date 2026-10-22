@@ -120,6 +120,25 @@ class Criticising(WorkerHarness):
         loop = cr.loop_from_json(job.critics)
         self.assertEqual((loop.done, loop.round, loop.notes, loop.cut), (True, 2, (), 0))
 
+    async def test_the_revision_is_shown_the_sessions_real_last_two_beats(self) -> None:
+        # A short session shows the writer only a pick of its beats; the revision's ending block
+        # must still hold the session's real last two (#2331), as the first draft's does.
+        filler = " ".join(["calm"] * 95)
+        invented = f"《Tense》 Mira wanted to avenge her brother. {filler} Oskar"
+        fast = Smart(
+            fx.BEATS_ANSWER, fx.prose_answer(invented, "1. Strings."), *([fx.GRADE_ANSWER] * 2),
+            fx.FINISH_ANSWER,
+        )  # fmt: skip
+        clean = f"《Tense》 Mira stood by the door. {filler} Oskar"
+        careful = fx.Canned(fx.prose_answer(clean, "1. Strings."))
+        await self.setUpWorker(fast, careful, critics=True, hours=0.5)
+        job = await self.settle(await self.go())
+        self.assertEqual(job.state, "ready")
+        revision = careful.sent[0]
+        self.assertIn("avenge her brother", revision)  # it is the revision, told what nobody said
+        ending = revision.split("<ending>")[1].split("</ending>")[0]
+        self.assertIn("Mira found a locked door with a silver lock", ending)  # beat 4 of 5
+
     async def test_a_motive_the_word_list_does_not_know_is_caught_by_the_call(self) -> None:
         text = "Mira stayed at the door, loyal to the last."
         draft = CLEAN.replace(
@@ -202,6 +221,265 @@ class Criticising(WorkerHarness):
         self.assertEqual(len(careful.sent), 3)  # the notes, and PlotBot asked twice
         loop = cr.loop_from_json(job.critics)
         self.assertEqual((loop.done, loop.round), (True, 0))  # no reading ever counted
+
+    def test_plotbots_room_grows_with_the_recap_and_is_capped(self) -> None:
+        self.assertEqual(pl.plot_room(0), pl.PLOT_TOKENS)
+        self.assertGreater(pl.plot_room(60), pl.PLOT_TOKENS)
+        self.assertEqual(pl.plot_room(10_000) * 2, pl.PLOT_ROOM_MAX)
+
+    async def test_a_plotbot_answer_cut_off_is_asked_again_with_twice_the_room(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [{"sentence": 1, "kind": "mis', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        with patch.object(pl, "PLOT_TOKENS_PER_SENTENCE", 400):  # so this short recap needs more
+            job = await self.go()
+        self.assertEqual(job.state, "ready")
+        first, second = careful.tokens[1], careful.tokens[2]
+        with patch.object(pl, "PLOT_TOKENS_PER_SENTENCE", 400):
+            self.assertEqual(first, pl.plot_room(len(rd.sentences_of(job.summary))))
+        self.assertGreater(first, pl.PLOT_TOKENS)
+        self.assertEqual(second, first * 2)
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round), (True, 1))  # the second answer was the reading
+
+    async def test_a_plotbot_answer_cut_off_twice_waits_and_never_fails_the_recap(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [{"sentence": 1', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, cut)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        job = await self.go()
+        self.assertNotEqual(job.state, "failed")
+        self.assertEqual(careful.tokens[2], careful.tokens[1] * 2)
+        self.clock.now += 1000
+        careful.answers[:] = [AGREE]  # the service answers in time
+        job = await self.settle(await self.go())
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+
+    async def test_critics_stopped_by_unreadable_answers_do_not_fail_a_draft_with_a_failed_check(
+        self,
+    ) -> None:
+        fast = self.fast_for(WITH_MOTIVE)
+        careful = fx.Canned(NO_NOTES, "not json", "not json")
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        real = rd.check_prose
+
+        def ending_fails(*a: Any, **k: Any) -> list[str]:
+            return (
+                ["the recap must end exactly where the session stopped"]
+                if k.get("last")
+                else real(*a, **k)
+            )
+
+        with (
+            patch.object(rd, "check_prose", ending_fails),
+            self.assertLogs("dmbot.recaps.pipeline", "INFO") as logged,
+        ):
+            job = await self.settle(await self.go(), times=3)
+        self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
+        self.assertEqual(job.last_error, pl.CHECK_WAIT)
+        # (the reason shown is only CHECK_WAIT: the log is where the failed rule is named)
+        self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
+
+    async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE)
+        careful = fx.Canned(NO_NOTES, *(["not json"] * 90))
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        real = rd.check_prose
+
+        def ending_fails(*a: Any, **k: Any) -> list[str]:
+            return (
+                ["the recap must end exactly where the session stopped"]
+                if k.get("last")
+                else real(*a, **k)
+            )
+
+        told = AsyncMock()
+        self.worker._unchecked = told
+        with patch.object(rd, "check_prose", ending_fails):
+            job = await self.go()
+            began, waits = self.clock.now, 0
+            for _ in range(60):  # days of waiting: 15 minutes, an hour, 4 hours, then 12
+                self.clock.now = max(self.clock.now, job.next_at) + 1
+                job = await self.worker.run(1, self.one.id, 100) or job
+                waits += 1
+        self.assertGreater(self.clock.now - began, 3 * 24 * 3600)  # past the days it once gave up
+        self.assertGreaterEqual(waits, 20)  # (a give-up after 20 waits would have failed it)
+        self.assertNotEqual(job.state, "failed", job.last_error)  # a waiting recap never fails
+        self.assertEqual(job.last_error, pl.CHECK_WAIT)
+        self.assertTrue(cr.loop_from_json(job.critics).told)  # and the DM was told, once
+        told.assert_awaited_once()
+
+    # ---- PlotBot's answer cut off, declined or unreadable (#2365) -----------------------------
+
+    def spy_on_annotations(self) -> list[tuple[str, dict[str, Any]]]:
+        """Everything the worker writes on its call reports, as (stage, fields)."""
+        seen: list[tuple[str, dict[str, Any]]] = []
+        real = pl.RecapWorker._annotate
+
+        def spy(worker: Any, gid: int, cid: str, job: Job, stage: str, **fields: Any) -> None:
+            seen.append((stage, fields))
+            real(worker, gid, cid, job, stage, **fields)
+
+        patcher = patch.object(pl.RecapWorker, "_annotate", spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    @staticmethod
+    def plot_checks(seen: list[tuple[str, dict[str, Any]]]) -> list[Any]:
+        return [f["checks"] for stage, f in seen if stage == "plotbot" and "checks" in f]
+
+    def test_the_rooms_are_the_literal_numbers(self) -> None:
+        self.assertEqual(pl.plot_room(0), 1200)
+        self.assertEqual(pl.plot_room(10), 1200)
+        self.assertEqual(pl.plot_room(60), 3600)  # 50 for each sentence and 600
+        self.assertEqual(pl.plot_room(10_000), 6000)  # doubled, it is at most 12,000
+        self.assertEqual(pl.PLOT_ROOM_MAX, 12_000)
+
+    async def test_the_retry_is_capped_at_the_most(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [{"sentence": 1', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, cut)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        with patch.object(pl, "PLOT_TOKENS_PER_SENTENCE", 100_000):
+            await self.go()
+        self.assertEqual(careful.tokens[1:3], [6000, 12_000])
+
+    async def test_a_declined_answer_is_not_asked_again_and_is_named_declined(self) -> None:
+        fast = self.fast_for()
+        declined = Reply("", True, 10, 10, "m", refused=True)  # (a refusal can also say it was cut)
+        careful = fx.Canned(NO_NOTES, declined, AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        seen = self.spy_on_annotations()
+        await self.go()
+        self.assertEqual(len(careful.tokens), 2)  # the notes and one PlotBot call
+        self.assertEqual(self.plot_checks(seen)[0], ["declined"])
+
+    async def test_cut_off_and_wrong_shape_are_named_for_what_they_were(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, cut)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        seen = self.spy_on_annotations()
+        await self.go()
+        self.assertEqual(self.plot_checks(seen)[0], ["cut off"])
+
+    async def test_a_wrong_shape_answer_is_named_shape_and_not_asked_again(self) -> None:
+        fast = self.fast_for()
+        careful = fx.Canned(NO_NOTES, "not json", AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        seen = self.spy_on_annotations()
+        await self.go()
+        self.assertEqual(len(careful.tokens), 2)
+        self.assertEqual(self.plot_checks(seen)[0], ["shape"])
+
+    async def test_the_retry_is_counted_in_the_jobs_calls_and_the_days_tally(self) -> None:
+        fast = self.fast_for()
+        cut = Reply('{"changes": [', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        job = await self.go()
+        made = (
+            len(fast.sent) + len(careful.sent) + len(fast.motive_sent)
+            + len(fast.fact_sent) + len(careful.fact_sent)
+        )  # fmt: skip
+        self.assertEqual((job.calls, job.spent), (made, made))  # the second PlotBot call too
+
+    async def cut_answer_with_the_ceiling(self, room_left: int) -> tuple[list[Any], Any, Any]:
+        """A cut PlotBot answer when the job's ceiling leaves `room_left` calls above the reserve
+        once that first call is made: 0 is exactly at the reserve. Returns (careful's token
+        list, the annotations, the job)."""
+        fast = self.fast_for()
+        cut = Reply('{"changes": [', True, 10, 10, "m")
+        careful = fx.Canned(NO_NOTES, cut, AGREE)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        seen = self.spy_on_annotations()
+        ceiling_after: dict[str, int] = {}
+        real_call = pl.RecapWorker._call
+
+        async def call(worker: Any, gid: int, cid: str, job: Job, *a: Any, **k: Any) -> Any:
+            got = await real_call(worker, gid, cid, job, *a, **k)
+            if k.get("stage") == "plotbot" and not ceiling_after:
+                now = await worker._store.get(gid, cid, job.session_at)
+                ceiling_after["at"] = now.calls + pl.CRITIC_RESERVE + room_left
+            return got
+
+        def ceiling(job: Job) -> int:
+            return ceiling_after.get("at", 1000)
+
+        with (
+            patch.object(pl.RecapWorker, "_call", call),
+            patch.object(pl.RecapWorker, "_ceiling", staticmethod(ceiling)),
+        ):
+            job = await self.go()
+        return careful.tokens, seen, job
+
+    async def test_exactly_at_the_reserve_a_cut_answer_is_not_asked_again(self) -> None:
+        tokens, seen, job = await self.cut_answer_with_the_ceiling(0)
+        self.assertEqual(len(tokens), 2)  # the notes and one PlotBot call: no second
+        self.assertEqual(self.plot_checks(seen)[0], ["cut off"])
+        self.assertNotEqual(job.last_error, pl.CAP)
+
+    async def test_one_call_above_the_reserve_a_cut_answer_is_asked_again(self) -> None:
+        tokens, _seen, _job = await self.cut_answer_with_the_ceiling(1)
+        self.assertEqual(len(tokens), 3)
+        self.assertEqual(tokens[2], tokens[1] * 2)
+
+    # ---- how the loop stops (#2365) ------------------------------------------------------------
+
+    async def stopped(self, why: str, *, unfixable: bool = False, tries: int = 1) -> Any:
+        await self.setUpWorker(fx.Canned(), fx.Canned(), critics=True)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET tries = %s", (tries,))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        best = cr.Best(CLEAN, (), {}, 1, 0, (), (1,), unfixable)
+        loop = cr.Loop(round=1, best=best)
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
+            previous="", earlier=None, day=4, window_chars=40_000, hours=2.5, campaign_name="",
+        )  # fmt: skip
+        return await self.worker._stop_critics(1, self.one.id, job, loop, inputs, why)
+
+    async def test_an_unfixable_draft_holds_when_the_service_or_the_tally_stopped_the_loop(
+        self,
+    ) -> None:
+        for why in (pl.STOP_ERRORS, pl.STOP_TALLY):
+            job = await self.stopped(why, unfixable=True)
+            self.assertEqual((job.state != "failed", job.last_error), (True, pl.CHECK_WAIT), why)
+
+    async def test_no_agreement_fails_on_our_side_with_the_rule_named_and_gives_the_try_back(
+        self,
+    ) -> None:
+        real = rd.check_prose
+        ending = ["the recap must end exactly where the session stopped"]
+        with patch.object(
+            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
+        ):
+            job = await self.stopped("no agreement", tries=1)
+        self.assertEqual(job.state, "failed")
+        self.assertIn("(check: ending)", job.last_error)
+        self.assertEqual(job.tries, 0)  # given back
+
+    async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
+        real = rd.check_prose
+        ending = ["the recap must end exactly where the session stopped"]
+        with patch.object(
+            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
+        ):
+            job = await self.stopped(pl.STOP_CEILING, tries=1)
+        self.assertEqual((job.state, job.tries), ("failed", 1))
+        self.assertIn("(check: ending)", job.last_error)
+
+    async def test_an_unfixable_draft_with_no_agreement_fails_and_gives_the_try_back(self) -> None:
+        job = await self.stopped("no agreement", unfixable=True, tries=1)
+        self.assertEqual((job.state, job.tries), ("failed", 0))
+        self.assertIn("(check: unfixable)", job.last_error)
+
+    async def test_the_job_ceiling_fails_and_keeps_the_try(self) -> None:
+        job = await self.stopped(pl.STOP_CEILING, unfixable=True, tries=1)
+        self.assertEqual((job.state, job.tries), ("failed", 1))
 
     async def test_critics_that_never_agree_stop_at_four_readings_and_leave_notes(self) -> None:
         fast = self.fast_for(grades=4)

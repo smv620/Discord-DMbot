@@ -26,6 +26,7 @@ from dataclasses import dataclass, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
 
 MIN_TIMES = 2
 MAX_SUGGESTIONS = 10
@@ -152,6 +153,13 @@ def _candidates(
         j = i
         while j < len(words) and name_like(j):
             j += 1
+        # A pronoun is never offered as a name (#2358), unless this sentence plainly names
+        # someone by it ("My name is We"). A run led by one ("We Should") goes with it.
+        if not_names.is_not_name(" ".join(words[i:j]), sentence_start=i == 0) and not (
+            not_names.keep(" ".join(words[i:j]), " ".join(words), sentence_start=i == 0)
+        ):
+            i = j
+            continue
         if j - i <= MAX_WORDS:
             out.append((" ".join(words[i:j]), i > 0))
             if i == 0 and j - i > 1:

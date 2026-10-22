@@ -707,6 +707,31 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**House rules from any file or link** (owner, 2026-10-22). The plain numbered format stays what DMbot
+**writes** (the download, sharing and review copy), but DMbot **reads** the house rules a DM already has,
+in whatever shape they are:
+- **What it reads:** an upload of PDF, Word (.docx), Excel (.xlsx) or CSV, plain text or Markdown; or a
+  link to a Google Doc, Google Sheet, Drive, Dropbox or OneDrive file, or a public web page. Everything is
+  read through the guarded link reader (`dmbot.fetch`: public https only, every address checked), 10 MB
+  and 200,000 characters of text at most. Text only: images and scanned pages without text are said, not
+  guessed at.
+- **How:** a file already in the plain format is read by code as today, with no AI. Anything else goes to
+  one AI call (the careful tier) that lists the house rules it finds, each with a short **quote** from
+  the file. Code keeps only rules whose quote is really in the file (DMbot never invents a rule), at most
+  200, each 500 characters at most, and drops repeats of a rule the campaign already has.
+- **The DM decides:** the result is the same offer as a linked file's changes today (**Accept all /
+  Review / Not now**, one at a time in Review), plus the plain-format file to download so the DM can
+  check it. Nothing is saved without a press, and every new rule goes through the disagreement check
+  ("Which one wins?", #2284). 📂 Sources shows "from <file name>" or "from <site>" (never the full link).
+- **A linked file in another shape** is read the same way at session start, **only when it has changed**
+  since the last read (DMbot keeps a fingerprint of the text, not the text), so the AI call is made once
+  per change, not once per session.
+- **Only the DM's own rules:** the form says "Your own house rules only. For a published book, use Share
+  a rulebook." A file that reads as a published book (long, page-numbered rules text with no house
+  rules) gets that line instead of an offer. The file's text goes to the AI for this one read and is not
+  stored; the link is stored and shown as today (site only, never logged).
+- **Cost:** one AI call per file read (or per change of a linked file), counted in the campaign's usage.
+
 **Homebrew (part 1)** (decided 2026-10-16 by Supervisor, #1520, migration 0097). A campaign stores its
 own homebrew: **entries** the DM wrote, in the DM's own words (a spell, monster, item, feat, condition,
 species, subclass, background or other). **A rule the DM makes up is a house rule, not homebrew** (owner, 2026-10-16, #1628): there is
@@ -1332,7 +1357,8 @@ so the docs always show names the way Discord does. For the campaign
   the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
   DM confirmed that are true now. Because players can peek here and the list sits in view all
   session, it is built by `RecallService.roster`, which applies the **players** audience's rules
-  and not a second copy: never a secret name or a name only misheard, a limited clue or anything
+  and not a second copy: never a secret name or a name only misheard, an entry the DM marked
+  "Players don't know yet" (#2321, see "Players don't know this one yet" below), a limited clue or anything
   that points to one, a story thread, a deed or standing, the DM's note (so there is **no
   description line**: the only description an entry has is the DM's note), a condition such as
   dead or missing (the table may not know yet), or anything from the adventure plan. Groups
@@ -1367,7 +1393,8 @@ so the docs always show names the way Discord does. For the campaign
       anyone in the server may download a backup.
     - Each person can download all of their own notes, and delete them (Delete my notes).
     - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
-      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      into another, its notes move to the one kept, the ones already marked "no longer listed" too: they keep
+      their 30-day clock, and are unmarked only if the kept NPC is listed. When an NPC is rejected or deleted, the person's
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
@@ -1827,6 +1854,18 @@ names panel nor the speech-to-text hints can be a fixed list.
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
     suggestions a session, link suggestions included.
+- **Connections from a backstory** (owner, 2026-10-22). 📜 From a story or background also suggests
+  the connections the DM's text states ("Vex is the boss of the Ashen Hand"), in the same AI read
+  (no extra call). Each comes with a short quote. Code keeps a connection only if its quote is in the
+  text, both ends are names from this read or already in the campaign, and its kind is one of the
+  fixed core kinds above (or the campaign's own definitions). After the DM has answered the names, the
+  connections are offered one at a time with their quote: **✅ Keep**, **🤫 Keep as secret** or **❌ No**.
+  A kept one is confirmed (`source="dm"`, as with Connect to…), and it shows on the name cards and the
+  website graph, with ↩️ Undo. A connection to a name the DM said no to is dropped. Nothing is saved
+  without a press, and the text is never kept.
+  **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
+  campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
+  Names → 📥 Add many → 📜 From a story or background stays too.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
@@ -3877,6 +3916,20 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
   estimates them from the words spoken, and `recap_run --hours` sets them.
+  **Shorter recaps** (owner, 2026-10-22, after Test L): the target is now **75 words for every hour
+  played, plus 75**, rounded to the nearest 10, **at most 450** (1 hour 150, 3 hours 300, 5 hours or
+  more 450; under three minutes read aloud). This replaces the 100/100/700 rule above; the 50% under
+  and 20% (35% on the last try) over margins stay. Why: a recap is read or played at the start of
+  the next game, which must stay quick, and a shorter recap costs less to voice, gives the checks
+  less to read and leaves less room for an answer to be cut off.
+  **A draft of the wrong length is steered, not just retried** (owner, 2026-10-22, after Test L's
+  rerun failed its checks). When a draft fails only because of its length, the next try tells the writer
+  which way and by how much, N being the distance to the target: for a 1-hour session (target 150, range
+  75 to 180), "Your draft is 60 words; it must be 75 to 180. Make it longer by about 90 words" (or shorter). The next draft must move the right way and land in the range. If it moves the
+  wrong way, does not move, or overshoots past the other end of the range, the job stops there and
+  fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
+  same applies to the section count when the fix-up changes the sections: the length is checked again
+  after it, and steered once if it left the range.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4693,6 +4746,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   one can be cancelled. An address another account already uses is refused (sign-in by email
   needs one address per account). Once changed, the **old** address gets a short note, so a
   stolen session can't quietly move email sign-in. API shape: the comment on #2349.
+  *Two more rules (Supervisor, 2026-10-22, #2359 review):* an email the person chose **outlives
+  later Discord sign-ins** (a Discord sign-in no longer overwrites it), and confirming deletes any
+  unused sign-in links sent to the old address. "That address is already used by another account"
+  is the one place DMbot says whether an address has an account: only to a signed-in person, at
+  most 6 tries an hour, because two accounts sharing an address would lock both out of email
+  sign-in.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
@@ -4806,6 +4865,19 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   #227)
 
 *Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.
+
+### Players don't know this one yet (#2321, 2026-10-22)
+Any entry (person, group, place, thing) can be kept from the players until the DM says they
+know it: the 🙈 switch on the kind step of Add a name, and 🙈 Hide from players / 👀 Players know
+it now on the name card (DM only). It is the clue's `audience_limited` treatment without an
+audience to track: `memory_entities.hidden_from_players`, read everywhere as
+`Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
+recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
+DM sets it. The relationship-level secret is separate and already exists (a secret connection).
+A player's character, the party and DMbot's own player entries can't be hidden. A hidden name is
+treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
+until the DM shows it.
+A database trigger clears the flag whenever an entry becomes a player's character or the party, whichever path does it (an import, a change of kind, the plays answer, a merge).
 
 ### Recap output room and Try again (#2341, 2026-10-22)
 The beat-sheet call's output room is sized for a full window of beats (`beats.room`) and doubles on the

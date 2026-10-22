@@ -149,6 +149,27 @@ class TheLink(Shared):
         got = await self.public.get(f"/recaps/{token}")
         self.assertEqual((got.status_code, got.text), (404, '{"error":"not_found"}'))
 
+    async def test_a_name_the_players_dont_know_yet_makes_the_read_return_nothing(self) -> None:
+        """#2321: the DM's "Players don't know yet" entry is secret to the public page too, though
+        none of its names is marked secret."""
+        await self.post_it()
+        token = await self.token()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, hidden_from_players) VALUES (%s, %s, %s, 'npc', %s,"
+                " '', 'confirmed', 'dm', 0, true)",
+                (THURSDAY.id, self.one.id, "f" * 32, "Mira"),
+            )
+            await conn.execute(
+                "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                " kind, secret, status, sound_codes, source, created_at) VALUES (%s, %s, %s, %s,"
+                " %s, %s, 'full', false, 'confirmed', '{}', 'dm', 0)",
+                (THURSDAY.id, self.one.id, "b" * 32, "f" * 32, "Mira", "mira"),
+            )
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual((got.status_code, got.text), (404, '{"error":"not_found"}'))
+
     async def test_a_recap_dropped_after_posting_cannot_be_read(self) -> None:
         await self.post_it()
         token = await self.token()

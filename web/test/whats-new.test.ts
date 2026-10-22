@@ -68,6 +68,10 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
+      "Recaps are shorter", // until #2368 merges and dev1 deploys it
+      "All your names on the website", // until #2294 merges, dev1 deploys it and the Names page (#2295) is live
+      "Keep a name from the players until they learn it", // until dev1 deploys it (#2321)
       "Pick the other name from a list", // until #2321 merges and dev1 deploys it
       "DMbot asks when two house rules disagree", // until #2284 merges and dev1 deploys it
       "Hear and record how a name sounds", // until #2316 and #2318 are deployed (#2317)

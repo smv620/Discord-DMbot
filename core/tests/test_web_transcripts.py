@@ -433,7 +433,11 @@ class Characters(Transcripts):
         self.memory = MemoryStore(self.db)
         add = self.memory.add_entity
         g, c = THURSDAY.id, self.one.id
-        kw = {"source": DM_SOURCE, "status": "confirmed", "role": "player_character"}
+        kw: dict[str, Any] = {
+            "source": DM_SOURCE,
+            "status": "confirmed",
+            "role": "player_character",
+        }
         await add(g, c, type="character", name="Cerric", played_by=BOB.id, **kw)
         await add(g, c, type="character", name="Dorn", played_by=BOB.id, **kw)
         await add(g, c, type="character", name="Mira", played_by=CAROL.id, **kw)

@@ -6,7 +6,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -80,7 +80,9 @@ class Menus(unittest.TestCase):
             self.assertLessEqual(len(custom_id), 100)
             self.assertIsNotNone(cls.__discord_ui_compiled_template__.fullmatch(custom_id))
 
-    def test_each_viewer_gets_the_management_buttons_they_can_use(self) -> None:
+    def test_each_viewer_gets_the_management_buttons_they_can_use(
+        self,
+    ) -> None:
         owner, co_dm, manager = 7, 8, 9
         c = replace(campaign(), owner_user_id=owner, dm_user_ids=frozenset({owner, co_dm}))
         mine = labels(management_view(c, None, owner))
@@ -98,7 +100,8 @@ class Menus(unittest.TestCase):
             self.assertTrue(any(wanted in x for x in theirs), (wanted, theirs))
         for not_wanted in ("Hand over", "Pause", "Take back"):
             self.assertFalse(any(not_wanted in x for x in theirs), (not_wanted, theirs))
-        # a server manager who is not a DM: no 🗂️ on the main card, the 👁️ choices stay
+        # a viewer who is not a DM (a server manager, say): no 🗂️ on the main card, the 👁️
+        # choices stay (the press path for a real manager is in `Presses`)
         main = labels(settings_view(c, None, manager))
         self.assertNotIn("Campaign management", main)
         self.assertIn("Who can see the DM screen", main)
@@ -166,6 +169,30 @@ class Presses(unittest.IsolatedAsyncioTestCase):
             with patch.object(settings_module, "_may", AsyncMock(return_value=allowed)):
                 await BackToSettingsButton(CAMPAIGN).callback(it)
             self.assertIn("Settings for", it.response.edit_message.await_args.kwargs["content"])
+
+    async def test_a_server_manager_who_is_no_dm_opens_management_with_only_the_way_back(
+        self,
+    ) -> None:
+        it = press(PLAYER, found=campaign(), manager=True)  # (the real `_may`, not a stand-in)
+        it.response.edit_message = AsyncMock()
+        await ManagementMenuButton(CAMPAIGN).callback(it)
+        self.assertEqual(
+            labels(it.response.edit_message.await_args.kwargs["view"]), ["Back to Settings"]
+        )
+
+    async def test_an_edit_that_fails_answers_the_press_privately(self) -> None:
+        it = press(DM)
+        it.response.is_done = MagicMock(return_value=False)
+        it.response.edit_message = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(status=404), "x")
+        )
+        allowed = (campaign(), it.guild, it.client.campaigns)
+        with patch.object(settings_module, "_may", AsyncMock(return_value=allowed)):
+            await ManagementMenuButton(CAMPAIGN).callback(it)
+        sent = it.response.send_message.await_args
+        self.assertEqual(sent.args[0], settings_module.FAILED)
+        self.assertTrue(sent.kwargs["ephemeral"])
+        it.followup.send.assert_not_awaited()
 
     async def test_a_refused_press_changes_nothing(self) -> None:
         it = press(PLAYER)

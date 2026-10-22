@@ -34,7 +34,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import logic
+from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -283,6 +283,7 @@ class NamesHome(_Menu):
         waiting: int,
         shown: list[tuple[str, str, str]] | None = None,
         reviews: Reviews | None = None,
+        left_out: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -332,12 +333,17 @@ class NamesHome(_Menu):
             self.open = _Select(
                 self._open,
                 placeholder="✏️ Fix, change or remove a name…",
-                options=[
-                    discord.SelectOption(
-                        label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e, description=kind
-                    )
-                    for e, name, kind in shown[: logic.SELECT_OPTIONS_MAX]
-                ],
+                options=all_names.with_choice(
+                    [
+                        discord.SelectOption(
+                            label=logic.shorten(name, logic.OPTION_LABEL_MAX),
+                            value=e,
+                            description=kind,
+                        )
+                        for e, name, kind in shown
+                    ],
+                    left_out=left_out,
+                ),
                 row=2,
             )
             self.add_item(self.open)
@@ -373,6 +379,9 @@ class NamesHome(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
 
+        if all_names.chosen(self.open.values):
+            await all_names.reply(interaction, self.campaign_id)
+            return
         await show_card(interaction, self.campaign_id, self.open.values[0])
 
     async def _browse(self, interaction: discord.Interaction) -> None:
@@ -495,7 +504,12 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         else None
     )
     text, shown = home_text(names, campaign, waiting, reviews)
-    await _send(interaction, text, NamesHome(campaign.id, waiting, shown, reviews))
+    known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
+    await _send(
+        interaction,
+        text,
+        NamesHome(campaign.id, waiting, shown, reviews, left_out=known > len(shown)),
+    )
 
 
 class CampaignChoice(_Menu):
@@ -655,8 +669,14 @@ class AddNameForm(discord.ui.Modal, title="Add a name"):
         secret = (
             split_names(self.secret.value) if sees_secrets(campaign, interaction.user.id) else []
         )
-        view = KindPicker(self.campaign_id, name, split_names(self.others.value), secret)
-        await _send(interaction, f"**What is {_md(name)}?**", view)
+        view = KindPicker(
+            self.campaign_id,
+            name,
+            split_names(self.others.value),
+            secret,
+            can_hide=sees_secrets(campaign, interaction.user.id),
+        )
+        await _send(interaction, view.prompt(), view)
 
 
 async def known_as(memory: MemoryStore, campaign: Campaign, name: str) -> str | None:
@@ -673,13 +693,37 @@ def already_known(name: str, entry: str) -> str:
     )
 
 
+# A state the DM flips on the kind step (#2321), so the form needs no switch (not every client
+# draws one). Each label says what pressing does, as on the name card; no colon, the site's
+# button check refuses one.
+PLAYERS_KNOW = "🙈 Hide from players"
+PLAYERS_DONT_KNOW = "👀 Show to players"
+
+
 class KindPicker(_Menu):
-    def __init__(self, campaign_id: str, name: str, others: list[str], secret: list[str]) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        name: str,
+        others: list[str],
+        secret: list[str],
+        *,
+        can_hide: bool = False,
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.name = name
         self.others = others
         self.secret = secret
+        self.hidden = False
+        if can_hide:  # only a DM keeps an entry back from the players
+            self.hide = _Button(
+                self._flip_hidden,
+                label=PLAYERS_KNOW,
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            self.add_item(self.hide)
         self.pick = _Select(
             self._picked,
             placeholder="Pick one…",
@@ -691,6 +735,25 @@ class KindPicker(_Menu):
         )
         self.add_item(self.pick)
 
+    def prompt(self) -> str:
+        """The question, and (to a DM) whether the name will be kept from the players."""
+        text = f"**What is {_md(self.name)}?** Pick one to save it."
+        return text + ("\n🙈 Hidden from players. Only you will see it." if self.hidden else "")
+
+    async def _flip_hidden(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, "Only the DM can change that.")
+            return
+        self.hidden = not self.hidden
+        self.hide.label = PLAYERS_DONT_KNOW if self.hidden else PLAYERS_KNOW
+        self.hide.style = (
+            discord.ButtonStyle.success if self.hidden else discord.ButtonStyle.secondary
+        )
+        await interaction.response.edit_message(content=self.prompt(), view=self)
+
     async def _picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)  # saves, then reloads names
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -700,8 +763,9 @@ class KindPicker(_Menu):
         self.stop()
         try:
             entity = await save_name(
-                memory, campaign, self.name, self.pick.values[0], self.others, self.secret
-            )
+                memory, campaign, self.name, self.pick.values[0], self.others, self.secret,
+                hidden=self.hidden and sees_secrets(campaign, interaction.user.id),
+            )  # fmt: skip
         except MemoryRuleError as exc:
             await _replace(interaction, f"Couldn't save that: {exc}", None)
             return
@@ -725,20 +789,23 @@ async def save_name(
     secret: list[str],
     *,
     played_by: int | None = None,
+    hidden: bool = False,
 ) -> Entity:
-    """Save a name the DM gave, with its other and secret names, as the DM's word."""
+    """Save a name the DM gave, with its other and secret names, as the DM's word. `hidden`:
+    the players don't know it yet (#2321)."""
     gid, cid = campaign.guild_id, campaign.id
     written = await memory.add_entity(
-        gid, cid, type=kind, name=name, source=DM, status=CONFIRMED, played_by=played_by
-    )
+        gid, cid, type=kind, name=name, source=DM, status=CONFIRMED, played_by=played_by,
+        hidden_from_players=hidden,
+    )  # fmt: skip
     entity = written.value
     for other in others:
         await memory.add_alias(
             gid, cid, entity.id, other, kind="nickname", source=DM, status=CONFIRMED
         )
-    for hidden in secret:
+    for disguise in secret:
         await memory.add_alias(
-            gid, cid, entity.id, hidden, kind="title", source=DM, status=CONFIRMED, secret=True
+            gid, cid, entity.id, disguise, kind="title", source=DM, status=CONFIRMED, secret=True
         )
     return entity
 
@@ -746,6 +813,8 @@ async def save_name(
 def saved_text(entity: Entity, others: list[str], secret: list[str]) -> str:
     kind = KIND_SHORT.get(entity.kind_key, entity.kind_key)
     lines = [f"✅ DMbot will remember **{_md(entity.name)}** ({kind})."]
+    if entity.hidden_from_players:
+        lines.append("🙈 Hidden from players. Only you see it.")
     if others:
         lines.append(f"DMbot also listens for: {', '.join(map(_md, others))}.")
     if secret:

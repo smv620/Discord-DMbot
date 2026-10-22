@@ -126,9 +126,10 @@ class CampaignLookup:
                 a.text,
                 a.key,
                 a.kind,
-                # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
-                # must never write it into the shared transcript, and it is the DM's alone.
-                a.secret or entities[a.entity_id].audience_limited,
+                # A clue only some people know (#1649), or an entry the DM hasn't told the players
+                # of (#2321), is as secret as a secret name: the Cleaner must never write it into
+                # the shared transcript, and it is the DM's alone.
+                a.secret or entities[a.entity_id].unseen_by_players,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
                 False,
@@ -202,15 +203,16 @@ class CampaignLookup:
 
     @property
     def hidden(self) -> frozenset[str]:
-        """What the campaign's DMs alone may see: the clues only some people know (#1649) and
-        the story threads (#1662) and deeds (#1732), which are the DM's plot notes."""
+        """What the campaign's DMs alone may see: the clues only some people know (#1649), the
+        entries the DM marked "Players don't know yet" (#2321), and the story threads (#1662)
+        and deeds (#1732), which are the DM's plot notes."""
         return frozenset(
-            e.id for e in self.entities.values() if e.audience_limited or e.type in DM_ONLY_TYPES
+            e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
         )
 
     def for_viewer(self, secrets: bool) -> CampaignLookup:
         """What a person who may not see secrets (a server manager who is not a DM) gets to
-        read: the same names without the clues only some people know, in every list, search,
+        read: the same names without the DM-only entries (`hidden`), in every list, search,
         card and file. The campaign's DMs, and the Cleaner, get the whole thing."""
         if secrets:
             return self
