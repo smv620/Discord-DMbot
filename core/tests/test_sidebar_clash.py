@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.rules.followed import FollowedRule
@@ -259,10 +259,10 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_the_press_records_the_winner_and_asks_again_once(self) -> None:
         view, record, retry = self.view()
         it = self.press(DM)
-        await view.children[1].callback(it)  # type: ignore[attr-defined]
+        await cast(Any, view.children[1]).callback(it)
         record.assert_awaited_once_with(RuleRef("", 2), RuleRef("", 1), DM)
         retry.assert_awaited_once()
-        await view.children[0].callback(self.press(DM))  # type: ignore[attr-defined]
+        await cast(Any, view.children[0]).callback(self.press(DM))
         record.assert_awaited_once()  # a second press changes nothing
         retry.assert_awaited_once()
 
@@ -271,22 +271,24 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         retry.side_effect = RuntimeError("boom")
         it = self.press(DM)
         it.edit_original_response = AsyncMock()
-        await view.children[0].callback(it)  # type: ignore[attr-defined]
+        await cast(Any, view.children[0]).callback(it)
         self.assertIn("couldn't answer", it.edit_original_response.await_args.kwargs["content"])
 
     async def test_unanswered_buttons_are_taken_away_when_they_time_out(self) -> None:
         view, record, _retry = self.view()
-        view._message = view.message = MagicMock()  # type: ignore[assignment]
-        view.message.edit = AsyncMock()  # type: ignore[union-attr]
+        message = MagicMock()
+        message.edit = AsyncMock()
+        setattr(view, "_message", message)  # noqa: B010 - the library keeps it under this name
+        setattr(view, "message", message)  # noqa: B010
         await view.on_timeout()
-        self.assertIn("neither rule was used", view.message.edit.await_args.kwargs["content"])  # type: ignore[union-attr]
-        self.assertIsNone(view.message.edit.await_args.kwargs["view"])  # type: ignore[union-attr]
+        self.assertIn("neither rule was used", message.edit.await_args.kwargs["content"])
+        self.assertIsNone(message.edit.await_args.kwargs["view"])
         record.assert_not_awaited()
 
     async def test_a_choice_that_could_not_be_saved_does_not_ask_again(self) -> None:
         view, record, retry = self.view()
         record.return_value = False
-        await view.children[0].callback(self.press(DM))  # type: ignore[attr-defined]
+        await cast(Any, view.children[0]).callback(self.press(DM))
         retry.assert_not_awaited()
 
 
@@ -305,8 +307,8 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
             self.recorded.append((winner, loser))
             return True
 
-        self.host.sidebar_campaign = campaign_of  # type: ignore[method-assign]
-        self.host.sidebar_record_win = record  # type: ignore[method-assign]
+        setattr(self.host, "sidebar_campaign", campaign_of)  # noqa: B010
+        setattr(self.host, "sidebar_record_win", record)  # noqa: B010
         sides = rule_clash.named(
             "House rule 1, House rule 2", [house(1, POTION_A), house(2, POTION_B)]
         )
