@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "My Account shows each campaign at a glance",
+    what: "On My Account, each campaign card now shows whether DMbot is listening right now, your part in it, and its sessions, hours played, players, NPCs, when it started and when it was last played. Tap the name to open the campaign. The sections are in a new order: My campaigns, My characters, My plan and billing, then the sections about your account.",
+    reason: "In review (#2460); held until the API sends the facts and dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Every recap says which session it is",
     what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
     reason: "In review (#2418); held until dev1 deploys it.",

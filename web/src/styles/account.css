@@ -124,6 +124,16 @@
     font-weight: 600;
   }
 
+  /* A campaign card's facts (#2460): short phrases that wrap on a phone, never a table. */
+  .account .facts {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+  }
+
   .account .hello {
     display: flex;
     flex-wrap: wrap;

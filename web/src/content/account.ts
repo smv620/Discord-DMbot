@@ -142,7 +142,7 @@ export const text = {
   signOutEverywhereWait: "Wait a minute, then try again.",
 
   // Plan
-  planHeading: "Your plan",
+  planHeading: "My plan and billing",
   noPlan: "You don't have a plan yet.",
   startTryIt: "Start Try It",
   startTryItNote: "Free for 30 days. No card needed.",
@@ -211,7 +211,7 @@ export const text = {
   lapsed: `Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
-  campaignsHeading: "Your campaigns",
+  campaignsHeading: "My campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
   /** The button under a long list (#1991): the real count, one or many. */
   showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
@@ -224,6 +224,17 @@ export const text = {
   // Free access with no limits has no hours to use (#824).
   youRunItFree: "You run it",
   youHelp: "You help run it",
+  youPlay: "You play in it",
+  // The card's facts (#2460): the same words as Discord's campaign list.
+  listeningNow: "Listening now",
+  factsLabel: (name: string): string => `About ${name}`,
+  sessionsFact: (n: number): string => (n === 1 ? "1 session" : `${n} sessions`),
+  hoursFact: (h: number): string => `${h} ${h === 1 ? "hour" : "hours"} played`,
+  playersFact: (n: number): string => (n === 1 ? "1 player" : `${n} players`),
+  npcsFact: (n: number): string => (n === 1 ? "1 NPC" : `${n} NPCs`),
+  startedFact: (iso: string): string => `Started ${shortDate(iso)}`,
+  // The heading over the sections about the person and their account (#2460).
+  myAccountHeading: "My account",
   handOver: "Hand over",
 
   // Hand over

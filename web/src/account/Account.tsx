@@ -5,7 +5,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
-import { homebrewCard, houseRulesCard, recapCard, transcriptsCard } from "../content/account-cards";
+import { recapCard } from "../content/account-cards";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
@@ -529,18 +529,16 @@ function SignedIn({
           onNews={setOfferNews}
         />
       )}
+      <CampaignsSection me={me} />
+      <CharactersSection />
       <PlanSection me={me} />
+      <h2 id="my-account-heading">{text.myAccountHeading}</h2>
       {me.dmbotId !== undefined && <IdSection me={me} />}
       {api.myEmail && <EmailSection hash={hash} />}
+      <ServersSection me={me} />
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
-      <CampaignsSection me={me} />
-      {api.houseRuleCampaigns && <HouseRulesSection />}
-      {api.homebrewCampaigns && <HomebrewSection />}
-      {api.transcriptCampaigns && <TranscriptsSection />}
-      <ServersSection me={me} />
       <Improvement api={api} />
-      <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
@@ -1057,40 +1055,16 @@ function CampaignsSection({ me }: { me: Me }) {
   );
 }
 
-/** A link to the house rules (#1521): for anyone in a server, not only a DM, so it is not part of
- * the campaigns list. Hidden on an API older than the house-rules pages. */
-function HouseRulesSection() {
-  return (
-    <section aria-labelledby="house-rules-heading" class="panel">
-      <h2 id="house-rules-heading">{houseRulesCard.heading}</h2>
-      <p>{houseRulesCard.lead}</p>
-      <a href="/account/house-rules">{houseRulesCard.link}</a>
-    </section>
-  );
-}
-
-/** A link to the homebrew the DM shared (#1525): for anyone in a server, not only a DM. Hidden on
- * an API older than the homebrew pages. */
-function HomebrewSection() {
-  return (
-    <section aria-labelledby="homebrew-heading" class="panel">
-      <h2 id="homebrew-heading">{homebrewCard.heading}</h2>
-      <p>{homebrewCard.lead}</p>
-      <a href="/account/homebrew">{homebrewCard.link}</a>
-    </section>
-  );
-}
-
-/** A link to the session transcripts (#1501): for anyone in a server, not only a DM, so it is not
- * part of the campaigns list. Hidden on an API older than the transcript pages. */
-function TranscriptsSection() {
-  return (
-    <section aria-labelledby="transcripts-heading" class="panel">
-      <h2 id="transcripts-heading">{transcriptsCard.heading}</h2>
-      <p>{transcriptsCard.lead}</p>
-      <a href="/account/transcripts">{transcriptsCard.link}</a>
-    </section>
-  );
+/** The facts on a campaign's card (#2460), each left out when there is none. */
+function facts(c: Campaign): string[] {
+  return [
+    c.sessions ? text.sessionsFact(c.sessions) : null,
+    c.hoursPlayed ? text.hoursFact(c.hoursPlayed) : null,
+    c.players ? text.playersFact(c.players) : null,
+    c.npcs ? text.npcsFact(c.npcs) : null,
+    c.startedAt ? text.startedFact(c.startedAt) : null,
+    c.lastPlayedAt ? text.lastPlayed(c.lastPlayedAt) : text.notPlayed,
+  ].filter((f): f is string => f !== null);
 }
 
 function CampaignRow({
@@ -1118,22 +1092,34 @@ function CampaignRow({
         {/* Linked only when the API sends the campaign's address (#2416). */}
         {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
       </p>
-      <p class="muted small">
-        {campaign.serverName} ·{" "}
-        {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
-      </p>
+      <p class="muted small">{campaign.serverName}</p>
+      <ul class="facts small muted" aria-label={text.factsLabel(campaign.name)}>
+        {facts(campaign).map((f) => (
+          <li key={f}>{f}</li>
+        ))}
+      </ul>
       <p class="tags">
-        <span class={`tag ${campaign.status}`}>
-          <span aria-hidden="true">{campaign.status === "active" ? "🟢" : "⏸️"}</span>{" "}
-          {campaign.status === "active" ? text.active : text.paused}
-        </span>
+        {campaign.live && (
+          <span class="tag active">
+            <span aria-hidden="true">🟢</span> {text.listeningNow}
+          </span>
+        )}
+        {campaign.status === "paused" && (
+          <span class="tag paused">
+            <span aria-hidden="true">⏸️</span> {text.paused}
+          </span>
+        )}
         <span class="tag">
-          <span aria-hidden="true">{campaign.role === "owner" ? "👑" : "🤝"}</span>{" "}
+          <span aria-hidden="true">
+            {campaign.role === "owner" ? "👑" : campaign.role === "player" ? "🎲" : "🤝"}
+          </span>{" "}
           {campaign.role === "owner"
             ? noLimits
               ? text.youRunItFree
               : text.youRunIt
-            : text.youHelp}
+            : campaign.role === "player"
+              ? text.youPlay
+              : text.youHelp}
         </span>
       </p>
       <Notice message={notice} />

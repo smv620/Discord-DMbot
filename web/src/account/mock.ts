@@ -76,6 +76,13 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-10-02T19:30:00Z",
     status: "active",
     role: "owner",
+    // The card's facts (#2460).
+    live: true,
+    sessions: 12,
+    hoursPlayed: 41.5,
+    players: 4,
+    npcs: 27,
+    startedAt: "2026-03-14T18:00:00Z",
     // A test server: importing is on here though the site's own switch is off (#2260).
     importsOn: true,
   },
@@ -96,6 +103,24 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-09-25T18:00:00Z",
     status: "active",
     role: "co-dm",
+    sessions: 3,
+    hoursPlayed: 9,
+    players: 3,
+  },
+  // A campaign the person plays in (#2460): a card with no DM tools.
+  {
+    id: "cmp-lantern",
+    ref: "100.cmp4.cp-player",
+    name: "The Lantern Road",
+    serverName: "Thursday Table",
+    lastPlayedAt: "2026-09-18T18:00:00Z",
+    status: "active",
+    role: "player",
+    sessions: 5,
+    hoursPlayed: 15.5,
+    players: 5,
+    npcs: 8,
+    startedAt: "2026-06-01T18:00:00Z",
   },
 ];
 
