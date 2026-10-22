@@ -65,6 +65,12 @@ export const text = {
     "We can't find that recap. Open it again from your email, or pick it from your list.",
   onlyYou: "Only you can see this until you post it.",
   working: "DMbot is still writing this recap. Check back in a few minutes.",
+  // Written, but the checks that read it before the DM does can't run yet (#2297). One steady line:
+  // it stays up through the short gaps between tries, until the recap is ready or has failed.
+  waitingForCheck:
+    "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
+  checksHeading: "What the checks said",
+  checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
@@ -132,13 +138,16 @@ export function isHeld(recap: Recap): boolean {
 }
 
 /** "Ready to read", "Posted"… for one row of the list. */
-export function statusLine(recap: Recap): string {
+/** `stillWaiting`: the page has seen this recap wait for its check and keeps saying so through the short
+ * gaps where the API says something else (#2297), so the tag and the line below it agree. */
+export function statusLine(recap: Recap, stillWaiting = false): string {
   if (recap.status === "posted" && recap.shared && RECAPS_LIVE && RECAP_SHARE_LIVE) return shareWords.listTag;
   if (recap.status === "posted") return "Posted";
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
   if (isHeld(recap)) return heldWords.status;
   if (recap.state === "failed") return "Couldn't be made";
+  if (recap.working && (recap.waitingForCheck || stillWaiting)) return "Waiting for a last check";
   if (recap.working) return "Being made";
   return "Ready to read";
 }
