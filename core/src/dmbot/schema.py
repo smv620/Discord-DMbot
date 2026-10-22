@@ -3014,6 +3014,58 @@ EMAIL_SIGN_IN = (
     """
 )
 
+EMAIL_CHANGES = """
+    -- A waiting change of the email DMbot uses (#2349): one row per account (a new ask replaces the
+    -- last one), holding the address asked for and only the SHA-256 of the confirm link's token,
+    -- like a session cookie. Own row only; the link works for the account that asked.
+    CREATE TABLE email_changes (
+        user_id     BIGINT PRIMARY KEY REFERENCES web_users ON DELETE CASCADE,
+        new_email   TEXT NOT NULL,
+        token_hash  TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL
+    );
+    ALTER TABLE email_changes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_changes FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_changes
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+
+    -- Whether another account already uses an address (sign-in by email needs one address per
+    -- account). The person is the one signed in; the function runs with its owner's rights to
+    -- read the other rows, opened by the same setting and policy as dmbot_user_by_email, and
+    -- answers only yes or no.
+    CREATE FUNCTION dmbot_email_taken(addr TEXT) RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BOOLEAN;
+        me BIGINT := dmbot_current_user();
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF me IS NULL OR addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        SELECT EXISTS (
+            SELECT 1 FROM web_users
+            WHERE user_id <> me
+              AND (lower(email) = lower(addr) OR lower(payment_email) = lower(addr))
+        ) INTO found;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_email_taken(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_email_taken(TEXT) FROM PUBLIC;
+"""
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -3026,6 +3078,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     # Sign-in by emailed link (#1231).
     ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    # Whether another account has an address, for the signed-in person's change of email (#2349).
+    ("dmbot_email_taken", "dmbot_email_taken(TEXT)"),
     # Experience points (#1228): the one door to the person's all-time minutes.
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
@@ -3199,6 +3253,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
     ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
     ("UPDATE (used_at)", ("email_sign_in_links",)),
+    # A waiting change of the account's email (#2349): made, replaced, read, confirmed (deleted).
+    ("SELECT, INSERT, UPDATE, DELETE", ("email_changes",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
@@ -9465,6 +9521,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0163_import_plays", IMPORT_PLAYS),  # the DM's "plays" choices wait for the bot (#2135)
     ("0164_house_rule_wins", HOUSE_RULE_WINS),  # which of two disagreeing rules wins (#2284)
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
+    ("0168_email_changes", EMAIL_CHANGES),  # a waiting change of the account email (#2349)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -9547,6 +9604,7 @@ USER_ISOLATED_TABLES = (
     "payment_events",
     "web_sessions",
     "email_sign_in_links",
+    "email_changes",
     "installs",
     # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
     "account_id_history",
