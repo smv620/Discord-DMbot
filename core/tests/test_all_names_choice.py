@@ -128,3 +128,48 @@ class TheMenus(NamesTest):
         assert many.open is not None
         self.assertEqual(many.open.options[-1].value, all_names.VALUE)
         self.assertLessEqual(len(many.open.options), 25)
+
+    async def matches_for(self, typed: str) -> Any:
+        from dmbot.ui import name_card
+
+        it = self.it()
+        await name_card.show_matches(it, self.campaign.id, typed)
+        return it.response.sent[0][1]["view"]
+
+    async def test_fewer_matches_than_the_cap_have_no_choice(self) -> None:
+        from dmbot.memory.search import MAX_RESULTS
+
+        await self.add(MAX_RESULTS - 1)
+        few = await self.matches_for("Person")
+        self.assertNotIn(all_names.VALUE, [o.value for o in few.pick.options])
+
+    async def test_matches_at_the_cap_end_with_the_choice(self) -> None:
+        from dmbot.memory.search import MAX_RESULTS
+
+        await self.add(MAX_RESULTS)  # a fresh test, as the panel keeps the names it loaded
+        many = await self.matches_for("Person")
+        self.assertEqual(many.pick.options[-1].value, all_names.VALUE)
+        self.assertLessEqual(len(many.pick.options), 25)
+
+    async def test_choosing_it_in_matches_gives_the_link_and_opens_no_card(self) -> None:
+        await self.add(30)
+        view = await self.matches_for("Person")
+        view.pick = SimpleNamespace(values=[all_names.VALUE])
+        press = self.it()
+        press.client = SimpleNamespace(settings=SimpleNamespace(site_url="https://x.example.com"))
+        await view._picked(press)
+        (text, kw) = press.response.sent[0]
+        self.assertEqual(text, all_names.LINE)
+        self.assertEqual(len(kw["view"].children), 1)
+        self.assertTrue(kw["ephemeral"])
+
+    async def test_choosing_it_in_browse_gives_the_link_and_opens_no_card(self) -> None:
+        await self.add(40)
+        browse = name_lists.Browse(self.campaign.id, await self.lookup(), "npc")
+        browse.open = SimpleNamespace(values=[all_names.VALUE])  # type: ignore[assignment]
+        press = self.it()
+        press.client = SimpleNamespace(settings=SimpleNamespace(site_url="https://x.example.com"))
+        await browse._open(press)
+        (text, kw) = press.response.sent[0]
+        self.assertEqual(text, all_names.LINE)
+        self.assertEqual(len(kw["view"].children), 1)
