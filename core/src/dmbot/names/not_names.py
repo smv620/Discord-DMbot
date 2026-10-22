@@ -47,7 +47,10 @@ _STEMS = (
 )
 _ENDINGS = ("m", "ll", "d", "ve", "re", "s")
 CONTRACTIONS = frozenset(
-    f"{stem}'{end}" for stem in _STEMS for end in _ENDINGS if not (stem == "i" and end in "sre")
+    f"{stem}'{end}"
+    for stem in _STEMS
+    for end in _ENDINGS
+    if not (stem == "i" and end in ("s", "re"))
 ) | {"im", "ive", "id", "theyre", "youre", "weve", "theyll", "youll", "hes", "shes", "thats"}
 # Words that only fail as a name when they start a sentence ("This is it", "Someone knocked").
 SENTENCE_STARTERS = frozenset(
@@ -63,7 +66,7 @@ _GAP = re.compile(r"\s+")
 
 
 def _plain(word: str) -> str:
-    return word.translate(_CURLY).strip(' .,;:!?"“”()[]').lower()
+    return word.translate(_CURLY).strip(" .,;:!?\"“”()[]'").lower()
 
 
 def _first(candidate: str) -> str:
@@ -94,7 +97,7 @@ def is_not_name(candidate: str, *, sentence_start: bool = False) -> bool:
 
 # "my/his/her/their/your/its/our name is X", "(I'm|he's|they're|…) called X", "call me/him/… X",
 # "named X", "goes by X". X is the one word straight after the cue.
-_X = r"[\"“‘']?(?P<x>[^\W\d_][\w'’-]*)"
+_X = r"[\"“‘']?(?P<x>[^\W\d_][\w'’-]*?)(?:['’][\"”’]?)?(?![\w'’-])"
 _CUES = [
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -108,12 +111,23 @@ _CUES = [
 ]
 
 
+_NAMED = 3
+_LOOSE = (2, _NAMED)  # the cues that take whatever word follows
+_OBJECTS = frozenset({"me", "him", "her", "them", "it", "you"})
+_FILLER = frozenset({"the", "a", "an", "after", "for", "by", "in", "on", "to", "of", "as"})
+
+
 def cued_names(line: str) -> frozenset[str]:
     """The words a plain naming cue in this one line says are names, lower case."""
     found: set[str] = set()
-    for pattern in _CUES:
+    for at, pattern in enumerate(_CUES):
         for match in pattern.finditer(line or ""):
-            found.add(_plain(match.group("x")))
+            word = _plain(match.group("x"))
+            # "They named him Bob", "He was named after the king": the word after "named" or
+            # "call" is not always the name.
+            if at in _LOOSE and (word in _FILLER or (at == _NAMED and word in _OBJECTS)):
+                continue
+            found.add(word)
     return frozenset(found)
 
 

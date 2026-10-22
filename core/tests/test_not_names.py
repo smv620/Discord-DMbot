@@ -211,3 +211,17 @@ class TheOtherSources(unittest.TestCase):
 
         self.assertEqual(kept("We reached Zarathon.", "We went to Zarathon"), ["Zarathon"])
         self.assertEqual(kept("Then We spoke.", "My name is We"), ["We"])
+
+
+class TheCueEdges(unittest.TestCase):
+    def test_a_quoted_name_is_cued_and_a_quoted_pronoun_is_still_a_pronoun(self) -> None:
+        self.assertTrue(nn.keep("She", "a gnome named 'She' waved"))
+        self.assertTrue(nn.keep("She", "a gnome named ‘She’ waved"))
+        self.assertTrue(nn.is_not_name("'We'"))
+        self.assertTrue(nn.is_not_name("‘We’"))
+        self.assertTrue(nn.is_not_name("we'll"))
+
+    def test_the_word_after_named_must_be_a_name_not_an_object_or_filler(self) -> None:
+        self.assertFalse(nn.keep("Him", "They named him Bob"))
+        self.assertFalse(nn.keep("It", "They named it Fred"))
+        self.assertEqual(nn.cued_names("He was named after the king"), frozenset())
