@@ -158,6 +158,49 @@ describe("under the email switch in the recap choices", () => {
   });
 });
 
+describe("while a recap is being made, with the choices panel on the same page", () => {
+  const making = (recapEmail: RecapEmail) => {
+    const api = mockApi("table");
+    const real = api.recap!.bind(api);
+    api.recap = async (r) => ({
+      ...(await real(r)),
+      working: true,
+      state: "working",
+      canPost: false,
+      canEdit: false,
+      canTryAgain: false,
+      canDrop: false,
+      recapEmail,
+    });
+    render(<Recaps api={api} path={`/account/recaps/${mockRecaps()[0]!.ref}`} />);
+    return api;
+  };
+
+  it("names the address once, with one Stripe button", async () => {
+    making({ address: "pay@example.com", source: "payment", on: true });
+    const box = (await screen.findByLabelText(choiceWords.labels.email)) as HTMLInputElement;
+    await waitFor(() => expect(box.checked).toBe(true));
+    expect(screen.getAllByText(/We'll email pay@example\.com/)).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: w.changePayment })).toHaveLength(1);
+  });
+
+  it("follows the switch: turning emails off takes the promise away", async () => {
+    making({ address: "dm@example.com", source: "signin", on: true });
+    const box = (await screen.findByLabelText(choiceWords.labels.email)) as HTMLInputElement;
+    await screen.findByText(/We'll email dm@example\.com/);
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.queryByText(/We'll email/)).toBeNull());
+    expect(screen.getByText(new RegExp("Emails are off"))).toBeTruthy();
+  });
+
+  it("follows the switch the other way: the first read said off, the switch is on", async () => {
+    making({ address: "dm@example.com", source: "signin", on: false });
+    const box = (await screen.findByLabelText(choiceWords.labels.email)) as HTMLInputElement;
+    await waitFor(() => expect(box.checked).toBe(true));
+    expect(await screen.findByText(/We'll email dm@example\.com/)).toBeTruthy();
+  });
+});
+
 describe("on the recap page", () => {
   const ref = mockRecaps()[0]!.ref;
 

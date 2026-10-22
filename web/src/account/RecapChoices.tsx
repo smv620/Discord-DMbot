@@ -19,11 +19,17 @@ export default function RecapChoicesPart({
   api,
   recapRef,
   email,
+  working = false,
+  onEmail,
 }: {
   api: AccountApi;
   recapRef: string;
   /** Where this recap's email goes (#2335), so the switch never promises one with no address. */
   email?: RecapEmail | undefined;
+  /** The recap is being made: the line above already names the address, so this panel does not (#2335). */
+  working?: boolean;
+  /** Tells the page whether the email switch is on, so the line while a recap is made follows it. */
+  onEmail?: ((on: boolean) => void) | undefined;
 }) {
   const [choices, setChoices] = useState<RecapChoices | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -45,6 +51,13 @@ export default function RecapChoicesPart({
       live = false;
     };
   }, [api, ref, on]);
+
+  const emailOn = choices?.email;
+  useEffect(() => {
+    if (emailOn !== undefined) onEmail?.(emailOn);
+    // `onEmail` is only a setter; the switch is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailOn]);
 
   if (!on) return null;
   const { setRecapChoice } = api;
@@ -113,7 +126,7 @@ export default function RecapChoicesPart({
           {!choices.email && <p class="small muted">{words.emailOff}</p>}
           {/* With the switch on, the same line as under a working recap: which address, or that there is none.
               `on` follows the switch just changed here, not the page's first read. */}
-          {choices.email && <RecapEmailLine api={api} email={email ? { ...email, on: true } : undefined} />}
+          {choices.email && !working && <RecapEmailLine api={api} email={email ? { ...email, on: true } : undefined} />}
           {/* Always on the page, only its words change: a screen reader announces a live region that
               was already there, not one added together with its text. */}
           <p class="small" role="status">

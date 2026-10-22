@@ -434,6 +434,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     };
   }, [api, recapRef]);
 
+  // The email switch as the DM has it now (null until the choices have loaded), so the line while a
+  // recap is made follows it instead of the first read of the recap.
+  const [emailOn, setEmailOn] = useState<boolean | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
 
@@ -636,7 +639,12 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       {/* The only place the page says an email is coming, so the only place it names the address. */}
-      {recap.working && <RecapEmailLine api={api} email={recap.recapEmail} />}
+      {recap.working && (
+        <RecapEmailLine
+          api={api}
+          email={recap.recapEmail && emailOn !== null ? { ...recap.recapEmail, on: emailOn } : recap.recapEmail}
+        />
+      )}
       {recap.state === "failed" && !decided && !recap.working && (
         <p class="warn" role="alert">
           {text.failed}
@@ -756,7 +764,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
-      {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} />}
+      {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         !recap.working &&
