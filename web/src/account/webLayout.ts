@@ -2,6 +2,7 @@
 // worked out here in plain code so the page needs no graph library (the site's weight budget, #1947,
 // has no room for one). Pure and deterministic: the same names and connections always land in the
 // same places, so a redraw after a small change does not shuffle everything.
+import type { WebEdge } from "./api";
 
 export interface Placed {
   id: string;
@@ -119,3 +120,9 @@ export function zoomAbout(view: View, at: { x: number; y: number }, factor: numb
   const scale = k / view.k;
   return { k, x: at.x - (at.x - view.x) * scale, y: at.y - (at.y - view.y) * scale };
 }
+
+/** A line is a theory when every connection on it is something the party only suspects (#2405). */
+export function isTheory(edge: Pick<WebEdge, "links">): boolean {
+  return edge.links.length > 0 && edge.links.every((l) => l.belief !== undefined && l.belief.confidence < 1);
+}
+

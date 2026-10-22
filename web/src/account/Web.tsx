@@ -10,9 +10,20 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
-import { type AccountApi, ApiError, type NameChange, type NameRow, type WebEdge, type WebGraph, type WebLinkChange, type WebNode } from "./api";
+import {
+  type AccountApi,
+  ApiError,
+  type NameChange,
+  type NameRow,
+  type WebEdge,
+  type WebGraph,
+  type WebLinkChange,
+  type WebNode,
+  type WebRevealTarget,
+  type WebView,
+} from "./api";
 import WebMap from "./WebMap";
-import { clampHops } from "./webLayout";
+import { clampHops, isTheory } from "./webLayout";
 
 /** The campaign's address, read from `/account/web/<server>.<campaign>`. */
 export function webRefFromPath(path: string): string | null {
@@ -50,24 +61,39 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
   const latest = useRef(0);
   const sayings = useRef(0);
+  // Which web is asked for (#2405): a DM's "players" or "full"; a player who peeks, "full"; else the
+  // API's own pick. Kept in a ref too, so a read started before a switch is not mixed up with it.
+  const [asked, setAsked] = useState<WebView | undefined>(undefined);
+  const askedNow = useRef<WebView | undefined>(undefined);
+  // Once a response says the person is a DM they stay one for this visit, even in the players' view.
+  const [isDm, setIsDm] = useState(false);
+  const [meta, setMeta] = useState<{ visibility?: WebGraph["visibility"] | undefined; canPeek?: boolean | undefined }>({});
+  const [asking, setAsking] = useState(false);
+  const peekSwitch = useRef<HTMLInputElement>(null);
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
   async function load(at: string | null, steps: number, sure = false): Promise<void> {
     if (!ref || !api.webGraph) return;
     const mine = ++latest.current;
+    const view = askedNow.current;
     setBig(null);
     try {
       if (!sure && api.webSize) {
-        const size = await api.webSize(ref, { center: at, hops: steps });
+        const size = await api.webSize(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
         if (mine !== latest.current) return;
         if (size.names > BIG_WEB) {
           setBig({ names: size.names, center: at, hops: steps });
           return;
         }
       }
-      const read = await api.webGraph(ref, { center: at, hops: steps });
+      const read = await api.webGraph(ref, { center: at, hops: steps, ...(view ? { view } : {}) });
       if (mine !== latest.current) return;
       setGraph(read);
+      if (read.canEdit) setIsDm(true);
+      setMeta((now) => ({
+        visibility: read.visibility ?? now.visibility,
+        canPeek: read.canPeek ?? now.canPeek,
+      }));
       setCenter(read.center);
       setHops(clampHops(steps, read.maxHops));
       setHopsText(String(clampHops(steps, read.maxHops)));
@@ -76,10 +102,63 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     } catch (error) {
       if (mine !== latest.current) return;
       const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "peek-off") {
+        // The DM turned peeking off while it was on: back to the normal view, with the reason.
+        switchTo(undefined);
+        setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
+        setNews({ ok: false, text: words.errors["peek-off"]!, n: ++sayings.current });
+        await load(at, steps, true);
+        return;
+      }
       if (kind === "signed-out") setView("signed-out");
       else if (kind === "not-found" || kind === "not-allowed") setView("none");
       else setView("down");
     }
+  }
+
+  /** Changes which web is asked for, and reads it (#2405). */
+  function switchTo(next: WebView | undefined): void {
+    askedNow.current = next;
+    setAsked(next);
+  }
+  function chooseView(next: WebView | undefined): void {
+    switchTo(next);
+    setLine(null);
+    void load(center, hops, true);
+  }
+
+  /** A player agreed to the warning: tell the API they peek, then read the full web. */
+  async function peek(): Promise<void> {
+    setAsking(false);
+    if (!ref || !api.webPeek) return;
+    try {
+      await api.webPeek(ref);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "signed-out") return setView("signed-out");
+      setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
+      setNews({ ok: false, text: words.errors["peek-off"]!, n: ++sayings.current });
+      return;
+    }
+    chooseView("full");
+    peekSwitch.current?.focus();
+  }
+
+  /** A DM shows a name or a connection to the players, then the web is read again. */
+  async function reveal(target: WebRevealTarget): Promise<string | null> {
+    if (!ref || !api.webReveal) return words.errorFallback;
+    try {
+      await api.webReveal(ref, target);
+    } catch (error) {
+      const said = refusal(error);
+      if (said === null) {
+        setView("signed-out");
+        return "";
+      }
+      return said;
+    }
+    setNews({ ok: true, text: words.revealed, n: ++sayings.current });
+    await load(center, hops, true);
+    return null;
   }
 
   useEffect(() => {
@@ -185,17 +264,25 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         {words.loading}
       </p>
     );
-  // The API never sends a secret to someone who isn't a DM; this keeps one from showing if it did.
-  const canEdit = graph.canEdit;
-  const nodes = graph.nodes.filter((n) => canEdit || !n.secret);
+  // The API never sends a secret to someone it isn't for; this keeps one from showing if it did.
+  // Secrets are for a DM in Full View and for a player who is peeking, never in the players' view.
+  const showAll = asked === "players" ? false : graph.canEdit || asked === "full";
+  // Changing anything is for a DM, and not in the players' view (read-only, so what they see is checked).
+  const canEdit = graph.canEdit && asked !== "players";
+  const peeking = !isDm && asked === "full";
+  // Nor what the players haven't been told yet: the page may still hold the full web for a moment
+  // after a switch to the players' view, and this keeps it off the screen.
+  const nodes = graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
     // For anyone but a DM the label is rebuilt from the known connections, so a secret one's words can
     // never ride along on the line even if the API sent them.
     .map((e) => {
-      if (canEdit) return e;
-      const links = e.links.filter((l) => !l.secret);
+      if (showAll) return e;
+      const links = e.links
+        .filter((l) => !l.secret && l.revealed !== false)
+        .map(({ belief, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
@@ -213,6 +300,40 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           {words.readOnly}
         </p>
       )}
+
+      {isDm && (
+        <fieldset class="web-view">
+          <legend>{words.viewLegend}</legend>
+          <label class="choice">
+            <input type="radio" name="web-view" checked={asked !== "players"} onChange={() => chooseView("full")} />
+            <span>{words.fullView}</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="web-view" checked={asked === "players"} onChange={() => chooseView("players")} />
+            <span>{words.playersView}</span>
+          </label>
+          <p class="small muted">{asked === "players" ? words.playersViewNote : words.fullViewNote}</p>
+        </fieldset>
+      )}
+      {!isDm && api.webPeek && (
+        <PeekSwitch
+          on={asked === "full"}
+          disabled={meta.canPeek === false || meta.visibility === "private"}
+          inputRef={peekSwitch}
+          onTurnOn={() => setAsking(true)}
+          onTurnOff={() => chooseView(undefined)}
+        />
+      )}
+      {asking && (
+        <PeekAsk
+          onYes={() => void peek()}
+          onCancel={() => {
+            setAsking(false);
+            peekSwitch.current?.focus();
+          }}
+        />
+      )}
+      {peeking && <p class="note" role="note">{words.peeking}</p>}
 
       <div class="web-tools-form">
         <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} />
@@ -279,6 +400,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           nameOf={nameOf}
           canEdit={canEdit}
           act={act}
+          reveal={reveal}
           onClose={() => setLine(null)}
         />
       )}
@@ -288,18 +410,29 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <h3 class="small">{words.namesHeading}</h3>
         <ul class="web-names">
           {nodes.map((n) => (
-            <li key={n.id} class="name-row">
+            <li key={n.id} class={n.revealed === false ? "name-row web-dim" : "name-row"}>
               <span class="campaign-name">
                 {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
                 {n.name}
               </span>
               {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}{" "}
+              {n.revealed === false && <span class="small muted">({words.notRevealed}) </span>}
               <span class="tag">{kindWords(n.kind)}</span>
               {n.id === center ? (
                 <span class="small muted"> {words.inMiddle}</span>
               ) : (
                 <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
                   {words.makeMiddleShort}
+                </button>
+              )}
+              {canEdit && n.revealed === false && api.webReveal && (
+                <button
+                  type="button"
+                  class="button secondary"
+                  aria-label={words.revealFor(n.name)}
+                  onClick={() => void reveal({ kind: "name", id: n.id })}
+                >
+                  {words.reveal}
                 </button>
               )}
               {canEdit && api.changeName && (
@@ -323,6 +456,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <ul class="web-lines">
           {edges.map((e) => (
             <li key={`${e.a}|${e.b}`} class="name-row">
+              {isTheory(e) && <span aria-hidden="true">{words.theoryMark} </span>}
               {words.lineText(nameOf(e.a), nameOf(e.b), e.label, e.more)}{" "}
               <button
                 type="button"
@@ -411,12 +545,14 @@ function LinePanel({
   nameOf,
   canEdit,
   act,
+  reveal,
   onClose,
 }: {
   edge: WebEdge;
   nameOf: (id: string) => string;
   canEdit: boolean;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  reveal: (target: WebRevealTarget) => Promise<string | null>;
   onClose: () => void;
 }) {
   const a = nameOf(edge.a);
@@ -428,7 +564,7 @@ function LinePanel({
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
       <ol class="stack">
         {edge.links.map((l, i) => (
-          <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} />
+          <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} />
         ))}
       </ol>
       {canEdit && <AddLink edge={edge} act={act} />}
@@ -446,6 +582,7 @@ function LinkRow({
   b,
   canEdit,
   act,
+  reveal,
 }: {
   n: number;
   link: WebEdge["links"][number];
@@ -453,18 +590,39 @@ function LinkRow({
   b: string;
   canEdit: boolean;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  reveal: (target: WebRevealTarget) => Promise<string | null>;
 }) {
   const [text, setText] = useState(link.words);
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   return (
-    <li class="stack">
+    <li class={link.revealed === false ? "stack web-dim" : "stack"}>
       <p>
         {link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+        {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
         {words.linkText(a, b, link.words, link.direction)}
         {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {link.belief && (
+        <p class="small">
+          {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}
+        </p>
+      )}
+      {link.belief?.contradicted && <p class="small warn">{words.believesFalse}</p>}
+      {link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
+      {canEdit && link.revealed === false && (
+        <div class="row">
+          <button
+            type="button"
+            class="button secondary"
+            aria-label={words.revealLink(n)}
+            onClick={() => void reveal({ kind: "link", id: link.id }).then(setProblem)}
+          >
+            {words.reveal}
+          </button>
+        </div>
+      )}
       {canEdit && (
         <div class="stack">
           <label class="field">
@@ -595,6 +753,83 @@ function NodePanel({ node, act }: { node: WebNode; act: (id: string, change: Nam
           {problem}
         </p>
       )}
+    </div>
+  );
+}
+
+
+/** The player's "Peek behind the DM screen" switch. Greyed out, with the reason, when the DM turned
+ * peeking off; it stays focusable so a screen reader can read why. */
+function PeekSwitch({
+  on,
+  disabled,
+  inputRef,
+  onTurnOn,
+  onTurnOff,
+}: {
+  on: boolean;
+  disabled: boolean;
+  inputRef: { current: HTMLInputElement | null };
+  onTurnOn: () => void;
+  onTurnOff: () => void;
+}) {
+  return (
+    <div class="web-peek">
+      <label class={disabled ? "choice web-peek-off" : "choice"}>
+        <input
+          type="checkbox"
+          role="switch"
+          ref={inputRef}
+          checked={on && !disabled}
+          aria-disabled={disabled ? "true" : undefined}
+          aria-describedby={disabled ? "web-peek-note" : undefined}
+          onClick={(e) => {
+            if (disabled) {
+              e.preventDefault();
+              return;
+            }
+            // The box flips by itself on a click; what it shows is decided by the page.
+            e.preventDefault();
+            if (on) onTurnOff();
+            else onTurnOn();
+          }}
+        />
+        <span>{words.peekSwitch}</span>
+      </label>
+      {!on && <p class="small muted">{words.normalView}</p>}
+      {disabled && (
+        <p id="web-peek-note" class="small">
+          {words.peekOffNote}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The warning before a player peeks (#2405). Cancel changes nothing. */
+function PeekAsk({ onYes, onCancel }: { onYes: () => void; onCancel: () => void }) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  useEffect(() => cancel.current?.focus(), []);
+  return (
+    <div
+      class="panel stack"
+      role="alertdialog"
+      aria-labelledby="web-peek-title"
+      aria-describedby="web-peek-warn"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+    >
+      <h2 id="web-peek-title">{words.peekTitle}</h2>
+      <p id="web-peek-warn">{words.peekWarn}</p>
+      <div class="row">
+        <button type="button" class="button" onClick={onYes}>
+          {words.peekYes}
+        </button>
+        <button type="button" class="button secondary" ref={cancel} onClick={onCancel}>
+          {words.peekCancel}
+        </button>
+      </div>
     </div>
   );
 }
