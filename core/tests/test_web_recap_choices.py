@@ -260,6 +260,8 @@ class Choices(Base):
         self.assertEqual(
             set(got), {"text", "audio", "email", "canAudio", "audioHow", "audioUnavailable"}
         )
+        # Only these may leave for a co-DM: never "plan" or "allowance", which are the owner's.
+        self.assertIn(got["audioUnavailable"], {"", "unavailable", "not_set_up"})
         shown = repr(got).casefold()
         for secret in (str(ALICE.id), "guild", "sub_1", "active", "fake"):
             self.assertNotIn(secret, shown.replace("part of your plan", ""))

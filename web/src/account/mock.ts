@@ -12,6 +12,7 @@ import type {
   Character,
   ImportProgress,
   Me,
+  MyEmail,
   NameChanged,
   NameChange,
   NameKind,
@@ -464,6 +465,11 @@ function webView(ref: string): "dm" | "manager" | "none" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  const myEmail: MyEmail = {
+    address: "dm@example.com",
+    source: scenario === "table" ? "payment" : "signin",
+    pending: null,
+  };
   const memory = startNames();
   // My private notes on NPCs, by entry id (#2266). "old" is one on a name no longer listed.
   const npcNotes = new Map<string, string>([["old", "He owed me a favour."]]);
@@ -1270,6 +1276,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async getMoveCode() {
       calls.push("move-code");
       signedIn();
+    },
+    // The email setting (#2349). A confirmation link is "sent"; nothing changes until it is opened.
+    async myEmail() {
+      calls.push("myEmail");
+      await reachable();
+      signedIn();
+      return { ...myEmail };
+    },
+    // The pretend link's code is "good-code": it confirms the waiting change, anything else is a bad link.
+    async confirmEmail(token) {
+      calls.push("confirmEmail");
+      await reachable();
+      signedIn();
+      if (token !== "good-code" || !myEmail.pending) throw new ApiError("bad-link");
+      myEmail.address = myEmail.pending;
+      myEmail.pending = null;
+    },
+    async cancelEmailChange() {
+      calls.push("cancelEmailChange");
+      await reachable();
+      signedIn();
+      myEmail.pending = null;
+    },
+    async changeEmail(address) {
+      calls.push(`changeEmail:${address}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address.trim())) throw new ApiError("bad-email");
+      if (myEmail.source === "payment") throw new ApiError("not-allowed");
+      if (address.trim().toLowerCase() === "taken@example.com") throw new ApiError("in-use");
+      myEmail.pending = address.trim();
+      return { pending: myEmail.pending };
     },
     async sendSupport(ticket) {
       calls.push("support");

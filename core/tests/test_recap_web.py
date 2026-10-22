@@ -996,8 +996,8 @@ class TheApproval(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(recaps_on=True, recap_audio_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(

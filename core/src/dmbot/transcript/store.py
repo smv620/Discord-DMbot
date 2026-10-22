@@ -13,11 +13,12 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
+from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
 
@@ -128,6 +129,63 @@ class TranscriptStore:
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
+
+    async def record_names(
+        self, guild_id: int, session_id: str, names: Mapping[int, str | None]
+    ) -> None:
+        """Keep these speakers' display names for the website's transcripts (#2337). `None`: they
+        are not in the server any more, kept as "" so DMbot does not look again. A name already
+        kept is not replaced, and only people with lines in the session get one, so a name never
+        outlives its lines (`delete_person` and `remove_lines` take it out). It is the name when
+        DMbot first saved the person's words, or for an older session the one it found at the
+        start-up fill-in."""
+        if not names:
+            return
+        # (a name that is nothing once cleaned is kept as not found, never as "Someone")
+        kept = {
+            str(u): ""
+            if not n or (clean_name(n) == UNKNOWN_SPEAKER and n.strip() != UNKNOWN_SPEAKER)
+            else clean_name(n)
+            for u, n in names.items()
+        }
+        async with self._db.guild(guild_id) as conn:
+            # The session's row is locked first, as `delete_person` does, so a person's lines can't
+            # be deleted between the check below and the write (the statement's own snapshot
+            # would not see it).
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE id = %s FOR UPDATE", (session_id,)
+            )
+            await conn.execute(
+                "UPDATE transcript_sessions s SET speaker_names = ("
+                "   SELECT COALESCE(jsonb_object_agg(j.key, j.value), '{}'::jsonb)"
+                "   FROM jsonb_each(%s::jsonb) AS j"
+                "   WHERE EXISTS (SELECT 1 FROM transcript_lines l"
+                "     WHERE l.session_id = s.id AND l.user_id = j.key::bigint)"
+                " ) || s.speaker_names"
+                " WHERE s.id = %s AND s.transcripts_deleted_at IS NULL",
+                (json.dumps(kept), session_id),
+            )
+
+    async def unnamed(
+        self, guild_id: int, *, limit: int = 200
+    ) -> list[tuple[str, tuple[int, ...]]]:
+        """Sessions with speakers whose name was never kept (sessions from before #2337, or one a
+        restart cut short): (session ID, those speakers' IDs), at most `limit` sessions, oldest
+        first. The bot's one-off fill-in at start-up reads this; it finds nothing once done."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT s.id, ARRAY(SELECT u FROM unnest(s.speakers) AS u"
+                "   WHERE NOT s.speaker_names ? u::text ORDER BY u) AS missing"
+                " FROM transcript_sessions s WHERE s.guild_id = %s AND s.line_count > 0"
+                " AND s.transcripts_deleted_at IS NULL"
+                " AND EXISTS (SELECT 1 FROM unnest(s.speakers) AS u"
+                "   WHERE NOT s.speaker_names ? u::text)"
+                " ORDER BY s.started_at, s.id LIMIT %s",
+                (guild_id, limit),
+            )
+            return [
+                (str(r["id"]), tuple(int(u) for u in r["missing"])) for r in await cur.fetchall()
+            ]
 
     async def end_session(self, guild_id: int, session_id: str, ended_at: int) -> None:
         async with self._db.guild(guild_id) as conn:
@@ -265,9 +323,13 @@ class TranscriptStore:
                 " line_count = (SELECT count(*) FROM transcript_lines"
                 "   WHERE session_id = %s AND sidebar IS NULL),"
                 " speakers = ARRAY(SELECT DISTINCT user_id FROM transcript_lines"
-                "   WHERE session_id = %s AND sidebar IS NULL ORDER BY user_id)"
+                "   WHERE session_id = %s AND sidebar IS NULL ORDER BY user_id),"
+                # a name never outlives its person's lines (#2337)
+                " speaker_names = (SELECT COALESCE(jsonb_object_agg(j.key, j.value), '{}'::jsonb)"
+                "   FROM jsonb_each(speaker_names) AS j WHERE EXISTS (SELECT 1"
+                "   FROM transcript_lines l WHERE l.session_id = %s AND l.user_id = j.key::bigint))"
                 " WHERE id = %s",
-                (session_id, session_id, session_id),
+                (session_id, session_id, session_id, session_id),
             )
 
     async def sessions(
@@ -572,6 +634,11 @@ class TranscriptStore:
                 " ORDER BY id FOR UPDATE",
                 (guild_id, guild_id, user_id),
             )
+            await conn.execute(  # the name kept for the website's transcripts first (#2337)
+                "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
+                " WHERE guild_id = %s AND speaker_names ? %s",
+                (str(user_id), guild_id, str(user_id)),
+            )
             await conn.execute(
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
@@ -675,7 +742,8 @@ class TranscriptStore:
             )
             await conn.execute(
                 "UPDATE transcript_sessions SET line_count = 0, speakers = '{}',"
-                " transcripts_deleted_at = %s WHERE guild_id = %s AND id = %s",
+                " speaker_names = '{}', transcripts_deleted_at = %s"
+                " WHERE guild_id = %s AND id = %s",
                 (now, guild_id, session_id),
             )
             return len(gone)
@@ -734,6 +802,7 @@ def _session(row: dict[str, Any]) -> TranscriptSession:
         number=int(row["number"]),
         engines=tuple(row["engines"]),
         deleted_at=row_int(row, "transcripts_deleted_at"),
+        speaker_names={int(u): str(n) for u, n in (row.get("speaker_names") or {}).items()},
     )
 
 
