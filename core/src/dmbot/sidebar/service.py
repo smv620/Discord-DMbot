@@ -305,7 +305,10 @@ class SidebarService:
                 if view is None:
                     await message.channel.send(text, allowed_mentions=NO_PINGS)
                 else:
-                    await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
+                    sent = await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
+                    keep = getattr(view, "keep_message", None)  # a view that edits itself (#2284)
+                    if keep is not None:
+                        keep(sent)
             except discord.HTTPException:
                 return False
             return True

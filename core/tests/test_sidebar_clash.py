@@ -352,6 +352,20 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("item interaction", " ".join(saved))  # never a rule's words
         self.assertNotIn("Which one applies?", " ".join(saved))
 
+    async def test_a_question_typed_to_dmbot_hands_the_sent_message_to_the_view(self) -> None:
+        from tests.test_sidebar_service import dm_message
+
+        message = dm_message(content="can I drink a potion?")
+        sent = MagicMock()
+        sent.edit = AsyncMock()
+        message.channel.send = AsyncMock(return_value=sent)
+        await self.sidebar.on_dm_message(message)
+        await self.settle()
+        view = message.channel.send.await_args.kwargs["view"]
+        await view.on_timeout()  # nobody answered: the buttons come off the message as sent
+        sent.edit.assert_awaited_once()
+        self.assertIsNone(sent.edit.await_args.kwargs["view"])
+
     async def test_a_players_table_question_tells_the_dm_which_two_and_nothing_else(self) -> None:
         public = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
         public.clash = self.clash.clash
