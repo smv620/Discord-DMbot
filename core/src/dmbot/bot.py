@@ -259,6 +259,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import Tally
+from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
@@ -355,7 +356,7 @@ from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Re
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
-from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
+from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer, TranscriptSession, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -9703,12 +9704,35 @@ class DMBot(commands.AutoShardedBot):
             log.info("Say it this way: %d offered", kept)
 
     async def _propose_new_names(
-        self, gid: int, cid: str, lines: Sequence[str], users: Collection[int]
+        self,
+        gid: int,
+        cid: str,
+        lines: Sequence[str],
+        users: Collection[int],
+        session_id: str | None = None,
+        *,
+        agreed: Collection[int] | None = None,
+        game_only: bool = False,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
-        names are not story names. Returns the names proposed; nothing is confirmed."""
+        names are not story names. `session_id`: the stored transcript the lines came from, so
+        each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
+        confirmed."""
         assert self.memory is not None
+        heard_in: list[Line] = []
+        if session_id is not None and self.transcripts is not None:
+            try:
+                # only the lines the scan itself read: people who still agree and, for an imported
+                # session, game talk (a place must never quote what the scan left out)
+                heard_in = [
+                    x
+                    for x in await self.transcripts.lines(gid, session_id)
+                    if (agreed is None or x.user_id in agreed)
+                    and (not game_only or x.topic == GAME)
+                ]
+            except Exception:  # the places are a nicety: the suggestion is still made
+                log.exception("Couldn't read the session to find where names were said")
         # People at the table aren't story names: skip their whole display names and
         # each word of them ("Mia Stone" → "Mia", "Stone").
         skip = set(await self.memory.known_keys(gid, cid))
@@ -9736,6 +9760,11 @@ class DMBot(commands.AutoShardedBot):
                 log.info("Skipped a suggested name: %s", exc)
                 continue
             added.append(suggestion.name)
+            if heard_in and session_id is not None:
+                await self._keep_places(
+                    gid, cid, session_id, written.value.id, heard_in,
+                    [suggestion.name, *suggestion.also],
+                )  # fmt: skip
             for other in suggestion.also:  # suggested with it, confirmed with it
                 part = name_key(other) in name_key(suggestion.name)
                 try:
@@ -9750,6 +9779,40 @@ class DMBot(commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _keep_places(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str,
+        entity_id: str,
+        lines: Sequence[Line],
+        spellings: Sequence[str],
+    ) -> None:
+        """Keep where a suggested name was said, spread across the session: pointers only (the
+        line's reference and the place in it), never the words (#2329). Never raises."""
+        assert self.memory is not None
+        try:
+            session = await self._session_of(gid, session_id)
+            session_at = session.started_at if session is not None else None
+            for spot in spread(find_spots(lines, spellings)):
+                await self.memory.add_mention(
+                    gid,
+                    cid,
+                    entity_id,
+                    line_ref=line_ref(session_id, spot.line.started_ms, spot.line.user_id),
+                    span=(spot.start, spot.end),
+                    confidence=1.0,
+                    method="exact",
+                    source="scan",
+                    session_started_at=session_at,
+                )
+        except Exception:
+            log.exception("Couldn't keep where a suggested name was said")
+
+    async def _session_of(self, gid: int, session_id: str) -> TranscriptSession | None:
+        assert self.transcripts is not None
+        return await self.transcripts.session(gid, session_id)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
@@ -9767,7 +9830,11 @@ class DMBot(commands.AutoShardedBot):
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
-            added = await self._propose_new_names(gid, cid, lines, users)
+            if table.transcript_session_id is not None:
+                await self.save_transcript(table)  # so every line is stored to point at
+            added = await self._propose_new_names(
+                gid, cid, lines, users, table.transcript_session_id, agreed=agreed
+            )
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
@@ -10021,7 +10088,10 @@ class DMBot(commands.AutoShardedBot):
         if not lines:
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
-        added = await self._propose_new_names(gid, ready.campaign_id, [t for _, t in lines], users)
+        added = await self._propose_new_names(
+            gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
+            agreed=set(agreed), game_only=True,
+        )  # fmt: skip
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
         return added
 
