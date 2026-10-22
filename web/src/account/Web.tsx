@@ -613,7 +613,7 @@ function LinkRow({
         {words.linkText(a, b, link.words, link.direction)}
         {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
-      {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
+      {canEdit && link.pinned && <p class="small">{words.pinnedWords}</p>}
       {link.belief && (
         <p class="small">
           {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}
@@ -675,6 +675,7 @@ function LinkRow({
               </button>
             )}
           </div>
+          <p class="small muted">{words.pinHint}</p>
           {asking && (
             <div class="row" role="group" aria-label={words.removeShort}>
               <span>{words.removeAsk(a, b)}</span>
