@@ -1837,6 +1837,9 @@ names panel nor the speech-to-text hints can be a fixed list.
   A kept one is confirmed (`source="dm"`, as with Connect to…), and it shows on the name cards and the
   website graph, with ↩️ Undo. A connection to a name the DM said no to is dropped. Nothing is saved
   without a press, and the text is never kept.
+  **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
+  campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
+  Names → 📥 Add many → 📜 From a story or background stays too.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
