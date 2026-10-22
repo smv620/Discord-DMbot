@@ -6438,11 +6438,13 @@ class DMBot(commands.AutoShardedBot):
         lookup = await self._names_now(table)  # fresh: a name may have just been made secret
         if lookup is None:
             return asked
-        secret = {  # a clue only some people know is as secret as a secret name
+        # A clue only some people know, or an entry the players haven't been told of (#2321), is as
+        # secret as a secret name.
+        secret = {
             entry.key
             for entry in lookup.names
             if entry.secret
-            or getattr(lookup.entities.get(entry.entity_id), "audience_limited", False)
+            or getattr(lookup.entities.get(entry.entity_id), "unseen_by_players", False)
         }
         agreed = [
             t for _, who, t in table.recent.spoken if self.consent.has_consent(table.guild_id, who)

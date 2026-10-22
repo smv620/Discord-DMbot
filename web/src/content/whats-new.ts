@@ -236,6 +236,12 @@ export const held: Held[] = [
     reason: "In review (#2294); held until dev1 deploys it and the website's Names page is live (#2295, WebDev).",
   },
   {
+    date: "2026-10-22",
+    title: "Keep a name from the players until they learn it",
+    what: "When you add a name, 🙈 Hide from players keeps it to yourself: not in the NPC list, answers or recaps. On its card, 👀 Players know it now shows it to everyone when the players find out.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-21",
     title: "Pick the other name from a list",
     what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
