@@ -124,6 +124,7 @@ from dmbot.dm_screen.adventure_card import RemoveButton as RemoveAdventureButton
 from dmbot.dm_screen.adventure_card import RemoveNoButton as RemoveAdventureNoButton
 from dmbot.dm_screen.adventure_card import RemoveYesButton as RemoveAdventureYesButton
 from dmbot.dm_screen.adventure_card import SeeButton as SeeAdventureButton
+from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.channel import update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
@@ -239,6 +240,7 @@ from dmbot.memory import definitions, document_reader, extractor, plan_reader, w
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
 from dmbot.memory.adventure import AdventureSection, AdventureStore
+from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
@@ -962,6 +964,7 @@ class DMBot(commands.AutoShardedBot):
         recap_notes: NoteStore | None = None,
         installs: InstallStore | None = None,
         recap_holds: recap_hold.HoldStore | None = None,
+        backstory_links: BackstoryLinks | None = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -1011,6 +1014,8 @@ class DMBot(commands.AutoShardedBot):
         self.clocks = clocks
         # The linked house-rules file (#969), and what is waiting for a DM's press.
         self.house_file_links = house_file_links
+        # The connections a backstory reading found, waiting for the DM (#2380).
+        self.backstory_links = backstory_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
@@ -1297,6 +1302,11 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.house_file_ai = (  # house rules found in any file or link (#2377)
+            self.ai_client.tier(FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES)
+            if self.ai_client
+            else None
+        )
         # Which disagreeing house rule wins, as the DM decided; set where the database is known.
         self.house_wins: WinsStore | None = None
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
@@ -1503,6 +1513,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
         import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
+        self.add_dynamic_items(BackstoryButton)  # 📜 Upload backstory, from the Main Menu (#2380)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -11870,6 +11881,7 @@ async def run(settings: Settings) -> None:
             recap_notes=NoteStore(db),
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
+            backstory_links=BackstoryLinks(db),
         )
         bot.house_wins = WinsStore(db)
         _close_on_sigterm(bot)

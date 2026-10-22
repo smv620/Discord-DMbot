@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -449,6 +450,124 @@ class Criticising(WorkerHarness):
             job = await self.stopped(why, unfixable=True)
             self.assertEqual((job.state != "failed", job.last_error), (True, pl.CHECK_WAIT), why)
 
+    async def test_an_unfixable_draft_holds_when_the_revision_was_unavailable(self) -> None:
+        job = await self.stopped(pl.STOP_REVISION, unfixable=True, tries=1)
+        self.assertEqual((job.state != "failed", job.last_error), (True, pl.CHECK_WAIT))
+
+    async def revision_stop(self, revision: Any, unchecked: bool) -> list[str]:
+        """Why the loop stopped, when the PlotBot-flagged draft's revision is `revision`."""
+        ask = change(1, "secret", "it names the baron", MEMORY.id)
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        careful = fx.Canned(NO_NOTES, ask, revision)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        whys: list[str] = []
+        real_stop, real_facts = self.worker._stop_critics, self.worker._facts
+        checked = [False]
+
+        async def spy(*args: Any) -> Any:
+            whys.append(args[-1])
+            return await real_stop(*args)
+
+        async def facts(*args: Any, **kw: Any) -> Any:
+            if unchecked and checked[0]:  # the first draft was checked; its revision cannot be
+                return None, False
+            checked[0] = True
+            return await real_facts(*args, **kw)
+
+        with (
+            patch.object(self.worker, "_stop_critics", spy),
+            patch.object(self.worker, "_facts", facts),
+        ):
+            await self.worker.run(1, self.one.id, 100)
+        return whys
+
+    async def test_a_revision_cut_off_stops_the_loop_as_unavailable(self) -> None:
+        cut = Reply("The party", True, 10, 10, "m")
+        self.assertEqual((await self.revision_stop(cut, False))[:1], [pl.STOP_REVISION])
+
+    async def test_a_revision_that_waits_for_its_try_is_off_the_jobs_calls(self) -> None:
+        cut = Reply("The party", True, 10, 10, "m")
+        await self.setUpWorker(self.fast_for(WITH_MOTIVE, grades=2), fx.Canned(cut), critics=True)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        room = self.worker._ceiling(job) - pl.CRITIC_RESERVE - pl.CRITIC_REVISE_CALLS
+        asked = (cr.Change("secret", "it names the baron", True, 1),)
+        best = cr.Best(CLEAN, (), {}, 1, 0, (), (1,), True)  # a hard change that cannot be cut
+        loop = cr.Loop(round=1, pending=asked, best=best, waits=2, since=1)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s", (room + 1,))
+        await self.store.update(1, self.one.id, 100, critics=loop.to_json())
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
+            previous="", earlier=None, day=4, window_chars=40_000, hours=2.5, campaign_name="",
+        )  # fmt: skip
+        after = await self.worker._critique(
+            1, self.one.id, job, inputs, AsyncMock(return_value=job.speakers)
+        )
+        assert after is not None
+        self.assertEqual((after.state != "failed", after.calls), (True, room + 1))
+        self.assertEqual(after.last_error, pl.CHECK_WAIT)
+
+    async def test_a_waiting_revision_is_free_end_to_end_and_ends_the_waiting(self) -> None:
+        # Seven waits in, the job's calls at the edge of its ceiling: the writer, the fact check and
+        # the grader are all off the job's calls (#2370), so the good revision lands and the
+        # waiting is over (waits, since and told back to nothing).
+        fast = self.fast_for(WITH_MOTIVE, grades=3)
+        careful = fx.Canned(AIError("down"))  # the revision's write fails: the loop is waiting
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((job.state, loop.round, loop.pending is not None), ("prose", 1, True))
+        edge = self.worker._ceiling(job) - pl.CRITIC_RESERVE - 1  # the last step the loop may start
+        waiting = replace(loop, waits=7, since=5, told=True)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s, errors = 0", (edge,))
+        await self.store.update(1, self.one.id, 100, critics=waiting.to_json(), next_at=0)
+        careful.answers[:] = [fx.prose_answer(CLEAN)]
+        before = (await self.store.get(1, self.one.id, 100)).spent  # type: ignore[union-attr]
+        self.clock.now += 3600
+
+        # (the reading that follows the revision runs too: it is paid for as any reading is)
+        job = await self.go()
+        self.assertEqual(job.summary, CLEAN)  # the revision landed
+        self.assertGreater(job.calls, edge)  # only that reading, and the title, were paid for
+        self.assertLess(job.calls, edge + pl.CRITIC_REVISE_CALLS)  # not the revision too
+        self.assertLessEqual(job.spent - before, cr.WAIT_REVISE_CALLS)
+        back = cr.loop_from_json(job.critics)
+        self.assertEqual((back.waits, back.since, back.told, back.pending), (0, 0, False, None))
+
+    async def test_eight_waiting_tries_with_an_unreadable_fact_check_never_fail_the_recap(
+        self,
+    ) -> None:
+        # A held, unfixable best draft; the revision is written each try but its fact check is
+        # never readable. At the entry ceiling of the loop, waiting tries are off the job's calls
+        # and must not trip it: the recap stays "waiting for its check", calls unchanged (#2370).
+        fast = self.fast_for(WITH_MOTIVE, grades=3)
+        careful = fx.Canned(AIError("down"), facts=["not json"] * 10)
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        unfixable = cr.Best(WITH_MOTIVE, (), {}, 1, 0, (), (1,), True)
+        waiting = replace(loop, best=unfixable, waits=1, since=5)
+        edge = self.worker._ceiling(job) - pl.CRITIC_RESERVE  # the entry check's own line
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s, errors = 0", (edge,))
+        await self.store.update(1, self.one.id, 100, critics=waiting.to_json(), next_at=0)
+        for _ in range(8):
+            careful.answers[:] = [fx.prose_answer(CLEAN)]
+            self.clock.now += 13 * 3600
+            job = await self.go()
+            self.assertNotEqual(job.state, "failed", job.last_error)
+            self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+            self.assertEqual(job.calls, edge)
+        self.assertGreaterEqual(cr.loop_from_json(job.critics).waits, 8)
+
+    async def test_a_revision_that_could_not_be_checked_stops_the_loop_as_unavailable(self) -> None:
+        whys = await self.revision_stop(fx.prose_answer(CLEAN), True)
+        self.assertEqual(whys[:1], [pl.STOP_REVISION])
+
     async def test_no_agreement_fails_on_our_side_with_the_rule_named_and_gives_the_try_back(
         self,
     ) -> None:
@@ -730,6 +849,16 @@ class Criticising(WorkerHarness):
         self.assertEqual((done.waits, done.since, done.told), (0, 0, False))
         told.assert_awaited_once()
 
+    async def test_a_step_that_gets_through_ends_the_waiting_whichever_step_it_was(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.go()
+        loop = cr.Loop(round=1, waits=3, since=5, told=True)
+        saved = await self.worker._save_loop(1, self.one.id, job, loop)
+        assert saved is not None
+        back = cr.loop_from_json(saved.critics)
+        self.assertEqual((back.waits, back.since, back.told), (0, 0, False))
+
     async def test_a_long_recap_is_checked_in_every_waiting_try_too(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.down = True
@@ -737,7 +866,8 @@ class Criticising(WorkerHarness):
         with patch.object(mo, "MAX_ASKED", 10):  # three batches for this recap
             job = await self.drive(await self.go(), 6)
             self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
-            self.assertEqual(cr.wait_budget(3), 4)  # the batches and PlotBot
+            self.assertEqual(cr.wait_budget(3), 6)  # a revision's calls are the larger
+            self.assertEqual(cr.wait_budget(10), 12)  # a long reading's: batches and PlotBot
             fast.down = False
             before = len(fast.motive_sent)
             job = await self.drive(job, 6)

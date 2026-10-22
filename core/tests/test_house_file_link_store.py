@@ -28,6 +28,32 @@ class LinkTest(DatabaseTest):
         self.elsewhere = await self.campaigns.create(GUILD_B, "Frostmaiden", DM)
 
 
+class TheLastRead(LinkTest):
+    """What the AI last read of a linked file is a hash, kept per campaign, forgotten with a new
+    link (#2377)."""
+
+    async def test_it_is_remembered_per_campaign_and_a_new_link_forgets_it(self) -> None:
+        await self.links.set_link(GUILD_A, self.campaign.id, DM, DOC)
+        await self.links.set_link(GUILD_A, self.other.id, DM, DOC)
+        self.assertTrue(await self.links.set_read(GUILD_A, self.campaign.id, FINGERPRINT))
+        mine = await self.links.get(GUILD_A, self.campaign.id)
+        theirs = await self.links.get(GUILD_A, self.other.id)
+        assert mine is not None and theirs is not None
+        self.assertEqual((mine.read, theirs.read), (FINGERPRINT, None))
+        await self.links.set_link(GUILD_A, self.campaign.id, DM, DOC + "x")
+        again = await self.links.get(GUILD_A, self.campaign.id)
+        assert again is not None
+        self.assertIsNone(again.read)
+
+    async def test_with_no_file_linked_there_is_nothing_to_remember(self) -> None:
+        self.assertFalse(await self.links.set_read(GUILD_A, self.campaign.id, FINGERPRINT))
+
+    async def test_only_a_hash_fits(self) -> None:
+        await self.links.set_link(GUILD_A, self.campaign.id, DM, DOC)
+        with self.assertRaises(Exception):  # noqa: B017  (the table's own check)
+            await self.links.set_read(GUILD_A, self.campaign.id, "the rule text itself")
+
+
 class Linking(LinkTest):
     async def test_a_dm_links_a_file_and_it_is_read_back(self) -> None:
         saved = await self.links.set_link(GUILD_A, self.campaign.id, DM, f"  <{DOC}>  ")
@@ -37,6 +63,12 @@ class Linking(LinkTest):
         self.assertEqual((back.link, back.set_by, back.set_at), (DOC, DM, 1_700_000_000))
         self.assertEqual(back.site, "docs.google.com")
         self.assertNotIn("a" * 30, back.site)  # only the site is ever shown
+
+    async def test_a_onedrive_share_is_shown_as_onedrive_not_as_its_file_api(self) -> None:
+        saved = await self.links.set_link(
+            GUILD_A, self.campaign.id, DM, "https://1drv.ms/w/s!AbCdEfGhIjKlMn"
+        )
+        self.assertEqual(saved.site, "onedrive.live.com")
 
     async def test_a_second_dm_may_too_but_a_player_may_not(self) -> None:
         await self.campaigns.add_dm(GUILD_A, self.campaign.id, CO_DM)
