@@ -51,7 +51,7 @@ def prose_problems(summary: str = fx.SUMMARY, music: str = fx.MUSIC, **kw: Any) 
         "transcript": TRANSCRIPT,
         "allowed_names": fx.NAMES,
         "secret_names": [],
-        "length": rd.length_for(2.5),  # the canned recap is 353 words: a 2.5-hour session's
+        "length": rd.length_for(3.5),  # the canned recap is 353 words: a 2.5-hour session's
     }
     return rd.check_prose(prose, **{**args, **kw})
 
@@ -427,7 +427,7 @@ class TheProse(unittest.TestCase):
             transcript=transcript,
             allowed_names=fx.NAMES,
             secret_names=["Zarathul"],
-            length=rd.length_for(2.5),
+            length=rd.length_for(3.5),
         )
         copy = [p for p in found if "copies the table" in p]
         self.assertTrue(copy and all("Zarathul" not in p and "starting" not in p for p in copy))
@@ -462,7 +462,7 @@ class TheProse(unittest.TestCase):
         self.assertEqual(rd.pick_beats(many[:6]), many[:6])  # a short sheet whole
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
-        system = rd.prose_system(None, rd.length_for(2.5))
+        system = rd.prose_system(None, rd.length_for(3.5))
         self.assertIn(
             "about 2.5 hours, so write about 350 words in all (between 175 and 420)", system
         )
@@ -584,7 +584,7 @@ class TheRetryAndTheJson(unittest.TestCase):
     and the answer is JSON of a fixed shape."""
 
     def test_the_prose_retry_carries_the_draft_the_target_and_the_form(self) -> None:
-        length = rd.length_for(2.5)
+        length = rd.length_for(3.5)
         prose = rd.parse_prose(fx.PROSE_ANSWER)
         assert prose is not None
         text = rd.prose_retry(["a name is not allowed"], prose, length)
