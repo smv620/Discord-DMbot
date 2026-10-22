@@ -242,6 +242,7 @@ class HouseRuleStore:
             row = await cur.fetchone()
             if row is None:
                 raise await _missing(conn, guild_id, campaign_id, number)
+            await _forget_wins(conn, guild_id, campaign_id, number)
             return _rule(row)
 
     @notifies
@@ -267,7 +268,18 @@ class HouseRuleStore:
             row = await cur.fetchone()
             if row is None:
                 raise await _missing(conn, guild_id, campaign_id, number)
+            await _forget_wins(conn, guild_id, campaign_id, number)
             return _rule(row)
+
+
+async def _forget_wins(conn: Conn, guild_id: int, campaign_id: str, number: int) -> None:
+    """Which rule wins was decided about the old words (#2284): changed or removed, the rule is
+    compared and asked about afresh. Same transaction, so every way of changing a rule does it."""
+    await conn.execute(
+        "DELETE FROM house_rule_wins WHERE guild_id = %s AND campaign_id = %s AND"
+        " ((a_set = '' AND a_number = %s) OR (b_set = '' AND b_number = %s))",
+        (guild_id, campaign_id, number, number),
+    )
 
 
 async def _missing(conn: Conn, guild_id: int, campaign_id: str, number: int) -> HouseRuleError:

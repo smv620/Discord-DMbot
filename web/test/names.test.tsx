@@ -263,6 +263,12 @@ describe("what a DM can do", () => {
     fireEvent.click(row.getByRole("button", { name: w.saveSpelling }));
     expect(await screen.findByText(w.errors["not-found"] ?? "")).toBeTruthy();
     expect(screen.queryByLabelText(w.spellLabel)).toBeNull();
+    // The editor is gone, so the keyboard goes to the news line rather than to the top of the page.
+    await waitFor(() => {
+      const now = document.activeElement as HTMLElement | null;
+      expect(now?.getAttribute("role")).toBe("status");
+      expect(now?.getAttribute("tabindex")).toBe("-1");
+    });
   });
 });
 
@@ -411,6 +417,20 @@ describe("follow-ups from the first review (#2299)", () => {
     box.focus();
     fireEvent.input(box, { target: { value: "Dunmar a" } });
     await waitFor(() => expect(row.queryByRole("button", { name: w.mergeYes })).toBeNull());
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("typing in the merge search keeps the cursor there when it closes the Remove question too", async () => {
+    // Fails if "No" and "typing" are mixed up: only "Keep it" may hand the keyboard back to a button.
+    open();
+    await ready();
+    const row = await edit("Gorrak");
+    const box = row.getByLabelText(w.mergeSearch) as HTMLInputElement;
+    fireEvent.click(row.getByRole("button", { name: w.removeButton }));
+    await row.findByRole("button", { name: w.removeYes });
+    box.focus();
+    fireEvent.input(box, { target: { value: "Dun" } });
+    await waitFor(() => expect(row.queryByRole("button", { name: w.removeYes })).toBeNull());
     expect(document.activeElement).toBe(box);
   });
 

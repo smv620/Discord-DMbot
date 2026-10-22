@@ -96,7 +96,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep a connection secret",
-    what: "On a name's card, press Connect to…, press 🤫 Secret: no so it reads 🤫 Secret: yes, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
+    what: "On a name's card, press Connect to…, press 🤫 Next one is public so it reads 🤫 Next one is secret, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
   },
   {
     date: "2026-10-16",
@@ -231,8 +231,32 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "Pick the other name from a list",
+    what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "DMbot asks when two house rules disagree",
+    what: "When you add or change a house rule that says something different from another one, DMbot shows you both and asks which should win. You can replace the old one, or keep both and pick the winner. DMbot never picks for you, and it remembers your answer.",
+    reason: "In review (#2284); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "Hear and record how a name sounds",
+    what: "Beside the box for how a name is said, you can now ask DMbot for a suggestion, say the name out loud and have it turned into letters, and hear the letters read back. Nothing is saved until you save it, and your recording is deleted once it has been turned into letters.",
+    reason: "In review (#2317); held until the API (#2316) and the speech recogniser on the server (#2318) are deployed by dev1.",
+  },
+  {
+    date: "2026-10-21",
     title: "See where your house rules came from",
     what: "On the house rules list, 📂 Sources shows where your rules came from: the linked file, each file you uploaded, rules added in Discord, and the set you follow. Pick one to download just its rules as a text file.",
+    reason: "In review (#2285); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "See where your homebrew came from",
+    what: "On the Homebrew menu, 📂 Sources shows where your homebrew came from: what you typed, each file you uploaded, each website you linked it from, and each pack you follow. Pick one to download just those entries as a text file.",
     reason: "In review (#2285); held until dev1 deploys it.",
   },
   {
@@ -684,6 +708,12 @@ export const held: Held[] = [
     what: "If the game clock hasn't come up for a while during a session, DMbot drops one quiet line on the DM screen: \"Where we are: Day 4, afternoon (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
     reason:
       "Held until it has been seen working on the test server (#1738).",
+  },
+  {
+    date: "2026-10-21",
+    title: "See how your names are connected",
+    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
+    reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
   },
 ];
 
