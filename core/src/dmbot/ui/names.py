@@ -34,7 +34,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import logic
+from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -283,6 +283,7 @@ class NamesHome(_Menu):
         waiting: int,
         shown: list[tuple[str, str, str]] | None = None,
         reviews: Reviews | None = None,
+        left_out: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -332,12 +333,17 @@ class NamesHome(_Menu):
             self.open = _Select(
                 self._open,
                 placeholder="✏️ Fix, change or remove a name…",
-                options=[
-                    discord.SelectOption(
-                        label=logic.shorten(name, logic.OPTION_LABEL_MAX), value=e, description=kind
-                    )
-                    for e, name, kind in shown[: logic.SELECT_OPTIONS_MAX]
-                ],
+                options=all_names.with_choice(
+                    [
+                        discord.SelectOption(
+                            label=logic.shorten(name, logic.OPTION_LABEL_MAX),
+                            value=e,
+                            description=kind,
+                        )
+                        for e, name, kind in shown
+                    ],
+                    left_out=left_out,
+                ),
                 row=2,
             )
             self.add_item(self.open)
@@ -373,6 +379,9 @@ class NamesHome(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
 
+        if all_names.chosen(self.open.values):
+            await all_names.reply(interaction, self.campaign_id)
+            return
         await show_card(interaction, self.campaign_id, self.open.values[0])
 
     async def _browse(self, interaction: discord.Interaction) -> None:
@@ -495,7 +504,12 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         else None
     )
     text, shown = home_text(names, campaign, waiting, reviews)
-    await _send(interaction, text, NamesHome(campaign.id, waiting, shown, reviews))
+    known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
+    await _send(
+        interaction,
+        text,
+        NamesHome(campaign.id, waiting, shown, reviews, left_out=known > len(shown)),
+    )
 
 
 class CampaignChoice(_Menu):

@@ -528,11 +528,18 @@ def prose_message(
     names: Collection[str],
     day: int | None,
     retold: str = "",
+    ending: Sequence[Beat] | None = None,
 ) -> str:
+    """`beats`: the ones the writer is shown (at most a few for a short session). `ending`: the
+    session's real last beats, the pair the ending check looks for (`check_prose`); the shown beats
+    are a pick, so their last two are not the session's last two (the second-to-last of a pick is
+    any beat of the middle), and a writer told to end there ends on the wrong beat."""
     parts = [f"<beats>\n{sheet(beats, notes=True)}\n</beats>"]
-    if beats:  # where the session stopped, said apart so the last section is set exactly there
-        parts.append(f"<ending>\n{sheet(beats[-2:], notes=True)}\n</ending>")
-    names = {*names, *(w for b in beats for w in b.who)}  # the beats' own names are allowed too
+    stop = list(ending[-2:]) if ending else list(beats[-2:])
+    if stop:  # where the session stopped, said apart so the last section is set exactly there
+        parts.append(f"<ending>\n{sheet(stop, notes=True)}\n</ending>")  # (may be beats not shown)
+    # the beats' own names are allowed too, the ending's included (it may not be among the shown)
+    names = {*names, *(w for b in beats for w in b.who), *(w for b in stop for w in b.who)}
     if previous.strip():
         parts.append(
             f"<previous>\n{quoted(' '.join(previous.split())[:PREVIOUS_MAX])}\n</previous>"
@@ -842,6 +849,45 @@ def ends_on(narration: str, last: Sequence[Beat]) -> bool:
     return any(w[:5] in stems for w in words(narration)[-ENDING_WORDS:] if len(w) >= 4)
 
 
+STILL_MARGIN = 2  # words: a retry that moved by no more than this has not moved
+
+
+def length_range(length: Length, last: bool) -> tuple[int, int]:
+    """The words a draft may have on this try: the last try may run over by 35%."""
+    return (length.last_low, length.last_high) if last else (length.low, length.high)
+
+
+def length_steer(count: int, length: Length, last: bool = False) -> str:
+    """Which way and how far to move a draft whose length is off, or "" if it fits. Made in code,
+    word for word the same every time (the owner's rule, 2026-10-22): the distance is to the
+    target, not to the edge of the range."""
+    low, high = length_range(length, last)
+    if count < low:
+        return f"Make it longer by about {length.target - count} words"
+    if count > high:
+        return f"Make it shorter by about {count - length.target} words"
+    return ""
+
+
+def length_move(before: tuple[int, int] | None, count: int, length: Length, last: bool) -> str:
+    """Did a retry move the length the way it was steered? `before`: (words, +1 if that draft was
+    too short or -1 if too long), or None for the first draft. "" when it fits the range now, or
+    moved the right way and is still off (steer it again); otherwise why it is stopped: "stuck"
+    (it moved the wrong way or by no more than `STILL_MARGIN`) or "overshot" (it went past the
+    other end of the range)."""
+    low, high = length_range(length, last)
+    if before is None or low <= count <= high:
+        return ""
+    words_before, wanted = before
+    if wanted > 0:  # it was too short
+        if count > high:
+            return "overshot"
+        return "stuck" if count <= words_before + STILL_MARGIN else ""
+    if count < low:  # it was too long
+        return "overshot"
+    return "stuck" if count >= words_before - STILL_MARGIN else ""
+
+
 def check_prose(
     prose: Prose,
     *,
@@ -876,7 +922,8 @@ def check_prose(
     ):
         problems.append(
             f"Your draft was {count} words. This session ran about {length.hours:g} hours: "
-            f"write about {length.target} words, between {length.low} and {length.high}"
+            f"write about {length.target} words, between {length.low} and {length.high}. "
+            f"{length_steer(count, length, last)}"
         )
     if len(summary) > length.summary_max:
         problems.append(f"the summary is over {length.summary_max} characters")

@@ -3136,6 +3136,11 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
     ("dmbot_web_set_said_as", "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"),
+    # The All names page's list (#2294): DMs, and managers without what only a DM sees.
+    (
+        "dmbot_web_all_names",
+        "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)",
+    ),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -9437,6 +9442,123 @@ INSTALLS_LEFT_EXCEPT = r"""
     REVOKE ALL ON FUNCTION dmbot_installs_left_except(BIGINT[]) FROM PUBLIC;
 """
 
+ALL_NAMES_PAGE = r"""
+    -- The website's All names page (#2294): one page of a campaign's confirmed names, searched and
+    -- filtered, with the count of each kind. Answers a DM of the campaign (everything) and a server
+    -- manager who is not one (the same names without what only a DM sees: the entries the players
+    -- don't know yet, a clue only some know, the story threads and deeds, and any name whose own
+    -- spelling is secret, and no secret spellings). NULL for anyone else, so the page says "not
+    -- found" exactly as for a missing campaign. The website's role has no grant on the memory
+    -- tables; this door is its only way to read them.
+    CREATE FUNCTION dmbot_web_all_names(
+        g BIGINT, c TEXT, q TEXT, k TEXT, newest BOOLEAN, pg INT, size INT, only_id TEXT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        cname TEXT;
+        needle TEXT := NULLIF(lower(btrim(COALESCE(q, ''))), '');
+        kind_ TEXT := NULLIF(k, '');
+        result JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c
+                           AND d.user_id = dmbot_current_user());
+        IF NOT is_dm AND NOT (g = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT name INTO cname FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        WITH base AS (
+            SELECT e.id, e.name, e.created_at,
+                   CASE WHEN e.type = 'character' THEN
+                            CASE e.role WHEN 'player_character' THEN 'player_character'
+                                        WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                        ELSE 'character' END
+                        ELSE e.type END AS kind,
+                   EXISTS (SELECT 1 FROM memory_aliases a
+                           WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,
+                   (e.audience_limited OR e.hidden_from_players) AS hidden
+            FROM memory_entities e
+            WHERE e.guild_id = g AND e.campaign_id = c
+              AND e.status = 'confirmed' AND e.type <> 'person'
+              AND (is_dm OR (NOT e.audience_limited AND NOT e.hidden_from_players
+                             AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                                'promise', 'deed')))
+        ), vis AS (
+            SELECT * FROM base WHERE is_dm OR NOT secret
+        ), hit AS (
+            SELECT v.* FROM vis v
+            WHERE (kind_ IS NULL OR v.kind = kind_)
+              AND (only_id IS NULL OR v.id = only_id)
+              AND (needle IS NULL
+                   OR position(needle IN lower(v.name)) > 0
+                   OR EXISTS (SELECT 1 FROM memory_aliases a
+                              WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = v.id
+                                AND a.status = 'confirmed' AND (is_dm OR NOT a.secret)
+                                AND position(needle IN lower(a.text)) > 0))
+        ), pageful AS (
+            SELECT h.* FROM hit h
+            ORDER BY CASE WHEN newest THEN NULL ELSE lower(h.name) END,
+                     CASE WHEN newest THEN h.created_at END DESC, h.id
+            LIMIT GREATEST(size, 1) OFFSET GREATEST(pg - 1, 0)::BIGINT * GREATEST(size, 1)
+        )
+        SELECT jsonb_build_object(
+            'campaign', cname,
+            'canEdit', is_dm,
+            'total', (SELECT count(*) FROM hit),
+            'kinds', COALESCE((SELECT jsonb_object_agg(kind, n)
+                               FROM (SELECT kind, count(*) AS n FROM vis GROUP BY kind) t),
+                              '{}'::jsonb),
+            'names', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', p.id, 'name', p.name, 'kind', p.kind, 'secret', p.secret,
+                    'hidden', p.hidden,
+                    'others', COALESCE((
+                        SELECT jsonb_agg(a.text ORDER BY lower(a.text), a.id)
+                        FROM memory_aliases a
+                        WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = p.id
+                          AND a.status = 'confirmed' AND NOT a.secret
+                          AND lower(a.text) <> lower(p.name)), '[]'::jsonb),
+                    'secretOthers', CASE WHEN is_dm THEN COALESCE((
+                        SELECT jsonb_agg(a.text ORDER BY lower(a.text), a.id)
+                        FROM memory_aliases a
+                        WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = p.id
+                          AND a.status = 'confirmed' AND a.secret
+                          AND lower(a.text) <> lower(p.name)), '[]'::jsonb)
+                        ELSE '[]'::jsonb END,
+                    'npcId', CASE WHEN p.kind = 'npc' AND EXISTS (
+                        SELECT 1 FROM npc_roster r
+                        WHERE r.guild_id = g AND r.campaign_id = c AND r.entry_id = p.id)
+                        THEN p.id END)
+                    ORDER BY CASE WHEN newest THEN NULL ELSE lower(p.name) END,
+                             CASE WHEN newest THEN p.created_at END DESC, p.id)
+                FROM pageful p), '[]'::jsonb))
+        INTO result;
+        RETURN result;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
+        FROM PUBLIC;
+"""
 # Which suggested names were made before pronouns were kept out of them (#2358). The default
 # marks every existing row (a constant default is stored as metadata: no UPDATE runs, so no
 # row-level-security policy is opened) and is then changed, so every row written from now on is
@@ -9663,6 +9785,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
     ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
+    ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
 )
 
