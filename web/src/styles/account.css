@@ -876,6 +876,32 @@
   stroke-width: 4;
 }
 
+/* Players View / Full View (#2405): what the players have not learned yet is dimmed in the drawing only,
+   never the words, so the text keeps its contrast; a theory is a dotted line. */
+.account .web-edge.web-theory .web-line {
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+}
+
+.account .web-edge.web-dim .web-line {
+  opacity: 0.5;
+}
+
+.account .web-node.web-dim :where(circle, rect, polygon, path) {
+  opacity: 0.55;
+}
+
+.account .web-view {
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  padding: var(--space-3, 0.75rem);
+}
+
+.account .web-peek-off {
+  color: var(--muted, inherit);
+  cursor: not-allowed;
+}
+
 .account .web-hit {
   stroke: transparent;
   stroke-width: 22;

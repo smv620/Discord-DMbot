@@ -30,6 +30,7 @@ from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import (
     RecapError,
@@ -472,8 +473,8 @@ class TheRoutes(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(recaps_on=True, recap_audio_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
@@ -995,8 +996,8 @@ class TheApproval(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(recaps_on=True, recap_audio_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
@@ -1099,6 +1100,81 @@ class TheApproval(Base):
         await decide(self.web, self.session, self.ref, "drop")
         got = await self.approve("both")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+
+    async def test_approve_and_post_hands_it_to_the_bot_in_one_call(self) -> None:
+        """(#2419) ✅ Approve and post text only: approved with the text-only choice and posting."""
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": True}
+        )
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual((body["status"], body["approval"]["choice"]), ("posting", "text"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("posting", True))
+
+    async def test_approve_and_post_is_only_for_the_text_only_choice(self) -> None:
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "both", "post": True}
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_choice"))
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": "yes"}
+        )
+        self.assertEqual(got.status_code, 422)
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("draft", False))  # nothing half done
+
+    async def test_approve_and_post_that_cannot_post_approves_nothing(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:  # decided in Discord meanwhile
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": True}
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("posted", False))  # no approval was recorded
+
+    async def test_audio_is_refused_by_the_route_where_recaps_are_off(self) -> None:
+        """With recaps off the route refuses audio (409) and still approves text."""
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        ) as off:
+            off.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            url = f"/me/recaps/{self.ref}/approve"
+            got = await off.post(url, json={"choice": "both"})
+            self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_unavailable"))
+            self.assertEqual((await off.post(url, json={"choice": "text"})).status_code, 200)
+
+    async def test_approving_without_posting_leaves_a_draft_that_can_be_posted_later(self) -> None:
+        """(#2419) 📋 Approve but don't post: approved, nothing sent; Post to the table later."""
+        got = await self.approve("text")
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual((body["status"], body["approval"]["approved"]), ("draft", True))
+        self.assertTrue(body["canPost"])
+        later = await decide(self.web, self.session, self.ref, "post")
+        self.assertEqual(later["status"], "posting")
+
+    async def test_audio_is_refused_where_nothing_here_makes_it(self) -> None:
+        from dmbot.web.recaps import approve_recap
+
+        for why in ("not_set_up", "allowance"):
+            with self.subTest(why), self.assertRaises(RecapError) as no:
+                await approve_recap(
+                    self.web, self.session, self.ref, "both",
+                    audio_in_plan=True, audio_unavailable=why,
+                )  # fmt: skip
+            self.assertEqual(no.exception.code, "audio_unavailable")
+        got = await approve_recap(  # text only is never held back by it
+            self.web, self.session, self.ref, "text",
+            audio_in_plan=True, audio_unavailable="not_set_up",
+        )  # fmt: skip
+        self.assertEqual(got["approval"]["choice"], "text")
 
     async def test_audio_already_under_way_is_not_started_over(self) -> None:
         self.assertEqual((await self.approve("both")).status_code, 200)
@@ -1293,6 +1369,59 @@ class TheAddressDoor(Base):
             row = await cur.fetchone()
         assert row is not None
         self.assertIsNone(row["a"])
+
+    async def test_a_co_dm_with_no_job_of_their_own_gets_their_address(self) -> None:
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
+        await sessions.sign_in(self.web, carol, [THURSDAY], now=NOW, days=30)
+        self.assertIsNone(await self.store.address(THURSDAY.id, carol.id))  # not a DM yet
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, carol.id)
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+
+    async def test_a_co_dm_of_a_campaign_with_only_a_held_recap_gets_their_address(self) -> None:
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
+        await sessions.sign_in(self.web, carol, [THURSDAY], now=NOW, days=30)
+        held = await self.campaigns.create(THURSDAY.id, "Held", ALICE.id)
+        await self.campaigns.add_dm(THURSDAY.id, held.id, carol.id)
+        self.assertIsNone(await self.store.address(THURSDAY.id, carol.id))  # nothing waiting yet
+        await HoldStore(self.db).hold(
+            THURSDAY.id, held.id, 300, session_id="s1", dm_user_id=ALICE.id, channel_id=5,
+            asked=True, names_open=2,
+        )  # fmt: skip
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+
+    async def test_a_hold_gives_its_own_campaigns_dms_their_address_and_nobody_else(self) -> None:
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
+        erin = DiscordUser(id=5005, name="Erin", email="erin@example.com")
+        dave = DiscordUser(id=4004, name="Dave", email="dave@example.com")
+        for who in (carol, erin, dave):
+            await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30)
+        held = await self.campaigns.create(THURSDAY.id, "Held", carol.id)  # no job of its own
+        await self.campaigns.create(THURSDAY.id, "Quiet", erin.id)  # no job, no hold
+        await HoldStore(self.db).hold(
+            THURSDAY.id, held.id, 300, session_id="s1", dm_user_id=carol.id, channel_id=5,
+            asked=True, names_open=2,
+        )  # fmt: skip
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+        self.assertIsNone(await self.store.address(THURSDAY.id, erin.id))  # another campaign's DM
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))  # not a DM at all
+
+    async def test_a_former_dm_gets_nothing_even_if_the_job_was_made_for_them(self) -> None:
+        self.assertEqual(await self.store.address(THURSDAY.id, ALICE.id), ALICE.email)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "DELETE FROM campaign_dms WHERE campaign_id = %s AND user_id = %s",
+                (self.one.id, ALICE.id),
+            )
+        self.assertIsNone(await self.store.address(THURSDAY.id, ALICE.id))
+
+    async def test_someone_who_is_not_a_dm_there_still_gets_none(self) -> None:
+        dave = DiscordUser(id=4004, name="Dave", email="dave@example.com")
+        await sessions.sign_in(self.web, dave, [THURSDAY], now=NOW, days=30)
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))
+        # a DM of a campaign that has no recap job does not count either
+        empty = await self.campaigns.create(THURSDAY.id, "Empty", dave.id)
+        self.assertIsNotNone(empty)
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))
 
     def test_only_the_recap_code_opens_the_door(self) -> None:
         self.assertEqual(callers(".recap_mail("), {"recaps/store.py", "schema.py"})
