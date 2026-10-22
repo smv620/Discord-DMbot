@@ -321,6 +321,7 @@ class TheProse(unittest.TestCase):
         for hours, target in (
             (0.5, 110),
             (1, 150),
+            (2, 230),  # a half rounds up: 225 is 230, not 220
             (2.5, 260),
             (3, 300),
             (4, 380),

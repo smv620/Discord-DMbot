@@ -54,6 +54,8 @@ BELOW = 0.50  # a draft of at least this share of the target passes, on every tr
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
+# The longest at all: the last try's limit at 8 characters a word, so the web editor never refuses a
+# draft the length check passed.
 SUMMARY_MAX = (
     round(WORDS_CEILING * (1 + LAST_UP)) * CHARS_PER_WORD + FIXED_LINES_ROOM
 )  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
@@ -245,14 +247,15 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """75 words and 75 for each hour played, to the nearest 10 and at most 450 (0.5 hours 110, 1
-    hour 150, 3 hours 300, 5 hours or more 450). A draft passes from half the target (the owner
-    asked for 50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
+    """75 words and 75 for each hour played, to the nearest 10 with a half rounding up (Python's
+    round() would make 2 hours 220) and at most 450: 0.5 hours 110, 1 hour 150, 2 hours 230,
+    3 hours 300, 5 hours or more 450. A draft passes from half the target (the owner asked for
+    50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
     limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
     a paragraph for every 100 words (2 or more), 8 characters for each word of the longest
     accepted draft (so the cap never cuts a draft the length check passes) and a token budget for
     the words, the music prompts and the form."""
-    target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
+    target = min(WORDS_CEILING, int((BASE_WORDS + WORDS_PER_HOUR * hours) / 10 + 0.5) * 10)
     low = round(target * BELOW)
     high = round(target * (1 + RANGE))
     last_high = round(target * (1 + LAST_UP))
