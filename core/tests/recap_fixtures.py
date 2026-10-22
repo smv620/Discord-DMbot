@@ -137,13 +137,16 @@ def facts_answer(unsupported: Sequence[tuple[int, str]] = (), missing: Sequence[
 class Canned:
     """An AI that returns the answers it was given, in order, and records what it was sent."""
 
-    def __init__(self, *answers: str | Exception | Reply, facts: Sequence[str] = ()) -> None:
+    def __init__(
+        self, *answers: str | Exception | Reply, facts: Sequence[str | Reply] = ()
+    ) -> None:
         self.answers = list(answers)
         # The fact check (#2064) is a call of its own: it takes the next of `facts`, or finds
         # nothing wrong, and is kept apart from `sent` so the tests that count the writer's calls
         # need not know about it.
         self.facts = list(facts)
         self.fact_sent: list[str] = []
+        self.fact_tokens: list[int] = []  # the room each fact check was given (#2345)
         self.tokens: list[int] = []  # the room each call was given
         self.sent: list[str] = []
         self.systems: list[str] = []
@@ -161,7 +164,9 @@ class Canned:
     ) -> Reply:
         if system == rd.FACTS_SYSTEM:
             self.fact_sent.append(text)
-            return Reply(self.facts.pop(0) if self.facts else CLEAN_FACTS, False, 10, 10, "m")
+            self.fact_tokens.append(max_tokens)
+            given = self.facts.pop(0) if self.facts else CLEAN_FACTS
+            return given if isinstance(given, Reply) else Reply(given, False, 10, 10, "m")
         self.sent.append(text)
         self.systems.append(system)
         self.schemas.append(schema)

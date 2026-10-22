@@ -116,6 +116,18 @@ UNMATCHED = "Couldn't write a recap that matched the session."
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
 SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and keep every word"
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
+FACTS_ROOM_MAX = (
+    16_000  # after doubling too: a run of one-word sentences stays under the output limit
+)
+FACTS_TOKENS_PER_SENTENCE = 60  # one flag as JSON: the sentence number, the kind, the beat numbers
+
+
+def facts_room(sentences: int) -> int:
+    """The fact check's output room: never below the old 800, and a number pair for each sentence
+    of a long recap (#2345)."""
+    return min(max(FACTS_TOKENS, FACTS_TOKENS_PER_SENTENCE * sentences + 400), FACTS_ROOM_MAX // 2)
+
+
 GRADE_TOKENS = 200  # the grader's room: a few numbers
 FINISH_TOKENS = 900  # room for a title and twelve short bullets as JSON
 SPLIT_ERRORS_MAX = 2  # service errors at the split before it is done without the AI
@@ -1158,27 +1170,45 @@ class RecapWorker:
         await self._store.update(
             gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
         )
-        try:
-            reply = await self._careful.complete(
-                rd.FACTS_SYSTEM,
-                rd.facts_message(shown, prose.summary, corrections),
-                max_tokens=FACTS_TOKENS,
-                schema=rd.facts_schema(),
-            )
-        except AIOutOfFunds:
-            raise
-        except Exception as exc:
-            log.warning("Recap: the fact check failed (%s)", type(exc).__name__)
-            return None
+        # Room for a number pair for every sentence, not a fixed 800: a long recap's answer was
+        # cut off, unreadable, and the check then skipped (#2345). A cut-off answer is asked for
+        # once more with twice the room.
+        room = facts_room(len(rd.sentence_spans(prose.summary)))
+        reply: Reply | None = None
+        for again in (False, True):
+            if again:
+                fresh = await self._store.get(gid, cid, job.session_at) or job
+                if fresh.calls >= self._ceiling(fresh) - 1:
+                    break  # (the room reported stays the one the cut answer had)
+                room = min(room * 2, FACTS_ROOM_MAX)
+                await self._store.update(
+                    gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+                )
+            try:
+                reply = await self._careful.complete(
+                    rd.FACTS_SYSTEM,
+                    rd.facts_message(shown, prose.summary, corrections),
+                    max_tokens=room,
+                    schema=rd.facts_schema(),
+                )
+            except AIOutOfFunds:
+                raise
+            except Exception as exc:
+                log.warning("Recap: the fact check failed (%s)", type(exc).__name__)
+                return None
+            if not reply.cut:
+                break
+            log.info("Recap: the fact check was cut off at %d tokens", room)
+        assert reply is not None
         facts = None
         if not unusable(reply):
             facts = rd.parse_facts(
                 reply.text, len(rd.sentence_spans(prose.summary)), {b.number for b in shown}
             )
-        self._announce(gid, cid, job, self._careful, FACTS_TOKENS, reply, stage="facts")
+        self._announce(gid, cid, job, self._careful, room, reply, stage="facts")
         self._annotate(
             gid, cid, job, "facts",
-            checks=["shape"] if facts is None else [],
+            checks=(["cut off" if reply.cut else "shape"] if facts is None else []),
             facts=facts.counts() if facts is not None else {},
         )  # fmt: skip
         return facts
