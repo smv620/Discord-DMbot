@@ -301,6 +301,7 @@ export function mockRecaps(): Recap[] {
     state: "ready",
     working: false,
     error: "",
+    recapEmail: { address: "dm@example.com", source: "signin", on: true } as const,
     audio: {
       state: "off",
       error: "",

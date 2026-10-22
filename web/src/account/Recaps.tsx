@@ -30,6 +30,7 @@ import {
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapApprove from "./RecapApprove";
+import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
@@ -600,6 +601,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
         </p>
       )}
+      {/* The only place the page says an email is coming, so the only place it names the address. */}
+      {recap.working && <RecapEmailLine api={api} email={recap.recapEmail} />}
       {recap.state === "failed" && !decided && (
         <p class="warn" role="alert">
           {text.failed}

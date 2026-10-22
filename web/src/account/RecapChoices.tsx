@@ -95,6 +95,8 @@ export default function RecapChoicesPart({
                 <label>
                   <input
                     type="checkbox"
+                    // The "Turn emails on" link under a working recap lands here (#2335).
+                    id={which === "email" ? "recap-email-switch" : undefined}
                     checked={choices[which]}
                     onChange={(e) => change(which, (e.currentTarget as HTMLInputElement).checked)}
                   />{" "}
