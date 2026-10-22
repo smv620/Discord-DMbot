@@ -71,7 +71,10 @@ describe("Try again on a failed recap", () => {
     expect(await screen.findByText(text.failed)).toBeTruthy();
     const again = screen.getByRole("button", { name: text.again }) as HTMLButtonElement;
     expect(again.disabled).toBe(true);
-    expect(screen.getByText(text.noTriesLeft)).toBeTruthy();
+    // A failed recap has nothing to edit or post, so the no-tries line must not say it has.
+    expect(screen.getByText(text.failedNoTries)).toBeTruthy();
+    expect(screen.queryByText(text.noTriesLeft)).toBeNull();
+    expect(screen.queryByText(text.tryingAgain)).toBeNull();
     expect(screen.getByRole("button", { name: text.drop })).toBeTruthy();
   });
 });
@@ -89,6 +92,19 @@ describe("when the run ends", () => {
     expect(await screen.findByRole("button", { name: text.post })).toBeTruthy();
     expect(screen.getByRole("button", { name: text.edit })).toBeTruthy();
     expect(screen.queryByText(text.working)).toBeNull();
+    expect(screen.queryByText(text.tryingAgain)).toBeNull();
+  });
+
+  it("shows a genuinely new failure inside the minute, once the tries have gone down", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    open(failed(1), failed(0));
+    await screen.findByText(text.failed);
+    fireEvent.click(screen.getByRole("button", { name: againLabel(1) }));
+    await screen.findByText(text.working);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(await screen.findByText(text.failed)).toBeTruthy();
   });
 
   it("ignores a read that still shows the old failure, then follows the real one", async () => {

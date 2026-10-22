@@ -451,6 +451,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         const stale = staleFailure.current;
         if (stale && Date.now() < stale.until && read.state === "failed" && !read.working && read.triesLeft >= stale.triesLeft) return;
         staleFailure.current = null;
+        // "DMbot is making it again" is true only while it is being made (#2333).
+        if (!read.working) setNote((now) => (now?.message === text.tryingAgain ? null : now));
         setRecap(read);
       }, () => undefined);
     }, POLL_MS);
@@ -804,7 +806,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           </div>
         )}
       {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && (
-        <p class="small">{text.noTriesLeft}</p>
+        <p class="small">{recap.state === "failed" ? text.failedNoTries : text.noTriesLeft}</p>
       )}
         </>
       )}
