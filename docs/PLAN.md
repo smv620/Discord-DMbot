@@ -1786,12 +1786,16 @@ names panel nor the speech-to-text hints can be a fixed list.
       revealed (no change for players today).
     - **When it changes, by itself:** an unrevealed name becomes revealed when its name or one of its other
       names is said or typed (the whole-name matcher that guards secrets). An unrevealed connection becomes
-      revealed when both its names are revealed and the after-session connection check hears it stated. The
-      DM sees "Revealed at the table: Vex (Session 4)" in the after-session report, with ↩️ Undo. The
-      DM can also press **👁️ Reveal to players** on a card or in the graph.
-    - **🤫 Secret is stronger:** a name or connection the DM kept as secret (🤫 Keep as secret, or 🤫 on a
-      card) is never revealed by itself. Saying it out loud still asks the DM, as under "When a secret is
-      revealed". "Revealed" decides only what players see; every listener still uses unrevealed names.
+      revealed when both its names are revealed and the session states it. The DM can also press **👁️ Reveal
+      to players** on a card or in the graph.
+    - **🤫 Secrets said out loud are revealed too, and the DM can recant** (owner, 2026-10-22, replacing "🤫 is
+      stronger"): after the session, the **knowledge map review** lists "Secrets exposed" with **↩️ Recant**
+      for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is
+      never a reveal: it becomes a theory, drawn as uncertain. Red herrings and lies are beliefs the truth
+      disagrees with. See docs/STORY_MEMORY.md section 9, "Assertions, perspectives and evidence".
+    - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
+      Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
+      every name.
     - **The same rule everywhere for players:** the graph, the NPC pages and the All names list show players
       revealed names and connections only. Code decides it, never the AI, and nothing unrevealed is sent to
       a player's browser.
