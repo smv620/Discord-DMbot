@@ -90,6 +90,7 @@ class Feature(enum.StrEnum):
     TIME_SUGGEST = "time_suggest"  # a time jump suggested from vague narration (#1758)
     RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
     RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
+    RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -117,6 +118,8 @@ FEATURE_TIERS = {
     Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # one small answer a DM waits for
     Feature.RECAP_WRITE: AIModelTier.CREATIVE,
     Feature.RECAP_FORMAT: AIModelTier.FORMATTING,
+    # Numbers only, each checked against what was shown, and the DM answers every one (#2284).
+    Feature.RULE_CONFLICTS: AIModelTier.FAST,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

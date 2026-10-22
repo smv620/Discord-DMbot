@@ -77,7 +77,13 @@ class TheReadyEmail(IsolatedAsyncioTestCase):
             address=AsyncMock(side_effect=lambda guild, user: f"dm{user}@example.org")
         )
         job: Any = SimpleNamespace(
-            state="ready", title="The Gate", dm_user_id=9, session_at=1000, tries=0, last_error=""
+            state="ready",
+            title="The Gate",
+            dm_user_id=9,
+            session_at=1000,
+            tries=0,
+            last_error="",
+            updated_at=50,
         )
         result = await tell_the_dm(mailer, store, SITE, 5, CID, job, {7, 8, 9})
         self.assertEqual(result, "sent")
@@ -98,7 +104,13 @@ class TheReadyEmail(IsolatedAsyncioTestCase):
 
         store: Any = SimpleNamespace(address=address)
         job: Any = SimpleNamespace(
-            state="failed", title="", dm_user_id=9, session_at=1000, tries=1, last_error="x"
+            state="failed",
+            title="",
+            dm_user_id=9,
+            session_at=1000,
+            tries=1,
+            last_error="x",
+            updated_at=50,
         )
         await tell_the_dm(mailer, store, SITE, 5, CID, job, {7, 8, 9})
         calls = {c.kwargs["user_id"]: c.kwargs["to"] for c in mailer.send.await_args_list}
@@ -110,7 +122,37 @@ class TheReadyEmail(IsolatedAsyncioTestCase):
         mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
         store: Any = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
         job: Any = SimpleNamespace(
-            state="failed", title="", dm_user_id=9, session_at=1000, tries=1, last_error="x"
+            state="failed",
+            title="",
+            dm_user_id=9,
+            session_at=1000,
+            tries=1,
+            last_error="x",
+            updated_at=50,
         )
         await tell_the_dm(mailer, store, SITE, 5, CID, job)
         self.assertEqual([c.kwargs["user_id"] for c in mailer.send.await_args_list], [9])
+
+
+class TheFailureEmailKey(IsolatedAsyncioTestCase):
+    """A failure of ours gives the DM's Try again back (#2341), so the email's key must not be
+    built from the tries: fail, Try again, fail again must send two emails."""
+
+    async def test_a_second_failure_after_a_given_back_try_is_still_emailed(self) -> None:
+        from dmbot.recaps.notify import tell_the_dm
+
+        mailer: Any = SimpleNamespace(send=AsyncMock(return_value="sent"))
+        store: Any = SimpleNamespace(address=AsyncMock(return_value="dm@example.org"))
+
+        def job(tries: int, updated_at: int) -> Any:
+            return SimpleNamespace(
+                state="failed", session_at=1000, dm_user_id=7, tries=tries,
+                last_error="The recap came out too long for DMbot to finish.",
+                updated_at=updated_at,
+            )  # fmt: skip
+
+        await tell_the_dm(mailer, store, SITE, 5, CID, job(0, 100))  # the first run fails
+        await tell_the_dm(mailer, store, SITE, 5, CID, job(0, 200))  # Try again, ours, tries back
+        kinds = [c.kwargs["kind"] for c in mailer.send.await_args_list]
+        self.assertEqual(len(kinds), 2)
+        self.assertNotEqual(kinds[0], kinds[1])

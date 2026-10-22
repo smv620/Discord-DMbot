@@ -709,10 +709,11 @@ export const dmSteps: Step[] = [
     names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
   },
   {
-    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret: no, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Next one is public so it reads 🤫 Next one is secret, then pick the other name from the list. Players' cards never show that connection. To hide or show a connection you already made, use 🤫 Hide or show a connection… on the same screen. Only a game master of the campaign can do either.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
-      { name: "🤫 Secret: yes", file: "ui/name_card.py" },
+      { name: "🤫 Next one is secret", file: "ui/name_card.py" },
+      { name: "🤫 Hide or show a connection…", file: "ui/name_card.py" },
     ],
   },
   {

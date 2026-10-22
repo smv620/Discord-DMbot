@@ -165,6 +165,7 @@ class Tiers(unittest.TestCase):
                 Feature.SUPPORT: AIModelTier.DEEP,
                 Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
                 Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed
+                Feature.RULE_CONFLICTS: AIModelTier.FAST,  # house rules that disagree (#2284)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out

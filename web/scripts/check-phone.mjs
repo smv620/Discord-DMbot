@@ -55,6 +55,7 @@ function fileFor(url) {
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
+  if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
   if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
@@ -146,6 +147,14 @@ const pages = [
   ["account, free access", "/account?demo=free-paying"],
   ["recap list", "/account/recaps?demo=table"],
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
+  ["a recap's names, with how to say each (#2317)", `/account/recaps/${REF}?demo=table`, async (page) => {
+    await page.getByText("Names in this campaign").first().click();
+    await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
+    await page.getByRole("button", { name: /Say it/ }).first().waitFor();
+    // A suggestion fills the box, which brings the Hear it button.
+    await page.getByRole("button", { name: /Suggest/ }).first().click();
+    await page.getByRole("button", { name: /Hear it/ }).first().waitFor();
+  }],
   ["transcripts", "/account/transcripts?demo=table"],
   ["transcripts, signed out (the line at the top)", "/account/transcripts?demo=signed-out"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
@@ -178,6 +187,8 @@ const pages = [
     await page.getByRole("button", { name: "Yes, remove it" }).waitFor();
   }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
+  ["web: the map", "/account/web/100.cmp1?demo=table"],
+  ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
   ["admin, signed in", "/admin", adminIn],
   ["admin, with an addition and the tickets shown", "/admin", async (page) => {
     await adminIn(page);
