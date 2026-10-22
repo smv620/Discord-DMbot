@@ -37,7 +37,7 @@ from dmbot.memory.models import (
 )
 
 ONLY_THE_DM = "Only the DM can write what is true."
-NOT_A_REVEAL = "That is a guess, not a reveal: show the connection to the players to reveal it."
+NOT_A_REVEAL = "Show or hide the connection itself to change what the players know."
 NOT_THERE = "DMbot doesn't remember that any more."
 
 
@@ -50,8 +50,10 @@ def belief_of(row: dict[str, Any]) -> Belief:
 
 
 async def perspective_ids(w: Changes) -> dict[str, str]:
-    """The ids of The truth and The party, made on first use (a campaign made after the
-    migration has none until its first confirmed connection)."""
+    """The ids of The truth and The party. Every campaign has them from the day it is made (and
+    the migration gave them to the ones that existed), so they are never made inside a change a
+    DM could undo. A campaign that somehow lacks them (made by hand in a test) gets them here with
+    plain statements, which the change log does not see."""
     if w.perspectives is None:
         found = {
             p["kind"]: p["id"]
@@ -59,11 +61,12 @@ async def perspective_ids(w: Changes) -> dict[str, str]:
         }
         for kind in (TRUTH, PARTY):
             if kind not in found:
-                row = await w.insert(
-                    PERSPECTIVES,
-                    {"id": new_id(), "kind": kind, "entity_id": None, "created_at": w.now},
+                found[kind] = new_id()
+                await w.conn.execute(
+                    "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (*w.ids, found[kind], kind, w.now),
                 )
-                found[kind] = row["id"]
         w.perspectives = found
     return w.perspectives
 
@@ -140,13 +143,12 @@ async def believe_in(
         raise MemoryRuleError(NOT_THERE)
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
-    if (
-        perspective["kind"] == PARTY
-        and confidence >= KNOWN
-        and (relation["secret"] or relation["status"] != CONFIRMED)
+    if perspective["kind"] == PARTY and (
+        confidence < KNOWN or relation["secret"] or relation["status"] != CONFIRMED
     ):
-        # a secret (or unconfirmed) connection is never held by the players as fact; a theory about
-        # one is fine (the players guessed), a reveal goes through the connection's own switch
+        # Until guesses arrive (#2412, with their own rules for readers), what the players hold is
+        # exactly the connections shown to them: a reveal or a hide goes through the connection's
+        # own switch, and a guess is not recorded here.
         raise MemoryRuleError(NOT_A_REVEAL)
     return belief_of(
         await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
@@ -185,17 +187,9 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
     connection with none, The truth at 1.0 and, when it is not secret, The party at 1.0. The
     migration does the same for every campaign; this is for one restored from a backup made before
     beliefs existed, or with a connection its file gave no beliefs (a belief already there is left
-    alone, so a file that has them loses nothing). A campaign with no confirmed connection
-    gets nothing: its perspectives are made with its first one, as for any new campaign. Plain
+    alone, so a file that has them loses nothing). Plain
     scoped statements: the restore's transaction already has the server set."""
     now = int(time.time())
-    cur = await conn.execute(
-        "SELECT 1 FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
-        " AND status = 'confirmed' LIMIT 1",
-        (guild_id, campaign_id),
-    )
-    if await cur.fetchone() is None:
-        return
     await conn.execute(
         "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)"
         " SELECT %s, %s, md5(%s::text || k.kind || clock_timestamp()::text), k.kind, %s::bigint"

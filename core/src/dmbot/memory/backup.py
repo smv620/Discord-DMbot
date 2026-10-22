@@ -253,6 +253,12 @@ class MemorySection:
         """`rows` as `check` returned them, or straight from a file (checked here)."""
         by_tag = rows if isinstance(rows, dict) else await asyncio.to_thread(_checked_rows, rows)
         try:
+            if by_tag["perspective"]:
+                # the file brings its own; the two a new campaign was made with have no beliefs yet
+                await conn.execute(
+                    "DELETE FROM memory_perspectives WHERE guild_id = %s AND campaign_id = %s",
+                    (guild_id, campaign_id),
+                )
             for tag, table in _TAGS.items():
                 if not by_tag[tag]:
                     continue
@@ -345,9 +351,13 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # the file is damage.
     secret = {r["id"] for r in by_tag["relation"] if r["secret"]}
     party = {p["id"] for p in by_tag["perspective"] if p["kind"] == "party"}
-    if any(b["perspective_id"] in party and b["confidence"] >= 1.0 and b["relation_id"] in secret
-           for b in by_tag["belief"]):  # fmt: skip
-        raise CampaignError(DAMAGED)  # the players would hold a secret connection as fact
+    newest: dict[str, dict[str, Any]] = {}  # the players' current belief in each connection
+    for b in sorted(by_tag["belief"], key=lambda b: b["seq"]):
+        if b["perspective_id"] in party:
+            newest[b["relation_id"]] = b
+    if any(b["confidence"] >= 1.0 and rel in secret for rel, b in newest.items()):
+        raise CampaignError(DAMAGED)  # the players would hold a secret connection as fact now
+    # (an older belief of theirs in one that is hidden again is history, and is kept)
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)

@@ -168,10 +168,11 @@ ATTITUDES = Table(
 )  # fmt: skip
 # Who holds beliefs (The truth, The party, a character) and what each believes of a connection
 # (#2409). A belief is never edited: a new row is the new belief, the highest `seq` wins.
-# The truth and The party are made the first time a campaign needs them, inside whatever write that
-# is, so an Undo of that write takes them away again unless a later belief already rests on them
-# (`Changes.delete`: they are plumbing, not something the DM did).
-PERSPECTIVES = Table("memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"))
+# Perspectives are unlogged: The truth and The party are made with the campaign, not by a DM's
+# change, so an Undo can never take them away from the beliefs resting on them.
+PERSPECTIVES = Table(
+    "memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"), logged=False
+)
 BELIEFS = Table(
     "memory_beliefs",
     "id",
@@ -371,14 +372,6 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             return
-        if table is PERSPECTIVES and self.undoes is not None:
-            cur = await self.conn.execute(
-                "SELECT 1 FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s"
-                " AND perspective_id = %s LIMIT 1",
-                (*self.ids, row_id),
-            )
-            if await cur.fetchone() is not None:
-                return  # a later belief rests on it: it stays, and the Undo goes on without it
         if table is RELATIONS and self.undoes is None:
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):

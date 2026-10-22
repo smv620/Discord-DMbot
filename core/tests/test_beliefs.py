@@ -141,11 +141,12 @@ class Beliefs(MemoryTest):
 
     # ---- the beliefs follow the connection ----
 
-    async def test_a_new_campaign_gets_its_perspectives_with_its_first_connection(self) -> None:
+    async def test_a_new_campaign_has_its_perspectives_from_the_start(self) -> None:
         a, b = await self.pair()
-        self.assertEqual(await self.memory.perspectives(GUILD_A, self.c), [])
+        before = await self.kinds()
+        self.assertEqual(sorted(before), ["party", "truth"])  # before any connection
         known = await self.link(a, b)
-        self.assertEqual(sorted(await self.kinds()), ["party", "truth"])
+        self.assertEqual(await self.kinds(), before)  # and the same two afterwards
         self.assertEqual(await self.party(), {known: 1.0})
         self.assertEqual(await self.truth(), {known: (1.0, "revealed_fact")})
 
@@ -214,36 +215,32 @@ class Beliefs(MemoryTest):
 
     # ---- the one write path ----
 
-    async def test_believe_records_a_theory_and_the_party_view_hides_it_until_known(self) -> None:
+    async def test_believe_records_a_belief_with_its_evidence_and_undo_takes_it_back(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b, secret=True)
-        party = (await self.kinds())["party"]
-        theory = await self.memory.believe(
-            GUILD_A, self.c, party, rel, 0.5, "theory", source="dm",
+        truth = (await self.kinds())["truth"]
+        doubt = await self.memory.believe(
+            GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm",
             evidence=["line:s1:1000:7"], session_at=1_000,
         )  # fmt: skip
-        self.assertEqual((theory.value.confidence, theory.value.status), (0.5, "theory"))
-        self.assertEqual(theory.value.evidence_ids, ("line:s1:1000:7",))
-        self.assertEqual(await self.party(), {})  # a guess is never a reveal
-        shown = await self.memory.party_view(GUILD_A, self.c, known_only=False)
-        self.assertEqual([(x.relation_id, x.confidence) for x in shown], [(rel, 0.5)])
-        await self.memory.undo(GUILD_A, self.c, theory.batch, source="dm")  # type: ignore[arg-type]
-        self.assertEqual(await self.memory.party_view(GUILD_A, self.c, known_only=False), [])
+        self.assertEqual((doubt.value.confidence, doubt.value.status), (0.5, "theory"))
+        self.assertEqual(doubt.value.evidence_ids, ("line:s1:1000:7",))
+        self.assertEqual(await self.party(), {})  # nothing here reveals anything to the players
+        self.assertEqual((await self.truth())[rel], (0.5, "theory"))
+        await self.memory.undo(GUILD_A, self.c, doubt.batch, source="dm")  # type: ignore[arg-type]
+        self.assertEqual((await self.truth())[rel], (1.0, "secret_plot"))
 
     async def test_the_newest_belief_wins_and_undo_brings_the_one_before_back(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b, secret=True)
-        party = (await self.kinds())["party"]
-        await self.memory.believe(GUILD_A, self.c, party, rel, 0.5, "theory", source="dm")
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm")
         proof = await self.memory.believe(
-            GUILD_A, self.c, party, rel, 0.9, "evasion_under_magic", source="dm"
+            GUILD_A, self.c, truth, rel, 0.9, "evasion_under_magic", source="dm"
         )
-        self.assertEqual(
-            (await self.memory.party_view(GUILD_A, self.c, known_only=False))[0].confidence, 0.9
-        )
+        self.assertEqual((await self.truth())[rel], (0.9, "evasion_under_magic"))
         await self.memory.undo(GUILD_A, self.c, proof.batch, source="dm")  # type: ignore[arg-type]
-        (still,) = await self.memory.party_view(GUILD_A, self.c, known_only=False)
-        self.assertEqual((still.confidence, still.status), (0.5, "theory"))
+        self.assertEqual((await self.truth())[rel], (0.5, "theory"))
 
     async def test_a_new_belief_wins_over_rows_numbered_by_another_campaigns_history(self) -> None:
         a, b = await self.pair()
@@ -277,10 +274,11 @@ class Beliefs(MemoryTest):
                 await self.memory.believe(
                     GUILD_A, self.c, ids["truth"], rel, 1.0, "revealed_fact", source=source
                 )
-        # the party may be written by a helper (a theory it heard), never the truth
-        await self.memory.believe(
-            GUILD_A, self.c, ids["party"], rel, 0.5, "theory", source="extractor"
-        )
+        # and nobody writes a guess for the players yet: what they hold is the shown connections
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.believe(
+                GUILD_A, self.c, ids["party"], rel, 0.5, "theory", source="extractor"
+            )
         for bad in (
             {"confidence": 1.5, "status": "theory"},
             {"confidence": -0.1, "status": "theory"},
@@ -292,7 +290,7 @@ class Beliefs(MemoryTest):
                 await self.memory.believe(
                     GUILD_A,
                     self.c,
-                    ids["party"],
+                    ids["truth"],
                     rel,
                     bad["confidence"],  # type: ignore[arg-type]
                     bad["status"],  # type: ignore[arg-type]
@@ -325,9 +323,11 @@ class Beliefs(MemoryTest):
                 await self.memory.believe(
                     GUILD_A, self.c, party, rel, 1.0, "revealed_fact", source="dm"
                 )
-        await self.memory.believe(
-            GUILD_A, self.c, party, secret, 0.5, "theory", source="dm"
-        )  # a guess
+        for guess in (0.5, 0.0):  # a guess or a hide goes through the connection's own switch
+            with self.subTest(guess=guess), self.assertRaises(MemoryRuleError):
+                await self.memory.believe(
+                    GUILD_A, self.c, party, secret, guess, "theory", source="dm"
+                )
         # and even a row put there by hand is not shown as known
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
@@ -454,9 +454,9 @@ class Beliefs(MemoryTest):
     async def test_a_backup_round_trip_keeps_perspectives_and_beliefs(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b, secret=True)
-        party = (await self.kinds())["party"]
+        truth = (await self.kinds())["truth"]
         await self.memory.believe(
-            GUILD_A, self.c, party, rel, 0.5, "theory", source="dm", evidence=["claim:abc"]
+            GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm", evidence=["claim:abc"]
         )
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
@@ -544,6 +544,22 @@ class Beliefs(MemoryTest):
             )
             got = {(r["kind"], r["relation_id"]) for r in await cur.fetchall()}
         self.assertEqual(got, {("truth", known), ("party", known), ("truth", secret)})
+
+    async def test_a_connection_shown_and_hidden_again_still_backs_up_and_restores(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        async with self.db.guild(GUILD_B) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_beliefs WHERE campaign_id = %s", (restored.id,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertGreaterEqual(row["n"], 3)  # the history came with it: it was known, then hidden
+        view = await self.memory.party_view(GUILD_B, restored.id)
+        self.assertEqual(view, [])  # and the players hold nothing of it now
 
     async def test_a_damaged_belief_in_a_backup_is_refused(self) -> None:
         from dmbot.campaigns.models import CampaignError

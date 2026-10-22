@@ -10044,6 +10044,30 @@ BELIEFS = (
     DROP POLICY migrate_backfill ON memory_beliefs;
     DROP POLICY migrate_backfill ON memory_relations;
     DROP POLICY migrate_backfill ON campaigns;
+    -- Every campaign made from now on has them from the start, part of the campaign and never part
+    -- of a change a DM could undo (the trigger runs in the creating transaction, so the server is
+    -- already set and the table's policy lets the rows in).
+    CREATE FUNCTION dmbot_campaign_perspectives() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)
+            SELECT NEW.guild_id, NEW.id, md5(NEW.guild_id::text || NEW.id || k.kind), k.kind,
+                   NEW.created_at
+              FROM (VALUES ('truth'), ('party')) AS k(kind);
+        RETURN NEW;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_campaign_perspectives()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    CREATE TRIGGER campaign_perspectives AFTER INSERT ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_campaign_perspectives();
     """
 )
 
