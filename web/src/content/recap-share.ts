@@ -1,5 +1,5 @@
 // The words for sharing a recap by a link (#2119; core #2118; docs/PLAN.md, "Recaps on the website").
-// A game master turns a link on for a posted recap; anyone with it reads the recap (and plays its
+// A DM turns a link on for a posted recap (or one they approved); anyone with it reads the recap (and plays its
 // voice and music) without signing in. The link is a secret in the address, so the words say to
 // treat it like a password, as the privacy page does. Shown only while RECAP_SHARE_LIVE is true.
 import { RECAP_AUDIO_LIVE } from "./recap-words";
@@ -53,7 +53,7 @@ export const publicWords = {
   busy: "Too many tries just now. Wait a minute and open the link again.",
   posted: (day: string): string => `Posted ${day}`,
   /** A recap the DM approved and shared without posting it to the table (#2419). */
-  approved: "Shared by the game master. It was not posted to a Discord table.",
+  approved: "Shared by the DM.",
   /** A network or server trouble: not a dead link, so the reader is not sent to the DM for nothing. */
   trouble: "We couldn't load this recap. Check your connection and try again.",
   tryAgain: "Try again",

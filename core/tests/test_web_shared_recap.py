@@ -207,16 +207,28 @@ class TheLink(Shared):
         a not-ready one, or with an empty approval, opens nothing; a wrong token opens nothing."""
         token = "T" * 43
         async with self.db.guild(THURSDAY.id) as conn:
-            await conn.execute("UPDATE recap_jobs SET share_token = %s", (token,))
+            await conn.execute(
+                "UPDATE recap_jobs SET share_token = %s"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (token, self.one.id),
+            )
         self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
         await self.approve_text()
         self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
         self.assertEqual((await self.public.get(f"/recaps/{'U' * 43}")).status_code, 404)
         async with self.db.guild(THURSDAY.id) as conn:
-            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'failed'"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
         self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
         async with self.db.guild(THURSDAY.id) as conn:
-            await conn.execute("UPDATE recap_jobs SET state = 'ready', approved_hash = ''")
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'ready', approved_hash = ''"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
         self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
 
     async def test_only_the_campaigns_dm_makes_a_link_for_an_approved_draft(self) -> None:
@@ -239,7 +251,11 @@ class TheLink(Shared):
         await self.approve_text()
         token = await self.token()
         async with self.db.guild(THURSDAY.id) as conn:
-            await conn.execute("UPDATE recap_jobs SET status = 'posting'")
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting'"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
         self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
 
     async def test_a_turned_off_link_on_an_unposted_recap_answers_not_found(self) -> None:
