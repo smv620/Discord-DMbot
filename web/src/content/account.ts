@@ -345,6 +345,7 @@ export const text = {
       : `We sent a link to ${address}. Your email is saved when you open it. Until then DMbot has no email for you. Sending a new link replaces this one.`,
   emailLinkNote: "We'll send a link to this address. Your email changes when you open it.",
   emailSendAgain: "Send a new link",
+  emailSendFailed: "The link couldn't be emailed just now. Try again in a few minutes.",
   emailCancel: "Cancel this change",
   emailCancelled: "Cancelled. DMbot keeps using the email it had.",
   emailConfirmed: (address: string): string => `Done. DMbot now emails ${address}.`,

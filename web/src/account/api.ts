@@ -918,7 +918,7 @@ export interface AccountApi {
   myEmail?(): Promise<MyEmail>;
   /** Ask to change it: a confirmation link goes to the new address and nothing changes until it is
    * opened. Not for a payment email, which is changed with the payment company. */
-  changeEmail?(address: string): Promise<{ pending: string }>;
+  changeEmail?(address: string): Promise<{ pending: string | null }>;
   /** Open the emailed link's code (`#email-confirm=...`): changes the email, but only for the same
    * signed-in account that asked. A wrong, used or ended code is `bad-link`. */
   confirmEmail?(token: string): Promise<void>;
@@ -1288,7 +1288,7 @@ export function httpApi(
       await call("POST", "/me/move-code");
     },
     myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
-    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string },
+    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string | null },
     confirmEmail: async (token) => {
       await call("POST", "/me/email/confirm", { token });
     },

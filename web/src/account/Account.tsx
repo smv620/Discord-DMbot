@@ -66,6 +66,32 @@ function emailLinkToken(hash: string): string | null {
   return found ? (found[1] ?? null) : null;
 }
 
+/** A change-of-email code survives the Discord sign-in round trip in this tab's session storage, because
+ * the address's `#...` does not (#2349). It is removed once the API has answered it. */
+const CONFIRM_KEY = "dmbot:email-confirm";
+function rememberConfirm(token: string): void {
+  try {
+    sessionStorage.setItem(CONFIRM_KEY, token);
+  } catch {
+    // Storage may be blocked; the code is then still in the address until sign-in.
+  }
+}
+function recalledConfirm(): string | null {
+  try {
+    const found = sessionStorage.getItem(CONFIRM_KEY);
+    return found && /^[\w-]{1,200}$/.test(found) ? found : null;
+  } catch {
+    return null;
+  }
+}
+function forgetConfirm(): void {
+  try {
+    sessionStorage.removeItem(CONFIRM_KEY);
+  } catch {
+    // Nothing to remove.
+  }
+}
+
 /** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
 function forgetEmailLink(): void {
   if (typeof window !== "undefined") {
@@ -215,7 +241,9 @@ export default function Account({
       }
       // A change-of-email link only works for the account that asked, and its code stays in the
       // address while the person signs in, so say so instead of showing a plain sign-in page.
-      if (!me && emailConfirmToken(hash)) {
+      const waiting = emailConfirmToken(hash);
+      if (!me && waiting) {
+        rememberConfirm(waiting);
         setState({ kind: "signed-out", notice: text.emailConfirmSignIn });
         return;
       }
@@ -1427,19 +1455,29 @@ function EmailSection({ hash }: { hash: string }) {
   const confirmed = useRef(false);
   const [result, setResult] = useState<string | null>(null);
   useEffect(() => {
-    const token = emailConfirmToken(hash);
+    // From the address, or kept across the sign-in that was needed first.
+    const token = emailConfirmToken(hash) ?? recalledConfirm();
     if (token && api.confirmEmail && !confirmed.current) {
       confirmed.current = true;
-      forgetEmailLink();
       void (async () => {
         let worked = false;
+        let answered = false;
         await run(
           async () => {
             await api.confirmEmail?.(token);
             worked = true;
           },
-          (error) => (error.kind === "bad-link" ? text.emailConfirmBad : null),
+          (error) => {
+            if (error.kind !== "bad-link") return null;
+            answered = true;
+            return text.emailConfirmBad;
+          },
         );
+        // The code goes only once the API has answered it; a network failure leaves it to try again.
+        if (worked || answered) {
+          forgetConfirm();
+          forgetEmailLink();
+        }
         const now = await read();
         if (worked) setResult(now?.address ? text.emailConfirmed(now.address) : null);
       })();
@@ -1483,13 +1521,16 @@ function EmailSection({ hash }: { hash: string }) {
       return;
     }
     setTypeFirst(false);
-    void run(async () => {
-      await api.changeEmail?.(address.trim());
-      setSent(true);
-      setEditing(false);
-      setAddress("");
-      await read();
-    });
+    void run(
+      async () => {
+        await api.changeEmail?.(address.trim());
+        setSent(true);
+        setEditing(false);
+        setAddress("");
+        await read();
+      },
+      (error) => (error.kind === "email-failed" ? text.emailSendFailed : null),
+    );
   };
 
   return (

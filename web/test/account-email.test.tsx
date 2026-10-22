@@ -11,7 +11,11 @@ import { ApiError, httpApi } from "../src/account/api";
 import { mockApi, type Scenario } from "../src/account/mock";
 import { text } from "../src/content/account";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
+});
 
 function show(scenario: Scenario) {
   const api = mockApi(scenario);
@@ -123,6 +127,35 @@ describe("opening the emailed link", () => {
     expect(api.calls.filter((c) => c === "confirmEmail").length).toBe(first);
   });
 
+  it("keeps the code across the sign-in, then uses it and forgets it", async () => {
+    sessionStorage.clear();
+    // Signed out: the page asks for a sign-in and keeps the code for after it.
+    const out = mockApi("signed-out");
+    window.history.replaceState(null, "", "/account#email-confirm=good-code");
+    render(<Account api={out} go={vi.fn()} hash="#email-confirm=good-code" />);
+    await screen.findByText(text.emailConfirmSignIn);
+    cleanup();
+    // After Discord brings the person back there is no `#...` any more.
+    window.history.replaceState(null, "", "/account");
+    const api = mockApi("try-it");
+    await api.changeEmail!("new@example.org");
+    render(<Account api={api} go={vi.fn()} hash="" />);
+    expect(await screen.findByText(text.emailConfirmed("new@example.org"))).toBeTruthy();
+    expect(sessionStorage.getItem("dmbot:email-confirm")).toBeNull();
+  });
+
+  it("keeps the code when the answer never came, so it can be tried again", async () => {
+    sessionStorage.clear();
+    const api = mockApi("try-it");
+    await api.changeEmail!("new@example.org");
+    api.confirmEmail = () => Promise.reject(new ApiError("network"));
+    window.history.replaceState(null, "", "/account#email-confirm=good-code");
+    render(<Account api={api} go={vi.fn()} hash="#email-confirm=good-code" />);
+    await screen.findByText(text.myEmailHeading);
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeNull());
+    expect(window.location.hash).toBe("#email-confirm=good-code");
+  });
+
   it("asks a signed-out person to sign in first, and does not spend the code", async () => {
     const api = mockApi("signed-out");
     window.history.replaceState(null, "", "/account#email-confirm=good-code");
@@ -210,6 +243,16 @@ describe("any other email", () => {
     fireEvent.click(screen.getByRole("button", { name: text.cancel }));
     fireEvent.click(screen.getByRole("button", { name: text.emailChange }));
     expect(screen.queryByText(text.emailTypeFirst)).toBeNull();
+  });
+
+  it("says the mail could not be sent, and leaves nothing waiting", async () => {
+    const { api } = await open();
+    api.changeEmail = () => Promise.reject(new ApiError("email-failed"));
+    fireEvent.input(screen.getByLabelText(text.emailNewLabel), { target: { value: "new@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: text.emailSend }));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.emailSendFailed);
+    expect(screen.queryByText(text.emailPending("new@example.org", "dm@example.com"))).toBeNull();
+    expect(screen.queryByRole("button", { name: text.emailCancel })).toBeNull();
   });
 
   it("lets the person back out", async () => {
