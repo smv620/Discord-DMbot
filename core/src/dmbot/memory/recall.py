@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory._changes import Scope
-from dmbot.memory.beliefs import party_knows
+from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.memory.models import DM_ONLY_TYPES, ROLE_LABELS, name_key
@@ -358,10 +358,12 @@ class RecallService:
             aliases: dict[str, list[str]] = {}
             for r in await cur.fetchall():
                 aliases.setdefault(str(r["entity_id"]), []).append(str(r["text"]))
+            party = await party_id(scope)
             cur = await scope.conn.execute(
                 "SELECT subject_id, predicate, object_id, source FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
-                f" AND to_session_at IS NULL AND {party_knows()} AND predicate = ANY(%s)"
+                f" AND to_session_at IS NULL AND {party_knows_by('memory_relations', party)}"
+                " AND predicate = ANY(%s)"
                 " AND subject_id = ANY(%s) AND object_id = ANY(%s)"
                 " ORDER BY from_session_at DESC NULLS LAST, id",
                 (*scope.ids, [ROSTER_GROUP_LINK, *ROSTER_TIES], ids, ids),
@@ -427,7 +429,8 @@ class RecallService:
         walk.cost = {i: 0 for i in walk.seeds}
         when, values = _true_at(as_of)
         # The players read what The party believes (#2409), the DM everything.
-        secret = f" AND {party_knows()}" if audience == PLAYERS else ""
+        party = await party_id(scope) if audience == PLAYERS else None
+        secret = f" AND {party_knows_by('memory_relations', party)}" if audience == PLAYERS else ""
         frontier = set(walk.seeds)
         for _ in range(MAX_ROUNDS):
             if not frontier:
