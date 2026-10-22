@@ -4,11 +4,12 @@ Pure: no database, so it always runs."""
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from dmbot.web.recaps import session_facts
 
 # As the transcripts page's door lists them: newest first, numbered by start time.
-SESSIONS = [
+SESSIONS: list[dict[str, Any]] = [
     {"number": 3, "startedAt": 3000, "endedAt": None},  # still listening
     {"number": 2, "startedAt": 2000, "endedAt": 2000 + 2 * 3600 + 35 * 60},
     {"number": 1, "startedAt": 1000, "endedAt": 1000 + 45 * 60},
