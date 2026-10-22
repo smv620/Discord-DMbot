@@ -65,20 +65,6 @@ CONNECTIONS = {
 SCHEMA = {
     "type": "object",
     "properties": {
-        "connections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "string"},
-                    "how": {"type": "string", "enum": list(CONNECTIONS)},
-                    "b": {"type": "string"},
-                    "quote": {"type": "string"},
-                },
-                "required": ["a", "how", "b", "quote"],
-                "additionalProperties": False,
-            },
-        },
         "names": {
             "type": "array",
             "items": {
@@ -91,6 +77,20 @@ SCHEMA = {
                     "quote": {"type": "string"},
                 },
                 "required": ["name", "kind", "also", "secret", "quote"],
+                "additionalProperties": False,
+            },
+        },
+        "connections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "string"},
+                    "how": {"type": "string", "enum": list(CONNECTIONS)},
+                    "b": {"type": "string"},
+                    "quote": {"type": "string"},
+                },
+                "required": ["a", "how", "b", "quote"],
                 "additionalProperties": False,
             },
         },
@@ -115,6 +115,7 @@ class Connection:
     how: str  # the relationship (a key of CONNECTIONS.values())
     b: str
     quote: str  # a line of the text that holds both names, as written
+    secret: bool = False  # an end was found through a secret spelling: it is kept as secret only
 
 
 def instructions() -> str:
@@ -142,8 +143,8 @@ def instructions() -> str:
         "Then list the connections the text says plainly between two of those names. For each:\n"
         "- a and b: the two names as written in the text, never the same one twice.\n"
         f'- how: exactly one of {", ".join(CONNECTIONS)}. It reads "a <how> b": a is family '
-        "of b; a is a member of b; a is in b (a place or thing in a place); a is a friend of "
-        "b; a is an enemy of b; a owns b; a works for b.\n"
+        "of b; a is a member of b; a is in b (a place or thing located in a place, never a "
+        "person in a group); a is a friend of b; a is an enemy of b; a owns b; a works for b.\n"
         f"- quote: one short quote copied exactly from the text that holds both names, at most "
         f"{QUOTE_WORDS} words.\n"
         "Only connections the text states. Never guess, never infer. Empty if there are none."
@@ -468,10 +469,19 @@ def keep_connections(
     of the campaign's own mapped to its name). Each end becomes the name it stands for. The same
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
     friends and family read the same both ways). At most `cap`."""
+    names = list(names)
     ends: dict[str, str] = dict(known)
+    for f in names:  # every public name first: another name's spelling never takes it over
+        ends.setdefault(name_key(f.name), f.name)
+    hidden = {name_key(x) for f in names for x in f.secret} - {name_key(f.name) for f in names}
+    claimed: dict[str, set[str]] = {}
     for f in names:
-        for spelling in (f.name, *f.also, *f.secret):
-            ends.setdefault(name_key(spelling), f.name)
+        for spelling in (*f.also, *f.secret):
+            claimed.setdefault(name_key(spelling), set()).add(f.name)
+    for key, owners in claimed.items():
+        # a spelling that two names claim is no end: DMbot would be guessing which one is meant
+        if key not in ends and len(owners) == 1:
+            ends[key] = next(iter(owners))
     both_ways = {"kin_of", "ally_of", "enemy_of"}
     seen: set[tuple[str, str, str]] = set()
     out: list[Connection] = []
@@ -486,7 +496,9 @@ def keep_connections(
             if (ka, c.how, kb) in seen:
                 continue
             seen.add((ka, c.how, kb))
-            out.append(Connection(a, c.how, b, c.quote))
+            out.append(
+                Connection(a, c.how, b, c.quote, name_key(c.a) in hidden or name_key(c.b) in hidden)
+            )
             if len(out) >= cap:
                 return out
     return out

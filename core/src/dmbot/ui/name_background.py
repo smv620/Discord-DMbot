@@ -425,40 +425,51 @@ async def offer_connections(
 
 class ConnectionOffer(_Menu):
     """Keep each connection the DM's text states, one by one: ✅ Keep, 🤫 Keep as secret, ❌ No,
-    or skip the rest. They wait only in this message: nothing is stored until the DM says yes,
-    and a connection needs both names to be answered first. A kept connection is the DM's word
-    (never proposed), so it reaches lookups like one the DM added by hand."""
+    or leave out the rest. They wait only in this message: nothing is stored until the DM says
+    yes, and a connection needs both names to be answered first. A kept connection is the DM's
+    word (never proposed), so it reaches lookups like one the DM added by hand. One that the text
+    wrote with a secret spelling can only be kept as secret."""
 
     def __init__(self, campaign_id: str, links: list[bg.Connection]) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.links = links
         self.kept = 0
+        self.left_out = 0
+        self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
-        self.add_item(_Button(partial(self._answer, False), label="✅ Keep",
-                              style=discord.ButtonStyle.success))  # fmt: skip
+        self.keep = _Button(
+            partial(self._answer, False), label="✅ Keep", style=discord.ButtonStyle.success
+        )
+        self.add_item(self.keep)
         self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
         self.add_item(_Button(self._no, label="❌ No", style=grey))
-        self.add_item(_Button(self._skip, label="Skip the rest", style=grey, row=1))
+        self.add_item(_Button(self._skip, label="⏭️ Skip remaining", style=grey, row=1))
+        self._sync()
+
+    def _sync(self) -> None:
+        self.keep.disabled = bool(self.links and self.links[0].secret)
 
     def text(self) -> str:
         if not self.links:
-            return (
-                f"📜 Done. You kept {self.kept} connection{'' if self.kept == 1 else 's'}."
-                if self.kept
-                else "📜 Done. No connections were kept."
-            )
+            left = f" Left out {self.left_out}." if self.left_out else ""
+            return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
         c = self.links[0]
-        words = connection_words(c.how)
+        note = (
+            "It uses a secret name, so it can only be kept as secret."
+            if c.secret
+            else "From your text. 🤫 hides it from the players."
+        )
         return (
-            f"📜 **Connection {self.kept + 1}**, {len(self.links)} to check\n"
-            f"**{_md(c.a)}** {words} **{_md(c.b)}**?\n> {_md(c.quote)}\n"
-            "DMbot only reads what your text says. 🤫 keeps it from the players."
+            f"📜 **Connection check** ({len(self.links)} left)\n"
+            f"**{_md(c.a)}** {connection_words(c.how)} **{_md(c.b)}**?\n> {_md(c.quote)}\n{note}\n"
+            "Add both names in 📝 Check new names first. Skip remaining leaves the rest out."
         )
 
     async def _next(self, interaction: discord.Interaction) -> None:
         if not self.links:
             self.stop()
+        self._sync()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=self.text(),
@@ -477,54 +488,68 @@ class ConnectionOffer(_Menu):
 
     async def _answer(self, secret: bool, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        campaign = await self._dm(interaction)
-        memory = _memory(interaction)
-        if campaign is None or memory is None or not self.links:
-            return
-        c = self.links[0]
-        try:
-            lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
-            ids: list[str] = []
-            for name in (c.a, c.b):
-                mine = {
-                    e.entity_id
-                    for e in lookup.by_key.get(name_key(name), ())
-                    if e.confirmed and not e.person
-                }
-                if len(mine) != 1:
-                    break
-                ids.append(next(iter(mine)))
-            if len(ids) != 2:
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            memory = _memory(interaction)
+            if campaign is None or memory is None or not self.links:
+                return
+            c = self.links[0]
+            if c.secret and not secret:
+                return
+            try:
+                lookup = CampaignLookup.build(
+                    await memory.lookup_data(campaign.guild_id, campaign.id)
+                )
+                ids: list[str] = []
+                for name in (c.a, c.b):
+                    mine = {
+                        e.entity_id
+                        for e in lookup.by_key.get(name_key(name), ())
+                        if e.confirmed and not e.person
+                    }
+                    if len(mine) != 1:
+                        break
+                    ids.append(next(iter(mine)))
+                if len(ids) != 2:
+                    await _tell(
+                        interaction,
+                        f"**{_md(c.a)}** or **{_md(c.b)}** isn't added yet. Add it in 📝 Check "
+                        "new names, then press this again, or press ❌ No to move on.",
+                    )
+                    return
+                await memory.add_relation(
+                    campaign.guild_id, campaign.id, ids[0], c.how, ids[1],
+                    source=DM, confidence=1.0, status=CONFIRMED, secret=secret,
+                )  # fmt: skip
+            except MemoryRuleError as exc:
+                log.info("A connection from a background was refused: %s", exc)
                 await _tell(
                     interaction,
-                    "Say yes to both names in 📝 Check new names first, then press this again.",
+                    "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
                 )
                 return
-            await memory.add_relation(
-                campaign.guild_id, campaign.id, ids[0], c.how, ids[1],
-                source=DM, confidence=1.0, status=CONFIRMED, secret=secret,
-            )  # fmt: skip
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"DMbot couldn't keep that one: {exc}")
-            return
-        changed(interaction, campaign)
-        self.links.pop(0)
-        self.kept += 1
-        await self._next(interaction)
+            changed(interaction, campaign)
+            self.links.pop(0)
+            self.kept += 1
+            await self._next(interaction)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        if await self._dm(interaction) is None or not self.links:
-            return
-        self.links.pop(0)
-        await self._next(interaction)
+        async with self.busy:
+            if await self._dm(interaction) is None or not self.links:
+                return
+            self.links.pop(0)
+            self.left_out += 1
+            await self._next(interaction)
 
     async def _skip(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        if await self._dm(interaction) is None:
-            return
-        self.links.clear()
-        await self._next(interaction)
+        async with self.busy:
+            if await self._dm(interaction) is None:
+                return
+            self.left_out += len(self.links)
+            self.links.clear()
+            await self._next(interaction)
 
 
 class BulkConfirm(_Menu):

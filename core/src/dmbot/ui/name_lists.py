@@ -388,7 +388,8 @@ class AddMany(_Menu):
             interaction,
             "📜 **Names from your story.** Give DMbot your campaign's background and it "
             "suggests the names in it for you to check, and the connections between them "
-            f"(who is family, who is in which group). It keeps only what you say yes to.\n{rights_text()}",
+            "(who is family, who is in which group). It keeps only what you say yes to.\n"
+            f"{rights_text()}",
             BackgroundMenu(self.campaign_id),
         )
 
