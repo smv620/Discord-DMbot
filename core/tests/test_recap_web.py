@@ -1314,6 +1314,22 @@ class TheAddressDoor(Base):
         )  # fmt: skip
         self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
 
+    async def test_a_hold_gives_its_own_campaigns_dms_their_address_and_nobody_else(self) -> None:
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
+        erin = DiscordUser(id=5005, name="Erin", email="erin@example.com")
+        dave = DiscordUser(id=4004, name="Dave", email="dave@example.com")
+        for who in (carol, erin, dave):
+            await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30)
+        held = await self.campaigns.create(THURSDAY.id, "Held", carol.id)  # no job of its own
+        await self.campaigns.create(THURSDAY.id, "Quiet", erin.id)  # no job, no hold
+        await HoldStore(self.db).hold(
+            THURSDAY.id, held.id, 300, session_id="s1", dm_user_id=carol.id, channel_id=5,
+            asked=True, names_open=2,
+        )  # fmt: skip
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+        self.assertIsNone(await self.store.address(THURSDAY.id, erin.id))  # another campaign's DM
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))  # not a DM at all
+
     async def test_a_former_dm_gets_nothing_even_if_the_job_was_made_for_them(self) -> None:
         self.assertEqual(await self.store.address(THURSDAY.id, ALICE.id), ALICE.email)
         async with self.db.guild(THURSDAY.id) as conn:
