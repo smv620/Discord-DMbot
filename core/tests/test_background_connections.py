@@ -694,10 +694,10 @@ class ThePath(NamesTest):
             reason="the table uses it", source="dm",
         )  # fmt: skip
         await self.read()
-        shaping = [c for c in self.ai.complete.await_args_list if c.kwargs.get("schema")][0]
+        shaping = next(c for c in self.ai.complete.await_args_list if c.kwargs.get("schema"))
         self.assertIn("mentor_of", shaping.args[0])
         self.assertIn("mentor_of", json.dumps(shaping.kwargs["schema"]))
-        reading = [c for c in self.ai.complete.await_args_list if not c.kwargs.get("schema")][0]
+        reading = next(c for c in self.ai.complete.await_args_list if not c.kwargs.get("schema"))
         self.assertIn("mentor_of", reading.args[0])
 
     async def test_the_log_has_counts_only(self) -> None:

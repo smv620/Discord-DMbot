@@ -143,16 +143,17 @@ def cost_text(cents: int) -> str:
 def estimate_cents(chars: int) -> int:
     """About what reading `chars` characters costs, rounded up to a whole cent and never below
     one: roughly 4 characters a token. Pass 1 (the careful model reads the text and writes a
-    list about a twentieth as long) and pass 2 (the fast model reshapes the list), at the list
+    list up to an eighth as long) and pass 2 (the fast model reshapes the list), at the list
     prices of `ai.PRICE_PER_MILLION`, with a margin for the retries."""
     from dmbot.ai import DEFAULT_MODELS, DEFAULT_PRICE, PRICE_PER_MILLION
 
     careful_in, careful_out = PRICE_PER_MILLION.get(DEFAULT_MODELS.careful, DEFAULT_PRICE)
     fast_in, fast_out = PRICE_PER_MILLION.get(DEFAULT_MODELS.fast, DEFAULT_PRICE)
     tokens_in = chars / 4
-    listed = max(600.0, tokens_in / 20)  # the plain list
+    listed = max(600.0, tokens_in / 8)  # the plain list, at its fullest (a quote on every line)
     shaped = listed * 1.5  # the same list as JSON
-    cost = tokens_in * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
+    # The text goes in twice over: a retry or a continuation sends it again with the list so far.
+    cost = tokens_in * 2 * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
     cents = cost / 1_000_000 * 100 * 1.5
     return max(1, int(cents) + (1 if cents % 1 else 0))
 
@@ -417,6 +418,11 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
         if word == OTHER:  # the catch-all, kept with the words the text used
             label = " ".join(str(item.get("words") or "").split())
             if not label or len(label) > WORDS_CHARS or "|" in label:
+                continue
+            # The label is the one free text of a connection: its words must be the quote's own,
+            # so nothing carried in from the document or the list can ride in as a label.
+            quoted = set(re.findall(r"\w+", _squash(str(quote))))
+            if not set(re.findall(r"\w+", _squash(label))) <= quoted:
                 continue
             how = FALLBACK_PREDICATE
         if how is None or not all(isinstance(x, str) for x in (a, b, quote)):

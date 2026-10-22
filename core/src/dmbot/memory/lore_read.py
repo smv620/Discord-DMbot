@@ -27,24 +27,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.ai import max_output
+from dmbot.ai import AIError, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import request_text
 
 log = logging.getLogger(__name__)
 
-# One answer's room never goes past this, whatever the model could write: a request has
-# `ai.SLOW_TIER_TIMEOUT_S` seconds, and a model writes a few dozen tokens a second. A list that
-# needs more than one answer is continued, not asked for in one.
-ROOM_CAP = 16_000
+# One answer's room never goes past this, whatever the model could write (`ai.max_output`, which
+# a fallback model may make lower, so this stays well under it): a request has
+# `ai.SLOW_TIER_TIMEOUT_S` seconds, and a model writes 60 to 80 tokens a second, so 8,000 tokens
+# finish in about two minutes. A list that needs more than one answer is continued, not asked for
+# in one.
+ROOM_CAP = 8_000
 ROOM_MIN = 3000
 CONTINUE_ROUNDS = 3  # follow-up calls for a list still cut off at the room cap
+# Pass 1 starts no further call after this many seconds (the whole read has `LORE_TIME_LIMIT_S`):
+# what it has is shaped and shown with the cut-off note, never thrown away by a timeout.
+PASS1_BUDGET_S = 420.0
+LORE_TIME_LIMIT_S = 840  # the whole read: inside Discord's 15 minutes to answer
 SHAPE_LINES = 50  # list lines shaped in one pass-2 call
 SHAPE_ROOM = 8000  # tokens for one pass-2 call: a slice of the list as JSON
 SPLIT_DEPTH = 3  # a slice whose answer is cut off is halved this many times
@@ -111,7 +118,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
         "words (leads, is a member of, is in, is a friend of, is an enemy of, owns, works for, "
         f"knows, is family of, pays{theirs}). 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text, and holds both names (a quote that does not hold both is dropped).\n"
+        "exactly from the text, and holds both names (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
         "- Keep the three headings, and write nothing else.\n\n" + EXAMPLES
@@ -178,6 +185,7 @@ class PlainList:
     names: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
     left_out: list[str] = field(default_factory=list)
+    last: str | None = None  # the section the last line went into (a continuation starts there)
 
     def add(self, section: str, line: str) -> None:
         {NAMES: self.names, RELATIONSHIPS: self.links, NOT_INCLUDED: self.left_out}[section].append(
@@ -187,13 +195,15 @@ class PlainList:
 
 def parse_plain(reply: str, *, complete: bool = True, into: PlainList | None = None) -> PlainList:
     """The list lines of an answer, by section. Lines before the first heading are ignored (the
-    model's chatter). When the answer was cut off (`complete` False), its last line may end
-    mid-word, so it is dropped: the continuation writes it whole."""
+    model's chatter), except in a continuation (`into`), which carries on in the section the list
+    so far ended in when the model forgot to repeat the heading. When the answer was cut off
+    (`complete` False), its last line may end mid-word, so it is dropped: the continuation
+    writes it whole."""
     out = into if into is not None else PlainList()
     lines = reply.splitlines()
     if not complete and lines:
         lines = lines[:-1]
-    section: str | None = None
+    section: str | None = out.last
     for raw in lines:
         line = raw.strip()
         heading = _HEADING.match(line)
@@ -202,6 +212,7 @@ def parse_plain(reply: str, *, complete: bool = True, into: PlainList | None = N
             continue
         if section is not None and line.startswith("-"):
             out.add(section, line)
+            out.last = section
     return out
 
 
@@ -288,25 +299,34 @@ async def read_list(
     model = str(getattr(ai, "model", ""))
     room = read_room(text, model)
     cap = min(ROOM_CAP, max_output(model) if model else ROOM_CAP)
-    reply = await _call(gate, ai, system, read_request(text), room)
+    started = time.monotonic()
+    reply = await _call(gate, ai, system, read_request(text), room)  # (a failure here is the DM's)
     stats.read_calls += 1
-    if reply.cut and room < cap:  # the room was a guess: once more with twice as much
-        stats.read_cut += 1
-        room = min(room * 2, cap)
-        reply = await _call(gate, ai, system, read_request(text), room)
-        stats.read_calls += 1
     found = parse_plain(reply.text, complete=not reply.cut)
-    rounds = 0
-    while reply.cut and rounds < CONTINUE_ROUNDS:
-        stats.read_cut += 1
-        rounds += 1
-        stats.continued += 1
-        so_far = plain_text(found)
-        reply = await _call(gate, ai, system, continue_request(text, so_far), cap)
-        stats.read_calls += 1
-        parse_plain(reply.text, complete=not reply.cut, into=found)
+    try:
+        if reply.cut and room < cap:  # the room was a guess: once more with twice as much
+            stats.read_cut += 1
+            room = min(room * 2, cap)
+            if time.monotonic() - started < PASS1_BUDGET_S:
+                again = await _call(gate, ai, system, read_request(text), room)
+                stats.read_calls += 1
+                reply, found = again, parse_plain(again.text, complete=not again.cut)
+        rounds = 0
+        while (
+            reply.cut and rounds < CONTINUE_ROUNDS and time.monotonic() - started < PASS1_BUDGET_S
+        ):
+            stats.read_cut += 1
+            rounds += 1
+            stats.continued += 1
+            reply = await _call(gate, ai, system, continue_request(text, plain_text(found)), cap)
+            stats.read_calls += 1
+            parse_plain(reply.text, complete=not reply.cut, into=found)
+    except AIError:  # the AI failed part way: what was listed so far is kept, and reported cut
+        log.info("Lore read: pass 1 stopped by an AI error after %d call(s)", stats.read_calls)
+        reply = Reply("", True)
     if reply.cut:
         stats.read_cut += 1
+    # One line for each name (a name has one kind here) and for each pair and words.
     found.names, found.links = dedupe(found.names), dedupe(found.links)
     stats.names_listed, stats.links_listed = len(found.names), len(found.links)
     stats.left_out = len(found.left_out)

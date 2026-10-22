@@ -46,7 +46,6 @@ from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     AI_READS_PER_DAY,
-    AI_TIME_LIMIT_S,
     LINK_MAX,
     NO_AI_FOR_DOCUMENTS,
     PASTE_MAX,
@@ -307,8 +306,11 @@ class BackgroundOffer(_Menu):
             own = await own_kinds(memory, campaign)
             # Two passes (#2454): the careful model reads the whole text into a plain list, the
             # fast model shapes it, and the code checks every name and quote against the text.
-            read_ai = getattr(bot, "background_read_ai", None) or ai
-            async with asyncio.timeout(AI_TIME_LIMIT_S):
+            read_ai = getattr(bot, "background_read_ai", None)
+            if read_ai is None:  # never for a real bot: said once so a misconfiguration shows
+                log.warning("No careful-model reader for lore: pass 1 uses the fast model")
+                read_ai = ai
+            async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S):
                 read = await lore_read.read_lore(read_ai, ai, self.upload.text, own, AI_AT_ONCE)
             found = bg.merge(
                 [read.names],
@@ -449,7 +451,7 @@ async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
     """The campaign's own relationships (key → how it reads), offered to the AI beside the
     built-in kinds, at most MAX_OWN_KINDS."""
     onto = await memory.ontology(campaign.guild_id, campaign.id)
-    taken = set(bg.CONNECTIONS.values())
+    taken = {*bg.CONNECTIONS.values(), bg.OTHER}
     own = {
         p.key: p.label
         for p in onto.predicates.values()

@@ -10,9 +10,10 @@ import re
 import unittest
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock
 
-from dmbot.ai import Reply, max_output
+from dmbot.ai import AIError, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read as lr
 from dmbot.memory.ontology import FALLBACK_PREDICATE
@@ -35,13 +36,14 @@ RELATIONSHIPS
 
 NOT INCLUDED
 - Ashen Hand — answers to — someone in Wyrmhold: a rumour, not stated.
-"""
+"""  # noqa: E501
 NAME_ROWS = [
     {"name": "Brother Aldric", "kind": "person", "also": ["Aldric"], "secret": [],
      "quote": "Brother Aldric, the abbot"},
     {"name": "Greyfen Abbey", "kind": "place", "also": [], "secret": [],
      "quote": "abbot of Greyfen Abbey"},
-    {"name": "Ashen Hand", "kind": "group", "also": [], "secret": [], "quote": "pays the Ashen Hand"},
+    {"name": "Ashen Hand", "kind": "group", "also": [], "secret": [],
+     "quote": "pays the Ashen Hand"},
     {"name": "Mira", "kind": "person", "also": [], "secret": [], "quote": "Mira, called the Fox"},
 ]  # fmt: skip
 LINK_ROWS = [
@@ -208,6 +210,62 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(done.names), 4)
         reads = [c for c in fake.complete.await_args_list if not c.kwargs.get("schema")]
         self.assertEqual(len(reads), 1 + lr.CONTINUE_ROUNDS)
+
+    async def test_a_continuation_without_its_heading_carries_on_in_the_open_section(self) -> None:
+        text = TEXT + " " + "x" * 200_000
+        links = LIST.splitlines()[8:11]
+        part1 = (
+            "NAMES\n"
+            + "\n".join(LIST.splitlines()[1:5])
+            + "\n\nRELATIONSHIPS\n"
+            + links[0]
+            + "\n- Mi"
+        )
+        part2 = "\n".join(links[1:])  # no heading: the model just carries on
+        fake = ai([Reply(part1, True), Reply(part2, False)])
+        done = await read(fake, text=text)
+        self.assertEqual(len(done.links), 3)
+        self.assertFalse(done.cut)
+
+    async def test_an_ai_error_in_a_follow_up_keeps_the_list_so_far_and_reports_it_cut(
+        self,
+    ) -> None:
+        text = TEXT + " " + "x" * 200_000
+        calls = [Reply(LIST + "\n- Mi", True)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is not None:
+                return Reply(json.dumps({"names": NAME_ROWS, "connections": []}), False)
+            if calls:
+                return calls.pop(0)
+            raise AIError("busy")
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        done = await read(fake, text=text)
+        self.assertTrue(done.cut)
+        self.assertEqual({n.name for n in done.names}, {r["name"] for r in NAME_ROWS})
+
+    async def test_no_follow_up_starts_once_the_pass_one_budget_is_spent(self) -> None:
+        text = TEXT + " " + "x" * 200_000
+        fake = ai([Reply(LIST + "\n- Mi", True)] * 5)
+        with mock.patch.object(lr, "PASS1_BUDGET_S", -1.0):
+            done = await read(fake, text=text)
+        reads = [c for c in fake.complete.await_args_list if not c.kwargs.get("schema")]
+        self.assertEqual(len(reads), 1)  # no retry, no continuation: shaped as it is
+        self.assertTrue(done.cut)
+        self.assertEqual(len(done.names), 4)
+
+    async def test_a_catch_all_label_that_is_not_in_the_quote_is_dropped(self) -> None:
+        rows = [
+            {**LINK_ROWS[1], "words": "secretly bribes the guild"},
+            {**LINK_ROWS[1], "words": "x" * 41},
+            {**LINK_ROWS[1], "words": "pays | and more"},
+            {**LINK_ROWS[1], "words": ""},
+        ]
+        got = bg.read_connections(json.dumps({"connections": rows}), TEXT)
+        self.assertEqual(got, [])
+        ok = bg.read_connections(json.dumps({"connections": [LINK_ROWS[1]]}), TEXT)
+        self.assertEqual([c.words for c in ok], ["pays"])
 
     async def test_a_relationship_the_shaping_pass_invents_is_dropped(self) -> None:
         shaped = {
