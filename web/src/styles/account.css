@@ -337,6 +337,7 @@
   .account input[type="email"],
   .account input[type="url"],
   .account input[type="search"],
+  .account input[type="number"],
   .account select {
     width: 100%;
     box-sizing: border-box;
