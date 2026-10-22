@@ -1814,6 +1814,19 @@ names panel nor the speech-to-text hints can be a fixed list.
         👀 Players can peek."
       - The API re-checks the visibility and the person on every call; the switch alone never unlocks
         anything.
+- **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
+  is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
+  to that one campaign:
+  - its recaps (the recap list, showing only this campaign's);
+  - its house rules and its homebrew;
+  - its story map (the relationship web);
+  - its names and NPC pages;
+  - its transcripts and importing a past session.
+
+  Each link opens that page already on this campaign. Every campaign keeps its own house rules, homebrew and
+  story map, as the isolation rule says. A **← My Campaigns** link goes back to `/account#campaigns`.
+  Players see only the links they may use (transcripts, NPC pages, the story map's players' view); the DM's
+  own tools show only to the campaign's DMs. The API decides, not the page.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
