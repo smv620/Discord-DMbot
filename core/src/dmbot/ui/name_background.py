@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from functools import partial
 from typing import cast
@@ -23,20 +24,24 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
+from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
+    CONFIRMED,
     DESCRIPTION_MAX,
     DM,
     PROPOSED,
     MemoryRuleError,
     NewName,
+    name_key,
 )
 from dmbot.memory.ontology import check_named
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
+from dmbot.ui.name_card import connection_words
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     AI_READS_PER_DAY,
@@ -64,6 +69,7 @@ log = logging.getLogger(__name__)
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
 MAX_BULK_BUTTONS = 4
+ANSWER_TOKENS = 8000  # names and connections together
 
 
 def rights_text() -> str:
@@ -266,21 +272,31 @@ class BackgroundOffer(_Menu):
             )
             known = await memory.known_keys(guild, campaign.id)
 
-            async def one(piece: str) -> list[bg.Found]:
+            async def one(piece: str) -> tuple[list[bg.Found], list[bg.Connection]]:
                 async with AI_AT_ONCE:
                     reply = await ai.complete(
-                        bg.instructions(), bg.request(piece), max_tokens=4000, schema=bg.SCHEMA
-                    )
-                return bg.read_answer(reply.text, piece)
+                        bg.instructions(), bg.request(piece), max_tokens=ANSWER_TOKENS,
+                        schema=bg.SCHEMA,
+                    )  # fmt: skip
+                return bg.read_answer(reply.text, piece), bg.read_connections(reply.text, piece)
 
             async with asyncio.timeout(AI_TIME_LIMIT_S):
-                answers = await asyncio.gather(*(one(p) for p in bg.pieces(self.upload.text)))
+                both = await asyncio.gather(*(one(p) for p in bg.pieces(self.upload.text)))
             found = bg.merge(
-                answers, known, rules=(campaign.target_ruleset, campaign.fallback_ruleset)
+                [names for names, _ in both],
+                known,
+                rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
             stored = await store(memory, campaign, found)
-            log.info("Background read: %d names suggested", sum(map(len, stored.values())))
-            await summary(interaction, campaign, self.upload.label, stored)
+            # An end may be a name this reading found or one the campaign already has.
+            ends = await confirmed_ends(memory, campaign)
+            links = bg.keep_connections([c for _, c in both], found, ends)
+            log.info(
+                "Background read: %d names and %d connections suggested",
+                sum(map(len, stored.values())),
+                len(links),
+            )
+            await summary(interaction, campaign, self.upload.label, stored, links)
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -353,6 +369,7 @@ async def summary(
     campaign: Campaign,
     label: str,
     stored: dict[str, list[str]],
+    links: Sequence[bg.Connection] = (),
 ) -> None:
     total = sum(map(len, stored.values()))
     if not total:
@@ -360,6 +377,7 @@ async def summary(
             content=f"🤖 DMbot found no new names in {_md(label)}. Nothing was added.",
             allowed_mentions=NO_PINGS,
         )
+        await offer_connections(interaction, campaign.id, links)
         return
     parts = ", ".join(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
@@ -376,6 +394,137 @@ async def summary(
         allowed_mentions=NO_PINGS,
     )
     view.origin = interaction
+    await offer_connections(interaction, campaign.id, links)
+
+
+async def confirmed_ends(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
+    """The campaign's own confirmed public names (key → name): the ends a connection may use
+    besides this reading's new names. A secret spelling is left out, so a connection never
+    names a disguise on the public side."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    out: dict[str, str] = {}
+    for key, entries in lookup.by_key.items():
+        for e in entries:
+            if e.confirmed and not e.secret and not e.person:
+                out.setdefault(key, lookup.entities[e.entity_id].name)
+    return out
+
+
+async def offer_connections(
+    interaction: discord.Interaction, campaign_id: str, links: Sequence[bg.Connection]
+) -> None:
+    """The connections the text states, one at a time after the names (a private message)."""
+    if not links:
+        return
+    view = ConnectionOffer(campaign_id, list(links))
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.followup.send(
+            view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+
+
+class ConnectionOffer(_Menu):
+    """Keep each connection the DM's text states, one by one: ✅ Keep, 🤫 Keep as secret, ❌ No,
+    or skip the rest. They wait only in this message: nothing is stored until the DM says yes,
+    and a connection needs both names to be answered first. A kept connection is the DM's word
+    (never proposed), so it reaches lookups like one the DM added by hand."""
+
+    def __init__(self, campaign_id: str, links: list[bg.Connection]) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.links = links
+        self.kept = 0
+        grey = discord.ButtonStyle.secondary
+        self.add_item(_Button(partial(self._answer, False), label="✅ Keep",
+                              style=discord.ButtonStyle.success))  # fmt: skip
+        self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
+        self.add_item(_Button(self._no, label="❌ No", style=grey))
+        self.add_item(_Button(self._skip, label="Skip the rest", style=grey, row=1))
+
+    def text(self) -> str:
+        if not self.links:
+            return (
+                f"📜 Done. You kept {self.kept} connection{'' if self.kept == 1 else 's'}."
+                if self.kept
+                else "📜 Done. No connections were kept."
+            )
+        c = self.links[0]
+        words = connection_words(c.how)
+        return (
+            f"📜 **Connection {self.kept + 1}**, {len(self.links)} to check\n"
+            f"**{_md(c.a)}** {words} **{_md(c.b)}**?\n> {_md(c.quote)}\n"
+            "DMbot only reads what your text says. 🤫 keeps it from the players."
+        )
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        if not self.links:
+            self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=self.text(),
+                view=self if self.links else None,
+                allowed_mentions=NO_PINGS,
+            )
+
+    async def _dm(self, interaction: discord.Interaction) -> Campaign | None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return None
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await _tell(interaction, ONLY_DMS)
+            return None
+        return campaign
+
+    async def _answer(self, secret: bool, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        campaign = await self._dm(interaction)
+        memory = _memory(interaction)
+        if campaign is None or memory is None or not self.links:
+            return
+        c = self.links[0]
+        try:
+            lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+            ids: list[str] = []
+            for name in (c.a, c.b):
+                mine = {
+                    e.entity_id
+                    for e in lookup.by_key.get(name_key(name), ())
+                    if e.confirmed and not e.person
+                }
+                if len(mine) != 1:
+                    break
+                ids.append(next(iter(mine)))
+            if len(ids) != 2:
+                await _tell(
+                    interaction,
+                    "Say yes to both names in 📝 Check new names first, then press this again.",
+                )
+                return
+            await memory.add_relation(
+                campaign.guild_id, campaign.id, ids[0], c.how, ids[1],
+                source=DM, confidence=1.0, status=CONFIRMED, secret=secret,
+            )  # fmt: skip
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"DMbot couldn't keep that one: {exc}")
+            return
+        changed(interaction, campaign)
+        self.links.pop(0)
+        self.kept += 1
+        await self._next(interaction)
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if await self._dm(interaction) is None or not self.links:
+            return
+        self.links.pop(0)
+        await self._next(interaction)
+
+    async def _skip(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if await self._dm(interaction) is None:
+            return
+        self.links.clear()
+        await self._next(interaction)
 
 
 class BulkConfirm(_Menu):

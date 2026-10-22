@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from dmbot.memory.models import name_key
@@ -50,9 +50,35 @@ LABELS = {  # for "Yes to all 14 places"
     "event": ("event", "events"),
     "concept": ("idea", "ideas"),
 }
+MAX_CONNECTIONS = 200  # suggestions from one document
+# What the AI calls a connection, and the relationship DMbot keeps it as. "a <word> b" reads from
+# the first name to the second ("Ulfgar" member "Frostwolf tribe").
+CONNECTIONS = {
+    "family": "kin_of",
+    "member": "member_of",
+    "in": "located_in",
+    "friend": "ally_of",
+    "enemy": "enemy_of",
+    "owns": "owns",
+    "works for": "serves",
+}
 SCHEMA = {
     "type": "object",
     "properties": {
+        "connections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "string"},
+                    "how": {"type": "string", "enum": list(CONNECTIONS)},
+                    "b": {"type": "string"},
+                    "quote": {"type": "string"},
+                },
+                "required": ["a", "how", "b", "quote"],
+                "additionalProperties": False,
+            },
+        },
         "names": {
             "type": "array",
             "items": {
@@ -67,9 +93,9 @@ SCHEMA = {
                 "required": ["name", "kind", "also", "secret", "quote"],
                 "additionalProperties": False,
             },
-        }
+        },
     },
-    "required": ["names"],
+    "required": ["names", "connections"],
     "additionalProperties": False,
 }
 
@@ -81,6 +107,14 @@ class Found:
     also: tuple[str, ...]
     secret: tuple[str, ...]  # disguises and secret identities: never a public name
     quote: str  # at most QUOTE_WORDS words, as written; "" when the AI's quote was not in the text
+
+
+@dataclass(frozen=True, slots=True)
+class Connection:
+    a: str  # a name as written in the text
+    how: str  # the relationship (a key of CONNECTIONS.values())
+    b: str
+    quote: str  # a line of the text that holds both names, as written
 
 
 def instructions() -> str:
@@ -103,8 +137,16 @@ def instructions() -> str:
         "and never in also. Empty if none.\n"
         f"- quote: one short quote copied exactly from the text where it appears, at most "
         f"{QUOTE_WORDS} words.\n"
-        "Leave out descriptions, relationships, ordinary words, spells, rules terms, and kinds of "
-        "creature or people in general (elves, goblins). Each name once."
+        "Leave out descriptions, ordinary words, spells, rules terms, and kinds of "
+        "creature or people in general (elves, goblins). Each name once.\n\n"
+        "Then list the connections the text says plainly between two of those names. For each:\n"
+        "- a and b: the two names as written in the text, never the same one twice.\n"
+        f'- how: exactly one of {", ".join(CONNECTIONS)}. It reads "a <how> b": a is family '
+        "of b; a is a member of b; a is in b (a place or thing in a place); a is a friend of "
+        "b; a is an enemy of b; a owns b; a works for b.\n"
+        f"- quote: one short quote copied exactly from the text that holds both names, at most "
+        f"{QUOTE_WORDS} words.\n"
+        "Only connections the text states. Never guess, never infer. Empty if there are none."
     )
 
 
@@ -370,4 +412,81 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
     out: dict[str, int] = {}
     for item in found:
         out[item.kind] = out.get(item.kind, 0) + 1
+    return out
+
+
+def read_connections(reply: str, piece: str) -> list[Connection]:
+    """The connections in one answer that the text really holds: both names and the quote are in
+    `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
+    names are checked against the merged list later (`keep_connections`)."""
+    data = _json(reply)
+    items = data.get("connections") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    haystack = _squash(piece)
+    out: list[Connection] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        a, b, quote = item.get("a"), item.get("b"), item.get("quote")
+        how = CONNECTIONS.get(str(item.get("how", "")).strip().lower())
+        if how is None or not all(isinstance(x, str) for x in (a, b, quote)):
+            continue
+        a, b = " ".join(str(a).split()), " ".join(str(b).split())
+        words = str(quote).split()
+        if (
+            not a
+            or not b
+            or len(a) > NAME_CHARS
+            or len(b) > NAME_CHARS
+            or name_key(a) == name_key(b)
+            or not words
+            or len(words) > QUOTE_WORDS
+        ):
+            continue
+        said = " ".join(words)
+        if (
+            _has(haystack, a)
+            and _has(haystack, b)
+            and _has(_squash(said), a)
+            and _has(_squash(said), b)
+            and _has(haystack, said)
+        ):
+            out.append(Connection(a, how, b, said))
+    return out
+
+
+def keep_connections(
+    answers: Iterable[list[Connection]],
+    names: Iterable[Found],
+    known: Mapping[str, str],
+    *,
+    cap: int = MAX_CONNECTIONS,
+) -> list[Connection]:
+    """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
+    one of this reading's names (or its other spelling, public or secret) or `known` (a name key
+    of the campaign's own mapped to its name). Each end becomes the name it stands for. The same
+    pair is offered once, whichever way round or how it was said (one fact per pair and kind;
+    friends and family read the same both ways). At most `cap`."""
+    ends: dict[str, str] = dict(known)
+    for f in names:
+        for spelling in (f.name, *f.also, *f.secret):
+            ends.setdefault(name_key(spelling), f.name)
+    both_ways = {"kin_of", "ally_of", "enemy_of"}
+    seen: set[tuple[str, str, str]] = set()
+    out: list[Connection] = []
+    for piece in answers:
+        for c in piece:
+            a, b = ends.get(name_key(c.a)), ends.get(name_key(c.b))
+            if a is None or b is None or name_key(a) == name_key(b):
+                continue
+            ka, kb = name_key(a), name_key(b)
+            if c.how in both_ways and kb < ka:
+                ka, kb = kb, ka
+            if (ka, c.how, kb) in seen:
+                continue
+            seen.add((ka, c.how, kb))
+            out.append(Connection(a, c.how, b, c.quote))
+            if len(out) >= cap:
+                return out
     return out

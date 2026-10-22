@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Your story's connections, not just its names",
+    what: "When you give DMbot your campaign's background, it also suggests the connections the text says between names, such as who is family or who works for whom. You keep each one, keep it secret from the players, or say no.",
+    reason: "In review (#2380); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Recaps are shorter",
     what: "Recaps are shorter, so the game starts sooner: about 150 words for a one-hour game, 300 for three hours, and 450 at most.",
     reason: "In review (#2368); held until dev1 deploys it.",

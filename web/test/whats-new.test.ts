@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Your story's connections, not just its names", // until #2380 merges and dev1 deploys it
       "Recaps are shorter", // until #2368 merges and dev1 deploys it
       "Keep a name from the players until they learn it", // until dev1 deploys it (#2321)
       "Pick the other name from a list", // until #2321 merges and dev1 deploys it
