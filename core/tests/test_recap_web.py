@@ -1325,6 +1325,38 @@ class TheApproval(Base):
             secret=True,
         )  # fmt: skip
 
+    async def hidden_mira(self) -> str:
+        """A name the players haven't been shown yet (#2404): not a 🤫 spelling."""
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.store import MemoryStore
+
+        made = await MemoryStore(self.db).add_entity(
+            THURSDAY.id, self.one.id, type="npc", name="Mira", source=DM_SOURCE,
+            status="confirmed", hidden_from_players=True,
+        )  # fmt: skip
+        return made.value.id
+
+    async def said(self, text: str, *, sidebar: str | None = None) -> None:
+        transcripts = TranscriptStore(self.db)
+        sid = await transcripts.open_session(THURSDAY.id, self.one.id, 100)
+        kw = {"sidebar": sidebar} if sidebar else {}
+        await transcripts.add_lines(
+            THURSDAY.id,
+            sid,
+            [Line(101_000, fx.ALICE, text, text, **kw)],  # type: ignore[arg-type]
+        )
+
+    async def test_a_name_not_shown_yet_is_allowed_only_if_the_table_said_it_that_session(
+        self,
+    ) -> None:
+        await self.hidden_mira()  # the canned text says Mira
+        got = await self.approve("text")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "names_secret"))
+        await self.said("Mira, wait for him", sidebar="question")  # the sidebar never counts
+        self.assertEqual((await self.approve("text")).status_code, 409)
+        await self.said("we met Mira at the gate")
+        self.assertEqual((await self.approve("text")).status_code, 200)
+
     async def test_a_text_that_names_a_secret_is_not_approved_and_the_name_is_not_returned(
         self,
     ) -> None:
