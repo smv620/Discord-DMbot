@@ -442,6 +442,7 @@ interface WebState {
     direction: WebLink["direction"];
     revealed?: boolean;
     belief?: WebLink["belief"];
+    pinned?: boolean;
   }[];
   nextLink: number;
 }
@@ -471,6 +472,9 @@ function startWeb(big: boolean): WebState {
   // Not revealed to the players yet (#2405): two names and one connection that comes from a backstory.
   for (const i of [3, 8]) if (nodes[i]) nodes[i]!.revealed = false;
   const byId = (id: string) => links.find((l) => l.id === id);
+  // One connection the DM pinned as 100% truth (#2448).
+  const l2 = byId("l2");
+  if (l2) l2.pinned = true;
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -519,7 +523,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
-  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean): WebEdge[] => {
+  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean, pins = false): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
       if (l.secret && !dm) continue;
@@ -540,6 +544,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           secret: l.secret,
           direction: l.direction,
           ...(full ? { revealed: l.revealed !== false } : {}),
+          // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
+          ...(pins && l.pinned ? { pinned: true } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
@@ -588,7 +594,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ? { ...current(n), revealed: n.revealed !== false }
           : { id: n.id, name: current(n).name, kind: current(n).kind },
       );
-    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all);
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     return {
       center: centre,
       nodes,
@@ -880,7 +886,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
       const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true);
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
         return found[0] ?? { removed: true };
       };
       if (change.action === "add") {
@@ -896,6 +902,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         link.words = change.words.trim();
       } else if (change.action === "secret") {
         link.secret = change.secret;
+      } else if (change.action === "pin") {
+        link.pinned = change.pinned;
       } else {
         if (change.confirm !== true) throw new ApiError("needs-confirm");
         state.links.splice(state.links.indexOf(link), 1);

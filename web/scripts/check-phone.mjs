@@ -190,6 +190,10 @@ const pages = [
   }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
+  ["web: a pinned connection (#2448)", "/account/web/100.cmp1?demo=table", async (page) => {
+    await page.getByRole("button", { name: /connections between Mira Voss and Captain Brask/ }).first().click();
+    await page.getByText("100% truth", { exact: false }).first().waitFor();
+  }],
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
   ["campaign page: the DM's links", "/account/campaigns/100.cmp1?demo=table"],
   ["campaign page: a player", "/account/campaigns/100.cmp1.cp-player?demo=table"],

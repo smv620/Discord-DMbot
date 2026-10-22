@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Pin a connection as 100% truth",
+    what: "On the Story Graph, you can pin a connection as certainly true, and unpin it again with one press. A pinned connection shows 📌 100% truth. Only you see pins: never your players, and not a player who peeks.",
+    reason: "In review (#2448); held until the pin is live in the API (#2447) and dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Every recap says which session it is",
     what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
     reason: "In review (#2418); held until dev1 deploys it.",

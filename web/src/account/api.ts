@@ -770,6 +770,9 @@ export interface WebLink {
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
   belief?: WebBelief;
+  /** The DM pinned it as 100% truth (#2448, API #2447). Sent to a DM in the full view only; the page
+   * also drops it for anyone else. */
+  pinned?: boolean;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -821,6 +824,7 @@ export type WebLinkChange =
   | { action: "add"; a: string; b: string; words: string; secret: boolean }
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
+  | { action: "pin"; id: string; pinned: boolean }
   | { action: "remove"; id: string; confirm: true };
 
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
