@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Open any NPC and keep your own notes on them",
+    what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
+    reason: "In review (#2266); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Your story's connections, not just its names",
     what: "When you give DMbot your campaign's background, it also suggests the connections the text says between names, such as who is family or who works for whom. You keep each one, keep it secret from the players, or say no.",
     reason: "In review (#2380); held until dev1 deploys it.",
