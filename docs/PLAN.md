@@ -1393,7 +1393,8 @@ so the docs always show names the way Discord does. For the campaign
       anyone in the server may download a backup.
     - Each person can download all of their own notes, and delete them (Delete my notes).
     - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
-      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      into another, its notes move to the one kept, the ones already marked "no longer listed" too: they keep
+      their 30-day clock, and are unmarked only if the kept NPC is listed. When an NPC is rejected or deleted, the person's
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
@@ -1853,6 +1854,18 @@ names panel nor the speech-to-text hints can be a fixed list.
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
     suggestions a session, link suggestions included.
+- **Connections from a backstory** (owner, 2026-10-22). 📜 From a story or background also suggests
+  the connections the DM's text states ("Vex is the boss of the Ashen Hand"), in the same AI read
+  (no extra call). Each comes with a short quote. Code keeps a connection only if its quote is in the
+  text, both ends are names from this read or already in the campaign, and its kind is one of the
+  fixed core kinds above (or the campaign's own definitions). After the DM has answered the names, the
+  connections are offered one at a time with their quote: **✅ Keep**, **🤫 Keep as secret** or **❌ No**.
+  A kept one is confirmed (`source="dm"`, as with Connect to…), and it shows on the name cards and the
+  website graph, with ↩️ Undo. A connection to a name the DM said no to is dropped. Nothing is saved
+  without a press, and the text is never kept.
+  **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
+  campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
+  Names → 📥 Add many → 📜 From a story or background stays too.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
@@ -3909,6 +3922,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   and 20% (35% on the last try) over margins stay. Why: a recap is read or played at the start of
   the next game, which must stay quick, and a shorter recap costs less to voice, gives the checks
   less to read and leaves less room for an answer to be cut off.
+  **A draft of the wrong length is steered, not just retried** (owner, 2026-10-22, after Test L's
+  rerun failed its checks). When a draft fails only because of its length, the next try tells the writer
+  which way and by how much, N being the distance to the target: for a 1-hour session (target 150, range
+  75 to 180), "Your draft is 60 words; it must be 75 to 180. Make it longer by about 90 words" (or shorter). The next draft must move the right way and land in the range. If it moves the
+  wrong way, does not move, or overshoots past the other end of the range, the job stops there and
+  fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
+  same applies to the section count when the fix-up changes the sections: the length is checked again
+  after it, and steered once if it left the range.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
