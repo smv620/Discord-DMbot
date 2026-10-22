@@ -370,6 +370,8 @@ class Backups(MemoryTest):
         for row in rows:
             if row.get("entity_id") in people:
                 continue  # the person's own names
+            if row["table"] in ("perspective", "belief"):
+                continue  # a file from before has no beliefs (they are worked out on restore)
             if row["table"] == "rule_link":
                 continue  # a file from before has no links
             if row["table"] == "entity" and row["type"] == "person":
