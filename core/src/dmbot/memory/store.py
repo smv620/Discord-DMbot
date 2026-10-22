@@ -3260,7 +3260,7 @@ class MemoryStore:
             cur = await scope.conn.execute(
                 "SELECT b.id, b.perspective_id, b.relation_id, b.confidence, b.status,"
                 " b.session_at, b.evidence_ids, b.seq, b.recorded_at FROM ("
-                "  SELECT DISTINCT ON (b.relation_id) b.*"
+                "  SELECT DISTINCT ON (b.relation_id) b.*, r.secret AS relation_secret"
                 "    FROM memory_beliefs b"
                 "    JOIN memory_perspectives p ON p.guild_id = b.guild_id"
                 "     AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
@@ -3270,8 +3270,10 @@ class MemoryStore:
                 "     AND r.status = 'confirmed'"
                 "   ORDER BY b.relation_id, b.seq DESC) b"
                 " WHERE (NOT %s OR b.confidence >= 1.0) AND b.confidence > 0"
+                # defence in depth: the players never hold a secret connection as fact
+                " AND (%s <> 'party' OR NOT (b.confidence >= 1.0 AND b.relation_secret))"
                 " ORDER BY b.relation_id",
-                (*scope.ids, kind, known_only),
+                (*scope.ids, kind, known_only, kind),
             )
             return [beliefs.belief_of(r) for r in await cur.fetchall()]
 

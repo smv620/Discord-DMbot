@@ -37,6 +37,7 @@ from dmbot.memory.models import (
 )
 
 ONLY_THE_DM = "Only the DM can write what is true."
+NOT_A_REVEAL = "That is a guess, not a reveal: show the connection to the players to reveal it."
 NOT_THERE = "DMbot doesn't remember that any more."
 
 
@@ -139,6 +140,14 @@ async def believe_in(
         raise MemoryRuleError(NOT_THERE)
     if perspective["kind"] == TRUTH and w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
+    if (
+        perspective["kind"] == PARTY
+        and confidence >= KNOWN
+        and (relation["secret"] or relation["status"] != CONFIRMED)
+    ):
+        # a secret (or unconfirmed) connection is never held by the players as fact; a theory about
+        # one is fine (the players guessed), a reveal goes through the connection's own switch
+        raise MemoryRuleError(NOT_A_REVEAL)
     return belief_of(
         await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
     )
@@ -157,7 +166,12 @@ async def follow(w: Changes, relation: dict[str, Any]) -> None:
     party = newest.get((relation["id"], ids[PARTY]))
     secret = bool(relation["secret"])
     truth_status = SECRET_PLOT if secret else REVEALED_FACT
-    if truth is None or truth["confidence"] < KNOWN or truth["status"] != truth_status:
+    # The truth is written from the secret flag only while it still says what the flag said (a
+    # Secret Plot or a Revealed Fact): a belief the DM set another way (False Evidence, a
+    # Magically Verified word, a confidence short of 1.0) is left as the DM made it.
+    if truth is None or (
+        truth["status"] in (SECRET_PLOT, REVEALED_FACT) and truth["status"] != truth_status
+    ):
         await _add(w, ids[TRUTH], relation["id"], KNOWN, truth_status)
     party_knows = party is not None and party["confidence"] >= KNOWN
     if secret and party_knows:
@@ -167,10 +181,11 @@ async def follow(w: Changes, relation: dict[str, Any]) -> None:
 
 
 async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
-    """The beliefs of a campaign that has none: The truth and The party, and for every confirmed
-    connection The truth at 1.0 and, when it is not secret, The party at 1.0. The migration does
-    the same for every campaign; this is for one restored from a backup made before beliefs
-    existed (the file has connections and no beliefs). A campaign with no confirmed connection
+    """Give a campaign the beliefs it lacks: The truth and The party, and for every confirmed
+    connection with none, The truth at 1.0 and, when it is not secret, The party at 1.0. The
+    migration does the same for every campaign; this is for one restored from a backup made before
+    beliefs existed, or with a connection its file gave no beliefs (a belief already there is left
+    alone, so a file that has them loses nothing). A campaign with no confirmed connection
     gets nothing: its perspectives are made with its first one, as for any new campaign. Plain
     scoped statements: the restore's transaction already has the server set."""
     now = int(time.time())
@@ -198,7 +213,10 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
         "   FROM memory_relations r"
         "   JOIN memory_perspectives p ON p.guild_id = r.guild_id"
         "    AND p.campaign_id = r.campaign_id AND p.kind = 'truth'"
-        "  WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'",
+        "  WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'"
+        "    AND NOT EXISTS (SELECT 1 FROM memory_beliefs b WHERE b.guild_id = r.guild_id"
+        "     AND b.campaign_id = r.campaign_id AND b.relation_id = r.id"
+        "     AND b.perspective_id = p.id)",
         (now, *scope),
     )
     await conn.execute(  # The party believes the ones that are not secret
@@ -210,6 +228,9 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
         "   JOIN memory_perspectives p ON p.guild_id = r.guild_id"
         "    AND p.campaign_id = r.campaign_id AND p.kind = 'party'"
         "  WHERE r.guild_id = %s AND r.campaign_id = %s AND r.status = 'confirmed'"
-        "    AND NOT r.secret",
+        "    AND NOT r.secret"
+        "    AND NOT EXISTS (SELECT 1 FROM memory_beliefs b WHERE b.guild_id = r.guild_id"
+        "     AND b.campaign_id = r.campaign_id AND b.relation_id = r.id"
+        "     AND b.perspective_id = p.id)",
         (now, *scope),
     )

@@ -236,16 +236,18 @@ class Beliefs(MemoryTest):
         party = (await self.kinds())["party"]
         await self.memory.believe(GUILD_A, self.c, party, rel, 0.5, "theory", source="dm")
         proof = await self.memory.believe(
-            GUILD_A, self.c, party, rel, 1.0, "revealed_fact", source="dm"
+            GUILD_A, self.c, party, rel, 0.9, "evasion_under_magic", source="dm"
         )
-        self.assertEqual(await self.party(), {rel: 1.0})
+        self.assertEqual(
+            (await self.memory.party_view(GUILD_A, self.c, known_only=False))[0].confidence, 0.9
+        )
         await self.memory.undo(GUILD_A, self.c, proof.batch, source="dm")  # type: ignore[arg-type]
         (still,) = await self.memory.party_view(GUILD_A, self.c, known_only=False)
         self.assertEqual((still.confidence, still.status), (0.5, "theory"))
 
     async def test_a_new_belief_wins_over_rows_numbered_by_another_campaigns_history(self) -> None:
         a, b = await self.pair()
-        rel = await self.link(a, b, secret=True)
+        rel = await self.link(a, b)
         party = (await self.kinds())["party"]
         async with self.db.guild(GUILD_A) as conn:  # as a restored backup brings them
             await conn.execute(
@@ -297,6 +299,62 @@ class Beliefs(MemoryTest):
                     source="dm",
                     evidence=bad.get("evidence", ()),  # type: ignore[arg-type]
                 )
+
+    async def test_undoing_the_first_confirmed_connection_leaves_the_later_ones_alone(self) -> None:
+        a, b = await self.pair()
+        c = await self.add("Hollis")
+        first = await self.relate(a, "knows", b, status=CONFIRMED)  # makes the perspectives
+        second = await self.link(a, c)
+        await self.memory.undo(GUILD_A, self.c, first.batch, source="dm")  # type: ignore[arg-type]
+        self.assertEqual(set(await self.party()), {second})
+        self.assertEqual(sorted(await self.kinds()), ["party", "truth"])  # they stay
+
+    async def test_a_change_log_snapshot_from_before_the_column_reads_as_not_faked(self) -> None:
+        from dmbot.memory._changes import ENTITIES, _filled
+
+        old = {c: None for c in ENTITIES.columns if c != "manipulated_by"}
+        self.assertIsNone(_filled(ENTITIES, old)["manipulated_by"])
+
+    async def test_the_party_never_holds_a_secret_or_unconfirmed_connection_as_fact(self) -> None:
+        a, b = await self.pair()
+        secret = await self.link(a, b, secret=True)
+        waiting = (await self.relate(a, "ally_of", b, status=PROPOSED)).value[0].id
+        party = (await self.kinds())["party"]
+        for rel in (secret, waiting):
+            with self.subTest(rel=rel), self.assertRaises(MemoryRuleError):
+                await self.memory.believe(
+                    GUILD_A, self.c, party, rel, 1.0, "revealed_fact", source="dm"
+                )
+        await self.memory.believe(
+            GUILD_A, self.c, party, secret, 0.5, "theory", source="dm"
+        )  # a guess
+        # and even a row put there by hand is not shown as known
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id,"
+                " relation_id, confidence, status, evidence_ids, seq, recorded_at)"
+                " VALUES (%s, %s, %s, %s, %s, 1.0, 'revealed_fact', '{}', 999999, 1)",
+                (GUILD_A, self.c, new_id(), party, secret),
+            )
+        self.assertEqual(await self.party(), {})
+        self.assertEqual(await self.memory.party_view(GUILD_A, self.c, known_only=False), [])
+
+    async def test_a_truth_the_dm_set_another_way_is_not_overwritten_by_the_flag(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(GUILD_A, self.c, truth, rel, 0.0, "false_evidence", source="dm")
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        self.assertEqual((await self.truth()).get(rel), None)  # (0.0 is "not believed")
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT confidence, status FROM memory_beliefs WHERE perspective_id = %s"
+                " AND relation_id = %s ORDER BY seq DESC LIMIT 1",
+                (truth, rel),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["confidence"], row["status"]), (0.0, "false_evidence"))
 
     async def test_nothing_crosses_a_campaign_or_a_server(self) -> None:
         a, b = await self.pair()
@@ -451,6 +509,40 @@ class Beliefs(MemoryTest):
         walk(backup)
         self.assertEqual(len(found), 1)
         return found[0]
+
+    async def test_a_file_that_hands_the_players_a_secret_is_refused_and_gaps_are_filled(
+        self,
+    ) -> None:
+        from dmbot.campaigns.models import CampaignError
+
+        a, b = await self.pair()
+        c = await self.add("Hollis")
+        known, secret = await self.link(a, b), await self.link(a, c, secret=True)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        rows = self.memory_rows(backup)
+        party = next(r["id"] for r in rows if r["table"] == "perspective" and r["kind"] == "party")
+        crafted = [*rows, {**next(r for r in rows if r["table"] == "belief"),
+                           "id": new_id(), "perspective_id": party, "relation_id": secret,
+                           "confidence": 1.0, "seq": 99}]  # fmt: skip
+        rows[:] = crafted
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(backup)), DM)
+        # a file whose connection has no beliefs at all gets them, and keeps the ones it has
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        rows = self.memory_rows(backup)
+        rows[:] = [r for r in rows if not (r["table"] == "belief" and r["relation_id"] == known)]
+        restored = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        async with self.db.guild(GUILD_B) as conn:
+            cur = await conn.execute(
+                "SELECT p.kind, b.relation_id FROM memory_beliefs b JOIN memory_perspectives p"
+                " ON p.guild_id = b.guild_id AND p.campaign_id = b.campaign_id"
+                " AND p.id = b.perspective_id WHERE b.campaign_id = %s",
+                (restored.id,),
+            )
+            got = {(r["kind"], r["relation_id"]) for r in await cur.fetchall()}
+        self.assertEqual(got, {("truth", known), ("party", known), ("truth", secret)})
 
     async def test_a_damaged_belief_in_a_backup_is_refused(self) -> None:
         from dmbot.campaigns.models import CampaignError

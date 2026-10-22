@@ -167,8 +167,13 @@ ATTITUDES = Table(
      "created_at", "closed_at"),
 )  # fmt: skip
 # Who holds beliefs (The truth, The party, a character) and what each believes of a connection
-# (#2409). A belief is never edited: a new row is the new belief, the newest `version` wins.
-PERSPECTIVES = Table("memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"))
+# (#2409). A belief is never edited: a new row is the new belief, the highest `seq` wins.
+# Perspectives are unlogged: The truth and The party are made the first time a campaign needs them,
+# inside whatever write that is, and an Undo of that write must not take them away from the beliefs
+# of later ones (they are plumbing, not something the DM did).
+PERSPECTIVES = Table(
+    "memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"), logged=False
+)
 BELIEFS = Table(
     "memory_beliefs",
     "id",
@@ -610,6 +615,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "party": False,
         "hidden_from_players": False,
         "made_before_name_gate": True,
+        "manipulated_by": None,  # nothing was faked before beliefs (#2409)
     },
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,

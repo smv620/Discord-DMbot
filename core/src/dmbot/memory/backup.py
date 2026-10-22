@@ -272,9 +272,9 @@ class MemorySection:
                     )
             # Check links now, not at commit, so a broken file gives a plain message.
             await conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
-            if not by_tag["perspective"]:
-                # a file from before beliefs: worked out from its connections, as the migration did
-                await beliefs.backfill(conn, guild_id, campaign_id)
+            # a file from before beliefs, or a connection its file gave none: worked out from the
+            # connections, as the migration did (a belief the file has is left as it is)
+            await beliefs.backfill(conn, guild_id, campaign_id)
         except (pg_errors.IntegrityError, pg_errors.DataError) as exc:
             raise CampaignError(DAMAGED) from exc
         await bump_version(conn, guild_id, campaign_id)
@@ -343,6 +343,11 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # One left from another player, or on an entry with no player (an undone merge), is
     # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
     # the file is damage.
+    secret = {r["id"] for r in by_tag["relation"] if r["secret"]}
+    party = {p["id"] for p in by_tag["perspective"] if p["kind"] == "party"}
+    if any(b["perspective_id"] in party and b["confidence"] >= 1.0 and b["relation_id"] in secret
+           for b in by_tag["belief"]):  # fmt: skip
+        raise CampaignError(DAMAGED)  # the players would hold a secret connection as fact
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
