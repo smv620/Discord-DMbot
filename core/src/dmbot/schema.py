@@ -2059,6 +2059,21 @@ QUIET_STOP = """
             CHECK (quiet_stop_minutes IN (0, 30, 60, 90));
 """
 
+QUIET_STOP_CHOICES_SQL = """
+    -- Stop when quiet has no Off and offers 5, 10, 15 or 30 minutes, 10 by default (#2288).
+    -- A campaign on Off, 60 or 90 goes to 30, the longest wait left; one on 30 stays on 30.
+    -- This changes rows, and every campaign table has forced row-level security, so the update
+    -- opens the table for itself and closes it again (migrations run with no server set).
+    ALTER TABLE campaigns DROP CONSTRAINT campaigns_quiet_stop_minutes_check;
+    CREATE POLICY migrate_backfill ON campaigns USING (true) WITH CHECK (true);
+    UPDATE campaigns SET quiet_stop_minutes = 30 WHERE quiet_stop_minutes NOT IN (5, 10, 15, 30);
+    DROP POLICY migrate_backfill ON campaigns;
+    ALTER TABLE campaigns ALTER COLUMN quiet_stop_minutes SET DEFAULT 10;
+    ALTER TABLE campaigns
+        ADD CONSTRAINT campaigns_quiet_stop_minutes_check
+            CHECK (quiet_stop_minutes IN (5, 10, 15, 30));
+"""
+
 RECAP_STYLE = f"""
     -- The examples a DM pastes so recaps sound the way they like (#2075). DMbot copies how an
     -- example sounds, never what happens in it. At most 3 a campaign, each at most 600 words
@@ -9444,6 +9459,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0162_recap_critics", RECAP_CRITICS),  # the critics loop's saved state (#2255)
     ("0163_import_plays", IMPORT_PLAYS),  # the DM's "plays" choices wait for the bot (#2135)
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
+    ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
