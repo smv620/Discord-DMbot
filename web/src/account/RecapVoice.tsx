@@ -13,6 +13,7 @@ import {
   voiceWords as words,
 } from "../content/recap-voice";
 import { ApiError, type AccountApi, type Recap } from "./api";
+import { pickType } from "./recording";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60; // about two minutes: turning a note into words can take a while
@@ -28,19 +29,6 @@ const FAILED_KEY: Record<string, string> = {
   not_allowed: "not-allowed",
   not_editable: "not-editable",
   too_soon: "too-soon",
-};
-
-/** The first recording format this browser makes that the API reads (webm or ogg). */
-const pickType = (): string | null => {
-  if (typeof MediaRecorder === "undefined") return null;
-  for (const type of [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-  ])
-    if (MediaRecorder.isTypeSupported(type)) return type;
-  return null;
 };
 
 export default function RecapVoice({

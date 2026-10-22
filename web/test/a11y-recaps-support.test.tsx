@@ -83,7 +83,7 @@ describe("the recap pages", () => {
     fireEvent(details, new Event("toggle"));
     const box = await screen.findByLabelText(nameWords.label("Ka'zeth"));
     fireEvent.input(box, { target: { value: "Kah-zeth" } });
-    const save = box.parentElement!.querySelector("button")!;
+    const save = box.parentElement!.querySelector<HTMLButtonElement>("button[id^='save-said-as']")!;
     save.focus();
     fireEvent.click(save);
     // A live region (role=status), so a screen reader hears "Saved." without moving focus.
@@ -220,7 +220,7 @@ describe("focus after a button was pressed", () => {
     fireEvent(details, new Event("toggle"));
     const box = await screen.findByLabelText(nameWords.label("Ka'zeth"));
     fireEvent.input(box, { target: { value: "Kah-zeth" } });
-    const save = box.parentElement!.querySelector("button")!;
+    const save = box.parentElement!.querySelector<HTMLButtonElement>("button[id^='save-said-as']")!;
     save.focus();
     fireEvent.click(save);
     await within(details).findByText("Saved.");
