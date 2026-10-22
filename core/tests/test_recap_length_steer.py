@@ -6,6 +6,7 @@ fails with `check: length` and gives the Try again back."""
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
@@ -211,6 +212,28 @@ class TheLog(WorkerHarness):
             "40 words, 75 to 180 wanted, 1 section(s) of at most 2, about 1.00 hours", line
         )
         self.assertNotIn("calm", " ".join(logged.output))
+
+    async def test_a_stuck_retry_that_also_fails_another_check_logs_both_and_annotates_both(
+        self,
+    ) -> None:
+        wandering = fx.prose_answer("《Tense》 " + " ".join(["calm"] * 40), "1. Strings.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, draft(40), fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(wandering),
+            hours=1.0,
+        )
+        events: list[Any] = []
+        self.worker._on_call = events.append
+        with self.assertLogs("dmbot.recaps.pipeline", "INFO") as logged:
+            job = await self.go()
+        line = next(m for m in logged.output if "the retry's length is stuck" in m)
+        stopped = [e for e in events if e.stage == "prose" and e.checks][-1]
+        self.assertEqual(sorted(stopped.checks), ["ending", "length"])  # the report says both
+        self.assertIn("length", line)
+        self.assertIn("ending", line)  # the other check that failed with it
+        self.assertIn("2 check(s) failed", line)
+        self.assertNotIn("calm", line)
+        self.assertIn("(check: length)", job.last_error)
 
 
 class TheState(WorkerHarness):

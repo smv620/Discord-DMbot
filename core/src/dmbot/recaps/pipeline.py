@@ -908,14 +908,18 @@ class RecapWorker:
             # our side, so the DM keeps the Try again (#2383).
             wrong = rd.length_move(self._lengths.get(key), count, length, last)
             if wrong:
+                kinds = cl.kinds(problems)  # the length problem, and whatever else failed with it
                 log.info(
-                    "Recap: the retry's length is %s: %d words (range %d-%d)",
+                    "Recap: the retry's length is %s: %d words (range %d-%d); %d check(s) "
+                    "failed: %s",
                     wrong,
                     count,
                     low,
                     high,
-                )
-                self._annotate(gid, cid, job, stage, checks=["length"])
+                    len(problems),
+                    ", ".join(kinds),
+                )  # names and counts only
+                self._annotate(gid, cid, job, stage, checks=kinds)
                 return await self._fail(gid, cid, job, FAILED_CHECKS, check="length", ours=True)
             self._lengths[key] = (count, 1 if count < low else -1)
         if problems and last and not checked(True):
