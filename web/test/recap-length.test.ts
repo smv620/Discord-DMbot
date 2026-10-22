@@ -28,13 +28,13 @@ describe("the Help line on how long a recap is", () => {
   });
 
   it("gives the numbers core's rule gives", () => {
-    expect(wordsFor(1)).toBe(200);
-    expect(wordsFor(3)).toBe(400);
+    expect(wordsFor(1)).toBe(150);
+    expect(wordsFor(3)).toBe(300);
     expect(line).toContain(`about ${wordsFor(1)} words for a one-hour game`);
     expect(line).toContain(`about ${wordsFor(3)} for three hours`);
-    // The cap is reached at (ceiling - base) / words-per-hour hours: six, as Help says.
+    // The cap is reached at (ceiling - base) / words-per-hour hours: five, as Help says.
     const capHours = (constant("WORDS_CEILING") - constant("BASE_WORDS")) / constant("WORDS_PER_HOUR");
     expect(wordsFor(capHours)).toBe(constant("WORDS_CEILING"));
-    expect(line).toContain(`${capHours === 6 ? "six" : "?"} hours or more gets about ${constant("WORDS_CEILING")} words`);
+    expect(line).toContain(`${capHours === 5 ? "five" : "?"} hours or more gets about ${constant("WORDS_CEILING")} words`);
   });
 });

@@ -106,7 +106,8 @@ For each claim say how it was said:
 Answer with JSON only, in this shape:
 {"claims": [{"subject": "...", "relationship": "...", "object": "...", "details": "...",
 "lines": [1], "how": "dm_said"}]}
-Use short names for subject and object, as said in the transcript. "lines" are the line
+Use short names for subject and object, as said in the transcript, and never a pronoun (I, we,
+he, she, they) unless the line says it is someone's name. "lines" are the line
 numbers the claim comes from. Answer {"claims": []} if there are none."""
 
 
@@ -256,6 +257,7 @@ async def run(
     report = Report()
     collected: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
     work = batches([s for s in readable(lines) if s.started_ms > after_ms])
     report.through_ms = after_ms
@@ -313,6 +315,7 @@ async def run(
         collected.extend(found)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
+        heard.update((number, text) for number, _who, text in rows)
         report.malformed += bad
         if not broken:
             reached = end_ms
@@ -327,6 +330,7 @@ async def run(
                 campaign_id,
                 collected,
                 everyone,
+                said=heard,
                 opted_in=agreed,
                 prompt_version=PROMPT_VERSION,
                 model=answered_by or model(),

@@ -96,7 +96,7 @@ class TheNearMiss(unittest.TestCase):
             transcript=TRANSCRIPT + " Vaelithar",  # said in the session, and still refused
             allowed_names=fx.NAMES,
             secret_names=["Vaelithor"],
-            length=rd.length_for(2.5),
+            length=rd.length_for(3.5),
             refused=("vaelithar",),
         )
         self.assertTrue(any("too like one the DM keeps secret" in p for p in problems), problems)
@@ -140,7 +140,7 @@ class TheKeptNames(unittest.TestCase):
                 transcript=transcript,
                 allowed_names=fx.NAMES,
                 secret_names=[],
-                length=rd.length_for(2.5),
+                length=rd.length_for(3.5),
             )
 
         self.assertFalse(any("names that are not allowed" in p for p in problems(said)))

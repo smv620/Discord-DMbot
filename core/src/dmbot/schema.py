@@ -9543,6 +9543,38 @@ ALL_NAMES_PAGE = r"""
     REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
         FROM PUBLIC;
 """
+# Which suggested names were made before pronouns were kept out of them (#2358). The default
+# marks every existing row (a constant default is stored as metadata: no UPDATE runs, so no
+# row-level-security policy is opened) and is then changed, so every row written from now on is
+# false with no insert path changed. The recap page's door tells the website which are old.
+_NAMES_READ = NAME_ANSWERS[
+    NAME_ANSWERS.index("    CREATE FUNCTION dmbot_recap_names_read") : NAME_ANSWERS.index(
+        "    -- Queue the DM's answer"
+    )
+]
+NAME_GATE = (
+    """
+    ALTER TABLE memory_entities
+        ADD COLUMN made_before_name_gate BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE memory_entities ALTER COLUMN made_before_name_gate SET DEFAULT false;
+    """
+    + _NAMES_READ.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION").replace(
+        "'id', e.id, 'name', e.name,",
+        # the same rule as `hidden_old_pronoun`: never the DM's own entry
+        "'id', e.id, 'name', e.name,"
+        " 'old', (e.made_before_name_gate AND e.source IS DISTINCT FROM 'dm'),",
+    )
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_names_read(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    """
+)
+
 
 NAME_ACTIONS = (
     f"""
@@ -9884,6 +9916,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
     ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
+    ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
 )

@@ -270,6 +270,10 @@ class Entity:
     # a clue only some people know, but with no audience to track. Any kind of entry.
     hidden_from_players: bool = False
 
+    # Written before pronouns were kept out of the suggestions (#2358): such a suggestion that is a
+    # pronoun ("We", "I'll") is not offered again. Set by the database for the rows that existed.
+    made_before_name_gate: bool = False
+
     @property
     def unseen_by_players(self) -> bool:
         """The DM alone sees this entry: a clue only some know, or one the players don't know
