@@ -5027,12 +5027,13 @@ Any entry (person, group, place, thing) can be kept from the players until the D
 know it: the 🙈 switch on the kind step of Add a name, and 🙈 Hide from players / 👀 Players know
 it now on the name card (DM only). It is the clue's `audience_limited` treatment without an
 audience to track: `memory_entities.hidden_from_players`, read everywhere as
-`Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
-recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
+`Entity.unseen_by_players`. Players' lists, cards, answers, the NPC list and the website leave it out;
+recaps (Discord and the website's recap name check alike) leave it out **unless the table said it in that
+session's lines** (Supervisor, 2026-10-22, #2446); the DM and the DM screen see it, and a backup carries it. Only the
 DM sets it. The relationship-level secret is separate and already exists (a secret connection).
-A player's character, the party and DMbot's own player entries can't be hidden. A hidden name is
-treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
-until the DM shows it.
+A player's character, the party and DMbot's own player entries can't be hidden. **A hidden name is not a secret for DMbot's listeners** (Supervisor, 2026-10-22, replacing
+"treated like a clue in the transcript"): the cleaner and the DM sidebar recognise and use it; only a 🤫
+spelling or a clue only some know keeps the secret treatment.
 A database trigger clears the flag whenever an entry becomes a player's character or the party, whichever path does it (an import, a change of kind, the plays answer, a merge).
 
 ### Recap output room and Try again (#2341, 2026-10-22)
