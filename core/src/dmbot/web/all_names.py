@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.background import LABELS
 from dmbot.memory.models import PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -26,20 +27,15 @@ SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
 SORTS = ("name", "newest")
 PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
 
-# The kinds as the page lists them, in the order to show when counts tie; Discord's Browse puts the
-# biggest first. A kind the campaign added under a core one is shown by its own words.
+# The kinds Discord names in its own words ("people", "groups", "gods", "ideas": the plain words of
+# `memory/background.LABELS`, as in 📝 Check new names) are shown in those words, so the website and
+# Discord agree (#2376). The rest are the website's own.
 KIND_LABELS: dict[str, str] = {
-    "npc": "NPCs",
     "player_character": "Player characters",
     "character": "Characters",
-    "place": "Places",
-    "faction": "Groups",
     "creature": "Creatures",
-    "item": "Items",
-    "deity": "Gods",
-    "event": "Events",
     "clue": "Clues",
-    "people": "Peoples",
+    "people": "Folk and peoples",  # (not "People": that is the NPCs)
     "thread": "Story threads",
     "quest": "Quests",
     "mystery": "Mysteries",
@@ -47,11 +43,12 @@ KIND_LABELS: dict[str, str] = {
     "goal": "Goals",
     "promise": "Promises",
     "deed": "Deeds",
-    "concept": "Other",
 }
 
 
 def _label(key: str) -> str:
+    if key in LABELS:
+        return LABELS[key][1].capitalize()
     return KIND_LABELS.get(key) or key.replace("_", " ").capitalize()
 
 

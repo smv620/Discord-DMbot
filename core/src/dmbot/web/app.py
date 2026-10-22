@@ -18,6 +18,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
@@ -940,13 +941,20 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
-        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: int = 1
+        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
     ) -> dict[str, Any]:
         """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
-        server manager who is not a DM gets no secret names; anyone else gets "not found"."""
+        server manager who is not a DM gets no secret names; anyone else gets "not found". A page
+        that is not a number is the same plain refusal as one past the end (400 "bad_page"), not
+        FastAPI's own 422 (#2376)."""
         session, _token = signed
         try:
-            return await all_names.read_page(db, session, ref, q=q, kind=kind, sort=sort, page=page)
+            # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
+            # pages, and must not reach int() (which would raise a 500).
+            number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
+            return await all_names.read_page(
+                db, session, ref, q=q, kind=kind, sort=sort, page=number
+            )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
