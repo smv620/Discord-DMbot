@@ -47,6 +47,19 @@ export interface Campaign {
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
+  /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
+   * from an API older than that: the campaign is then not linked. */
+  ref?: string;
+}
+
+/** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+export interface CampaignPage {
+  ref: string;
+  name: string;
+  serverName: string;
+  /** "owner" and "co-dm" are the campaign's DMs; "player" is anyone else in its server. */
+  role: "owner" | "co-dm" | "player";
+  importsOn?: boolean;
 }
 
 /** A Discord server you manage. */
@@ -1073,6 +1086,8 @@ export interface AccountApi {
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
+  /** One campaign's page (#2416). Missing from an API older than that. */
+  campaignPage?(campaignRef: string): Promise<CampaignPage>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -1694,6 +1709,8 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
         withLinks({ files, plan }, links),
       )) as ImportStarted,
+    campaignPage: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
     npcPage: async (ref, entry) =>
       (await call(
         "GET",

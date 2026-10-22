@@ -57,6 +57,7 @@ function fileFor(url) {
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
   if (/^\/account\/npc\/[^/]+\/[^/]+$/.test(path)) path = "/account/npc";
+  if (/^\/account\/campaigns\/[^/]+$/.test(path)) path = "/account/campaigns";
   if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
@@ -190,6 +191,8 @@ const pages = [
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
+  ["campaign page: the DM's links", "/account/campaigns/100.cmp1?demo=table"],
+  ["campaign page: a player", "/account/campaigns/100.cmp1.cp-player?demo=table"],
   ["web: a DM in the Players View", "/account/web/100.cmp1?demo=table", async (page) => {
     await page.getByLabel("Players View").check();
     await page.getByText("Exactly what your players see.", { exact: false }).waitFor();

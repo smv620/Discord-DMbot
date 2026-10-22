@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NOTE_LIMIT, npcPage as words } from "../content/npc-words";
 import { type AccountApi, ApiError, type MyNpcNote, type NpcPage } from "./api";
+import BackToCampaign from "./BackToCampaign";
 
 /** The campaign and NPC in the address: `/account/npc/<server>.<campaign>/<entry>` (the one Discord links to). */
 export function npcFromPath(path: string): { ref: string; entry: string } | null {
@@ -88,6 +89,7 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
     page.alsoCalled.length === 0 && page.groups.length === 0 && page.ties.length === 0;
   return (
     <div class="stack npc-page">
+      <BackToCampaign campaignRef={where.ref} />
       <section class="stack" aria-labelledby="npc-name">
         <h2 id="npc-name">{page.name}</h2>
         <p class="muted">{words.kindOf(page.kind)}</p>

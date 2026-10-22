@@ -12,6 +12,7 @@ import {
   type HouseRuleCampaign,
   type HouseRules,
 } from "./api";
+import BackToCampaign from "./BackToCampaign";
 
 /** The campaign in the address: `/account/house-rules/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -139,6 +140,7 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
           <p>
             <a href="/account/house-rules">{text.allCampaigns}</a>
           </p>
+          <BackToCampaign campaignRef={campaignRef} name={found.name} />
           <h2>{found.name}</h2>
           <p class="small">{text.leadOneCampaign}</p>
           {found.rules.length === 0 ? (
