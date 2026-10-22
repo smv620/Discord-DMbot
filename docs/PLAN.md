@@ -4682,6 +4682,17 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address and per connection. No passwords, ever. *The account's email* is the one Stripe has
   for its payments (Checkout and the customer portal keep it up to date); an account that never
   paid has the email Discord gave the website, if it signed in there.
+- **Changing the email DMbot uses** (Supervisor, 2026-10-22, #2349: the recap page names the
+  address, so people need a way to fix it). The account page shows the address. A **payment
+  email** changes only in Stripe (the customer portal; `customer.updated` brings it back). Any
+  other email, or none, is changed on the account page: DMbot emails a link to the new address
+  and nothing changes until it is opened. The link is `/account#email-confirm=<token>` (in the
+  hash, so no server log holds it and a mail scanner opening it confirms nothing); the page
+  sends it back by POST, and it works only while signed in to **the same account** that asked.
+  One use, 15 minutes, like sign-in links; a new request replaces a waiting one, and a waiting
+  one can be cancelled. An address another account already uses is refused (sign-in by email
+  needs one address per account). Once changed, the **old** address gets a short note, so a
+  stolen session can't quietly move email sign-in. API shape: the comment on #2349.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
