@@ -333,6 +333,8 @@ describe("focus around the delete question", () => {
     fireEvent.click(await screen.findByRole("button", { name: w.deleteYes }));
     const said = await screen.findByText(w.deleted(1));
     await waitFor(() => expect(document.activeElement).toBe(said));
+    // The status line can take focus although it is not a control, so it carries tabindex -1.
+    expect(said.getAttribute("tabindex")).toBe("-1");
   });
 });
 
