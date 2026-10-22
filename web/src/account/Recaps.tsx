@@ -524,7 +524,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     setNote(null);
     try {
       const next = await api.decideRecap(recap.ref, action);
-      setRecap(next);
+      // Once Try again is accepted the new run is under way, whatever the answer still says about the
+      // old failure: show only the working state until a read says the run has ended (#2333).
+      setRecap(
+        action === "again"
+          ? { ...next, working: true, state: next.state === "failed" ? "working" : next.state, canTryAgain: false, canDrop: false, canPost: false, canEdit: false }
+          : next,
+      );
       setEditing(false);
       // Post and Don't post are said by the status lines above; only Try again needs a note.
       if (action === "again") setNote({ ok: true, message: text.tryingAgain });
@@ -600,7 +606,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
         </p>
       )}
-      {recap.state === "failed" && !decided && (
+      {recap.state === "failed" && !decided && !recap.working && (
         <p class="warn" role="alert">
           {text.failed}
         </p>
@@ -722,6 +728,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
+        !recap.working &&
         (recap.canEdit ||
           recap.canPost ||
           recap.canTryAgain ||
@@ -770,7 +777,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             )}
           </div>
         )}
-      {!decided && !recap.canTryAgain && recap.triesLeft === 0 && (
+      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && (
         <p class="small">{text.noTriesLeft}</p>
       )}
         </>
