@@ -46,10 +46,16 @@ describe("a payment email", () => {
 describe("an API that does not have the routes yet", () => {
   it("shows no section and no alarm when the answer is 'not found'", async () => {
     const api = mockApi("table");
-    api.myEmail = () => Promise.reject(new ApiError("not-found"));
+    let settled = false;
+    api.myEmail = () =>
+      Promise.reject(new ApiError("not-found")).finally(() => {
+        settled = true;
+      });
     render(<Account api={api} go={vi.fn()} />);
     await screen.findByText(text.idHeading);
-    await waitFor(() => expect(api.calls).toContain("me"));
+    // The refusal has to have come back before anything is asserted, or the test proves nothing.
+    await waitFor(() => expect(settled).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText(text.myEmailHeading)).toBeNull();
     expect(screen.queryByText(text.emailLoadFailed)).toBeNull();
   });
@@ -68,7 +74,7 @@ describe("the Stripe page", () => {
     api.billingPortalUrl = () => Promise.resolve("https://evil.example/");
     await screen.findByText(text.emailNow("dm@example.com"));
     fireEvent.click(screen.getByRole("button", { name: text.emailPaymentButton }));
-    await waitFor(() => expect(screen.getAllByRole("alert").length).toBeGreaterThan(0));
+    expect((await screen.findByRole("alert")).textContent).toBe(text.actionFailed);
     expect(go).not.toHaveBeenCalled();
     expect(screen.queryByText(text.emailPortalOff)).toBeNull();
   });
@@ -105,6 +111,16 @@ describe("opening the emailed link", () => {
     await withPending("#email-confirm=wrong-code");
     expect(await screen.findByText(text.emailConfirmBad)).toBeTruthy();
     expect(screen.getByText(text.emailNow("dm@example.com"))).toBeTruthy();
+  });
+
+  it("uses the code once, even if the page draws again", async () => {
+    const api = await withPending("#email-confirm=good-code");
+    await screen.findByText(text.emailConfirmed("new@example.org"));
+    const first = api.calls.filter((c) => c === "confirmEmail").length;
+    cleanup();
+    render(<Account api={api} go={vi.fn()} hash="" />);
+    await screen.findByText(text.emailNow("new@example.org"));
+    expect(api.calls.filter((c) => c === "confirmEmail").length).toBe(first);
   });
 
   it("asks a signed-out person to sign in first, and does not spend the code", async () => {
@@ -220,6 +236,37 @@ describe("the real API's calls", () => {
     // The address travels in the body only, never in a URL.
     expect(seen.every((s) => !s.url.includes("example.com") || s.url === "https://api.example/me/email")).toBe(true);
     expect(seen.some((s) => s.url.includes("b@example.com"))).toBe(false);
+  });
+
+  it("sends the emailed code in the body of a POST, never in the address", async () => {
+    const seen: { url: string; method: string; body: string }[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
+      seen.push({ url, method: init?.method ?? "GET", body: String(init?.body ?? "") });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    await api.confirmEmail!("secret-code-123");
+    expect(seen[0]).toMatchObject({
+      url: "https://api.example/me/email/confirm",
+      method: "POST",
+      body: '{"token":"secret-code-123"}',
+    });
+    expect(seen[0]!.url).not.toContain("secret-code-123");
+  });
+
+  it("cancels a waiting change with DELETE on the pending change", async () => {
+    const seen: { url: string; method: string }[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
+      seen.push({ url, method: init?.method ?? "GET" });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch);
+    await api.cancelEmailChange!();
+    expect(seen[0]).toEqual({ url: "https://api.example/me/email/pending", method: "DELETE" });
+  });
+
+  it("maps in_use to its own kind", async () => {
+    const api = httpApi("https://api.example", (async () =>
+      new Response(JSON.stringify({ error: "in_use" }), { status: 409, headers: { "Content-Type": "application/json" } })) as typeof fetch);
+    await expect(api.changeEmail!("x@example.org")).rejects.toMatchObject({ kind: "in-use" });
   });
 
   it("maps bad_email to its own kind", async () => {

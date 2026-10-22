@@ -348,7 +348,8 @@ export const text = {
   emailCancel: "Cancel this change",
   emailCancelled: "Cancelled. DMbot keeps using the email it had.",
   emailConfirmed: (address: string): string => `Done. DMbot now emails ${address}.`,
-  emailConfirmBad: "That link is wrong, was already used, or has ended. Send a new link from here.",
+  emailConfirmBad:
+    "That link is wrong, was already used, has ended (they last 15 minutes), or was asked for from another account. Sign in with the account that asked for the change, or send a new link from here.",
   emailConfirmSignIn: "Sign in with the account you asked from, then open the link in your email again.",
   emailLoadFailed: "Your email didn't load. Reload the page.",
   emailSaved: "If that address can be used, we've sent a link to it. Check the inbox (and spam).",
