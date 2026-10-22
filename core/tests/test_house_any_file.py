@@ -22,6 +22,7 @@ from dmbot.memory.name_documents import SCANNED_PDF, DocumentError
 from dmbot.rules import house_ai, house_reader
 from dmbot.rules.house_file_link import FileLink
 from dmbot.ui import house_file as file_ui
+from tests.test_house_file_sync import rule
 from tests.test_house_sync import DM, DOC, FakeLinks, SyncTest, campaign
 
 # ---- small files, made here --------------------------------------------------------------------
@@ -302,8 +303,9 @@ class Offering(SyncTest):
         super().setUp()
         hs._ai_busy.clear()
         hs._ai_reads.clear()
-        self.links = LinksThatRemember()
-        self.bot.house_file_links = self.links
+        self.remembering = LinksThatRemember()
+        self.links = self.remembering
+        self.bot.house_file_links = self.remembering
         self.ai = FakeAI()
         self.bot.house_file_ai = self.ai
         self.bot.plan_allows = AsyncMock(return_value=True)
@@ -324,7 +326,7 @@ class Offering(SyncTest):
         self.assertIn("I found 2 house rules in **our-rules.pdf**", text)
         self.assertIn("Nothing is saved until you press a button.", text)
         self.assertEqual(
-            [str(b.item.label) for b in view.children],
+            [str(b.item.label) for b in view.children],  # type: ignore[attr-defined]
             ["Accept all changes", "Review", "Close", "Download what I found"],
         )
         self.assertEqual(len(self.store.rules), 3)
@@ -358,8 +360,8 @@ class Offering(SyncTest):
     async def test_rules_the_campaign_already_has_are_not_offered_again(self) -> None:
         self.store.rules[:] = [
             *self.store.rules,
-            SimpleNamespace(number=4, rule="A healing potion is a bonus action.", supersedes=None),
-        ]  # type: ignore[list-item]
+            rule(4, "A healing potion is a bonus action."),
+        ]
         await self.compare()
         self.assertIn(
             "I found 1 house rule in your file** (1 already in your list)", self.sent[-1][0]
@@ -393,7 +395,7 @@ class Offering(SyncTest):
         self.links.link = DOC
         await self.compare(from_link=True)
         self.assertEqual(len(self.ai.calls), 1)
-        self.assertEqual(self.links.read_fp, house_reader.fingerprint_of(NOTES))
+        self.assertEqual(self.remembering.read_fp, house_reader.fingerprint_of(NOTES))
         self.assertIsNone(await self.compare(from_link=True))  # a session start: silent
         self.assertEqual(await self.compare(from_link=True, respect_ignore=False), hs.UNCHANGED)
         self.assertEqual(len(self.ai.calls), 1)
@@ -419,7 +421,7 @@ class Offering(SyncTest):
         self.links.link = DOC
         self.ai.replies = ["garbage", GOOD]
         self.assertEqual(await self.compare(from_link=True), hs.NOT_READ)
-        self.assertIsNone(self.links.read_fp)  # a failed read is read again
+        self.assertIsNone(self.remembering.read_fp)  # a failed read is read again
         self.assertIsNone(await self.compare(from_link=True))
         self.assertEqual(len(self.ai.calls), 2)
 
