@@ -1340,6 +1340,41 @@ class MemoryStore:
             row = await w.update(ENTITIES, entity_id, {"hidden_from_players": hidden})
             return Written(_entity(row), w.batch)
 
+    async def reveal_said(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> Written[list[str]]:
+        """The table said these names (#2404): the ones still held back from the players are shown
+        to them, all in one change so one Undo hides them again. Done by DMbot after a session, so
+        it only ever shows (never hides), and only what the DM had not made a clue only some know
+        or a player's character. Returns the ids it showed; none, no change."""
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            shown: list[str] = []
+            for row in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(set(entity_ids))]):
+                if (
+                    row["status"] == CONFIRMED
+                    and row["hidden_from_players"]
+                    and not row["audience_limited"]
+                ):
+                    await w.update(ENTITIES, row["id"], {"hidden_from_players": False})
+                    shown.append(str(row["id"]))
+            return Written(shown, w.batch if shown else None)
+
+    async def waiting_connections(self, guild_id: int, campaign_id: str) -> int:
+        """How many connections the story is holding back (#2404) now join two names the players
+        have been shown: the DM may show them from the connection's page. A count only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT count(*) AS n FROM memory_relations r WHERE r.guild_id = %s"
+                " AND r.campaign_id = %s AND r.status = 'confirmed' AND r.unrevealed"
+                " AND NOT r.secret AND (SELECT count(*) FROM memory_entities e"
+                "  WHERE e.guild_id = r.guild_id AND e.campaign_id = r.campaign_id"
+                "  AND e.id IN (r.subject_id, r.object_id) AND e.status = 'confirmed'"
+                "  AND NOT e.hidden_from_players AND NOT e.audience_limited) = 2",
+                scope.ids,
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
     async def set_audience_limited(
         self, guild_id: int, campaign_id: str, clue_id: str, limited: bool, *, source: str
     ) -> Written[Entity]:

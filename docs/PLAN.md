@@ -1819,8 +1819,12 @@ names panel nor the speech-to-text hints can be a fixed list.
       other; only a 🤫 spelling or a clue only some know keeps the secret treatment. The recap may use an
       unrevealed name only when the table said it in that session's lines (the recap writes what the party
       knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
-      node and connection. Matching what is said at the table, and the after-session "Revealed at the
-      table" line, are the next slice.
+      node and connection. **After each session** (and each imported session) a held-back name that a
+      recorded person said or typed at the table, by its name or another of its names as whole words, is shown
+      to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
+      and the 🤫 spellings never do. The DM screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo,
+      and counts any held-back connection that now joins two shown names, for the DM to show from its page
+      (a connection is never shown by itself: the bot advises, the DM decides).
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
