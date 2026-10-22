@@ -9,12 +9,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+
 from dmbot.web import sessions
+from dmbot.web.app import create_app
 from dmbot.web.campaign_page import read_campaign
 from dmbot.web.me import build_me
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import QUILLON, THURSDAY
+from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
+from tests.test_web_api import ALICE as ALICE_USER
+from tests.test_web_api import API, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 
 CAROL = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")  # in the server, no DM
 DAVE = SimpleNamespace(id=4004, name="Dave", email="dave@example.com")  # not in the server at all
@@ -78,3 +83,72 @@ class TheCampaignPage(Base):
 
     def ref_of(self, campaign: Any) -> str:
         return f"{THURSDAY.id}.{campaign.id}"
+
+    async def test_another_servers_campaign_is_not_found_by_the_database_itself(self) -> None:
+        """The person is in both servers (so Python's own server check passes) and asks for a real
+        campaign of one server under the other server's address: the door answers nothing."""
+        quill = await self.campaigns.create(QUILLON.id, "Quill", BOB.id)
+        both = await self.session_of(CAROL, [THURSDAY, QUILLON])
+        for ref in (f"{QUILLON.id}.{self.one.id}", f"{THURSDAY.id}.{quill.id}"):
+            with self.assertRaises(RecapError) as refused:
+                await read_campaign(self.web, both, ref)
+            self.assertEqual(refused.exception.code, "not_found", ref)
+        got = await read_campaign(self.web, both, f"{QUILLON.id}.{quill.id}")
+        self.assertEqual(
+            (got["name"], got["role"], got["serverName"]), ("Quill", "player", QUILLON.name)
+        )
+
+    async def test_the_door_has_one_caller(self) -> None:
+        self.assertEqual(callers("dmbot_web_campaign_card"), {"schema.py", "web/campaign_page.py"})
+
+
+class TheCampaignRoute(Base):
+    """`GET /me/campaigns/{ref}` over HTTP: the shape, the refusal and signed out."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        app = create_app(
+            settings(imports_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
+        )  # fmt: skip
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        )
+        self.addAsyncCleanup(self.client.aclose)
+        self.ref = f"{THURSDAY.id}.{self.one.id}"
+
+    async def sign_in(self, user: Any, guilds: Any = None) -> None:
+        token = await sessions.sign_in(
+            self.web, user, guilds if guilds is not None else [THURSDAY], now=NOW, days=30
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+
+    async def test_a_dm_gets_the_campaign(self) -> None:
+        await self.sign_in(ALICE_USER)
+        got = await self.client.get(f"/me/campaigns/{self.ref}")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(
+            got.json(),
+            {
+                "ref": self.ref,
+                "name": "One",
+                "serverName": THURSDAY.name,
+                "role": "owner",
+                "importsOn": True,
+            },
+        )
+
+    async def test_someone_else_in_the_server_is_a_player(self) -> None:
+        await self.sign_in(CAROL)
+        got = await self.client.get(f"/me/campaigns/{self.ref}")
+        self.assertEqual((got.status_code, got.json()["role"]), (200, "player"))
+
+    async def test_a_campaign_that_is_not_theirs_to_see_is_not_found(self) -> None:
+        await self.sign_in(DAVE, [QUILLON])
+        for ref in (self.ref, f"{THURSDAY.id}.nope", "garbage"):
+            got = await self.client.get(f"/me/campaigns/{ref}")
+            self.assertEqual((got.status_code, got.json()), (404, {"detail": "not_found"}), ref)
+
+    async def test_signed_out_gets_nothing(self) -> None:
+        got = await self.client.get(f"/me/campaigns/{self.ref}")
+        self.assertEqual(got.status_code, 401)

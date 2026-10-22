@@ -3,7 +3,8 @@
 The page needs the campaign's name for its heading and whether the person runs it, to decide which
 links to show. A DM of the campaign (its owner or a co-DM) is read through the same row-level
 security as `GET /me`; anyone else in the campaign's server is a player, and the name comes from
-the transcripts page's own door, which answers only for a server in this session's own list. A
+the page's own small door (`dmbot_web_campaign_card`), which answers only for a server in this
+session's own list. A
 server the person is not in, a campaign that is not there and another server's campaign all give
 the same "not found". Nothing here reads a secret, a story or a transcript line.
 """
@@ -52,10 +53,10 @@ async def read_campaign(
             name = mine["name"]
             role = "owner" if mine["owner_user_id"] == session.user_id else "co-dm"
         else:
-            # Not a DM of it: a player if the transcripts page's door knows the campaign in this
-            # server (it answers for the server's members only), else it isn't there.
+            # Not a DM of it: a player if the campaign's own small door knows it in this server (it
+            # answers for the server's members only), else it isn't there.
             cur = await conn.execute(
-                "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
+                "SELECT dmbot_web_campaign_card(%s, %s) AS found", (guild_id, campaign_id)
             )
             found = (await cur.fetchone() or {}).get("found")
             if found is None:
