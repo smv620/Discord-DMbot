@@ -10520,7 +10520,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
     ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
-    ("0187_all_names_said", ALL_NAMES_SAID),  # how to say a name, for the Names page (#2317)
+    ("0188_all_names_said", ALL_NAMES_SAID),  # how to say a name, for the Names page (#2317)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
