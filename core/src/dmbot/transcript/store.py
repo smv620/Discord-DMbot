@@ -67,6 +67,14 @@ class Around:
     after: tuple[int, str] | None
 
 
+# In an imported session only game talk counts (the name scan reads it so); a live session's
+# lines all count. Spelled out because the import's mark lives in its own table.
+GAME_IN_IMPORTS = (
+    "(topic = 'game' OR NOT EXISTS (SELECT 1 FROM session_imports i"
+    " WHERE i.guild_id = transcript_lines.guild_id AND i.session_id = transcript_lines.session_id))"
+)
+
+
 class TranscriptStore:
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -363,12 +371,14 @@ class TranscriptStore:
         itself and its neighbours: someone who stopped being recorded is not quoted even though
         their past lines stay. None when the line is not there any more (the transcript was
         deleted, or the person withdrew). The DM sidebar is skipped, so neighbours are what the
-        table said."""
+        table said. In an imported session only game talk is read, as the name scan reads it, so
+        an off-topic line is never quoted next to a place (#2329)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT id, started_ms, user_id, coalesce(text, heard) AS text"
                 " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL"
-                " AND started_ms = %s AND user_id = %s AND user_id = ANY(%s) ORDER BY id LIMIT 1",
+                f" AND {GAME_IN_IMPORTS} AND started_ms = %s AND user_id = %s"
+                " AND user_id = ANY(%s) ORDER BY id LIMIT 1",
                 (session_id, started_ms, user_id, list(speakers)),
             )
             row = await cur.fetchone()
@@ -377,13 +387,15 @@ class TranscriptStore:
             here = (int(row["started_ms"]), int(row["id"]))
             before = await conn.execute(
                 "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
-                " WHERE session_id = %s AND sidebar IS NULL AND (started_ms, id) < (%s, %s)"
+                f" WHERE session_id = %s AND sidebar IS NULL AND {GAME_IN_IMPORTS}"
+                " AND (started_ms, id) < (%s, %s)"
                 " AND user_id = ANY(%s) ORDER BY started_ms DESC, id DESC LIMIT 1",
                 (session_id, *here, list(speakers)),
             )
             after = await conn.execute(
                 "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
-                " WHERE session_id = %s AND sidebar IS NULL AND (started_ms, id) > (%s, %s)"
+                f" WHERE session_id = %s AND sidebar IS NULL AND {GAME_IN_IMPORTS}"
+                " AND (started_ms, id) > (%s, %s)"
                 " AND user_id = ANY(%s) ORDER BY started_ms, id LIMIT 1",
                 (session_id, *here, list(speakers)),
             )

@@ -265,6 +265,28 @@ class Cards(NamesTest):
         self.assertEqual(len(refs), 1)  # only the game line
         self.assertTrue(refs[0][0].endswith(f":{game.started_ms}:{DM}"))
 
+    async def test_an_off_topic_neighbour_in_an_import_is_never_quoted(self) -> None:
+        off = line(5, PLAYER, "my cat knocked the router over", topic="off_topic")
+        game = line(9, DM, SAID)
+        later = line(14, PLAYER, "ugh the pizza is here", topic="off_topic")
+        await self.store.add_lines(GUILD, self.sid, [off, game, later])
+        around = await self.store.around(GUILD, self.sid, game.started_ms, DM, {DM, PLAYER})
+        assert around is not None
+        self.assertIn(PLAYER, {x[0] for x in (around.before, around.after) if x})  # (a live one)
+        async with self.db.guild(GUILD) as conn:  # now it is an import
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'a.txt', %s, 1)",
+                (GUILD, self.campaign.id, self.sid, "a" * 32, DM),
+            )
+        around = await self.store.around(GUILD, self.sid, game.started_ms, DM, {DM, PLAYER})
+        assert around is not None
+        self.assertEqual((around.before, around.after), (None, None))  # only game talk is read
+        self.assertEqual(around.line[1], SAID)
+        self.assertIsNone(
+            await self.store.around(GUILD, self.sid, off.started_ms, PLAYER, {DM, PLAYER})
+        )  # and an off-topic line is not a place of its own
+
     async def test_a_bold_name_near_the_cut_is_never_left_open(self) -> None:
         window = name_places.window_text(
             "Session 1, 0:00:01",
