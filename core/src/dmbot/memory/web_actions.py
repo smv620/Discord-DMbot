@@ -23,8 +23,10 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     PLAYER_CHARACTER,
+    PRONOUNCED,
     REJECTED,
     MemoryRuleError,
+    lookup_key,
     name_key,
 )
 from dmbot.memory.store import PERSON, MemoryStore
@@ -73,10 +75,15 @@ class ActionStore:
                 "UPDATE name_actions SET state = 'working', claimed_at = %s WHERE (guild_id, id)"
                 " = (SELECT guild_id, id FROM name_actions WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
+                # Never past an earlier action of the campaign that another worker is still
+                # applying: the order made is the order done, even with two bots at once.
+                " AND NOT EXISTS (SELECT 1 FROM name_actions p WHERE p.guild_id = %s"
+                " AND p.campaign_id = name_actions.campaign_id AND p.seq < name_actions.seq"
+                " AND p.state = 'working' AND p.claimed_at >= %s)"
                 " ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, entity_id, user_id, action, kind, target_id, text,"
                 " flag",
-                (now, guild_id, now - RETAKE_AFTER_S * 1000),
+                (now, guild_id, now - RETAKE_AFTER_S * 1000, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
         if row is None:
@@ -145,6 +152,13 @@ async def apply(
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
     entity = await memory.entity(guild_id, cid, action.entity_id)
+    if entity is not None and entity.type != PERSON and entity.status != CONFIRMED:
+        # A claim taken again after a first run that did its work but did not get to say so:
+        # the wanted end state is already there, so it is done, not failed.
+        if action.action == "remove" and entity.status == REJECTED:
+            return Outcome()
+        if action.action == "merge" and entity.merged_into == action.target_id:
+            return Outcome(result_id=action.target_id)
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:
@@ -157,8 +171,11 @@ async def _other(
     memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, name: str, text: str
 ) -> str | None:
     """The id of the entry's other name spelled `text` (not the main name), if it has one."""
-    own, wanted = name_key(name), name_key(text)
-    if not wanted or wanted == own:
+    try:
+        own, wanted = lookup_key(name), lookup_key(text)
+    except MemoryRuleError:
+        return None
+    if wanted == own:
         return None
     for a in await memory.aliases(guild_id, campaign_id, entity_id=entity_id, include_secret=True):
         if a.key == wanted and a.status != REJECTED:
@@ -171,6 +188,8 @@ async def _do(
 ) -> Outcome:
     if a.action == "spell":
         new = " ".join(a.text.split())
+        if PRONOUNCED.search(new):  # how to say it is not how to spell it (#2332)
+            return _failed(BAD_NAME)
         if name_key(new) != name_key(name):
             clash = await memory.confirmed_name_for(guild_id, cid, name_key(new))
             if clash is not None and name_key(clash) != name_key(name):
@@ -194,6 +213,8 @@ async def _do(
         if clash is not None and name_key(clash) != name_key(name):
             return _failed(EXISTS)
         try:
+            if await _other(memory, guild_id, cid, entity_id, name, text) is not None:
+                return _failed(EXISTS)  # it already has that name (a secret one, say)
             await memory.add_alias(
                 guild_id, cid, entity_id, text, kind=ALIAS_KIND, source=DM, status=CONFIRMED
             )

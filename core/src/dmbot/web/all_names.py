@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.models import PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -145,6 +146,8 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
     flag = False
     if action == "spell":
         text = _text(body.get("name"))
+        if PRONOUNCED.search(text):  # how to say it is not how to spell it (#2332)
+            raise RecapError("bad_name")
     elif action == "kind":
         kind = str(body.get("kind") or "")
         if not KIND_PATTERN.match(kind):

@@ -10145,7 +10145,13 @@ class DMBot(commands.AutoShardedBot):
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name action failed: %s", type(exc).__name__)
                         done = web_actions.Outcome(error=web_actions.FAILED)
-                    await store.finish(guild.id, action, error=done.error, result_id=done.result_id)
+                    try:
+                        await store.finish(
+                            guild.id, action, error=done.error, result_id=done.result_id
+                        )
+                    except Exception as exc:  # taken again later: apply() sees it already done
+                        log.warning("A name action could not be marked: %s", type(exc).__name__)
+                        break
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)

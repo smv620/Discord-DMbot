@@ -286,6 +286,60 @@ class TheBot(Acting):
             self.assertEqual(outcome.error, why, bad.action)
         self.assertIn("Greywater Keep", str(await self.page()))  # nothing changed
 
+    async def test_a_second_worker_cannot_pass_an_action_the_first_is_still_applying(self) -> None:
+        await self.queue(self.keep, action="spell", name="Greywater Hold")
+        await self.queue(self.keep, action="kind", kind="faction")
+        first = await self.actions.claim_next(self.g)
+        assert first is not None and first.action == "spell"
+        self.assertIsNone(await self.actions.claim_next(self.g))  # the kind waits for the spell
+        await self.actions.finish(self.g, first)
+        second = await self.actions.claim_next(self.g)
+        assert second is not None
+        self.assertEqual(second.action, "kind")
+
+    async def test_a_retaken_merge_or_remove_that_already_happened_is_done_not_failed(self) -> None:
+        merge = await self.queue(self.sword, action="merge", into=self.keep)
+        taken = await self.actions.claim_next(self.g)
+        assert taken is not None
+        first = await wa.apply(self.memory, self.g, {ALICE.id}, taken)  # done, but never marked
+        self.assertEqual(first.error, "")
+        again = await wa.apply(self.memory, self.g, {ALICE.id}, taken)  # the retake runs it again
+        self.assertEqual((again.error, again.result_id), ("", self.keep))
+        await self.actions.finish(self.g, taken, result_id=again.result_id)
+        self.assertEqual((await self.poll(merge))["state"], "done")
+        remove = await self.queue(self.mira, action="remove", confirm=True)
+        taken = await self.actions.claim_next(self.g)
+        assert taken is not None
+        await wa.apply(self.memory, self.g, {ALICE.id}, taken)
+        self.assertEqual((await wa.apply(self.memory, self.g, {ALICE.id}, taken)).error, "")
+        await self.actions.finish(self.g, taken)
+        self.assertTrue((await self.poll(remove))["removed"])
+
+    async def test_a_name_that_is_only_punctuation_can_still_have_other_names_removed(self) -> None:
+        odd = await self.add("???", "item")
+        await self.alias(odd, "!!!")
+        answer = await self.queue(odd, action="remove-other", other="!!!")
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["error"], "")
+
+    async def test_adding_a_name_it_already_has_in_secret_says_so(self) -> None:
+        answer = await self.queue(self.mira, action="add-other", other="Lady Grey")
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["error"], "exists")
+
+    async def test_how_to_say_it_is_not_a_spelling_here_either(self) -> None:
+        self.assertEqual(
+            await self.refused_action(self.keep, action="spell", name="Greywater pronounced Gray"),
+            "bad_name",
+        )
+        hand_made = wa.Action(
+            "a" * 32, self.one.id, self.keep, ALICE.id, "spell", text="Greywater sounds like Gray"
+        )
+        self.assertEqual(
+            (await wa.apply(self.memory, self.g, {ALICE.id}, hand_made)).error, "bad_name"
+        )
+        await self.queue(self.keep, action="spell", name="Pronouncer Vex")  # (a real name is fine)
+
     async def test_a_stalled_claim_is_picked_up_again_and_only_its_holder_may_finish(self) -> None:
         await self.queue(self.keep, action="kind", kind="faction")
         now = [1000.0]
