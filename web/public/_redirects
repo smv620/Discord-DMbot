@@ -19,6 +19,10 @@
 /account/names/*  /account/names  200
 /account/web/*  /account/web  200
 
+# An NPC's page (#2266), at the address Discord's 📖 Open button links to (core's dm_screen/npc_pages.py):
+# one page for every NPC; it reads the campaign and the NPC from the address.
+/account/npc/*  /account/npc  200
+
 # A shared recap (#2119): one page for every link; it reads the secret from the address.
 # /r/ itself and /r/<secret> both get the page; the page reads the secret from the address.
 /r/*  /r  200

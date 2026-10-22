@@ -56,6 +56,7 @@ function fileFor(url) {
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
+  if (/^\/account\/npc\/[^/]+\/[^/]+$/.test(path)) path = "/account/npc";
   if (/^\/account\/transcripts\/[^/]+(\/\d+)?$/.test(path)) path = "/account/transcripts";
   const base = path === "/" ? "/index.html" : path;
   return [resolve(dist, "." + base), resolve(dist, "." + `${base}.html`)].find(
@@ -189,6 +190,9 @@ const pages = [
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
+  ["npc: the page and my notes", "/account/npc/100.cmp1/e1?demo=table"],
+  ["npc: a DM sees their own note", "/account/npc/100.cmp1.npc-dm/e1?demo=table"],
+  ["npc: not in that server", "/account/npc/100.cmp1.npc-outside/e1?demo=table"],
   ["admin, signed in", "/admin", adminIn],
   ["admin, with an addition and the tickets shown", "/admin", async (page) => {
     await adminIn(page);
