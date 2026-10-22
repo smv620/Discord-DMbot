@@ -2578,8 +2578,8 @@ async def show_matches(interaction: discord.Interaction, campaign_id: str, typed
         text = f"No name like **{_md(typed)}**."
     elif len(matches) >= MAX_RESULTS:
         text = (
-            f"**Names like {_md(typed)}:** the closest {all_names.NAMES_MAX}. Type more of the name to "
-            "narrow it."
+            f"**Names like {_md(typed)}:** the closest {all_names.NAMES_MAX}. "
+            "Type more of the name to narrow it."
         )
     else:
         text = f"**Names like {_md(typed)}:** pick one."
