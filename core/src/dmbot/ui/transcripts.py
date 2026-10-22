@@ -15,7 +15,7 @@ import io
 import logging
 import re
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -235,7 +235,7 @@ def _build(
     campaign_name: str,
     session: TranscriptSession,
     lines: list[Line],
-    names: dict[int, str],
+    names: Mapping[int, str],
     playing: dict[int, str],
     running: bool,
     version: str,
