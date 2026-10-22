@@ -39,14 +39,7 @@ WEAK_NAMES = {
     "why": "y", "tea": "t", "queue": "q", "cue": "q", "pee": "p", "a": "a", "i": "i",
 }  # fmt: skip
 # Table talk that is spelled with letters but is not a name (acronyms the game uses).
-NOT_NAMES = frozenset(
-    {
-        *("npc", "pc", "pcs", "npcs", "bbeg", "tpk", "aoe", "dnd", "phb", "dmg", "xp", "hp"),
-        *("ac", "dc", "dm", "gm", "ooc", "lfg", "ttrpg"),
-        *("brb", "lol", "omg", "wtf", "tbh", "btw", "idk", "afk", "gg", "irl"),
-        *("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
-    }
-)
+NOT_NAMES = not_names.TABLE_TALK
 # Lead-ins and fillers before an answer: they do not count against "mostly letters".
 FILLERS = frozenset(
     {

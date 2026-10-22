@@ -30,53 +30,7 @@ _WORD = r"[A-Z][\w'’-]{1,24}"
 _NAME = rf"{_WORD}(?: {_WORD})?"
 _START = re.compile(rf"^\W*({_NAME})\s*,")
 _END = re.compile(rf",\s*({_NAME})\W*$")
-_NOT_NAMES = frozenset(
-    [
-        "i",
-        "ok",
-        "okay",
-        "so",
-        "well",
-        "yes",
-        "no",
-        "yeah",
-        "hey",
-        "hi",
-        "hello",
-        "right",
-        "sure",
-        "now",
-        "then",
-        "and",
-        "but",
-        "oh",
-        "um",
-        "uh",
-        "alright",
-        "all",
-        "everyone",
-        "everybody",
-        "guys",
-        "folks",
-        "please",
-        "thanks",
-        "thank",
-        "dm",
-        "gm",
-        "dungeon",
-        "master",
-        "game",
-        "dmbot",
-        "team",
-        "listen",
-        "look",
-        "wait",
-        "great",
-        "good",
-        "nice",
-        "cool",
-    ]
-)
+_NOT_NAMES = not_names.ADDRESS_WORDS  # one shared list, with its extras kept (#2358)
 _ANSWER = re.compile(
     r"\b(i|i'll|i’ll|i'm|i’m|i'd|i’d|i've|i’ve|my|me|ok|okay|sure|yes|yeah)\b", re.IGNORECASE
 )

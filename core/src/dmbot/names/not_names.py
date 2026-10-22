@@ -61,6 +61,66 @@ SENTENCE_STARTERS = frozenset(
     }
 )
 
+# Words an address ("Okay, Mike, ...") starts or ends with that are not a name: the table-names
+# learner's own extras (#1188, #1208), kept here so there is one place to look.
+ADDRESS_WORDS = frozenset(
+    [
+        "i",
+        "ok",
+        "okay",
+        "so",
+        "well",
+        "yes",
+        "no",
+        "yeah",
+        "hey",
+        "hi",
+        "hello",
+        "right",
+        "sure",
+        "now",
+        "then",
+        "and",
+        "but",
+        "oh",
+        "um",
+        "uh",
+        "alright",
+        "all",
+        "everyone",
+        "everybody",
+        "guys",
+        "folks",
+        "please",
+        "thanks",
+        "thank",
+        "dm",
+        "gm",
+        "dungeon",
+        "master",
+        "game",
+        "dmbot",
+        "team",
+        "listen",
+        "look",
+        "wait",
+        "great",
+        "good",
+        "nice",
+        "cool",
+    ]
+)
+# Table talk spelled with letters that is not a name (acronyms the game uses, number words): the
+# spelled-name reader's extras (#2168).
+TABLE_TALK = frozenset(
+    {
+        *("npc", "pc", "pcs", "npcs", "bbeg", "tpk", "aoe", "dnd", "phb", "dmg", "xp", "hp"),
+        *("ac", "dc", "dm", "gm", "ooc", "lfg", "ttrpg"),
+        *("brb", "lol", "omg", "wtf", "tbh", "btw", "idk", "afk", "gg", "irl"),
+        *("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
+    }
+)
+
 _CURLY = str.maketrans({"’": "'", "‘": "'", "`": "'", "´": "'"})
 _GAP = re.compile(r"\s+")
 
@@ -101,7 +161,7 @@ _X = r"[\"“‘']?(?P<x>[^\W\d_][\w'’-]*?)(?:['’][\"”’]?)?(?![\w'’-])
 _CUES = [
     re.compile(p, re.IGNORECASE)
     for p in (
-        rf"\b(?:my|his|her|their|your|its|our)\s+name\s+(?:is|was)\s+{_X}",
+        rf"\b(?:my|his|her|their|your|its|our|whose)\s+name\s+(?:is|was)\s+{_X}",
         rf"\b(?:i['’]m|i\s+am|he['’]s|he\s+is|she['’]s|she\s+is|they['’]re|they\s+are|"
         rf"we['’]re|we\s+are|it['’]s|it\s+is|you['’]re|you\s+are)\s+called\s+{_X}",
         rf"\bcall(?:s|ed)?\s+(?:me|him|her|them|us|it)\s+{_X}",

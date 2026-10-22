@@ -140,10 +140,6 @@ class TheNamingCue(unittest.TestCase):
         self.assertEqual(nn.filtered(["Oskar", "We", "Mira", "I'll"], "okay"), ["Oskar", "Mira"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheScan(unittest.TestCase):
     """The Check new names scan (`memory.scan`) never offers a pronoun (#2358)."""
 
@@ -225,3 +221,111 @@ class TheCueEdges(unittest.TestCase):
         self.assertFalse(nn.keep("Him", "They named him Bob"))
         self.assertFalse(nn.keep("It", "They named it Fred"))
         self.assertEqual(nn.cued_names("He was named after the king"), frozenset())
+
+
+class TheSourcesEach(unittest.TestCase):
+    """One test per source, each failing when that source's filter is taken out (#2358)."""
+
+    def test_the_scan_skips_pronouns_in_the_middle_of_a_sentence(self) -> None:
+        from dmbot.memory import scan
+
+        lines = [
+            "Then I'll go. Okay We went and We left.",
+            "Then they said He knew. Okay He ran, then They're here and We hid.",
+            "Then I'll go. Okay We went and We left. Then They're here. He sat. He sat.",
+        ]
+        got = {s.name for s in scan.find_new_names(lines, min_times=1)}
+        self.assertEqual(got & {"He", "I'll", "They're", "We"}, set())
+
+    def test_the_recap_names_to_check_skip_pronouns_in_the_middle_of_a_sentence(self) -> None:
+        from dmbot.recaps import draft as rd
+        from tests import recap_fixtures as fx
+        from tests.test_recaps import TRANSCRIPT, beats
+
+        said = TRANSCRIPT + " Zarathon fell and We wept. They're here. I'll go."
+        for text in (
+            "Zarathon fell, and We wept.",
+            "Zarathon fell, and They're here.",
+            "Zarathon fell, and I'll go.",
+        ):
+            got = rd.kept_names(
+                text, beats=beats(), transcript=said, allowed_names=fx.NAMES, secret_names=[]
+            )
+            self.assertEqual(got, ["Zarathon"], text)
+
+    def test_the_table_learner_never_learns_a_pronoun_as_an_answered_name(self) -> None:
+        from dmbot.memory.table_names import NameThenAnswer
+
+        def learned(name: str) -> list[str]:
+            t = NameThenAnswer()
+            for n in range(3):
+                t.feed(1, 100_000 * n, f"{name}, what do you do?", consented=True)
+                t.feed(2, 100_000 * n + 2000, "I run with my sword", consented=True)
+            return [a.name for a in t.answered(minimum=1)]
+
+        self.assertEqual(learned("Oskar"), ["Oskar"])
+        self.assertEqual(learned("We"), [])
+        self.assertEqual(learned("They"), [])
+
+    def test_a_spelled_out_pronoun_is_not_a_spelled_name(self) -> None:
+        from dmbot.transcript.spelled import parse
+
+        self.assertEqual([s.word for s in parse("spelled O S K A R", asked=True)], ["Oskar"])
+        for pronoun in ("T H E Y", "S H E", "H E R", "T H E M", "H I M"):
+            self.assertEqual(parse(f"spelled {pronoun}", asked=True), [], pronoun)
+
+    def test_the_background_reader_drops_a_pronoun_unless_the_text_names_it(self) -> None:
+        import json
+
+        from dmbot.memory import background as bg
+
+        def read(name: str, text: str) -> list[str]:
+            reply = json.dumps(
+                {"names": [{"name": name, "kind": "person", "also": [], "quote": ""}]}
+            )
+            return [f.name for f in bg.read_answer(reply, text)]
+
+        self.assertEqual(read("We", "We went north. We camped."), [])
+        self.assertEqual(read("Oskar", "Oskar went north."), ["Oskar"])
+        self.assertEqual(read("We", "A gnome whose name is We went north."), ["We"])
+        self.assertEqual(read("She", "A gnome named She went north."), ["She"])
+
+    def test_the_recap_page_does_not_show_old_pronoun_suggestions(self) -> None:
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from dmbot.web import name_checks
+
+        door = {
+            "names": [{"id": "a" * 32, "name": "We"}, {"id": "b" * 32, "name": "Oskar"}],
+            "known": [],
+        }
+        conn = MagicMock()
+        cur = MagicMock()
+
+        async def fetchone() -> dict[str, object]:
+            return {"r": door}
+
+        async def execute(*_a: object, **_k: object) -> MagicMock:
+            cur.fetchone = fetchone
+            return cur
+
+        conn.execute = execute
+
+        class Ctx:
+            async def __aenter__(self) -> MagicMock:
+                return conn
+
+            async def __aexit__(self, *_a: object) -> None:
+                return None
+
+        db = MagicMock()
+        db.user = lambda *a, **k: Ctx()
+
+        async def one(*_a: object, **_k: object) -> tuple[int, str, int, None]:
+            return 1, "c" * 32, 0, None
+
+        session = MagicMock()
+        with patch.object(name_checks.recaps, "_one", one):
+            got = asyncio.run(name_checks.read_checks(db, session, "1.x.2"))
+        self.assertEqual([n["name"] for n in got["names"]], ["Oskar"])

@@ -482,6 +482,7 @@ class ClaimStore:
         claims: Sequence[Extracted],
         speakers: Mapping[str, int | None],
         *,
+        said: Mapping[str, str] | None = None,
         opted_in: Collection[int],
         prompt_version: str,
         model: str,
@@ -541,6 +542,8 @@ class ClaimStore:
             for claim in claims[:limit]:
                 reason = judged(claim)
                 unknown: list[str] = []
+                # A pronoun is a name only where a cited line plainly says so ("My name is We").
+                cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
                     unknown = _unknown_names(claim, names)
                     if any(name_key(n) in refused_names for n in unknown):
@@ -548,7 +551,7 @@ class ClaimStore:
                         unknown = []  # never made into an entry again
                     elif any(name_key(n) in skip for n in unknown):
                         unknown = []  # a person at the table: not a story name
-                    elif any(not_names.is_not_name(n) for n in unknown):
+                    elif not all(not_names.allowed(n, cued) for n in unknown):
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                 work.append((claim, reason, unknown))
             # Claims kept from an earlier session for a name that was past its limit come first:

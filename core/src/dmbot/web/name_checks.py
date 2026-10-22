@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.web import recaps
 from dmbot.web.recaps import RecapError
@@ -44,7 +45,10 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    return {"names": got["names"], "known": got["known"], "kinds": name_answers.kinds()}
+    # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are not
+    # shown (#2358). The DM's own names are in `known`, which is not touched.
+    waiting = [n for n in got["names"] if not not_names.is_not_name(str(n.get("name", "")))]
+    return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
 
 
 async def answer(

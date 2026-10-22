@@ -126,6 +126,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
 
 PERSON = "person"
 PLAYS = "plays"
@@ -309,6 +310,9 @@ class PersonAdded:
     flagged: tuple[str, ...]  # characters named but not linked: played by someone else, or unknown
 
 
+PRONOUNS_KEPT_OUT_FROM = 1792713600  # 2026-10-23 00:00 UTC: after this, the write side did the job
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -423,7 +427,19 @@ class MemoryStore:
             rows = await scope.select(
                 ENTITIES, " AND status = ANY(%s) ORDER BY name, id", [list(statuses)]
             )
-            return [_entity(r) for r in rows]
+            found = [_entity(r) for r in rows]
+        # Suggestions made before pronouns were kept out ("We", "I'll") are still stored; they
+        # are not offered again (#2358). Later ones passed the gate when they were made (a naming
+        # cue let "We" through), so only the old ones are looked at again. A name the DM added or
+        # confirmed is never hidden.
+        return [
+            e
+            for e in found
+            if e.status != PROPOSED
+            or e.source == DM
+            or e.created_at >= PRONOUNS_KEPT_OUT_FROM
+            or not not_names.is_not_name(e.name)
+        ]
 
     async def aliases(
         self,

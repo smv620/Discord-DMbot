@@ -18,6 +18,7 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.store import PRONOUNS_KEPT_OUT_FROM
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
 EVERYONE = {DM, 8}
@@ -146,6 +147,44 @@ class Linking(ConfirmedMemoryTest):
 
     async def counts(self) -> dict[str, int]:
         return await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE)
+
+    # ---- a pronoun is not a name (#2358) ------------------------------------------------------
+
+    async def test_a_pronoun_in_a_claim_is_never_proposed_as_a_name(self) -> None:
+        got = await self.propose(said("Bram", "knows", "He"), said("Bram", "knows", "I'll"))
+        self.assertEqual((got.named, got.new), (0, ()))
+        self.assertNotIn("He", await self.entries())
+
+    async def test_a_cited_line_that_names_the_word_lets_it_through(self) -> None:
+        self.memory._clock = lambda: PRONOUNS_KEPT_OUT_FROM + 1  # the old-suggestion filter is off
+        got = await self.propose(
+            said("Bram", "knows", "We", "1"), **{"said": {"1": "My name is We"}}
+        )
+        self.assertEqual(got.new, ("We",))
+        self.assertIn("We", await self.entries())
+
+    async def test_a_waiting_claim_for_a_pronoun_is_dropped_when_it_is_read_again(self) -> None:
+        kept = await self.propose(
+            said("Bram", "knows", "We", "1"), new_names=0, **{"said": {"1": "My name is We"}}
+        )
+        self.assertEqual((kept.named, kept.deferred), (0, 1))  # kept waiting, no name made
+        again = await self.propose(said("Bram", "knows", "Veldmoor"))  # nothing cites a cue now
+        self.assertEqual(again.named, 0)
+        self.assertNotIn("We", await self.entries())
+
+    async def test_suggestions_made_before_the_filter_are_not_offered_again(self) -> None:
+        self.memory._clock = lambda: PRONOUNS_KEPT_OUT_FROM - 100
+        for name in ("We", "I'll"):
+            await self.memory.add_entity(
+                GUILD_A, self.c, type="concept", name=name, source="extractor"
+            )
+        await self.memory.add_entity(
+            GUILD_A, self.c, type="character", name="Oskar", source="extractor"
+        )
+        self.assertEqual(sorted(await self.entries()), ["Oskar"])
+        self.memory._clock = lambda: PRONOUNS_KEPT_OUT_FROM + 100
+        await self.memory.add_entity(GUILD_A, self.c, type="concept", name="Us", source="extractor")
+        self.assertEqual(sorted(await self.entries()), ["Oskar", "Us"])  # new ones were gated
 
     # ---- a new name ------------------------------------------------------------------------
 
