@@ -247,9 +247,9 @@ class ThePath(NamesTest):
         self.assertEqual(len(await self.waiting()), 3)
         self.assertEqual(await self.relations(), [])
         summary = press.edit_original_response.await_args.kwargs
-        self.assertIn("3 connections between names wait", summary["content"])
+        self.assertIn("3 connections found too", summary["content"])
         labels = [getattr(b, "label", "") for b in summary["view"].children]
-        self.assertIn("📜 Check the connections", labels)
+        self.assertIn("📜 Connections", labels)
 
     async def test_they_are_not_asked_while_a_name_is_still_waiting(self) -> None:
         await self.read()
@@ -261,8 +261,8 @@ class ThePath(NamesTest):
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
         it = self.it()
-        await self.button(view, "📜 Check the connections").callback(it)
-        self.assertIn("Answer its names first", it.followup.send.await_args.args[0])
+        await self.button(view, "📜 Connections").callback(it)
+        self.assertIn("None to check yet", it.followup.send.await_args.args[0])
 
     async def test_add_all_offers_the_connections_whose_names_it_answered(self) -> None:
         press = await self.read()
@@ -277,7 +277,7 @@ class ThePath(NamesTest):
             for it in pressed
             for c in it.followup.send.await_args_list
         ]
-        self.assertTrue(any("Connection check" in text for text in said), said)
+        self.assertTrue(any("Keep this?" in text for text in said), said)
 
     async def test_the_end_of_check_new_names_offers_them(self) -> None:
         await self.read()
@@ -287,7 +287,7 @@ class ThePath(NamesTest):
         offered = it.followup.send.await_args
         self.assertIsNotNone(offered)
         self.assertIn(
-            "Connection check",
+            "Keep this?",
             offered.args[0] if offered.args else offered.kwargs.get("content", ""),
         )
 
@@ -297,8 +297,8 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        self.assertIn("Found in:", view.text())
-        self.assertIn("(3 left)", view.text())
+        self.assertIn("From your text:", view.text())
+        self.assertIn("Connection 1 of 3", view.text())
         await self.button(view, "✅ Keep").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
@@ -319,7 +319,7 @@ class ThePath(NamesTest):
         _, first = await self.offer()
         await self.button(first, "❌ No").callback(self.it())
         _, again = await self.offer()  # as after a restart: a new view reads the store
-        self.assertIn("(2 left)", again.text())
+        self.assertIn("Connection 1 of 2", again.text())
 
     async def test_no_drops_it_and_skip_the_rest_drops_what_is_ready(self) -> None:
         await self.read()
@@ -352,7 +352,7 @@ class ThePath(NamesTest):
         self.assertEqual(len(left), 2)
         self.assertNotIn("Oakmere", [w.object for w in left] + [w.subject for w in left])
         _, again = await self.offer()
-        self.assertIn("(2 left)", again.text())  # nothing was said about the refused one
+        self.assertIn("Connection 1 of 2", again.text())  # nothing was said about the refused one
         _ = view
 
     async def test_a_refused_first_name_takes_its_connections_away_too(self) -> None:
@@ -408,7 +408,7 @@ class ThePath(NamesTest):
         view = ui_bg.ConnectionOffer(self.campaign.id)
         view._set([Waiting("a", "knows", "b", "q", True, "Belleros", "Waterdeep", True)])
         self.assertTrue(view.keep.disabled)
-        self.assertIn("only be kept as secret", view.text())
+        self.assertIn("Only 🤫 Keep as secret works", view.text())
 
     # ---- the reading --------------------------------------------------------------------------
 
@@ -451,7 +451,7 @@ class ThePath(NamesTest):
         joined = "\n".join(logs.output)
         self.assertIn("3 connections", joined)
         self.assertNotIn("Mirelle", joined)
-        self.assertNotIn("Found in", joined)
+        self.assertNotIn("From your text", joined)
 
     async def test_nothing_is_queued_without_the_store_or_without_connections(self) -> None:
         self.ai.complete.return_value = Reply(reply([]), False)
@@ -484,6 +484,52 @@ class TheStore(NamesTest):
         )
         (w,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse(w.ready)
+
+    async def test_a_merge_never_loses_the_connection_whichever_row_comes_first(self) -> None:
+        early, late = BackstoryLinks(self.db, lambda: 100), BackstoryLinks(self.db, lambda: 200)
+        for n, merged_first in enumerate((True, False)):
+            made = await self.memory.add_names(
+                GUILD, self.campaign.id,
+                [NewName(f"Mira{n}", "npc", CONFIRMED), NewName(f"Mirela{n}", "npc", CONFIRMED)],
+                source="dm",
+            )  # fmt: skip
+            keep, gone = made.value
+            assert keep and gone
+            # one row names the entry that stays, one the entry merged into it: both orders
+            first, second = (gone, keep) if merged_first else (keep, gone)
+            await early.add(GUILD, self.campaign.id, [NewLink(first, "knows", self.oakmere, "q")])
+            await late.add(GUILD, self.campaign.id, [NewLink(second, "knows", self.oakmere, "q")])
+            await self.memory.merge(
+                GUILD, self.campaign.id, keep, gone, source="dm", dm_said_same=True
+            )
+            for _ in range(2):  # the second read must still find it
+                found = [
+                    w for w in await self.store.waiting(GUILD, self.campaign.id)
+                    if w.subject_id == keep
+                ]  # fmt: skip
+                self.assertEqual(len(found), 1, (n, merged_first))
+
+    async def test_a_hidden_entry_can_only_be_linked_as_secret(self) -> None:
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, "q")]
+        )
+        (plain,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertFalse(plain.secret)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, self.oakmere, True, source="dm"
+        )
+        (hidden,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertTrue(hidden.secret)
+
+    async def test_a_proposed_relation_does_not_hide_the_dms_own_connection(self) -> None:
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.mirelle, "knows", self.oakmere,
+            source="extractor", confidence=0.5,
+        )  # fmt: skip
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, "q")]
+        )
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
 
     async def test_it_goes_with_its_campaign_and_is_isolated_per_server(self) -> None:
         await self.store.add(

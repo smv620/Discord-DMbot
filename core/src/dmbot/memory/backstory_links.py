@@ -51,12 +51,18 @@ class BackstoryLinks:
         self._db = db
         self._clock = clock
 
+    @staticmethod
+    async def _lock(conn: Any, campaign_id: str) -> None:
+        """One writer at a time for a campaign's queue (two presses, a press and a new reading)."""
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (campaign_id,))
+
     async def add(self, guild_id: int, campaign_id: str, links: Sequence[NewLink]) -> int:
         """Queue connections (a pair already waiting is kept as it is). Returns how many are new.
         At most MAX_WAITING wait for one campaign."""
         added = 0
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s",
@@ -84,8 +90,10 @@ class BackstoryLinks:
         `symmetric`: the relationships that read the same both ways (family, friend, enemy), so
         a pair the campaign has either way round is already known."""
         async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
             cur = await conn.execute(
-                "SELECT subject_id, predicate, object_id, quote, secret FROM backstory_links"
+                "SELECT subject_id, predicate, object_id, quote, secret, created_at"
+                " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
                 (guild_id, campaign_id),
@@ -102,6 +110,8 @@ class BackstoryLinks:
             known = await self._known(conn, guild_id, campaign_id, set(entities))
             out: list[Waiting] = []
             seen: set[tuple[str, str, str]] = set()
+            drop: list[Any] = []  # rows to delete: the dead ones and the ones a merge moved
+            move: list[tuple[str, str, str, Any]] = []  # where a moved row goes
             for r in rows:
                 a, b = self._end(entities, r["subject_id"]), self._end(entities, r["object_id"])
                 predicate = str(r["predicate"])
@@ -118,31 +128,39 @@ class BackstoryLinks:
                 )
                 moved = (a, b) != (r["subject_id"], r["object_id"])
                 if dead or moved:
-                    await self._drop(conn, guild_id, campaign_id, r)
+                    drop.append(r)
                 if dead:
                     continue
                 assert a is not None and b is not None
                 seen.add(key)
                 if moved:  # it follows the merge: the same connection, on the name that stayed
-                    await conn.execute(
-                        "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
-                        " predicate, object_id, quote, secret, created_at)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                        (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
-                         int(self._clock())),
-                    )  # fmt: skip
+                    move.append((a, predicate, b, r))
                 ready = entities[a]["status"] == "confirmed" == entities[b]["status"]
+                hidden = any(entities[x]["hidden_from_players"] or entities[x]["audience_limited"]
+                             for x in (a, b))  # fmt: skip
                 out.append(
                     Waiting(
-                        a, predicate, b, str(r["quote"]), bool(r["secret"]),
+                        a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready,
                     )
+                )  # fmt: skip
+            # Deletes first, then inserts: a moved row may land on a key a dropped row had.
+            for r in drop:
+                await self._drop(conn, guild_id, campaign_id, r)
+            for a, predicate, b, r in move:
+                await conn.execute(
+                    "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
+                    " predicate, object_id, quote, secret, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
+                     r["created_at"]),
                 )  # fmt: skip
         return out
 
     async def remove(self, guild_id: int, campaign_id: str, link: Waiting) -> None:
         async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
             await self._drop(
                 conn,
                 guild_id,
@@ -175,7 +193,8 @@ class BackstoryLinks:
             if not want:
                 break
             cur = await conn.execute(
-                "SELECT id, name, status, merged_into FROM memory_entities"
+                "SELECT id, name, status, merged_into, hidden_from_players, audience_limited"
+                " FROM memory_entities"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
                 (guild_id, campaign_id, list(want)),
             )
@@ -203,7 +222,7 @@ class BackstoryLinks:
     ) -> set[tuple[str, str, str]]:
         cur = await conn.execute(
             "SELECT subject_id, predicate, object_id FROM memory_relations"
-            " WHERE guild_id = %s AND campaign_id = %s AND status IN ('proposed', 'confirmed')"
+            " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
             " AND subject_id = ANY(%s) AND object_id = ANY(%s)",
             (guild_id, campaign_id, list(ids), list(ids)),
         )

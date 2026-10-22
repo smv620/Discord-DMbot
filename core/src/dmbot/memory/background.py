@@ -454,7 +454,7 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
-        how = CONNECTIONS.get(word) or (word if word in own else None)
+        how = CONNECTIONS.get(word) or next((k for k in own if k.lower() == word), None)
         if how is None or not all(isinstance(x, str) for x in (a, b, quote)):
             continue
         a, b = " ".join(str(a).split()), " ".join(str(b).split())

@@ -69,14 +69,15 @@ log = logging.getLogger(__name__)
 
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
+QUOTE_SHOWN = 200  # a long quote must not push the buttons off a phone
 MAX_BULK_BUTTONS = 4
 CUT_NOTE = (
-    "\nThe text was long, so DMbot may have missed some names or connections. Reading it in "
-    "smaller parts finds more."
+    "\nLong text: DMbot may have missed some names or connections. Reading it in smaller parts "
+    "finds more."
 )
 CONNECTIONS_NOTE = (
-    "\n{count} connection{s} between names wait too. DMbot asks about them once you've answered "
-    "the names."
+    '\n📜 {count} connection{s} found too (like "A is the boss of B"). You\'ll be asked about '
+    "each one after both its names are answered, or press 📜 Connections."
 )
 
 
@@ -100,9 +101,8 @@ async def open_background(interaction: discord.Interaction, campaign_id: str) ->
         return
     await _send(
         interaction,
-        "📜 **Names from your story.** Give DMbot your campaign's background and it "
-        "suggests the names in it for you to check, and the connections between them "
-        "(who is family, who is in which group). It keeps only what you say yes to.\n"
+        "📜 **Upload backstory.** Paste it, upload a file, or paste a link. DMbot suggests the "
+        "names in it and how they connect; you keep what's right.\n"
         f"{rights_text()}",
         BackgroundMenu(campaign_id),
     )
@@ -337,7 +337,8 @@ class BackgroundOffer(_Menu):
             log.exception("Reading a background with the AI failed")
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
-                    content="Something went wrong. Nothing was added. Try again later."
+                    content="Something went wrong. Nothing was added. Try again later, and if it "
+                    "keeps happening, tell your server owner."
                 )
         finally:
             _ai_busy.discard(guild)
@@ -449,7 +450,7 @@ async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
         for p in onto.predicates.values()
         if not p.core and p.status == ACTIVE and p.key not in taken
     }
-    return dict(list(own.items())[: bg.MAX_OWN_KINDS])
+    return dict(sorted(own.items())[: bg.MAX_OWN_KINDS])
 
 
 @dataclass(frozen=True, slots=True)
@@ -573,6 +574,8 @@ class ConnectionOffer(_Menu):
         self.left_out = 0
         self.current: Waiting | None = None
         self.left = 0
+        self.shown: list[Waiting] = []
+        self.total = 0
         self.words: dict[str, str] = {}
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
@@ -597,7 +600,9 @@ class ConnectionOffer(_Menu):
         return [w for w in waiting if w.ready]
 
     def _set(self, ready: list[Waiting]) -> None:
+        self.shown = list(ready)
         self.left = len(ready)
+        self.total = max(self.total, self.kept + self.left_out + self.left)
         self.current = ready[0] if ready else None
         self.keep.disabled = bool(self.current and self.current.secret)
 
@@ -617,14 +622,14 @@ class ConnectionOffer(_Menu):
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
-            "It uses a secret name, so it can only be kept as secret."
+            "It uses a secret name, so players won't see it. Only 🤫 Keep as secret works."
             if c.secret
-            else "🤫 keeps it from the players."
+            else "🤫 Keep as secret hides it from players."
         )
         return (
-            f"📜 **Connection check** ({self.left} left)\n"
-            f"**{_md(c.subject)}** {how} **{_md(c.object)}**.\n"
-            f"Found in: \u201c{_md(c.quote)}\u201d\nKeep it? {note}"
+            f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
+            f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
+            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n{note}"
         )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
@@ -717,8 +722,11 @@ class ConnectionOffer(_Menu):
             if campaign is None or store is None:
                 return
             ready = await self._ready(interaction, campaign)
-            await store.remove_all(campaign.guild_id, campaign.id, ready)
-            self.left_out += len(ready)
+            seen = {(w.subject_id, w.predicate, w.object_id) for w in self.shown}
+            # only what this message has listed: one that turned ready meanwhile is still unseen
+            gone = [w for w in ready if (w.subject_id, w.predicate, w.object_id) in seen]
+            await store.remove_all(campaign.guild_id, campaign.id, gone)
+            self.left_out += len(gone)
             await self._show(interaction, [])
 
 
@@ -759,7 +767,7 @@ class BulkConfirm(_Menu):
             self.add_item(
                 _Button(
                     self._connections,
-                    label="📜 Check the connections",
+                    label="📜 Connections",
                     style=discord.ButtonStyle.secondary,
                     row=1,
                 )
@@ -784,8 +792,9 @@ class BulkConfirm(_Menu):
         if not await offer_ready(interaction, self.campaign_id):
             await _tell(
                 interaction,
-                "No connection is ready yet. Answer its names first (✅ Add all, or 📝 Check new "
-                "names), then press this again.",
+                "None to check yet. Each connection waits until both its names are answered. "
+                "Answer more names (✅ Add all, or 📝 Check new names), then press 📜 Connections "
+                "again.",
             )
 
     async def _all(self, kind: str, interaction: discord.Interaction) -> None:
