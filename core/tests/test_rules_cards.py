@@ -102,7 +102,14 @@ class FakeStore:
         return list(self.rules.get(cid, []))
 
     async def add(
-        self, guild_id: int, cid: str, user_id: int, text: str, instead: str | None = None
+        self,
+        guild_id: int,
+        cid: str,
+        user_id: int,
+        text: str,
+        instead: str | None = None,
+        *,
+        source: str = "typed",
     ) -> HouseRule:
         if user_id != DM:
             from dmbot.rules import house

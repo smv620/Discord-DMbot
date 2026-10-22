@@ -35,6 +35,9 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.rules.changes import ChangeHook, notifies
 
+# Where a rule came from (#2285): "discord" is every rule from before it was recorded.
+SOURCES = ("discord", "typed", "voice", "alert", "linked", "upload")
+SOURCE_NAME_MAX = 200
 RULE_MAX = 500  # the rule, "instead of" and the scenario each; matches the table's checks
 HOUSE_RULES_MAX = 200  # per campaign, so a campaign (and its backup) stays a sensible size
 INT32_MAX = 2**31 - 1  # numbers are INTEGER
@@ -78,6 +81,10 @@ class HouseRule:
     # Set when the rule came from a followed set in a Cherry pick (#1191): "<set> house rules,
     # v4". Such rules rank below the campaign's own.
     from_set: str | None = None
+    # Where it came from (#2285): one of SOURCES; a rule from before this was recorded is
+    # "discord". `source_name` is an uploaded file's name.
+    source: str = "discord"
+    source_name: str | None = None
 
 
 def clean_rule(raw: str) -> str:
@@ -90,6 +97,12 @@ def clean_rule(raw: str) -> str:
             f"That's too long, so nothing was saved. Keep {RULE_BOX} under {RULE_MAX} characters."
         )
     return text
+
+
+def _name(raw: str | None) -> str | None:
+    """An uploaded file's name, one line, cut to what the table holds."""
+    text = " ".join((raw or "").split())[:SOURCE_NAME_MAX]
+    return text or None
 
 
 def clean_optional(raw: str | None, box: str) -> str | None:
@@ -116,12 +129,14 @@ def _rule(row: dict[str, Any]) -> HouseRule:
         int(row["updated_at"]),
         int(row["version"]),
         row.get("from_set"),
+        row.get("source", "discord"),
+        row.get("source_name"),
     )
 
 
 _COLUMNS = (
     "number, campaign_id, rule, supersedes, scenario, session_id, created_by, created_at,"
-    " updated_at, version, from_set"
+    " updated_at, version, from_set, source, source_name"
 )
 
 
@@ -155,6 +170,8 @@ class HouseRuleStore:
         scenario: str | None = None,
         session_id: str | None = None,
         wanted: int | None = None,
+        source: str = "typed",
+        source_name: str | None = None,
     ) -> HouseRule:
         """Save a new house rule, with the campaign's next number, or with `wanted` (a
         rule from the house-rules file, #969) if that number was never used: it is above
@@ -165,6 +182,8 @@ class HouseRuleStore:
         instead = clean_optional(supersedes, INSTEAD_BOX)
         happened = clean_optional(scenario, HAPPENED_BOX)
         now = int(self._clock())
+        if source not in SOURCES:
+            raise ValueError(f"Unknown house rule source: {source!r}")
         async with self._db.guild(guild_id) as conn:
             # Locking the campaign makes two adds at once take turns: the limit holds, and
             # each gets its own number.
@@ -180,6 +199,8 @@ class HouseRuleStore:
                 session_id,
                 wanted,
                 now,
+                source=source,
+                source_name=_name(source_name),
             )
 
     @notifies
@@ -270,6 +291,9 @@ async def insert_rule(
     wanted: int | None,
     now: int,
     from_set: str | None = None,
+    *,
+    source: str = "discord",
+    source_name: str | None = None,
 ) -> HouseRule:
     """Save one already-cleaned rule with the campaign's next number, inside the caller's
     transaction (which has checked the person is a DM and locked the campaign). Shared with
@@ -294,8 +318,8 @@ async def insert_rule(
     assert made is not None
     cur = await conn.execute(
         "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-        " scenario, session_id, created_by, created_at, updated_at, from_set)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " scenario, session_id, created_by, created_at, updated_at, from_set, source,"
+        " source_name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         f" RETURNING {_COLUMNS}",
         (
             guild_id,
@@ -309,6 +333,8 @@ async def insert_rule(
             now,
             now,
             from_set,
+            source,
+            source_name,
         ),
     )
     saved = await cur.fetchone()
@@ -339,7 +365,7 @@ async def require_dm(
 # ---- backups ------------------------------------------------------------------------
 
 _KEYS = frozenset({"number", "rule", "instead", "scenario", "by", "created_at", "updated_at"})
-_KEYS_FROM_SET = _KEYS | {"from_set"}
+_OPTIONAL_KEYS = frozenset({"from_set", "source", "source_name"})  # absent in older backups
 _MADE_KEYS = frozenset({"made"})  # the first row, when the campaign has made any rule
 
 
@@ -375,6 +401,20 @@ def _text(value: object, *, optional: bool) -> str | None:
     return cleaned
 
 
+def _source(value: object) -> str:
+    if not isinstance(value, str) or value not in SOURCES:
+        raise CampaignError(DAMAGED)
+    return value
+
+
+def _source_name(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or _name(value) != value:
+        raise CampaignError(DAMAGED)
+    return value
+
+
 def _person(value: object) -> int:
     digits = isinstance(value, str) and value.isascii() and value.isdigit()
     if not digits or not 0 < int(str(value)) <= INT64_MAX:
@@ -394,6 +434,8 @@ class _Checked:
     created_at: int
     updated_at: int
     from_set: str | None = None
+    source: str = "discord"
+    source_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +462,8 @@ class HouseRulesSection:
         made = await cur.fetchone()
         cur = await conn.execute(
             "SELECT number, rule, supersedes, scenario, created_by, created_at, updated_at,"
-            " from_set FROM house_rules WHERE guild_id = %s AND campaign_id = %s ORDER BY number",
+            " from_set, source, source_name FROM house_rules"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY number",
             (guild_id, campaign_id),
         )
         rows: list[Any] = [
@@ -434,6 +477,9 @@ class HouseRulesSection:
                 "updated_at": int(r["updated_at"]),
                 # Only on a rule that came from a followed set; older backups have no key.
                 **({"from_set": r["from_set"]} if r["from_set"] else {}),
+                # Only where it is known; a backup from before has none and reads "discord".
+                **({"source": r["source"]} if r["source"] != "discord" else {}),
+                **({"source_name": r["source_name"]} if r["source_name"] else {}),
             }
             for r in await cur.fetchall()
         ]
@@ -452,7 +498,7 @@ class HouseRulesSection:
         checked = []
         numbers: set[int] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) not in (_KEYS, _KEYS_FROM_SET):
+            if not isinstance(row, dict) or not _KEYS <= set(row) <= _KEYS | _OPTIONAL_KEYS:
                 raise CampaignError(DAMAGED)
             number = _number(row["number"])
             if number in numbers:  # two rules can't share a number
@@ -473,6 +519,8 @@ class HouseRulesSection:
                     created,
                     updated,
                     _short(_text(row.get("from_set"), optional=True)),
+                    _source(row.get("source", "discord")),
+                    _source_name(row.get("source_name")),
                 )
             )
         if made is not None and numbers and made < max(numbers):
@@ -489,8 +537,8 @@ class HouseRulesSection:
             async with conn.cursor() as cur:
                 await cur.executemany(
                     "INSERT INTO house_rules (guild_id, campaign_id, number, rule, supersedes,"
-                    " scenario, created_by, created_at, updated_at, from_set)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " scenario, created_by, created_at, updated_at, from_set, source,"
+                    " source_name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     [
                         (
                             guild_id,
@@ -503,6 +551,8 @@ class HouseRulesSection:
                             r.created_at,
                             r.updated_at,
                             r.from_set,
+                            r.source,
+                            r.source_name,
                         )
                         for r in loaded.rules
                     ],
