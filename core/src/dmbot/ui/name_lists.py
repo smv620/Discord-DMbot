@@ -45,6 +45,7 @@ from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
+    MAX_WORDS,
     OutName,
     OutPerson,
     Parsed,
@@ -484,6 +485,9 @@ async def take_link(interaction: discord.Interaction, campaign_id: str, link: st
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
+    if interaction.user.id not in campaign.dm_user_ids:  # the lore read is the DM's: fetch nothing
+        await _tell(interaction, "Only a DM of this campaign can add names from a link.")
+        return
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
@@ -575,6 +579,7 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
     else, a document or the lines that are prose, goes through the campaign-lore read
     (`name_background.offer`): the names and the connections the text states, each with its quote,
     for the DM to check. Nothing the AI says is added without the DM's press."""
+    # (imported here: name_background imports this module)
     from dmbot.ui.name_background import offer
 
     campaign = await _campaign_for(interaction, campaign_id)
@@ -583,30 +588,42 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
     if upload.document:  # a document is prose, never read as a names list (#264)
         await offer(interaction, campaign.id, upload)
         return
-    # Pure CPU, up to a fraction of a second on a full file: off the event loop.
-    secrets_ok = sees_secrets(campaign, interaction.user.id)
-    parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
-    if not parsed.lines and not parsed.refused and not parsed.people:
-        await _tell(
-            interaction,
-            f"There are no names in {_md(upload.label)}. Lines starting with # are "
-            "skipped. Put one name per line and try again.",
-        )
-        return
-    # Every line fits, or the only problem is secret names from someone who may not add them (the
-    # AI must never turn those into names everyone sees). A list with players or DMs in it never
-    # goes to the AI: it holds Discord ids (#1559).
-    if parsed.people or all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
+    rows = upload.text.splitlines()
+    # A bare line (no `|`) that reads as a sentence makes the upload lore. Without one, every line
+    # is a list line, even a wrong one: the list's own answer says why a line wasn't added (a
+    # spell, a monster, too many parts), instead of an AI read.
+    prose = [row for row in rows if _is_content(row) and "|" not in row and _sentence(row)]
+    if not prose:
+        secrets_ok = sees_secrets(campaign, interaction.user.id)
+        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
+        parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
+        if not parsed.lines and not parsed.refused and not parsed.people:
+            await _tell(
+                interaction,
+                f"There are no names in {_md(upload.label)}. Lines starting with # are "
+                "skipped. Put one name per line and try again.",
+            )
+            return
         await import_list(interaction, campaign.id, upload.text)
         return
-    # Some lines are not list lines: they are prose. The ones that fit go in now; the rest are read.
-    bad = {number for number, _ in parsed.refused}
-    rows = upload.text.splitlines()
-    strict = "\n".join(row for n, row in enumerate(rows, start=1) if n not in bad)
-    prose = "\n".join(row for n, row in enumerate(rows, start=1) if n in bad)
-    if parsed.lines:
-        await import_list(interaction, campaign.id, strict)
-    await offer(interaction, campaign.id, Upload(prose, upload.label))
+    # Prose is in it: the lines with a `|` are list lines and go in now; every other line is read
+    # as campaign lore, in order, so a connection's quote is still there to be found.
+    strict = [row for row in rows if "|" in row or not _is_content(row)]
+    lore = "\n".join(row for row in rows if _is_content(row) and "|" not in row)
+    if any(_is_content(row) for row in strict):
+        await import_list(interaction, campaign.id, "\n".join(strict))
+    await offer(interaction, campaign.id, Upload(lore, upload.label))
+
+
+def _is_content(row: str) -> bool:
+    return bool(row.strip()) and not row.lstrip().startswith("#")
+
+
+def _sentence(row: str) -> bool:
+    """A bare line that reads as prose, not as a name: too many words for a name, or it ends the
+    way a sentence does."""
+    text = row.strip()
+    return len(text.split()) > MAX_WORDS or text.endswith((".", "!", "?"))
 
 
 async def import_list(
