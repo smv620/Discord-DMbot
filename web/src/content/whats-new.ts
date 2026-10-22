@@ -243,6 +243,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "See where your homebrew came from",
+    what: "On the Homebrew menu, 📂 Sources shows where your homebrew came from: what you typed, each file you uploaded, each website you linked it from, and each pack you follow. Pick one to download just those entries as a text file.",
+    reason: "In review (#2285); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Recaps are checked before you see them",
     what: "Before you see a recap, DMbot checks it against your story so far and rewrites it, up to four times. It looks for things that matter that were left out, lines that don't fit the story, and any reason or plan nobody at the table said. DMbot never says what a character wants unless a player or you said it. If the checks still don't agree, you get the best version with a short list of what is left to check.",
     reason: "In review (#2255); held until dev1 deploys it and the recap page shows the list (criticNotes).",
@@ -690,6 +696,12 @@ export const held: Held[] = [
     what: "If the game clock hasn't come up for a while during a session, DMbot drops one quiet line on the DM screen: \"Where we are: Day 4, afternoon (14:30)\". With a split party it lists each group. It stays quiet during a fight and when the DM screen is set to Quiet. Players never see it.",
     reason:
       "Held until it has been seen working on the test server (#1738).",
+  },
+  {
+    date: "2026-10-21",
+    title: "See how your names are connected",
+    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
+    reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
   },
 ];
 

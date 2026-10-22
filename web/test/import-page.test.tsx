@@ -678,7 +678,7 @@ describe("a refusal", () => {
     );
   });
 
-  it("offers to sign in again when the session ended", async () => {
+  it("says the session ended, and leaves the one Sign in button to the shared line", async () => {
     await refused(new ApiError("signed-out"));
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
     // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
