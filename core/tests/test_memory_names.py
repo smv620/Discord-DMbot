@@ -1830,6 +1830,21 @@ class Lists(NamesTest):
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
         self.assertIn("can't read documents or links here", it.followup.send.call_args.args[0])
 
+    async def test_a_bare_name_beside_a_sentence_is_added_even_when_the_lore_read_is_refused(
+        self,
+    ) -> None:
+        """Decided line by line: "Moric" is a name for anyone to add; only the sentence waits for
+        the DM-only lore read (the manager is refused it, but still gets the name)."""
+        from dmbot.ui import name_lists
+
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        text = "Moric\nBryn Shander is a town in the far north, ruled by nine speakers."
+        it = self.it(MANAGER)
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("Added 1 name", it.followup.send.call_args_list[0].args[0])
+        self.assertIn("Moric", await self.names((CONFIRMED, "proposed")))
+
     async def test_hard_wrapped_prose_is_never_added_as_names(self) -> None:
         from dmbot.ui import name_background, name_lists
 

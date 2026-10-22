@@ -36,8 +36,9 @@ class PostedQueuedBackfill(unittest.IsolatedAsyncioTestCase):
             for campaign in (posted, draft):
                 await store.enqueue(GUILD, campaign.id, 100, dm_user_id=DM)
                 await store.update(GUILD, campaign.id, 100, state="ready", title="T", summary="S")
-                await store.set_audio(GUILD, campaign.id, 100, audio="queued")
             async with db.guild(GUILD) as conn:
+                # (plain SQL: the store now writes columns this older schema has not got yet)
+                await conn.execute("UPDATE recap_jobs SET audio = 'queued'")
                 await conn.execute(
                     "UPDATE recap_jobs SET status = 'posted' WHERE campaign_id = %s", (posted.id,)
                 )
