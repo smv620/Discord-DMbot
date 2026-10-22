@@ -176,3 +176,26 @@ class TheClock(Base):
                     async with conn.transaction():
                         await conn.execute(statement)
         self.assertEqual((await self.job(at)).posted_url, "")
+
+
+class TheWebRead(TheClock):
+    async def test_the_website_read_selects_the_stored_clock(self) -> None:
+        """The three columns reach the row the page's view is made from, so a stored value is not
+        lost on the way (the keys in `_view` come with #2436)."""
+        from dmbot.web import recaps as web_recaps
+
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.posting_step(1, self.one.id, at, "post")
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                f"SELECT {web_recaps._COLUMNS} {web_recaps._FROM} WHERE r.campaign_id = %s",
+                (self.one.id,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        job = await self.job(at)
+        self.assertEqual(
+            (row["posting_since"], row["posting_step"], row["posted_url"]),
+            (job.posting_since, "post", None),
+        )
