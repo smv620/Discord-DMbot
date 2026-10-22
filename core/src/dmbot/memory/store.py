@@ -25,11 +25,12 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import notify, standing, states
+from dmbot.memory import beliefs, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
+    BELIEFS,
     CHANGED_SINCE,
     CORRECTIONS,
     DEPENDENTS,
@@ -38,6 +39,7 @@ from dmbot.memory._changes import (
     IMPRESSIONS,
     MENTIONS,
     NOT_FOUND,
+    PERSPECTIVES,
     PLAN_SAME_AS,
     PREDICATES,
     RELATIONS,
@@ -89,6 +91,7 @@ from dmbot.memory.models import (
     SOURCES,
     SPECIES,
     Alias,
+    Belief,
     Correction,
     Entity,
     Flag,
@@ -99,6 +102,7 @@ from dmbot.memory.models import (
     NewName,
     Opinion,
     PeopleSuggestion,
+    Perspective,
     Relation,
     RuleLink,
     SaidAsSuggestion,
@@ -191,6 +195,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
+        r["manipulated_by"],
     )  # fmt: skip
 
 
@@ -3336,6 +3341,76 @@ class MemoryStore:
             row = await w.update(RELATIONS, relation_id, changes)
             return Written(_relation(row), w.batch)
 
+    # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
+
+    async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
+        """Who holds beliefs in this campaign: The truth and The party, then any character's."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(PERSPECTIVES, " ORDER BY created_at, id")
+        return [Perspective(r["id"], r["kind"], r["entity_id"], r["created_at"]) for r in rows]
+
+    async def believe(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        perspective_id: str,
+        relation_id: str,
+        confidence: float,
+        status: str,
+        *,
+        source: str,
+        evidence: Sequence[str] = (),
+        session_at: int | None = None,
+    ) -> Written[Belief]:
+        """A perspective comes to believe a connection at `confidence` (0.0 certainly false to 1.0
+        certainly true), with a status and the evidence it points at by id. A new row, never an
+        edit, so the history stays; logged, so Undo takes it back. Only the DM writes The truth.
+        The one way every writer records a belief."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await beliefs.perspective_ids(w)  # The truth and The party exist before anything else
+            belief = await beliefs.believe_in(
+                w, perspective_id, relation_id, confidence, status,
+                evidence=evidence, session_at=session_at,
+            )  # fmt: skip
+            return Written(belief, w.batch)
+
+    async def party_view(
+        self, guild_id: int, campaign_id: str, *, known_only: bool = True
+    ) -> list[Belief]:
+        """What The party believes of the confirmed connections: the current belief for each. With
+        `known_only` (what players are shown today) just those held as fact, at 1.0; without, the
+        party's theories too. A connection with no party belief is not in it (a secret one)."""
+        return await self._view(guild_id, campaign_id, "party", known_only)
+
+    async def truth_view(self, guild_id: int, campaign_id: str) -> list[Belief]:
+        """What The truth holds of the confirmed connections, secret ones included: the current
+        belief for each, the DM's view."""
+        return await self._view(guild_id, campaign_id, "truth", False)
+
+    async def _view(
+        self, guild_id: int, campaign_id: str, kind: str, known_only: bool
+    ) -> list[Belief]:
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            cur = await scope.conn.execute(
+                "SELECT b.id, b.perspective_id, b.relation_id, b.confidence, b.status,"
+                " b.session_at, b.evidence_ids, b.seq, b.recorded_at FROM ("
+                "  SELECT DISTINCT ON (b.relation_id) b.*, r.secret AS relation_secret"
+                "    FROM memory_beliefs b"
+                "    JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                "     AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                "    JOIN memory_relations r ON r.guild_id = b.guild_id"
+                "     AND r.campaign_id = b.campaign_id AND r.id = b.relation_id"
+                "   WHERE b.guild_id = %s AND b.campaign_id = %s AND p.kind = %s"
+                "     AND r.status = 'confirmed'"
+                "   ORDER BY b.relation_id, b.seq DESC) b"
+                " WHERE (NOT %s OR b.confidence >= 1.0) AND b.confidence > 0"
+                # defence in depth: the players never hold a secret connection as fact
+                " AND (%s <> 'party' OR NOT (b.confidence >= 1.0 AND b.relation_secret))"
+                " ORDER BY b.relation_id",
+                (*scope.ids, kind, known_only, kind),
+            )
+            return [beliefs.belief_of(r) for r in await cur.fetchall()]
+
     async def relation(self, guild_id: int, campaign_id: str, relation_id: str) -> Relation | None:
         """One connection of any status (rejected ones too), or None. For a retried job to tell
         "already done" from "never there"; nothing else lists a rejected connection."""
@@ -3779,10 +3854,12 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name <> %s",
                 (*w.ids, batch, RELATIONS.name),
             )
-            # (new words can raise a check's flag in the same change: it goes back with them)
+            # (new words can raise a check's flag in the same change: it goes back with them, and
+            # so do the beliefs written for the connections it added or ended, #2409)
             others = await cur.fetchall()
             if not rows or any(
-                o["table_name"] != FLAGS.name or o["op"] != "insert" for o in others
+                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                for o in others
             ):
                 raise TooLateToUndo(self._too_late())
             ended = [

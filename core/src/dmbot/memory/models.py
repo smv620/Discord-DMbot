@@ -273,6 +273,8 @@ class Entity:
     # Written before pronouns were kept out of the suggestions (#2358): such a suggestion that is a
     # pronoun ("We", "I'll") is not offered again. Set by the database for the rows that existed.
     made_before_name_gate: bool = False
+    # For an event, clue or item entry: the evidence it faked (the planted ledger), by id (#2409).
+    manipulated_by: str | None = None
 
     @property
     def unseen_by_players(self) -> bool:
@@ -446,3 +448,48 @@ class Written[T]:
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).
 MERGE_MANY_MAX = 50
+
+# ---- beliefs: who believes a connection, and how strongly (#2409; STORY_MEMORY section 9) ----
+
+TRUTH, PARTY, PC_VIEW, NPC_VIEW = "truth", "party", "pc", "npc"
+PERSPECTIVE_KINDS = (TRUTH, PARTY, PC_VIEW, NPC_VIEW)
+THEORY, ACCUSATION, REVEALED_FACT = "theory", "accusation", "revealed_fact"
+FALSE_EVIDENCE, SECRET_PLOT = "false_evidence", "secret_plot"
+MAGICALLY_VERIFIED, EVASION_UNDER_MAGIC = "magically_verified", "evasion_under_magic"
+BELIEF_STATUSES = (
+    THEORY, ACCUSATION, REVEALED_FACT, FALSE_EVIDENCE, SECRET_PLOT, MAGICALLY_VERIFIED,
+    EVASION_UNDER_MAGIC,
+)  # fmt: skip
+KNOWN = 1.0  # a belief at this confidence is something the perspective holds as fact
+EVIDENCE_MAX = 20  # pointers a belief may cite
+EVIDENCE_ID_MAX = 100
+
+
+@dataclass(frozen=True, slots=True)
+class Perspective:
+    """Who holds beliefs: The truth, The party, or one character (a player character or an NPC)."""
+
+    id: str
+    kind: str
+    entity_id: str | None
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Belief:
+    """One perspective's belief in one connection (the assertion), with the evidence it points at
+    by id. History is kept; the row with the highest `seq` for a pair is the current one."""
+
+    id: str
+    perspective_id: str
+    relation_id: str
+    confidence: float
+    status: str
+    session_at: int | None
+    evidence_ids: tuple[str, ...]
+    seq: int
+    recorded_at: int
+
+    @property
+    def known(self) -> bool:
+        return self.confidence >= KNOWN

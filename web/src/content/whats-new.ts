@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "A page for each campaign",
+    what: "On My Campaigns, tap a campaign's name to open its own page. It has links to its recaps, house rules, homebrew, story map, names and transcripts, all in one place. Players see only the pages for the whole table.",
+    reason: "In review (#2416); held until the API sends each campaign's address and dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "See where a new name was said",
     what: "When DMbot asks you to check a name it heard, it now shows two short bits of what was said around it, with who said each line and when. A 🔎 More places button shows more, and 📜 Open in transcript opens that session on the website.",
     reason: "In review (#2329); held until dev1 deploys it.",
