@@ -647,7 +647,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
       {recap.state === "failed" && !decided && !recap.working && (
         <p class="warn" role="alert">
-          {text.failed}
+          {/* With no tries left, "Press Try again" would point at a greyed button. */}
+          {recap.triesLeft === 0 ? text.failedNoTries : text.failed}
         </p>
       )}
 
@@ -816,8 +817,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
             )}
           </div>
         )}
-      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && (
-        <p class="small">{recap.state === "failed" ? text.failedNoTries : text.noTriesLeft}</p>
+      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && recap.state !== "failed" && (
+        <p class="small">{text.noTriesLeft}</p>
       )}
         </>
       )}
