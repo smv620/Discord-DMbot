@@ -291,6 +291,7 @@ class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
                 data.decode("utf-8", errors="replace"),
                 _private_send(interaction),
                 from_link=False,
+                file_name=attachment.filename,
             )
         finally:
             _done(current)

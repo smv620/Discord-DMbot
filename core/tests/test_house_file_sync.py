@@ -25,6 +25,7 @@ class FakeStore:
         self.rules = list(rules)
         self.made = made if made is not None else max((r.number for r in rules), default=0)
         self.scenarios: list[str | None] = []
+        self.sources: list[tuple[str, str | None]] = []
 
     async def list(self, guild_id: int, cid: str) -> list[HouseRule]:
         return sorted(self.rules, key=lambda r: -r.number)
@@ -44,8 +45,11 @@ class FakeStore:
         scenario: str | None = None,
         session_id: str | None = None,
         wanted: int | None = None,
+        source: str = "typed",
+        source_name: str | None = None,
     ) -> HouseRule:
         self._check(user_id)
+        self.sources.append((source, source_name))
         if len(self.rules) >= house.HOUSE_RULES_MAX:
             raise HouseRuleError(house.FULL)
         window = self.made < (wanted or 0) <= self.made + house.HOUSE_RULES_MAX

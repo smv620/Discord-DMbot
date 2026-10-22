@@ -138,7 +138,7 @@ class FakeStore:
 
     async def add(self, guild_id: int, cid: str, user_id: int, text: str,
                   instead: str | None = None, *, scenario: str | None = None,
-                  session_id: str | None = None) -> HouseRule:  # fmt: skip
+                  session_id: str | None = None, source: str = "typed") -> HouseRule:  # fmt: skip
         if user_id != DM:
             raise HouseRuleError(house.NOT_DM)
         self.made += 1
@@ -146,7 +146,9 @@ class FakeStore:
                          house.clean_optional(instead, house.INSTEAD_BOX), scenario, session_id,
                          user_id, NOW, NOW)  # fmt: skip
         self.rules.append(rule)
-        self.added.append({"rule": rule, "scenario": scenario, "session_id": session_id})
+        self.added.append(
+            {"rule": rule, "scenario": scenario, "session_id": session_id, "source": source}
+        )
         return rule
 
     async def edit(
@@ -306,6 +308,7 @@ class Pressing(TableTest):
         self.assertEqual(added["rule"].rule, "Potions are a bonus action")
         self.assertRegex(added["scenario"], r"^Said at the table, \d{4}-\d{2}-\d{2}$")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")
         content, new_view = it.response.edited[0]
         self.assertIsNone(new_view)
         self.assertIn("✅ Saved as house rule 1.", content)
@@ -337,6 +340,7 @@ class Pressing(TableTest):
         (added,) = self.store.added
         self.assertEqual(added["rule"].rule, "Potions are a free action")
         self.assertEqual(added["session_id"], "session-1")
+        self.assertEqual(added["source"], "voice")  # the edit form too
         self.assertIn("✅ Saved as house rule 1.", submit.response.edited[0][0])
         self.assertIsNone(submit.response.edited[0][1])
 

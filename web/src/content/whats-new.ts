@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-21",
+    title: "See where your house rules came from",
+    what: "On the house rules list, 📂 Sources shows where your rules came from: the linked file, each file you uploaded, rules added in Discord, and the set you follow. Pick one to download just its rules as a text file.",
+    reason: "In review (#2285); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "See where your homebrew came from",
     what: "On the Homebrew menu, 📂 Sources shows where your homebrew came from: what you typed, each file you uploaded, each website you linked it from, and each pack you follow. Pick one to download just those entries as a text file.",
     reason: "In review (#2285); held until dev1 deploys it.",
@@ -249,9 +255,21 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "Recaps say when they wait",
+    what: "If DMbot can't finish its last check of a recap right away, the recap page now says it is written and waiting for one last check, instead of saying it is still being written. When the checks weren't sure about something, a closed section called What the checks said lists it for you.",
+    reason: "In review (#2297); held until dev1 deploys the recap checks (#2280), and it goes live together with \"Recaps are checked before you see them\".",
+  },
+  {
+    date: "2026-10-21",
     title: "Import reads more transcripts",
     what: "When you bring in older sessions, DMbot now also reads a Google Doc transcript that writes each name in [square brackets], and a caption file (a .vtt or .srt) that says who is speaking. If it still can't read a file, it now says why: the format is one it doesn't know, or the captions don't say who is speaking.",
     reason: "In review (#2302); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
+    title: "Every page says who you are",
+    what: "Every page now starts with a line saying who you're signed in as, with a Sign out button if that's not you. If you're not signed in, it says so and shows a Sign in with Discord button. After you sign in, you land back on the page you were on.",
+    reason: "In review (#2301); held until dev1 deploys the web API, which makes 'back to the page you were on' work.",
   },
   {
     date: "2026-10-21",

@@ -74,13 +74,10 @@ export default function Recaps({
   );
 }
 
-function SignedOut({ api }: { api: AccountApi }) {
+function SignedOut() {
   return (
     <div class="panel" role="status">
       <p>{text.signedOut}</p>
-      <a class="button" href={api.signInUrl()}>
-        {text.signIn}
-      </a>
     </div>
   );
 }
@@ -117,7 +114,7 @@ function List({ api }: { api: AccountApi }) {
         {text.loading}
       </p>
     );
-  if (load.kind === "signed-out") return <SignedOut api={api} />;
+  if (load.kind === "signed-out") return <SignedOut />;
   if (load.kind === "error")
     return (
       <p class="warn" role="alert">
@@ -434,13 +431,19 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     return () => clearInterval(timer);
   }, [api, recapRef, waiting]);
 
+  // Once a recap has said it is waiting for its check, the line stays through the short gaps where
+  // the API says something else (a service hiccup between tries), until it is ready or has failed.
+  const sawWaiting = useRef(false);
+  if (recap?.waitingForCheck) sawWaiting.current = true;
+  else if (!recap || !recap.working || recap.state === "failed") sawWaiting.current = false;
+
   if (load.kind === "loading")
     return (
       <p class="muted" role="status">
         {text.loading}
       </p>
     );
-  if (load.kind === "signed-out") return <SignedOut api={api} />;
+  if (load.kind === "signed-out") return <SignedOut />;
   if (load.kind === "error" || !recap) {
     return (
       <>
@@ -543,7 +546,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <h2 tabIndex={-1} ref={headingRef}>
           {heading}
         </h2>
-        <span class="tag">{statusLine(recap)}</span>
+        <span class="tag">{statusLine(recap, sawWaiting.current)}</span>
       </div>
       <p class="small">
         {[recap.campaign, recap.serverName, sessionDay(recap.sessionAt)]
@@ -594,7 +597,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
       {recap.working && (
         <p class="panel" role="status">
-          {text.working}
+          {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
         </p>
       )}
       {recap.state === "failed" && !decided && (
@@ -665,6 +668,17 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 <p class="muted small">{panelWords.cuesNote}</p>
                 <CuedText text={recap.summary} />
               </section>
+            )}
+            {recap.criticNotes && recap.criticNotes.length > 0 && (
+              <details class="panel" id="recap-checks">
+                <summary>{text.checksHeading}</summary>
+                <p class="muted small">{text.checksNote}</p>
+                <ul>
+                  {recap.criticNotes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              </details>
             )}
             <section class="panel">
               <h3>{text.housekeepingHeading}</h3>
