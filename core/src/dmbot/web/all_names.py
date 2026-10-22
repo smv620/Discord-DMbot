@@ -68,6 +68,7 @@ async def read_page(
     kind: str = "",
     sort: str = "name",
     page: int = 1,
+    only: str | None = None,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names. "not_found" for anyone who may not see the
     list (or another campaign's ref); "bad_page" for a page past the end."""
@@ -80,7 +81,7 @@ async def read_page(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_all_names(%s, %s, %s, %s, %s, %s, %s) AS r",
+            "SELECT dmbot_web_all_names(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (
                 guild_id,
                 campaign_id,
@@ -89,6 +90,7 @@ async def read_page(
                 sort == "newest",
                 page,
                 PAGE_SIZE,
+                only,
             ),
         )
         found = await cur.fetchone()

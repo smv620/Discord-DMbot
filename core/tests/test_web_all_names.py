@@ -120,6 +120,11 @@ class TheDmsList(Listing):
             self.assertEqual(got["total"], len(expected))
             self.assertEqual(len(got["kinds"]), 3)  # (the kinds' counts ignore the search)
 
+    async def test_one_row_by_id_for_the_row_of_a_changed_name(self) -> None:
+        got = await self.page(only=self.keep)
+        self.assertEqual([n["name"] for n in got["names"]], ["Greywater Keep"])
+        self.assertEqual(got["total"], 1)
+
     async def test_a_kind_filters_and_the_total_follows(self) -> None:
         got = await self.page(kind="place")
         self.assertEqual([n["name"] for n in got["names"]], ["Greywater Keep"])
@@ -294,7 +299,7 @@ class TheManagersList(Listing):
     ) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             cur = await conn.execute(
-                "SELECT dmbot_web_all_names(%s, %s, '', '', false, 1, 20) AS r",
+                "SELECT dmbot_web_all_names(%s, %s, '', '', false, 1, 20, NULL) AS r",
                 (self.g, self.one.id),
             )
             row = await cur.fetchone()

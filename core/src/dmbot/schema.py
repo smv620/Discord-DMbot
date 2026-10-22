@@ -3139,7 +3139,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The All names page's list (#2294): DMs, and managers without what only a DM sees.
     (
         "dmbot_web_all_names",
-        "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT)",
+        "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)",
     ),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
@@ -9429,7 +9429,7 @@ ALL_NAMES_PAGE = r"""
     -- found" exactly as for a missing campaign. The website's role has no grant on the memory
     -- tables; this door is its only way to read them.
     CREATE FUNCTION dmbot_web_all_names(
-        g BIGINT, c TEXT, q TEXT, k TEXT, newest BOOLEAN, pg INT, size INT
+        g BIGINT, c TEXT, q TEXT, k TEXT, newest BOOLEAN, pg INT, size INT, only_id TEXT
     ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -9478,6 +9478,7 @@ ALL_NAMES_PAGE = r"""
         ), hit AS (
             SELECT v.* FROM vis v
             WHERE (kind_ IS NULL OR v.kind = kind_)
+              AND (only_id IS NULL OR v.id = only_id)
               AND (needle IS NULL
                    OR position(needle IN lower(v.name)) > 0
                    OR EXISTS (SELECT 1 FROM memory_aliases a
@@ -9528,12 +9529,12 @@ ALL_NAMES_PAGE = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT)'
+            'ALTER FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT)
+    REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
         FROM PUBLIC;
 """
 
