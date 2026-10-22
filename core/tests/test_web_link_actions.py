@@ -10,6 +10,7 @@ import httpx
 
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import MemoryRuleError
 from dmbot.web import relationships
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -100,8 +101,103 @@ class TheEdits(Editing):
         log = await self.log_since(before)
         await self.memory.undo(self.g, self.one.id, log[-1]["batch"], source=DM_SOURCE)
         again = await relationships.read_web(self.web, self.session, self.cref, center=self.mira)
-        words = {x["words"] for e in again["edges"] for x in e["links"]}
-        self.assertIn("knows", words)  # the card's Undo works on a change from the page too
+        pair = {
+            x["words"]
+            for e in again["edges"]
+            for x in e["links"]
+            if {e["a"], e["b"]} == {self.mira, self.keep}
+        }
+        self.assertEqual(pair, {"knows"})  # ONE Undo puts the old words back and ends the new ones
+        self.assertEqual(len({r["batch"] for r in log}), 1)  # one change: one batch, one Undo
+
+    async def test_the_cards_undo_takes_a_reworded_connection_back_whole(self) -> None:
+        link = self.links["mira-keep"]
+        before = await self.memory.version(self.g, self.one.id)
+        await self.edit(link, action="words", words="is an enemy of")
+        await self.apply_all()
+        (batch,) = {r["batch"] for r in await self.log_since(before)}
+        back = await self.memory.undo_connection(
+            self.g, self.one.id, batch, within=600, secrets=True
+        )
+        self.assertEqual((back.value.id, back.value.predicate), (link, "knows"))
+        mine = await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+        self.assertEqual(
+            sorted(r.predicate for r in mine if self.keep in (r.subject_id, r.object_id)),
+            ["knows"],
+        )  # the new words went too: no second connection is left
+        with self.assertRaises(MemoryRuleError):  # a second press finds it changed
+            await self.memory.undo_connection(self.g, self.one.id, batch, within=600, secrets=True)
+
+    async def free_link(self, words: str) -> str:
+        made = await self.add_link(self.mira, self.hall, words)
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(made), self.mira, self.hall)
+        return str(next(x["id"] for x in edge["links"] if x["words"] == words))
+
+    async def test_changing_only_the_capitals_keeps_the_connection(self) -> None:
+        link = await self.free_link("sworn to")
+        answer = await self.edit(link, action="words", words="Sworn To")
+        await self.apply_all()
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["removed"]), ("done", False))
+        edge = self.edge_of(done, self.mira, self.hall)
+        self.assertEqual([x["id"] for x in edge["links"]], [link])  # still there, untouched
+
+    async def test_new_words_that_already_exist_merge_and_a_secret_stays_secret(self) -> None:
+        secret = await self.free_link("sworn to")
+        await self.apply_all()
+        public = await self.add_link(self.mira, self.hall, "owes")
+        await self.apply_all()
+        self.assertTrue(public)
+        answer = await self.edit(secret, action="secret", secret=True)
+        await self.apply_all()
+        self.assertTrue(answer)
+        answer = await self.edit(
+            await self.link_id(self.mira, self.hall, "owes"), action="words", words="sworn to"
+        )
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(answer), self.mira, self.hall)
+        self.assertEqual([(x["words"], x["secret"]) for x in edge["links"]], [("sworn to", True)])
+
+    async def link_id(self, a: str, b: str, words: str) -> str:
+        web = await relationships.read_web(self.web, self.session, self.cref, center=a)
+        return str(
+            next(
+                x["id"]
+                for e in web["edges"]
+                if {e["a"], e["b"]} == {a, b}
+                for x in e["links"]
+                if x["words"] == words
+            )
+        )
+
+    async def test_a_retried_job_is_done_not_missing(self) -> None:
+        gone = self.links["rook-keep"]
+        await self.edit(gone, action="remove", confirm=True)
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        first = await wa.apply(self.memory, self.g, {ALICE.id}, action)
+        self.assertEqual(first.error, "")
+        await self.actions.finish(self.g, action, error="", result_id=first.result_id)
+        again = await wa.apply(self.memory, self.g, {ALICE.id}, action)  # the first try died here
+        self.assertEqual(again.error, "")
+        self.assertEqual(
+            (again.result_id, again.result_other), (first.result_id, first.result_other)
+        )
+        link = await self.add_link(self.mira, self.hall, "sworn to")
+        await self.apply_all()
+        self.assertTrue(link)
+        old = await self.link_id(self.mira, self.hall, "sworn to")
+        await self.edit(old, action="words", words="owes")
+        action = await self.actions.claim_next(self.g)
+        assert action is not None
+        self.assertEqual((await wa.apply(self.memory, self.g, {ALICE.id}, action)).error, "")
+        await self.actions.finish(self.g, action, error="")
+        self.assertEqual((await wa.apply(self.memory, self.g, {ALICE.id}, action)).error, "")
+        # the door refuses a new edit to a connection that has ended
+        self.assertEqual(
+            await self.refused_edit(link=old, action="secret", secret=True), "not_found"
+        )
 
     async def test_the_same_words_change_nothing(self) -> None:
         before = await self.memory.version(self.g, self.one.id)
