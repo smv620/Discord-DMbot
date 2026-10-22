@@ -117,6 +117,34 @@ class TheClock(Base):
         job = await self.job(at)
         self.assertEqual((job.posting_step, job.posting_since), ("check", since))
 
+    async def test_a_narration_clock_ends_when_the_lease_is_released_even_for_a_dropped_recap(
+        self,
+    ) -> None:
+        at = await self.ready()
+        await self.store.set_audio(1, self.one.id, at, audio="queued", tries=0, next_at=0)
+        await self.store.audio_lease(1, self.one.id, at)
+        await self.store.decide(1, self.one.id, at, "drop")  # the DM gave up meanwhile
+        # the worker's set_audio no longer matches a dropped recap...
+        await self.store.set_audio(1, self.one.id, at, audio="failed")
+        self.assertEqual((await self.job(at)).posting_step, "audio")
+        # ...but releasing the lease, which has no such filter, ends the clock
+        await self.store.release(1, self.one.id, at)
+        job = await self.job(at)
+        self.assertEqual((job.posting_step, job.posting_since), ("", None))
+
+    async def test_try_again_ends_a_narration_clock_that_a_dead_lease_left(self) -> None:
+        at = await self.ready()
+        await self.store.set_audio(1, self.one.id, at, audio="queued", tries=0, next_at=0)
+        await self.store.audio_lease(1, self.one.id, at)
+        await self.store.reset_audio(1, self.one.id, at)
+        self.assertEqual((await self.job(at)).posting_step, "")
+
+    async def test_releasing_a_lease_never_ends_a_posts_clock(self) -> None:
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.release(1, self.one.id, at)
+        self.assertEqual((await self.job(at)).posting_step, "check")
+
     async def test_audio_that_ran_out_of_tries_stops_the_clock(self) -> None:
         at = await self.ready()
         await self.store.set_audio(1, self.one.id, at, audio="queued", tries=0, next_at=0)

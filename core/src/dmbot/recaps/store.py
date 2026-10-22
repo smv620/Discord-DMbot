@@ -341,8 +341,10 @@ class RecapStore:
     async def release(self, guild_id: int, campaign_id: str, session_at: int) -> None:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET leased_to = 0 WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_at = %s",
+                # The lease is over, so a narration clock it ran is over (#2435), whatever state or
+                # status the recap is in by now (a dropped one is never reached by `set_audio`).
+                f"UPDATE recap_jobs SET leased_to = 0, {_AUDIO_CLOCK_OFF} WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = %s",
                 (guild_id, campaign_id, session_at),
             )
 
@@ -397,7 +399,9 @@ class RecapStore:
                 "UPDATE recap_jobs SET leased_to = %s, audio_tries = audio_tries + 1,"
                 # The clock runs while the narration is made, unless a post is under way (#2435).
                 " posting_step = COALESCE(posting_step, 'audio'),"
-                " posting_since = COALESCE(posting_since, %s)"
+                # (the database's own clock, as the trigger uses, so the two never differ)
+                " posting_since = COALESCE(posting_since,"
+                " floor(extract(epoch FROM clock_timestamp()))::BIGINT)"
                 " WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s AND leased_to <= %s AND audio_next_at <= %s"
                 " AND audio_tries < %s"
@@ -407,7 +411,6 @@ class RecapStore:
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
                     now + AUDIO_LEASE_S,
-                    now,
                     guild_id,
                     campaign_id,
                     session_at,
@@ -623,7 +626,7 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE recap_jobs SET audio = 'off', audio_tries = 0, audio_next_at = 0,"
-                " audio_credits = 0, audio_error = '', audio_text_hash = ''"
+                f" audio_credits = 0, audio_error = '', audio_text_hash = '', {_AUDIO_CLOCK_OFF}"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (guild_id, campaign_id, session_at),
             )
