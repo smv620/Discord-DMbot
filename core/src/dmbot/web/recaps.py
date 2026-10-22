@@ -38,7 +38,13 @@ _COLUMNS = (
     " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
-    " r.respelled_at, r.critics"
+    " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
+    # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
+    # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
+    # the person's own row, so no other DM's address can come out of this (#2334).
+    " (SELECT COALESCE(NULLIF(payment_email, ''), NULLIF(email, '')) FROM web_users LIMIT 1)"
+    " AS mail_address,"
+    " (SELECT COALESCE(payment_email, '') <> '' FROM web_users LIMIT 1) AS mail_is_payment"
 )
 _FROM = (
     "FROM recap_jobs r LEFT JOIN campaigns c ON c.id = r.campaign_id AND c.guild_id = r.guild_id"
@@ -130,6 +136,16 @@ def _unchecked_sentences(row: Mapping[str, Any], ready: bool) -> list[int]:
     ]
 
 
+def _mail_view(row: dict[str, Any]) -> dict[str, Any]:
+    """Where the recap-ready email goes, for the signed-in person only (#2334): the address (null
+    when there is none), where it came from (`payment`: the payment company's, change it in the
+    customer portal; `signin`: the address they signed in with, change it on the account page;
+    `none`: nothing will be sent) and whether the campaign's email switch is on. Never logged."""
+    address = row.get("mail_address") or None
+    source = "none" if address is None else ("payment" if row.get("mail_is_payment") else "signin")
+    return {"address": address, "source": source, "on": bool(row.get("mail_on", True))}
+
+
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     state, status = row["state"], row["status"]
     ready = state == "ready" and status == "draft"
@@ -192,6 +208,7 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # When a fixed spelling changed this recap's text (Unix seconds, #2170), else null. A
         # posted recap's Discord message keeps the old spelling, so the page says so (#2178).
         "respelledAt": row.get("respelled_at"),
+        "recapEmail": _mail_view(row),
     }
 
 
