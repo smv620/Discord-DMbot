@@ -66,6 +66,7 @@ FAILED_CHECKS = (
     "DMbot couldn't write this one so that every detail came from what was said, so it wrote "
     "nothing. You can try again."
 )
+TOO_LONG = "The recap came out too long for DMbot to finish. You can try again."
 SERVICE = "The writing service wasn't available. You can try again."
 FUNDS = "DMbot's writing service is unavailable right now. We've been told. Try again later."
 CAP = "This recap has hit its limit for now. You can try again tomorrow."
@@ -507,10 +508,26 @@ class RecapWorker:
                 "\nYour last sheet was rejected: " + "; ".join(job.problems) + ". Write it again."
             )
         raw = await self._call(
-            gid, cid, job, self._client(job), bt.system(k + 1, len(parts)), text, bt.MAX_TOKENS
+            gid,
+            cid,
+            job,
+            self._client(job),
+            bt.system(k + 1, len(parts)),
+            text,
+            bt.room(job.attempt),
         )
         if raw is None:
             return await self._store.get(gid, cid, job.session_at)
+        if raw.cut:  # never read half a sheet: once more with twice the room, then say so (#2341)
+            log.info(
+                "Recap: the beat sheet was cut off at %d tokens (try %d)",
+                bt.room(job.attempt),
+                job.attempt + 1,
+            )
+            self._annotate(gid, cid, job, "beats", checks=["cut off"])
+            return await self._retry_or_fail(
+                gid, cid, job, ["the answer was cut off: write it again, shorter"], too_long=True
+            )
         # (everyone whose words went to an AI for this recap: the play, the retelling, and the
         # catching up the housekeeping step reads; the talk went nowhere)
         sent = {s.user_id for s in sp.pick(said, split, sp.PLAY, sp.RECAP, sp.CATCHUP)}
@@ -877,7 +894,11 @@ class RecapWorker:
                 )
         self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
-            log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
+            log.info(
+                "Recap: a draft failed %d check(s): %s",
+                len(problems),
+                ", ".join(cl.kinds(problems)),
+            )  # names only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
@@ -1038,7 +1059,9 @@ class RecapWorker:
                 if self._on_problems is not None:
                     self._on_problems(job.state, job.attempt, problems)
                 log.info(
-                    "Recap: the revision failed %d check(s); the first draft stands", len(problems)
+                    "Recap: the revision failed %d check(s) (%s); the first draft stands",
+                    len(problems),
+                    ", ".join(cl.kinds(problems)),
                 )
                 if self._on_note is not None:
                     weak = ", ".join(rd.weak(grade)) or "a score"
@@ -1735,14 +1758,33 @@ class RecapWorker:
     # --- ways out -----------------------------------------------------------------------
 
     async def _retry_or_fail(
-        self, gid: int, cid: str, job: Job, problems: Sequence[str], *, last_attempt: int = 1
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        problems: Sequence[str],
+        *,
+        last_attempt: int = 1,
+        too_long: bool = False,
     ) -> Job | None:
         """A check failed: once more on the careful tier (the prose stage twice more), then the
         job fails plainly."""
         if self._on_problems is not None:  # the live job keeps only the first try's problems
             self._on_problems(job.state, job.attempt, problems)
         if job.attempt >= last_attempt:
-            return await self._fail(gid, cid, job, FAILED_CHECKS)
+            # The check's fixed name goes in the reason and the log (names only, never the text),
+            # so the recap page and the server's owner can say why (#2341).
+            named = ", ".join(cl.kinds(problems))
+            log.info("Recap: failed checks at %s: %s", job.state, named)
+            return await self._fail(
+                gid,
+                cid,
+                job,
+                TOO_LONG if too_long else FAILED_CHECKS,
+                error=named,
+                check=named,
+                ours=True,
+            )
         await self._store.update(
             gid, cid, job.session_at, attempt=job.attempt + 1, problems=list(problems)
         )
@@ -1762,7 +1804,7 @@ class RecapWorker:
         """Something outside failed: wait, longer each time, and fail on the third."""
         errors = job.errors + 1
         if errors >= len(BACKOFF_S):
-            return await self._fail(gid, cid, job, why, error=error)
+            return await self._fail(gid, cid, job, why, error=error, ours=why == SERVICE)
         extra = {} if calls is None else {"calls": calls, "spent": spent}
         await self._store.update(
             gid,
@@ -1801,10 +1843,26 @@ class RecapWorker:
         )
         log.info("Recap: a critics call failed (%s), %d so far", error, errors)
 
-    async def _fail(self, gid: int, cid: str, job: Job, why: str, *, error: str = "") -> Job | None:
+    async def _fail(
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        why: str,
+        *,
+        error: str = "",
+        check: str = "",
+        ours: bool = False,
+    ) -> Job | None:
         log.info("Recap: failed at %s (%s)", job.state, error or "plain reason")
         self._forget(gid, cid, job)
-        await self._store.update(gid, cid, job.session_at, state="failed", last_error=why[:200])
+        # A failure on our side (the writing, a check, the service) does not use up one of the
+        # DM's Try agains (#2341). Only the callers that say `ours` give it back: a limit, the
+        # allowance or a stopped player are the DM's, so the cap on tries still holds.
+        if ours and job.tries > 0:
+            await self._store.give_back_try(gid, cid, job.session_at)
+        reason = f"{why} (check: {check})" if check else why
+        await self._store.update(gid, cid, job.session_at, state="failed", last_error=reason[:200])
         return await self._store.get(gid, cid, job.session_at)
 
     def _keep_rejected(
