@@ -1276,6 +1276,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_email: "bad-email",
   in_use: "in-use",
   bad_target: "bad-target",
+  // The web's views: a visit the API doesn't know is no more than a failed try, so the page says
+  // its generic line rather than a reason (#2405).
+  bad_visit: "server",
   peek_off: "peek-off",
   not_in_server: "not-in-server",
   bad_name: "bad-name",
@@ -1780,6 +1783,9 @@ export function httpApi(
     webSize: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      // The size is of the web in the view being asked for, so a DM in Players View or a player
+      // peeking must not be told the size of the other one.
+      if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
