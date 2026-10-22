@@ -64,10 +64,11 @@ UNCHECKED_TOLD = (
 
 
 def wait_budget(batches: int) -> int:
-    """Calls a waiting try may make: one for each batch of sentences, one for PlotBot, and never
-    fewer than `WAIT_CALLS`, so a long recap is checked as surely as a short one. (PlotBot's
-    second call, with more room when its answer was cut off, #2365, is not counted here.)"""
-    return max(WAIT_CALLS, batches + 1)
+    """Calls a waiting try may make: one for each batch of sentences, two for PlotBot (its second
+    call, with more room when its answer was cut off, #2365, is counted, so a try never spends
+    past this), and never fewer than `WAIT_CALLS`, so a long recap is checked as surely as a short
+    one."""
+    return max(WAIT_CALLS, batches + 2)
 
 
 def wait_for(waits: int) -> int:

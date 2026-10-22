@@ -151,6 +151,9 @@ CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not 
 # Why the loop stopped before any draft was read: the recap then waits for its check (below),
 # or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
 STOP_ERRORS, STOP_CEILING, STOP_TALLY = "service errors", "job ceiling", "day's tally"
+# The revision could not be had or checked (cut off, declined, or its fact check unavailable): ours,
+# like a service error, so the recap waits for its check and never fails for it (#2370).
+STOP_REVISION = "revision unavailable"
 CHECK_TALLY_RETRY_S = 3600  # and this long after the day's tally was reached (it is a rolling day)
 CHECK_WAIT = cr.CHECK_WAIT  # (the words live with the loop's other fixed wording)
 
@@ -1363,9 +1366,12 @@ class RecapWorker:
 
     async def _save_loop(self, gid: int, cid: str, job: Job, loop: cr.Loop) -> Job | None:
         # (errors back to none: a step of the loop got through)
+        # A step got through: a "waiting for its check" note is over, and so is the waiting,
+        # whichever step it was (#2370); only `_hold` counts a wait.
+        loop = replace(loop, waits=0, since=0, told=False)
         await self._store.update(
             gid, cid, job.session_at, critics=loop.to_json(), errors=0, last_error=""
-        )  # (a step got through: a "waiting for its check" note is over)
+        )
         return await self._store.get(gid, cid, job.session_at)
 
     async def _read(
@@ -1416,9 +1422,6 @@ class RecapWorker:
                 loop,
                 motives=tuple(found),
                 best=first if loop.best is None else loop.best,
-                waits=0,  # a reading got through: the waiting is over
-                since=0,
-                told=False,
             )
             await self._save_loop(gid, cid, job, loop)
             job = await self._store.get(gid, cid, job.session_at) or job
@@ -1545,6 +1548,7 @@ class RecapWorker:
         if not set(job.speakers) <= set(await consenting()):
             return await self._restart(gid, cid, job)
         revised: rd.Prose | None = None
+        unavailable = kept is None and raw is not None and bool(unusable(raw))  # cut or declined
         if kept is not None or (raw is not None and not unusable(raw)):
             written = kept if kept is not None else (raw.text if raw is not None else "")
             if self._two:
@@ -1585,6 +1589,7 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, FUNDS)
             if not asked:  # a revision that could not be checked is not shipped
                 revised = None
+                unavailable = True
             elif facts is not None and not facts.clean:
                 revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
             if revised is not None:
@@ -1598,13 +1603,16 @@ class RecapWorker:
             return await self._restart(gid, cid, job)
         if revised is None:
             log.info("Recap: a critics revision did not pass the checks; the best draft stands")
-            return await self._stop_critics(gid, cid, job, loop, inputs, "revision failed")
+            why = STOP_REVISION if unavailable else "revision failed"
+            return await self._stop_critics(gid, cid, job, loop, inputs, why)
         await self._store.update(
             gid, cid, job.session_at,
             summary=revised.summary, original=revised.summary, music=list(revised.music),
             grade=grade, errors=0,
             to_confirm=self._to_confirm(revised.summary, sheet, transcript, inputs),
-            critics=replace(loop, pending=None, motives=None).to_json(),
+            critics=replace(
+                loop, pending=None, motives=None, waits=0, since=0, told=False
+            ).to_json(),
         )  # fmt: skip
         self._forget_draft(key)
         return await self._store.get(gid, cid, job.session_at)
@@ -1691,7 +1699,7 @@ class RecapWorker:
         # The critics stopped because the service did not answer (or the day's tally): that is ours,
         # so what would fail the recap waits for its check instead, and is tried again (#2365). Only
         # the job's own ceiling still ends in a failure.
-        ours = why in (STOP_ERRORS, STOP_TALLY)
+        ours = why in (STOP_ERRORS, STOP_TALLY, STOP_REVISION)
         if best.hard:
             if best.unfixable:
                 if ours:
@@ -1736,6 +1744,9 @@ class RecapWorker:
                 done=True,
                 pending=None,
                 motives=None,
+                waits=0,
+                since=0,
+                told=False,
                 notes=best.notes + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
                 cut=cut,
             ).to_json(),

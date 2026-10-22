@@ -449,6 +449,45 @@ class Criticising(WorkerHarness):
             job = await self.stopped(why, unfixable=True)
             self.assertEqual((job.state != "failed", job.last_error), (True, pl.CHECK_WAIT), why)
 
+    async def test_an_unfixable_draft_holds_when_the_revision_was_unavailable(self) -> None:
+        job = await self.stopped(pl.STOP_REVISION, unfixable=True, tries=1)
+        self.assertEqual((job.state != "failed", job.last_error), (True, pl.CHECK_WAIT))
+
+    async def revision_stop(self, revision: Any, unchecked: bool) -> list[str]:
+        """Why the loop stopped, when the PlotBot-flagged draft's revision is `revision`."""
+        ask = change(1, "secret", "it names the baron", MEMORY.id)
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        careful = fx.Canned(NO_NOTES, ask, revision)
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        whys: list[str] = []
+        real_stop, real_facts = self.worker._stop_critics, self.worker._facts
+        checked = [False]
+
+        async def spy(*args: Any) -> Any:
+            whys.append(args[-1])
+            return await real_stop(*args)
+
+        async def facts(*args: Any, **kw: Any) -> Any:
+            if unchecked and checked[0]:  # the first draft was checked; its revision cannot be
+                return None, False
+            checked[0] = True
+            return await real_facts(*args, **kw)
+
+        with (
+            patch.object(self.worker, "_stop_critics", spy),
+            patch.object(self.worker, "_facts", facts),
+        ):
+            await self.worker.run(1, self.one.id, 100)
+        return whys
+
+    async def test_a_revision_cut_off_stops_the_loop_as_unavailable(self) -> None:
+        cut = Reply("The party", True, 10, 10, "m")
+        self.assertEqual((await self.revision_stop(cut, False))[:1], [pl.STOP_REVISION])
+
+    async def test_a_revision_that_could_not_be_checked_stops_the_loop_as_unavailable(self) -> None:
+        whys = await self.revision_stop(fx.prose_answer(CLEAN), True)
+        self.assertEqual(whys[:1], [pl.STOP_REVISION])
+
     async def test_no_agreement_fails_on_our_side_with_the_rule_named_and_gives_the_try_back(
         self,
     ) -> None:
@@ -730,6 +769,16 @@ class Criticising(WorkerHarness):
         self.assertEqual((done.waits, done.since, done.told), (0, 0, False))
         told.assert_awaited_once()
 
+    async def test_a_step_that_gets_through_ends_the_waiting_whichever_step_it_was(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.go()
+        loop = cr.Loop(round=1, waits=3, since=5, told=True)
+        saved = await self.worker._save_loop(1, self.one.id, job, loop)
+        assert saved is not None
+        back = cr.loop_from_json(saved.critics)
+        self.assertEqual((back.waits, back.since, back.told), (0, 0, False))
+
     async def test_a_long_recap_is_checked_in_every_waiting_try_too(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.down = True
@@ -737,7 +786,7 @@ class Criticising(WorkerHarness):
         with patch.object(mo, "MAX_ASKED", 10):  # three batches for this recap
             job = await self.drive(await self.go(), 6)
             self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
-            self.assertEqual(cr.wait_budget(3), 4)  # the batches and PlotBot
+            self.assertEqual(cr.wait_budget(3), 5)  # the batches and PlotBot
             fast.down = False
             before = len(fast.motive_sent)
             job = await self.drive(job, 6)
