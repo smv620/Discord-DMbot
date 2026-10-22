@@ -7,7 +7,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { publicWords as words } from "../content/recap-share";
 import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { sessionDay } from "../content/recaps";
+import { sessionDay, sessionLine } from "../content/recaps";
 import { ApiError, type AccountApi, type PublicRecap } from "./api";
 import RecapPlayer from "./RecapPlayer";
 
@@ -101,6 +101,7 @@ export default function PublicRecapPage({
   return (
     <article class="public-recap">
       <h2>{recap.title}</h2>
+      {sessionLine(recap) !== "" && <p class="small">{sessionLine(recap)}</p>}
       <p class="note">{words.posted(sessionDay(recap.postedAt))}</p>
       {(recap.audio.voice || recap.audio.music) && (
         <div class="card">
