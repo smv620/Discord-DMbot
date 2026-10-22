@@ -1823,6 +1823,24 @@ names panel nor the speech-to-text hints can be a fixed list.
         👀 Players can peek."
       - The API re-checks the visibility and the person on every call; the switch alone never unlocks
         anything.
+- **Merging names, the easy way** (owner, 2026-10-22, after the NPC list showed one creature under four
+  spellings). Today a merge is one pair at a time (🔗 Same as… on a card, typing the other name). Three
+  easier ways, all the same merge underneath, so the kept name collects the others as "Also called", their
+  connections, notes and mentions move to it, and **one ↩️ Undo** reverses the whole merge:
+  1. **🔗 Look-alikes:** DMbot groups names that look or sound alike (spelling, sound, a shared word, "the"
+     dropped), in code, never by AI. The names overview gets **🔗 Look-alikes (N)**, and the after-session
+     knowledge map review lists new ones. Each group is one message: "These may be one name:" and a menu with
+     every name in the group already ticked, so the DM unticks any that are different. Then **Keep which
+     name? ▾** (the most-used one first), then **🔗 Merge** with one confirmation. **Not the same** stops that
+     group from being offered again. DMbot never merges by itself (two confirmed names are never merged
+     automatically).
+  2. **🔗 Merge several…** on a name card: a menu of up to 25 names (search first if there are more) to fold
+     into this one, in one go.
+  3. **On the website's All names page:** tick names, then **Merge selected**, pick the name to keep, and
+     confirm.
+
+  A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
+  a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
