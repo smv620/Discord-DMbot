@@ -692,7 +692,8 @@ class RecapStore:
         """Start one session's recap job over (#2341): back to the queue with its tries, errors
         and half-done work cleared, so a failure on our side (fixed since) costs the DM nothing.
         Only a failed recap that is still a draft (a good one is never wiped). Used by the
-        `recap_requeue` devtool, which dev1 runs on the server; the worker picks it up next round. False: no such recap."""
+        `recap_requeue` devtool, which dev1 runs on the server; the worker picks it up next
+        round. False: no such recap."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET state = 'queued', attempt = 0, errors = 0, restarts = 0,"
