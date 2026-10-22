@@ -1453,7 +1453,7 @@ Code changes: #87.
     stop, saying it stopped listening and why. The DM's message also says where to change it:
     ⚙️ Settings → Stop when quiet. A person whose private messages are closed is skipped; the DM screen
     line still says why it stopped.
-    *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
+    *Built (2026-10-19, #2034; auto-stop private messages #2288):* when DMbot stops by itself it also sends the campaign's DM a private message with the reason and where Settings is, and each other person still in the voice channel a short one (anyone there, opted in or not: it is a notice, not capture; a closed inbox is skipped and only counted in the log). `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132; since #2288 migration 0166 makes the choices 5, 10, 15 and 30 minutes, default 10, with no Off, and moves any campaign that was on Off, 60 or 90 to 30); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
