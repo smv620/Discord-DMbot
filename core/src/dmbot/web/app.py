@@ -35,6 +35,7 @@ from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
+    all_names,
     email_signin,
     entitlements_writer,
     feedback,
@@ -627,6 +628,8 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
+        "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
+        "bad_sort": (400, "bad_sort"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -934,6 +937,19 @@ def create_app(
         return FileResponse(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
+
+    @app.get("/me/campaigns/{ref}/all-names")
+    async def me_campaign_all_names(
+        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: int = 1
+    ) -> dict[str, Any]:
+        """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
+        server manager who is not a DM gets no secret names; anyone else gets "not found"."""
+        session, _token = signed
+        try:
+            return await all_names.read_page(db, session, ref, q=q, kind=kind, sort=sort, page=page)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/names")
     async def me_campaign_names(ref: str, signed: Signed) -> dict[str, Any]:
