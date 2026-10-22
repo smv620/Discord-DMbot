@@ -688,7 +688,7 @@ class NameCard(_Menu):
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
-        if undo_connection is not None:  # last row but one: out of the way of the edits
+        if undo_connection is not None:  # rows 0 and 1, because row 4 is Show all's (#2339)
             self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
         if undo_spelling is not None:
             self.add_item(UndoSpellingButton(campaign_id, entity_id, undo_spelling))
@@ -747,6 +747,10 @@ class NameCard(_Menu):
                 options=[discord.SelectOption(label=label, value=key) for key, label in cut],
                 row=4,
             )
+            # Row 4 is the menu's alone (a select takes a whole row): the Undo and Finish buttons
+            # sit on rows 0 and 1, which have room, because one on row 4, or on row 3 beside a
+            # thread's five buttons, made the card fail to build (#2339: "item would not fit at
+            # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
 
     async def _book(self, interaction: discord.Interaction) -> None:
@@ -1569,7 +1573,7 @@ class UndoConnectionButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unconn:{campaign_id}:{entity_id}:{batch}",
-                row=3,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1628,7 +1632,7 @@ class UndoSpellingButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unspell:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1709,7 +1713,7 @@ class FinishPastButton(
                 label="Finish the past transcripts",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"dmbot:finish:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=1,
             )
         )
         self.campaign_id = campaign_id
