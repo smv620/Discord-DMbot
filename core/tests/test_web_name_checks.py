@@ -69,6 +69,42 @@ class WithChecks(Base):
         return why
 
 
+class TheOldPronounRule(WithChecks):
+    """The recap page and Discord's lists agree on the same stored rows (#2358): a pronoun the
+    database marks as made before the gate is hidden in both, unless the DM wrote it."""
+
+    async def mark_old(self, *ids: str) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET made_before_name_gate = true WHERE id = ANY(%s)",
+                (list(ids),),
+            )
+
+    async def test_both_places_hide_the_same_old_pronouns(self) -> None:
+        old = await self.suggest("We")
+        new = await self.suggest("They")
+        await self.mark_old(old)
+        page = [n["name"] for n in (await self.listed())["names"]]
+        discord = [
+            e.name for e in await self.memory.entities(GUILD, self.one.id, statuses=[PROPOSED])
+        ]
+        self.assertEqual((page, discord), (["They"], ["They"]))
+        self.assertNotIn("old", (await self.listed())["names"][0])
+        self.assertNotEqual(old, new)
+
+    async def test_the_dms_own_entry_is_shown_in_both_places(self) -> None:
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type="concept", name="We", source="dm", description=""
+        )
+        await self.answers.link(GUILD, self.one.id, AT, [written.value.id])
+        await self.mark_old(written.value.id)
+        page = [n["name"] for n in (await self.listed())["names"]]
+        discord = [
+            e.name for e in await self.memory.entities(GUILD, self.one.id, statuses=[PROPOSED])
+        ]
+        self.assertEqual((page, discord), (["We"], ["We"]))
+
+
 class TheList(WithChecks):
     async def test_the_recaps_waiting_suggestions_are_listed_with_the_known_names(self) -> None:
         mira = await self.suggest("Mirelle")
