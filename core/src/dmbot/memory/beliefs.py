@@ -274,6 +274,29 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
         )  # fmt: skip
 
 
+def party_knows_by(table: str, party_id: str | None) -> str:
+    """`party_knows` for a hot read: with The party's id in hand (`party_id`, one cheap read for
+    the whole query) the current belief is one probe of the `memory_beliefs_current` index for
+    each connection, instead of the join and the max() subquery. The id is ours (32 hex digits,
+    checked here) so it is written into the SQL; None, no party yet, knows nothing."""
+    if party_id is None:
+        return "false"
+    if len(party_id) != 32 or any(c not in "0123456789abcdef" for c in party_id):
+        raise ValueError("Bad perspective ID")
+    return (
+        "EXISTS (SELECT 1 FROM (SELECT pb.confidence FROM memory_beliefs pb"
+        f" WHERE pb.guild_id = {table}.guild_id AND pb.campaign_id = {table}.campaign_id"
+        f" AND pb.relation_id = {table}.id AND pb.perspective_id = '{party_id}'"
+        " ORDER BY pb.seq DESC LIMIT 1) now WHERE now.confidence >= 1.0)"
+    )
+
+
+async def party_id(scope: Scope) -> str | None:
+    """The id of this campaign's party perspective, or None if it has none."""
+    rows = await scope.select(PERSPECTIVES, " AND kind = 'party' LIMIT 1")
+    return str(rows[0]["id"]) if rows else None
+
+
 def party_knows(table: str = "memory_relations") -> str:
     """SQL for "The party holds this connection as fact": its current party belief is 1.0. The
     readers that show the players the story use it where they used to test the `secret` flag, so
