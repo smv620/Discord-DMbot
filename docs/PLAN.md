@@ -2931,6 +2931,25 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
   typing is hidden like off-topic talk. What is typed there is **revealed** to the players, as anything said
   in the voice channel is. Commands and DMbot's own messages are skipped. Only people who agreed to be
   recorded are read (consent), while DMbot is listening.
+- **Images posted there** (owner, 2026-10-22). An image someone posts in the table chat DMbot reads (same
+  channels, same consent, while listening) is sent once to the AI to be described:
+  - **The transcript gets a description** in place of the image, under the poster's name and tagged
+    `(image)`: "(image) A torn letter with a wax seal." It counts as revealed, like anything typed there.
+    The image itself is never stored; only the words are kept.
+  - **A map:** the description names the places on it and says, in plain words, where each one is from the
+    others (north of, across the river from, two days' ride east of, inside), with any scale, roads, rivers
+    and labels shown. It is detailed enough that the layout could be drawn again from the words alone, and it
+    only says what the map shows, nothing guessed. It is kept as a map description for **MapBot**, a later
+    feature that draws simple local and regional maps from asserted facts (nothing is built for MapBot now).
+  - **A picture of text** (a handout, a note, a page): DMbot replies in the channel with the text it read,
+    "Text in this image:" and the words, so the table can check it. **✏️ Fix** lets the poster or a DM correct
+    it, and the transcript keeps the corrected text.
+  - **Limits:** images only (png, jpg, webp, gif's first frame), up to about 10 MB and a few per message;
+    a campaign's images count toward its AI use, and past the day's limit an image is noted as "(image, not
+    described)". The fast model describes, and a map uses the careful one. The DM's private channels are
+    never read.
+  - **Consent:** the consent message says DMbot also reads images posted in the table chat, so the consent
+    terms version goes up and everyone is asked again.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
