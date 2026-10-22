@@ -120,6 +120,12 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         setView("signed-out");
         return "";
       }
+      if (error instanceof ApiError && error.kind === "still-waiting") {
+        // It may still happen: say so, and read the list again so it shows if it did.
+        setNews({ ok: false, text: said, n: ++sayings.current });
+        await load(pageNow.current, true);
+        return null;
+      }
       if (error instanceof ApiError && error.kind === "not-found") {
         // The name is gone (someone else removed it): the list is read again and says so.
         setEditing(null);
@@ -471,12 +477,16 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
       <label class="choice">
         <input
           type="checkbox"
-          checked={row.secret}
+          checked={row.hidden === true}
           disabled={working}
-          onChange={(e) => void run({ action: "secret", secret: (e.target as HTMLInputElement).checked }, words.saved)}
+          onChange={(e) => void run({ action: "hide", hidden: (e.target as HTMLInputElement).checked }, words.saved)}
         />
-        <span>{words.secretCheck}</span>
+        <span>{words.hideCheck}</span>
       </label>
+      <p class="small muted">{words.hideHint}</p>
+      <p role="status" class="small muted">
+        {working ? words.waiting : ""}
+      </p>
 
       <fieldset class="name-others">
         <legend>{words.othersHeading}</legend>

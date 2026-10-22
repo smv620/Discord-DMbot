@@ -910,9 +910,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         case "remove-other":
           row.others = row.others.filter((o) => o !== change.other);
           break;
-        case "secret":
-          row.secret = change.secret;
+        case "hide":
+          row.hidden = change.hidden;
           break;
+        case "secret":
+          break; // a single other name's switch: the pretend memory keeps none
         case "merge": {
           const into = memory.find((n) => n.id === change.into);
           if (!into || into.id === id) throw new ApiError("not-found");

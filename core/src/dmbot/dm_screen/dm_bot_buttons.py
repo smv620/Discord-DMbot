@@ -24,6 +24,7 @@ import discord
 from dmbot import consent_dm
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
+from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
 from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.settings import SettingsButton
@@ -109,6 +110,8 @@ def role_view(
             view.add_item(SettingsButton(campaign.id))
         elif button is Button.NAMES:
             view.add_item(NamesButton(campaign.id))
+        elif button is Button.BACKSTORY:
+            view.add_item(BackstoryButton(campaign.id))
     return view
 
 

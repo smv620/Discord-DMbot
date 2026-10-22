@@ -42,6 +42,12 @@ WORDS = re.compile(
 # a fixed or deleted phrase leaves the list (the stale-entry check below).
 ALLOWED: list[tuple[str, str, str]] = [
     (
+        "rules/house_file_link.py",
+        "api",
+        "OneDrive's host name (api.onedrive.com), compared to name the site a link is on: an "
+        "address to match, never shown to a person",
+    ),
+    (
         "recaps/draft.py",
         "json",
         "the instructions the recap's AI is given (what form to answer in, #2074): sent to the AI, "
