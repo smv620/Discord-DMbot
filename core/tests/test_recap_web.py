@@ -30,6 +30,7 @@ from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import (
     RecapError,
@@ -1295,14 +1296,14 @@ class TheAddressDoor(Base):
         self.assertIsNone(row["a"])
 
     async def test_a_co_dm_with_no_job_of_their_own_gets_their_address(self) -> None:
-        carol = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
         await sessions.sign_in(self.web, carol, [THURSDAY], now=NOW, days=30)
         self.assertIsNone(await self.store.address(THURSDAY.id, carol.id))  # not a DM yet
         await self.campaigns.add_dm(THURSDAY.id, self.one.id, carol.id)
         self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
 
     async def test_someone_who_is_not_a_dm_there_still_gets_none(self) -> None:
-        dave = SimpleNamespace(id=4004, name="Dave", email="dave@example.com")
+        dave = DiscordUser(id=4004, name="Dave", email="dave@example.com")
         await sessions.sign_in(self.web, dave, [THURSDAY], now=NOW, days=30)
         self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))
         # a DM of a campaign that has no recap job does not count either
