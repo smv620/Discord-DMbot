@@ -534,6 +534,34 @@ class ThePath(NamesTest):
         (kept,) = await self.waiting()
         self.assertEqual((kept.subject, kept.object), ("Mirelle", "Oakmere"))
 
+    async def test_a_two_way_pair_held_the_other_way_round_is_not_queued(
+        self,
+    ) -> None:
+        # The campaign holds A kin_of B; the text says B kin_of A. If it were queued, the 📇 Names
+        # card would show "(1)" and pressing it would say "None to check yet".
+        from dmbot.memory.background import Connection, Found
+
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Mirelle", "npc", CONFIRMED), NewName("Brannoch", "npc", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        mira, bran = made.value
+        assert mira and bran
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, mira, "kin_of", bran, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        (held,) = [r for r in await self.relations() if r.predicate == "kin_of"]
+        names = {mira: "Mirelle", bran: "Brannoch"}
+        # the text names the pair in the order the campaign does NOT hold it
+        text_order = Connection(names[held.object_id], "kin_of", names[held.subject_id], "q")
+        queued = await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [Found("Zed", "npc", (), (), "")],
+            [[text_order]], set(),
+        )  # fmt: skip
+        self.assertEqual((queued, await self.store.count(GUILD, self.campaign.id)), (0, 0))
+
     async def test_a_second_campaign_in_the_server_sees_none_of_the_first_ones(self) -> None:
         await self.read()
         other = await self.campaigns.create(GUILD, "Other", DM)
