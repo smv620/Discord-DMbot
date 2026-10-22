@@ -228,3 +228,60 @@ async def backfill(conn: Conn, guild_id: int, campaign_id: str) -> None:
         "     AND b.perspective_id = p.id)",
         (now, *scope),
     )
+
+
+async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
+    """A reworded connection (#2408) is the same claim in other words, so the new one takes over
+    what the old one held: each perspective's current belief (what it thought, how sure, the
+    evidence and the session), the mentions it points to and its session span. Beliefs are copied
+    as new rows (history is kept on the old connection, which is ended). The players are never
+    handed a belief in a secret connection this way."""
+    new = await w.get(RELATIONS, new_id)
+    if new is None:
+        return
+    changes: dict[str, Any] = {}
+    if old["mention_ids"] and not new["mention_ids"]:
+        changes["mention_ids"] = list(old["mention_ids"])
+    for column in ("from_session_at", "to_session_at"):
+        if old[column] is not None and new[column] is None:
+            changes[column] = old[column]
+    if changes:
+        new = await w.update(RELATIONS, new_id, changes)
+    ids = await perspective_ids(w)
+    party = ids[PARTY]
+    held = await _newest(w, [old["id"], new_id])
+    for (relation_id, perspective_id), belief in sorted(held.items(), key=lambda kv: kv[1]["seq"]):
+        if relation_id != old["id"]:
+            continue
+        mine = held.get((new_id, perspective_id))
+        same = mine is not None and (
+            float(mine["confidence"]),
+            mine["status"],
+            list(mine["evidence_ids"]),
+        ) == (float(belief["confidence"]), belief["status"], list(belief["evidence_ids"]))
+        if same:
+            continue
+        if perspective_id == party and new["secret"] and float(belief["confidence"]) >= KNOWN:
+            continue  # (the flag decides what the players know; see `follow`)
+        await _add(
+            w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
+            list(belief["evidence_ids"]), belief["session_at"],
+        )  # fmt: skip
+
+
+def party_knows(table: str = "memory_relations") -> str:
+    """SQL for "The party holds this connection as fact": its current party belief is 1.0. The
+    readers that show the players the story use it where they used to test the `secret` flag, so
+    they read what The party believes (#2409); until guesses arrive the two always agree (`follow`
+    keeps them so, and a test holds the readers to it). `table` is the connections' table or alias
+    in the query; the SQL reads that table's own guild, campaign and id."""
+    return (
+        "EXISTS (SELECT 1 FROM memory_beliefs pb JOIN memory_perspectives pp"
+        " ON pp.guild_id = pb.guild_id AND pp.campaign_id = pb.campaign_id"
+        " AND pp.id = pb.perspective_id"
+        f" WHERE pp.kind = 'party' AND pb.guild_id = {table}.guild_id"
+        f" AND pb.campaign_id = {table}.campaign_id AND pb.relation_id = {table}.id"
+        " AND pb.confidence >= 1.0 AND pb.seq = (SELECT max(x.seq) FROM memory_beliefs x"
+        "  WHERE x.guild_id = pb.guild_id AND x.campaign_id = pb.campaign_id"
+        "  AND x.perspective_id = pb.perspective_id AND x.relation_id = pb.relation_id))"
+    )

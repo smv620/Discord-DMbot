@@ -256,6 +256,75 @@ class Beliefs(MemoryTest):
         await self.memory.believe(GUILD_A, self.c, party, rel, 1.0, "revealed_fact", source="dm")
         self.assertEqual(await self.party(), {rel: 1.0})
 
+    # ---- a reworded connection carries what the old one held (#2408) ----
+
+    async def test_new_words_carry_the_beliefs_evidence_and_session_span_of_the_old(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(
+            GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm",
+            evidence=["line:s1:1000:7"], session_at=1_000,
+        )  # fmt: skip
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", to_session_at=None)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET from_session_at = 1000 WHERE id = %s", (rel,)
+            )
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "since the war", source="dm"
+        )
+        new = moved.value.id
+        self.assertNotEqual(new, rel)
+        self.assertEqual(moved.value.from_session_at, 1_000)
+        self.assertEqual((await self.truth())[new], (0.6, "theory"))  # the DM's word, not 1.0
+        self.assertEqual(await self.party(), {new: 1.0})  # the players still know it, once
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT evidence_ids, session_at FROM memory_beliefs WHERE relation_id = %s"
+                " AND perspective_id = %s ORDER BY seq DESC LIMIT 1",
+                (new, truth),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["evidence_ids"], row["session_at"]), (["line:s1:1000:7"], 1_000))
+
+    async def test_undo_of_the_new_words_takes_the_carried_beliefs_with_them(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm")
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        assert moved.batch is not None
+        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")  # type: ignore[arg-type]
+        self.assertEqual((await self.truth())[rel], (0.6, "theory"))
+        self.assertEqual(set(await self.truth()), {rel})
+        self.assertEqual(await self.party(), {rel: 1.0})
+
+    async def test_a_secret_connection_reworded_stays_secret_to_the_players(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b, secret=True)
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        self.assertTrue(moved.value.secret)
+        self.assertEqual(await self.party(), {})
+        self.assertEqual((await self.truth())[moved.value.id][1], "secret_plot")
+
+    async def test_words_that_already_exist_reuse_that_connection_without_copying(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        other = await self.link(a, b, pred="ally_of")
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm")
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        self.assertEqual(moved.value.id, other)
+        self.assertEqual((await self.truth())[other], (1.0, "revealed_fact"))  # its own, untouched
+
     async def test_a_connection_that_is_no_longer_confirmed_drops_out_of_the_views(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b)

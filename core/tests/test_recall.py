@@ -12,7 +12,7 @@ from collections.abc import Collection, Sequence
 from typing import Any
 from unittest import mock
 
-from dmbot.memory import recall
+from dmbot.memory import beliefs, recall
 from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.memory.models import DEAD, Heard, MemoryRuleError
 from dmbot.memory.recall import (
@@ -247,6 +247,31 @@ class Recalling(MemoryTest):
         self.assertIn("Hides a vow", self.texts(got))  # the DM's note on the entry
         self.assertIn("dead", self.texts(got))
         self.assertTrue(next(i for i in got.items if i.id == self.secret).secret)
+
+    async def test_players_read_what_the_party_believes_as_the_flag_flips_both_ways(self) -> None:
+        """#2409: the players' recall reads The party's beliefs; they must give exactly what the
+        secret flag gave, before and after a reveal and a hide, and for a reworded connection."""
+        before = await self.recall(PLAYERS, "Mira", hops=2)
+        self.assertNotIn(self.secret, self.ids(before))
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        shown = await self.recall(PLAYERS, "Mira", hops=2)
+        self.assertIn(self.secret, self.ids(shown))
+        self.assertIn("Ulfgar", self.texts(shown))
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        hidden = await self.recall(PLAYERS, "Mira", hops=2)
+        self.assertEqual(self.ids(hidden), self.ids(before))
+        self.assertNotIn("Ulfgar", self.texts(hidden))
+        # a hidden connection reworded stays hidden; a shown one stays shown
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, self.secret, "enemy_of", "", source="dm"
+        )
+        self.assertNotIn(moved.value.id, self.ids(await self.recall(PLAYERS, "Mira", hops=2)))
+        again = await self.memory.change_relation_words(
+            GUILD_A, self.c, self.member, "ally_of", "", source="dm"
+        )
+        self.assertIn(again.value.id, self.ids(await self.recall(PLAYERS, "Mira", hops=2)))
+        # the DM still sees the secret one
+        self.assertIn(moved.value.id, self.ids(await self.recall(DM_SCREEN, "Mira", hops=2)))
 
     async def test_players_see_no_secret_fact_no_note_and_no_condition(self) -> None:
         await self.memory.set_condition(GUILD_A, self.c, self.mira, DEAD, source="dm")
@@ -659,6 +684,7 @@ class Speed(MemoryTest):
                 " FROM generate_series(0, %s - 1) AS n) x WHERE s <> o",
                 (GUILD_A, self.c, self.ENTRIES, self.ENTRIES, self.FACTS),
             )
+            await beliefs.backfill(conn, GUILD_A, self.c)  # (raw rows: no write path made beliefs)
             await conn.execute(
                 "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
                 " object, details, how, lines, speaker_ids, source, prompt_version, model,"
