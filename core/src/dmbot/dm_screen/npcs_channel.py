@@ -370,7 +370,11 @@ async def sync_roster(
     if lost:  # the message is gone (deleted by hand): forget the row and post it again
         await mapping.forget(guild_id, campaign_id, lost)
     missing = [key for key, _ in wanted if key not in have]
-    if reorder:
+    # A message in the other layout is replaced by a new one posted at the end (#2425), so while
+    # replacements are pending the list is mid-swap, not out of order: reordering then would delete
+    # the tail and, with posting paced, leave the channel blank (the deploy pass asks to reorder).
+    swapping = _swaps(have, looks)
+    if reorder and not swapping:
         keep = 0
         while keep < len(order) and keep < len(wanted) and order[keep] == wanted[keep][0]:
             keep += 1
@@ -378,7 +382,7 @@ async def sync_roster(
             for key in order[keep:]:
                 extras.append(have.pop(key))
             missing = [key for key, _ in wanted if key not in have]
-    elif _MORE in have and (missing or _swaps(have, looks)):
+    if _MORE in have and (missing or swapping):
         extras.append(have.pop(_MORE))  # it is last, so it moves behind the new messages
         missing = [key for key, _ in wanted if key not in have]
     deletes_left = False

@@ -807,6 +807,27 @@ class TheButton(WithNpcs):
         self.assertEqual(done.left_for_next_time, 5)
         self.assertEqual(len(chan.messages), len(entries))  # never two for one entry
 
+    async def test_the_deploy_pass_that_reorders_never_blanks_the_list_mid_swap(self) -> None:
+        """The deploy asks for a reorder; with more entries than one pass can replace, the list
+        is mid-swap and out of its old order, which must not look like a list to put in order."""
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n) for n in range(1, MAX_SENDS * 2 + 6)]
+        for _ in range(4):  # (posting is paced too: a few passes to put them all out)
+            await self.run_sync(chan, mapping, entries, "")
+        self.assertEqual(len(chan.messages), len(entries))
+        lowest = len(chan.messages)
+        for _ in range(6):
+            await nc.sync_roster(
+                cast(Any, chan), ME, entries, mapping, guild_id=1, campaign_id="c" * 32,
+                reorder=True, site_url="https://dmbot.example",
+            )  # fmt: skip
+            lowest = min(lowest, len(chan.messages))
+        self.assertEqual(lowest, len(entries))  # never fewer messages than entries
+        self.assertTrue(all(layout == "v2" for layout, _, _ in self.shown(chan)))
+        self.assertEqual(
+            [label for _, _, label in self.shown(chan)], [f"{e.name} · NPC" for e in entries]
+        )
+
     async def test_the_edits_are_paced_like_any_other(self) -> None:
         chan = V2Channel()
         mapping = MemMap()
