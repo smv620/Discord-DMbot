@@ -126,6 +126,7 @@ class Linking(ConfirmedMemoryTest):
         campaign: str | None = None,
         guild: int = GUILD_A,
         speakers: dict[str, int | None] | None = None,
+        heard: dict[str, str] | None = None,
         **kw: Any,
     ) -> Proposed:
         return await self.claims.propose(
@@ -133,6 +134,7 @@ class Linking(ConfirmedMemoryTest):
             campaign or self.c,
             list(found),
             speakers or {"1": PLAYER, "2": THE_DM},
+            said=heard,
             opted_in=EVERYONE,
             prompt_version="p1",
             model="m1",
@@ -157,15 +159,13 @@ class Linking(ConfirmedMemoryTest):
 
     async def test_a_cited_line_that_names_the_word_lets_it_through(self) -> None:
         self.memory._clock = lambda: PRONOUNS_KEPT_OUT_FROM + 1  # the old-suggestion filter is off
-        got = await self.propose(
-            said("Bram", "knows", "We", "1"), **{"said": {"1": "My name is We"}}
-        )
+        got = await self.propose(said("Bram", "knows", "We", "1"), heard={"1": "My name is We"})
         self.assertEqual(got.new, ("We",))
         self.assertIn("We", await self.entries())
 
     async def test_a_waiting_claim_for_a_pronoun_is_dropped_when_it_is_read_again(self) -> None:
         kept = await self.propose(
-            said("Bram", "knows", "We", "1"), new_names=0, **{"said": {"1": "My name is We"}}
+            said("Bram", "knows", "We", "1"), new_names=0, heard={"1": "My name is We"}
         )
         self.assertEqual((kept.named, kept.deferred), (0, 1))  # kept waiting, no name made
         again = await self.propose(said("Bram", "knows", "Veldmoor"))  # nothing cites a cue now

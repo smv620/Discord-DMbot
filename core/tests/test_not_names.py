@@ -294,7 +294,7 @@ class TheSourcesEach(unittest.TestCase):
         import asyncio
         from unittest.mock import MagicMock, patch
 
-        from dmbot.web import name_checks
+        from dmbot.web import name_checks, recaps
 
         door = {
             "names": [{"id": "a" * 32, "name": "We"}, {"id": "b" * 32, "name": "Oskar"}],
@@ -326,6 +326,6 @@ class TheSourcesEach(unittest.TestCase):
             return 1, "c" * 32, 0, None
 
         session = MagicMock()
-        with patch.object(name_checks.recaps, "_one", one):
+        with patch.object(recaps, "_one", one):
             got = asyncio.run(name_checks.read_checks(db, session, "1.x.2"))
         self.assertEqual([n["name"] for n in got["names"]], ["Oskar"])
