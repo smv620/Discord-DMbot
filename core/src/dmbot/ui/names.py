@@ -284,6 +284,7 @@ class NamesHome(_Menu):
         shown: list[tuple[str, str, str]] | None = None,
         reviews: Reviews | None = None,
         left_out: bool = False,
+        connections: int = 0,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -329,6 +330,16 @@ class NamesHome(_Menu):
                     self.add_item(
                         _Button(handler, label=f"{label} ({shown_count})", style=grey, row=4)
                     )
+        if connections:  # a backstory's connections still wait for the DM (#2380)
+            shown_links = str(connections) if connections < 100 else "99+"
+            self.add_item(
+                _Button(
+                    self._connections,
+                    label=f"📜 Check the connections ({shown_links})",
+                    style=grey,
+                    row=4,
+                )
+            )
         if shown:
             self.open = _Select(
                 self._open,
@@ -383,6 +394,11 @@ class NamesHome(_Menu):
             await all_names.reply(interaction, self.campaign_id)
             return
         await show_card(interaction, self.campaign_id, self.open.values[0])
+
+    async def _connections(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_background import ask_connections
+
+        await ask_connections(interaction, self.campaign_id)
 
     async def _browse(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_lists import show_browse
@@ -503,12 +519,26 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         if sees_secrets(campaign, interaction.user.id)
         else None
     )
+    links = getattr(_bot(interaction), "backstory_links", None)
+    connections = 0
+    if links is not None and sees_secrets(campaign, interaction.user.id):
+        try:
+            connections = await links.count(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Couldn't count the waiting connections")
     text, shown = home_text(names, campaign, waiting, reviews)
     known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
     await _send(
         interaction,
         text,
-        NamesHome(campaign.id, waiting, shown, reviews, left_out=known > len(shown)),
+        NamesHome(
+            campaign.id,
+            waiting,
+            shown,
+            reviews,
+            left_out=known > len(shown),
+            connections=connections,
+        ),
     )
 
 
@@ -1046,6 +1076,9 @@ async def _review(
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting:
         await _tell(interaction, "✅ No new names to check. DMbot suggests some after a session.")
+        from dmbot.ui.name_background import offer_ready  # (it imports this module)
+
+        await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
     view = SuggestionReview(campaign.id, [e.id for e in waiting])
@@ -1196,6 +1229,9 @@ class SuggestionReview(_Menu):
         else:
             done = "✅ All checked. DMbot will listen for the names you said yes to."
         await _replace(interaction, f"{note}\n\n{done}" if note else done, None)
+        from dmbot.ui.name_background import offer_ready  # (it imports this module)
+
+        await offer_ready(interaction, self.campaign_id)  # a backstory's connections, if ready
 
     async def _saved(
         self,

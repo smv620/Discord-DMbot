@@ -8819,6 +8819,28 @@ NAMES_LATER = f"""
     );
     """ + _isolate("name_later")
 
+BACKSTORY_LINKS = f"""
+    -- The connections a backstory reading found between names (#2380; docs/PLAN.md, "Names at
+    -- scale"), waiting for the DM to keep or refuse each. The same lifetime as the backstory's
+    -- name suggestions: until the DM answers, the campaign is deleted, or an end is refused. Two
+    -- entries, the relationship's key, a short quote of the DM's own text as evidence (never the
+    -- text) and whether the text wrote it with a secret spelling. Deleted with either entry and
+    -- with the campaign, left out of backups (a wait, not content), isolated per server.
+    CREATE TABLE backstory_links (
+        {_memory_scope()}
+        subject_id TEXT NOT NULL,
+        predicate  TEXT NOT NULL CHECK (char_length(predicate) BETWEEN 1 AND 80),
+        object_id  TEXT NOT NULL,
+        quote      TEXT NOT NULL CHECK (char_length(quote) <= 400),
+        secret     BOOLEAN NOT NULL DEFAULT false,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, subject_id, predicate, object_id),
+        CHECK (subject_id <> object_id),
+        {_entity_link("subject_id")},
+        {_entity_link("object_id")}
+    );
+    """ + _isolate("backstory_links")
+
 NAME_ANSWERS = (
     f"""
     -- The names a recap kept that DMbot did not know (#2027) and that the DM is asked to check, now
@@ -10014,6 +10036,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
 )
 
@@ -10053,6 +10076,7 @@ ISOLATED_TABLES = (
     "recap_dictionaries",
     "recap_holds",
     "name_later",
+    "backstory_links",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",

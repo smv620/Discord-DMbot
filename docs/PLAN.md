@@ -1902,6 +1902,13 @@ names panel nor the speech-to-text hints can be a fixed list.
   **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
   campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
   Names → 📥 Add many → 📜 From a story or background stays too.
+  **How they wait** (CloudDev, #2380, 2026-10-22): a found connection waits in the campaign's
+  `backstory_links` table (migration 0173): the two entries' IDs, the kind, a short quote and a secret
+  flag, never the text. It is asked only once both names are confirmed (after ✅ Add all, at the end of
+  📝 Check new names, or with 📜 Check the connections), so a restart loses nothing. Every read cleans
+  the queue: a refused name drops its connections, a merge moves them to the name that stayed, and a
+  connection the campaign already has is not asked again. One the text wrote with a secret spelling can
+  only be kept as secret.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
