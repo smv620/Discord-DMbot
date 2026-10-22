@@ -328,6 +328,8 @@ export function mockRecaps(): Recap[] {
       ...base,
       ref: "200000000000000001.cmp1.1791000000",
       sessionAt: 1791000000,
+      sessionNumber: 4,
+      sessionSeconds: 2 * 3600 + 35 * 60,
       status: "draft",
       title: "The ferry at dusk",
       text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
@@ -1340,7 +1342,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       const r = recaps.find((x) => x.share?.on && x.share.path === `/r/${token}`);
       if (!r) throw new ApiError("not-found");
-      return { title: r.title, text: r.text, postedAt: r.sessionAt, audio: {} };
+      return {
+        title: r.title,
+        text: r.text,
+        postedAt: r.sessionAt,
+        sessionAt: r.sessionAt,
+        sessionNumber: r.sessionNumber ?? null,
+        sessionSeconds: r.sessionSeconds ?? null,
+        audio: {},
+      };
     },
     async decideRecap(ref, action) {
       calls.push(`${action}Recap:${ref}`);

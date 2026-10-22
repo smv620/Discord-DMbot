@@ -76,6 +76,12 @@ async def read_shared(
         "title": found["title"],
         "text": strip_cues(found["summary"]),
         "postedAt": found["postedAt"],
+        # When it was played, and which session it was and how long it ran (#2418): the same facts
+        # as the DM's page. The number and length come from the shared door once it carries them;
+        # until then the page leaves them out (it must render an answer without them).
+        "sessionAt": found.get("at"),
+        "sessionNumber": found.get("sessionNumber"),
+        "sessionSeconds": found.get("sessionSeconds"),
         "audio": audio,
     }
 
