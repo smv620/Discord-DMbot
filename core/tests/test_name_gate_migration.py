@@ -59,3 +59,16 @@ class TheGateMigration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, {"They": False, "We": True})
         old = [e for e in await memory.entities(GUILD, campaign.id, statuses=[PROPOSED])]
         self.assertFalse(any(hidden_old_pronoun(e) for e in old))
+
+    async def test_a_plain_insert_after_the_migration_reads_false(self) -> None:
+        await self.db.migrate(MIGRATIONS)
+        campaign = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at) VALUES (%s, %s, %s, 'concept', 'We', '', 'proposed',"
+                " 'extractor', 1)",
+                (GUILD, campaign.id, "b" * 32),
+            )  # the column is left out: the backstop default marks it as made after the gate
+            cur = await conn.execute("SELECT made_before_name_gate AS old FROM memory_entities")
+            self.assertEqual([r["old"] for r in await cur.fetchall()], [False])

@@ -9431,7 +9431,10 @@ NAME_GATE = (
     ALTER TABLE memory_entities ALTER COLUMN made_before_name_gate SET DEFAULT false;
     """
     + _NAMES_READ.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION").replace(
-        "'id', e.id, 'name', e.name,", "'id', e.id, 'name', e.name, 'old', e.made_before_name_gate,"
+        "'id', e.id, 'name', e.name,",
+        # the same rule as `hidden_old_pronoun`: never the DM's own entry
+        "'id', e.id, 'name', e.name,"
+        " 'old', (e.made_before_name_gate AND e.source IS DISTINCT FROM 'dm'),",
     )
     + """
     DO $do$
