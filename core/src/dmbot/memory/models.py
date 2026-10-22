@@ -180,6 +180,12 @@ def spelling_key(text: str) -> str:
     return name_key(_POSSESSIVE.sub("", text))
 
 
+# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
+# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves. Shared
+# by Discord's name card and the website's All names page, so both refuse it.
+PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
+
+
 def lookup_key(text: str) -> str:
     """`name_key`, falling back to plain lower case for names that are all punctuation,
     so every name has a key. Raises MemoryRuleError when the key is too long."""
