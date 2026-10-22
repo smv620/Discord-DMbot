@@ -10433,6 +10433,29 @@ BELIEFS = (
     """
 )
 
+# The relationship web's door reads what The party believes (#2409 part B): a member sees the
+# connections the players hold as fact, where it used to test the `secret` flag. Until guesses
+# arrive the two always agree (the writers keep them so, and a test holds the door to it). The
+# door is redefined as it was, with that one test changed, and its pinned settings set again.
+_PARTY_KNOWS_R = (
+    "EXISTS (SELECT 1 FROM memory_beliefs pb JOIN memory_perspectives pp"
+    " ON pp.guild_id = pb.guild_id AND pp.campaign_id = pb.campaign_id"
+    " AND pp.id = pb.perspective_id WHERE pp.kind = 'party' AND pb.guild_id = r.guild_id"
+    " AND pb.campaign_id = r.campaign_id AND pb.relation_id = r.id AND pb.confidence >= 1.0"
+    " AND pb.seq = (SELECT max(x.seq) FROM memory_beliefs x WHERE x.guild_id = pb.guild_id"
+    " AND x.campaign_id = pb.campaign_id AND x.perspective_id = pb.perspective_id"
+    " AND x.relation_id = pb.relation_id))"
+)
+assert WEB_RELATIONSHIPS.count("(is_dm OR (NOT r.secret AND r.to_session_at IS NULL") == 1
+WEB_GRAPH_PARTY = WEB_RELATIONSHIPS.replace(
+    "CREATE FUNCTION dmbot_web_relationships(",
+    "CREATE OR REPLACE FUNCTION dmbot_web_relationships(",
+    1,
+).replace(
+    "(is_dm OR (NOT r.secret AND r.to_session_at IS NULL",
+    "(is_dm OR (" + _PARTY_KNOWS_R + " AND r.to_session_at IS NULL",
+    1,
+)
 SHARED_RECAP_SESSION = """
     -- A shared recap says which session it was and how long it ran (#2418), the same two facts the
     -- DM's page shows. The public door reads them from the transcripts' own sessions, so the
@@ -10726,6 +10749,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
+    ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
