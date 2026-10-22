@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import type { WebEdge, WebNode } from "./api";
-import { radialLayout, zoomAbout, type View } from "./webLayout";
+import { isTheory, radialLayout, zoomAbout, type View } from "./webLayout";
 
 const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal size, a fine thing to tap
 const SHOW_LABELS_UNDER = 80; // more lines than this and only the chosen line says its words
@@ -180,12 +180,17 @@ export default function WebMap({
             const q = layout.points.get(edge.b);
             if (!p || !q) return null;
             const chosen = selected !== null && ((selected.a === edge.a && selected.b === edge.b) || (selected.a === edge.b && selected.b === edge.a));
-            const text = `${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
+            const theory = isTheory(edge);
+            const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
+            const text = `${theory ? `${words.theoryMark} ` : ""}${edge.label}${edge.more > 0 ? ` (+${edge.more})` : ""}`;
             const open = (): void => {
               if (!dragged.current) onLine(edge.a, edge.b);
             };
             return (
-              <g key={`${edge.a}|${edge.b}`} class={chosen ? "web-edge chosen" : "web-edge"}>
+              <g
+                key={`${edge.a}|${edge.b}`}
+                class={`web-edge${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}`}
+              >
                 <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" />
                 {/* A fat invisible line: easy to hit with a finger. */}
                 <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-hit" onClick={open} />
@@ -204,7 +209,7 @@ export default function WebMap({
             return (
               <g
                 key={n.id}
-                class={`web-node web-kind-${KIND_ORDER.includes(n.kind) ? n.kind : "other"}${n.id === center ? " centre" : ""}`}
+                class={`web-node web-kind-${KIND_ORDER.includes(n.kind) ? n.kind : "other"}${n.id === center ? " centre" : ""}${n.revealed === false ? " web-dim" : ""}`}
                 transform={`translate(${at.x} ${at.y})`}
                 onClick={() => {
                   if (!dragged.current) onCenter(n.id);
@@ -234,6 +239,8 @@ export default function WebMap({
               {kindWords(k)}
             </li>
           ))}
+          {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
+          {edges.some(isTheory) && <li>{words.legendTheory}</li>}
         </ul>
       </section>
     </div>
