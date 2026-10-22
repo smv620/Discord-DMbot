@@ -181,6 +181,7 @@ class TheListeners(Held):
                 interaction, self.one.id, "t" * 32, "The Ford Fight",
                 kinds=None, then=then, make="event",
             )  # fmt: skip
+        assert then.await_args is not None
         made = then.await_args.args[3]
         entity = await self.memory.entity(self.g, self.one.id, made)
         assert entity is not None
