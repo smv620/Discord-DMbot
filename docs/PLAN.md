@@ -1853,6 +1853,18 @@ names panel nor the speech-to-text hints can be a fixed list.
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
     suggestions a session, link suggestions included.
+- **Connections from a backstory** (owner, 2026-10-22). 📜 From a story or background also suggests
+  the connections the DM's text states ("Vex is the boss of the Ashen Hand"), in the same AI read
+  (no extra call). Each comes with a short quote. Code keeps a connection only if its quote is in the
+  text, both ends are names from this read or already in the campaign, and its kind is one of the
+  fixed core kinds above (or the campaign's own definitions). After the DM has answered the names, the
+  connections are offered one at a time with their quote: **✅ Keep**, **🤫 Keep as secret** or **❌ No**.
+  A kept one is confirmed (`source="dm"`, as with Connect to…), and it shows on the name cards and the
+  website graph, with ↩️ Undo. A connection to a name the DM said no to is dropped. Nothing is saved
+  without a press, and the text is never kept.
+  **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
+  campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
+  Names → 📥 Add many → 📜 From a story or background stays too.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
