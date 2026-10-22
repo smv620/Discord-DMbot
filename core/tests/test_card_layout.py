@@ -10,8 +10,15 @@ from dmbot.ui import name_card
 
 CUT = [("connections", "Connections (9)"), ("names", "Names (7)")]
 # What a card can really carry together: one kind's own buttons, and any of the shared ones.
-KINDS: tuple[dict[str, bool], ...] = ({}, {"item": True}, {"clue": True}, {"standing": True}, {"deed": True},
-         {"thread": True}, {"thread": True, "promise": True})  # fmt: skip
+KINDS: tuple[dict[str, bool], ...] = (
+    {},
+    {"item": True},
+    {"clue": True},
+    {"standing": True},
+    {"deed": True},
+    {"thread": True},
+    {"thread": True, "promise": True},
+)
 SHARED = ("others", "sheet", "led", "book", "say")
 
 
