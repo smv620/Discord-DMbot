@@ -2,6 +2,8 @@
 // bot's own (core/src/dmbot/transcript/export.py: CLEANED_NOTE, AS_HEARD_NOTE), word for word, so
 // the website says what the Discord download says; test/transcripts-words.test.ts checks them
 // against that file.
+import { transcriptsCard } from "./account-cards";
+
 import type { TranscriptVersion } from "../account/api";
 
 export const cleanedNote =
@@ -15,9 +17,9 @@ export const versionNote: Record<TranscriptVersion, string> = {
 };
 
 export const text = {
-  heading: "Session transcripts",
-  link: "Read session transcripts",
-  lead: "Read what was said at your table, or save it as a text file. Anyone in the Discord server can read these. Only people who agreed were recorded.",
+  heading: transcriptsCard.heading,
+  link: transcriptsCard.link,
+  lead: transcriptsCard.lead,
   loading: "Loading…",
   empty: "No transcripts yet. They appear here after a session that DMbot recorded. Ask your DM to start recording.",
   signedOut: "Sign in to read transcripts.",

@@ -12,6 +12,8 @@ import psycopg
 from dmbot.consent import TERMS_VERSION
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
+from dmbot.transcript.models import Line
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -115,6 +117,47 @@ class TheLink(Shared):
         self.assertNotIn("Mira drew her blade.", got.text)  # not the housekeeping list
         self.assertEqual(got.headers["x-robots-tag"], "noindex, nofollow")
         self.assertIn("no-store", got.headers["cache-control"])
+
+    async def test_the_shared_page_says_which_session_it_was_and_how_long_it_ran(self) -> None:
+        """(#2418) The signed-out door gives the transcripts' own number and the session's length
+        and nothing else of the transcript; another campaign's session at the same time is not
+        mixed in, and a session still listening has no length."""
+        transcripts = TranscriptStore(self.db)
+
+        async def played(campaign_id: str, start: int, end: int | None) -> str:
+            sid = await transcripts.open_session(THURSDAY.id, campaign_id, start)
+            await transcripts.add_lines(
+                THURSDAY.id, sid, [Line(start * 1000 + 1000, ALICE.id, "we go", "we go")]
+            )
+            if end is not None:
+                await transcripts.end_session(THURSDAY.id, sid, end)
+            return sid
+
+        # An earlier session whose transcript retention has deleted still counts, as on the
+        # transcripts page ("Session 1" stays 1), so this recap's number does not slip.
+        gone = await played(self.one.id, 20, 40)
+        await transcripts.delete_session_transcript(THURSDAY.id, self.one.id, gone, 10**6, 300)
+        await played(self.one.id, 50, 90)  # Session 2 of "One"
+        await played(self.one.id, 100, 100 + 2 * 3600 + 35 * 60)  # Session 3: this recap's
+        await played(self.two.id, 100, 130)  # another campaign's, at the same time
+        await self.post_it()
+        token = await self.token()
+        body = (await self.public.get(f"/recaps/{token}")).json()
+        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, 9300))
+        self.assertEqual(
+            set(body),
+            {"title", "text", "postedAt", "audio", "sessionAt", "sessionNumber", "sessionSeconds"},
+        )  # no line, speaker or id of the transcript
+        self.assertNotIn("we go", (await self.public.get(f"/recaps/{token}")).text)
+        # Still listening: the number is known and the length is not.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET ended_at = NULL WHERE campaign_id = %s"
+                " AND started_at = 100",
+                (self.one.id,),
+            )
+        body = (await self.public.get(f"/recaps/{token}")).json()
+        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, None))
 
     async def test_asking_again_for_the_link_gives_the_same_one(self) -> None:
         await self.post_it()

@@ -9125,6 +9125,11 @@ class DMBot(commands.AutoShardedBot):
         text = recap_post.to_the_table(job)
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
             return await back("It names something you keep secret. Change the text, then post.")
+        try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits
+            # between the consent read and the send, which must stay back to back)
+            await self.recaps.posting_step(gid, cid, at, "post")
+        except Exception:
+            log.warning("Recap: couldn't move the progress step to post", exc_info=True)
         # The audio is looked up first, so the consent read below is the last await before the send.
         audio, audio_note = await self._recap_audio_files(gid, campaign, job, channel)
         agreed = await self.consent.consenting(gid)
@@ -9136,14 +9141,17 @@ class DMBot(commands.AutoShardedBot):
                 "Write a new recap, or leave this one out."
             )
         # Sent first and marked posted after, so a failed send is never recorded as a post.
+        link = ""
         try:
             parts = recap_post.parts_of(text)
             for i, part in enumerate(parts):
                 none = discord.AllowedMentions.none()
                 if audio and i == len(parts) - 1:
-                    await channel.send(part, allowed_mentions=none, files=audio)
+                    sent = await channel.send(part, allowed_mentions=none, files=audio)
                 else:
-                    await channel.send(part, allowed_mentions=none)
+                    sent = await channel.send(part, allowed_mentions=none)
+                if i == 0:
+                    link = str(getattr(sent, "jump_url", "") or "")
         except Exception:
             for f in audio:
                 f.close()
@@ -9152,7 +9160,7 @@ class DMBot(commands.AutoShardedBot):
                 "DMbot couldn't write in the chat channel. Check it can post there, "
                 "then press Post again."
             )
-        await self.recaps.posted(gid, cid, at)
+        await self.recaps.posted(gid, cid, at, url=link)
         if campaign.dm_screen_channel_id:
             await self.post(
                 campaign.dm_screen_channel_id,
