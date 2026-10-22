@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 import psycopg
@@ -15,6 +17,7 @@ from dmbot.db import Database
 from dmbot.mail import Mailer
 from dmbot.web import email_change, email_signin, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -217,6 +220,22 @@ class Changing(DatabaseTest):
         await sessions.sign_in(self.web, BOB, [THURSDAY], now=self.now + 60, days=30)
         self.assertEqual(await self.email_of(BOB), email_of(BOB))  # unchosen: Discord's, as before
 
+    async def test_a_discord_sign_in_does_not_take_an_address_another_account_uses(self) -> None:
+        shared = DiscordUser(id=3003, name="Second", email=email_of(ALICE))  # one mailbox, two
+        await self.exist(ALICE)
+        await sessions.sign_in(self.web, shared, [THURSDAY], now=self.now, days=30)
+        self.assertEqual(await self.email_of(ALICE), email_of(ALICE))
+        self.assertIsNone(await self.email_of(shared))  # a new account: none, Discord still works
+        # an account that already has an address keeps it when Discord now offers a taken one
+        await self.exist(BOB)
+        moved = DiscordUser(id=BOB.id, name=BOB.name, email=email_of(ALICE))
+        await sessions.sign_in(self.web, moved, [THURSDAY], now=self.now + 60, days=30)
+        self.assertEqual(await self.email_of(BOB), email_of(BOB))
+        # the address still finds exactly one account
+        async with self.web.user(ALICE.id) as conn:
+            found = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
+            self.assertIs(row_of(await found.fetchone())["t"], True)
+
     async def test_two_accounts_cannot_confirm_the_same_address_at_once(self) -> None:
         await self.exist(ALICE, BOB)
         asked = await email_change.ask(self.web, BOB.id, NEW, now=self.now)
@@ -235,6 +254,48 @@ class Changing(DatabaseTest):
                 (NEW, self.now, ALICE.id),
             )
         self.assertEqual(await bobs, "in_use")
+        self.assertEqual(await self.email_of(BOB), email_of(BOB))
+
+    async def test_a_discord_sign_in_holds_the_address_lock_against_a_confirm(self) -> None:
+        # The sign-in has checked the address is free and not yet written it: Bob's confirm of the
+        # same address must wait for it, then find it taken. Fails if the check runs outside the
+        # sign-in's transaction (then nothing is held and Bob's confirm goes straight through).
+        await self.exist(BOB)
+        asked = await email_change.ask(self.web, BOB.id, NEW, now=self.now)
+        assert isinstance(asked, tuple)
+        twin = DiscordUser(id=3003, name="Twin", email=NEW)
+        checked, release = asyncio.Event(), asyncio.Event()
+        real_user = self.web.user
+
+        class Pausing:
+            def __init__(self, conn: Any) -> None:
+                self.conn = conn
+
+            async def execute(self, sql: str, *args: Any) -> Any:
+                if sql.startswith("INSERT INTO web_users"):
+                    checked.set()  # (the check came first, in this transaction)
+                    await release.wait()
+                return await self.conn.execute(sql, *args)
+
+        @asynccontextmanager
+        async def user(*args: Any, **kw: Any) -> Any:
+            async with real_user(*args, **kw) as conn:
+                yield Pausing(conn) if args and args[0] == twin.id else conn
+
+        with patch.object(self.web, "user", user):
+            signing = asyncio.create_task(
+                sessions.sign_in(self.web, twin, [THURSDAY], now=self.now, days=30)
+            )
+            await asyncio.wait_for(checked.wait(), 5)
+            bobs = asyncio.create_task(
+                email_change.confirm(self.web, BOB.id, asked[1], now=self.now)
+            )
+            await asyncio.sleep(0.5)
+            self.assertFalse(bobs.done())  # waiting on the sign-in's lock
+            release.set()
+            await signing
+            self.assertEqual(await bobs, "in_use")
+        self.assertEqual(await self.email_of(twin), NEW)  # the sign-in took it first
         self.assertEqual(await self.email_of(BOB), email_of(BOB))
 
     async def test_an_account_sees_and_changes_nothing_of_anothers_waiting_change(self) -> None:
