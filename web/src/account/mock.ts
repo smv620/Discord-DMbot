@@ -33,6 +33,7 @@ import type {
   WebLinkChange,
   WebNode,
   WebQuery,
+  WebRevealTarget,
   MyNpcNote,
   NpcPage,
 } from "./api";
@@ -428,7 +429,16 @@ function namesView(ref: string): "dm" | "manager" | "none" {
 interface WebState {
   nodes: WebNode[];
   /** Each connection belongs to a pair (a, b) and has an order: later is newer. */
-  links: { id: string; a: string; b: string; words: string; secret: boolean; direction: WebLink["direction"] }[];
+  links: {
+    id: string;
+    a: string;
+    b: string;
+    words: string;
+    secret: boolean;
+    direction: WebLink["direction"];
+    revealed?: boolean;
+    belief?: WebLink["belief"];
+  }[];
   nextLink: number;
 }
 
@@ -454,13 +464,34 @@ function startWeb(big: boolean): WebState {
   // Two connections between one pair, one of them secret: the line says "(+1)".
   connect(0, 1, true);
   connect(0, 1);
+  // Not revealed to the players yet (#2405): two names and one connection that comes from a backstory.
+  for (const i of [3, 8]) if (nodes[i]) nodes[i]!.revealed = false;
+  const byId = (id: string) => links.find((l) => l.id === id);
+  const l4 = byId("l4");
+  if (l4) l4.revealed = false;
+  // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
+  // Two ordinary connections between names everyone can see, so a player's view has them too.
+  const plain = links.filter((l) => {
+    const ends = [l.a, l.b].map((id) => nodes.find((n) => n.id === id));
+    const pairs = links.filter((o) => (o.a === l.a && o.b === l.b) || (o.a === l.b && o.b === l.a));
+    return !l.secret && l.revealed !== false && pairs.length === 1 && ends.every((n) => n && !n.secret && n.revealed !== false);
+  });
+  // The first the party is wrong about (full view says so); the second is only a hunch.
+  if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
+  if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
   return { nodes, links, nextLink: links.length + 1 };
 }
 
 function webView(ref: string): "dm" | "manager" | "none" {
   if (/\.web-none$/.test(ref)) return "none";
-  if (/\.web-manager$/.test(ref)) return "manager";
+  if (/\.web-(manager|player|private|open)$/.test(ref)) return "manager"; // not a DM
   return "dm";
+}
+
+/** Who may see the DM screen's things in a pretend campaign (#2405): `.web-private` is the DM only,
+ * `.web-open` everyone, anything else lets players peek. */
+function webVisibility(ref: string): "private" | "peek" | "open" {
+  return /\.web-private$/.test(ref) ? "private" : /\.web-open$/.test(ref) ? "open" : "peek";
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
@@ -484,7 +515,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
-  const edgesOf = (links: WebState["links"], dm: boolean): WebEdge[] => {
+  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
       if (l.secret && !dm) continue;
@@ -499,7 +530,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         b: group[0]!.b,
         label,
         more: group.length - 1,
-        links: group.map((l) => ({ id: l.id, words: l.words, secret: l.secret, direction: l.direction })),
+        links: group.map((l) => ({
+          id: l.id,
+          words: l.words,
+          secret: l.secret,
+          direction: l.direction,
+          ...(full ? { revealed: l.revealed !== false } : {}),
+          ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
+        })),
       };
     });
   };
@@ -507,9 +545,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
     const dm = view === "dm";
+    const visibility = webVisibility(ref);
+    // What the person is shown (#2405): a DM sees everything unless they ask for the players' view; a
+    // player sees the players' view unless they peek, which the campaign's DM-screen setting allows or not.
+    if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+    const all = dm ? query.view !== "players" : query.view === "full";
     const state = web(ref);
-    const visible = new Set(state.nodes.filter((n) => dm || !n.secret).map((n) => n.id));
-    const usable = state.links.filter((l) => visible.has(l.a) && visible.has(l.b) && (dm || !l.secret));
+    const visible = new Set(
+      state.nodes.filter((n) => all || (!n.secret && n.revealed !== false)).map((n) => n.id),
+    );
+    const usable = state.links.filter(
+      (l) => visible.has(l.a) && visible.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+    );
     const centre = query.center && visible.has(query.center) ? query.center : [...visible][0]!;
     // Hops over every usable connection, as the real API counts them.
     const near = new Map<string, number>([[centre, 0]]);
@@ -532,9 +579,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     };
     const nodes = state.nodes
       .filter((n) => near.has(n.id))
-      .map((n) => (dm ? current(n) : { id: n.id, name: current(n).name, kind: current(n).kind }));
-    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), dm);
-    return { center: centre, nodes, edges, truncated: false, maxHops: 6, canEdit: dm };
+      .map((n) =>
+        all
+          ? { ...current(n), revealed: n.revealed !== false }
+          : { id: n.id, name: current(n).name, kind: current(n).kind },
+      );
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all);
+    return {
+      center: centre,
+      nodes,
+      edges,
+      truncated: false,
+      maxHops: 6,
+      canEdit: dm && all,
+      view: all ? "full" : "players",
+      ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),
+    };
   };
   // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
   let questions: SupportQuestion[] = [];
@@ -780,7 +840,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     // The relationship web (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
-      calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
+      calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
@@ -791,6 +851,24 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return { names: webGraphOf(ref, query).nodes.length };
     },
+    // A player who agreed to the warning peeks (#2405); the DM would be told once on the DM screen.
+    async webPeek(ref) {
+      calls.push(`webPeek:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "manager" || webVisibility(ref) === "private") throw new ApiError("peek-off");
+    },
+    // A DM shows a name or a connection to the players (#2405).
+    async webReveal(ref, target: WebRevealTarget) {
+      calls.push(`webReveal:${ref}:${target.kind}:${target.id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const state = web(ref);
+      const found = target.kind === "name" ? state.nodes.find((n) => n.id === target.id) : state.links.find((l) => l.id === target.id);
+      if (!found) throw new ApiError("not-found");
+      found.revealed = true;
+    },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
       await reachable();
@@ -798,7 +876,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
       const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true);
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true);
         return found[0] ?? { removed: true };
       };
       if (change.action === "add") {
