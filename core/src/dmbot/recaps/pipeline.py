@@ -1358,7 +1358,8 @@ class RecapWorker:
             )  # (the grader failed on this one)
             return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=unchecked))
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
-        if loop.round >= cr.MAX_ROUNDS or job.calls > room:
+        # (a revision that waits for its try is off the job's calls, so the room is not looked at)
+        if loop.round >= cr.MAX_ROUNDS or (job.calls > room and loop.waits == 0):
             return await self._stop_critics(gid, cid, job, loop, inputs, "no agreement")
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
@@ -1542,6 +1543,7 @@ class RecapWorker:
             schema=None if self._two else rd.prose_schema(),
             stage="revise",
             soft=True,
+            free=loop.waits > 0,  # a try of a recap that waits has its own budget (#2370)
         )  # fmt: skip
         if raw is None and kept is None:
             return await self._store.get(gid, cid, job.session_at)

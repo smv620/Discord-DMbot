@@ -484,6 +484,31 @@ class Criticising(WorkerHarness):
         cut = Reply("The party", True, 10, 10, "m")
         self.assertEqual((await self.revision_stop(cut, False))[:1], [pl.STOP_REVISION])
 
+    async def test_a_revision_that_waits_for_its_try_is_off_the_jobs_calls(self) -> None:
+        cut = Reply("The party", True, 10, 10, "m")
+        await self.setUpWorker(self.fast_for(WITH_MOTIVE, grades=2), fx.Canned(cut), critics=True)
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        room = self.worker._ceiling(job) - pl.CRITIC_RESERVE - pl.CRITIC_REVISE_CALLS
+        asked = (cr.Change("secret", "it names the baron", True, 1),)
+        best = cr.Best(CLEAN, (), {}, 1, 0, (), (1,), True)  # a hard change that cannot be cut
+        loop = cr.Loop(round=1, pending=asked, best=best, waits=2, since=1)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s", (room + 1,))
+        await self.store.update(1, self.one.id, 100, critics=loop.to_json())
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
+            previous="", earlier=None, day=4, window_chars=40_000, hours=2.5, campaign_name="",
+        )  # fmt: skip
+        after = await self.worker._critique(
+            1, self.one.id, job, inputs, AsyncMock(return_value=job.speakers)
+        )
+        assert after is not None
+        self.assertEqual((after.state != "failed", after.calls), (True, room + 1))
+        self.assertEqual(after.last_error, pl.CHECK_WAIT)
+
     async def test_a_revision_that_could_not_be_checked_stops_the_loop_as_unavailable(self) -> None:
         whys = await self.revision_stop(fx.prose_answer(CLEAN), True)
         self.assertEqual(whys[:1], [pl.STOP_REVISION])
