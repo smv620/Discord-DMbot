@@ -1934,6 +1934,30 @@ names panel nor the speech-to-text hints can be a fixed list.
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
     suggestions a session, link suggestions included.
+- **Campaign lore, and one way in for names** (owner, 2026-10-22, replacing the separate backstory and
+  "names from any document" paths for prose).
+  - **The name:** 📜 Upload backstory becomes **📜 Upload campaign lore** (the same place in the 👤 DMbot Main
+    Menu).
+  - **One process for prose.** Whatever arrives through 📜 Upload campaign lore or 📥 Add many (a pasted text, a
+    file, a link):
+    - **A strict names list** (`name (pronunciation) | kind | other names`, one per line) is added straight
+      away, with no AI.
+    - **Anything with prose in it** goes through the same single AI read as campaign lore: names and the
+      connections the text states, each with its quote. Code keeps a connection only when its quote is in the
+      text and both names are in this read or the campaign. **Nothing is invented:** no AI (PlotBot included)
+      adds a connection the text doesn't state. The DM answers each one: ✅ Keep, 🤫 Keep as secret, ❌ No.
+  - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
+    Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
+    players.
+  - **Pronunciation in the list** (`Moric (MOR-ick) | NPC | Mo`): the bracket after a name is read as how to say
+    it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
+    stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
+    "a". Otherwise it's an aside, kept as an other name with the name in front: `Moric (the rogue)` gives
+    Moric, also called "Moric the rogue". A near miss asks the DM ("Is (the Rogue) how to say Moric?" [It's how
+    to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
+  - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
+  - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen
+    notice with its line. Nothing is said when nothing is pinned.
 - **Connections from a backstory** (owner, 2026-10-22). 📜 From a story or background also suggests
   the connections the DM's text states ("Vex is the boss of the Ashen Hand"), in the same AI read
   (no extra call). Each comes with a short quote. Code keeps a connection only if its quote is in the
@@ -2902,8 +2926,11 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
 - **When and whose:** only while DMbot is listening, and only messages from people who agreed to
   be recorded. Bots are never read.
 - **What happens to them:** a typed line goes to the same listeners as a spoken one (clock phrases,
-  house rules, names heard, "Hey DMbot"). It goes into the **raw** transcript tagged `(typed)`,
-  never the cleaned one. Commands and DMbot's own messages are skipped.
+  house rules, names heard, "Hey DMbot"). It goes into the transcript under the name of whoever wrote or
+  pasted it, tagged `(typed)`: the raw one, and (owner, 2026-10-22) the cleaned one too, where off-topic
+  typing is hidden like off-topic talk. What is typed there is **revealed** to the players, as anything said
+  in the voice channel is. Commands and DMbot's own messages are skipped. Only people who agreed to be
+  recorded are read (consent), while DMbot is listening.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
