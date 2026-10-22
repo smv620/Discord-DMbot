@@ -146,7 +146,7 @@ export function statusLine(recap: Recap, stillWaiting = false): string {
   if (recap.status === "posting") return "Posting";
   if (recap.status === "dropped") return "Not posted";
   if (isHeld(recap)) return heldWords.status;
-  if (recap.state === "failed") return "Couldn't be made";
+  if (recap.state === "failed" && !recap.working) return "Couldn't be made";
   if (recap.working && (recap.waitingForCheck || stillWaiting)) return "Waiting for a last check";
   if (recap.working) return "Being made";
   return "Ready to read";
