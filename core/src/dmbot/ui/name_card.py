@@ -90,12 +90,11 @@ FLAG_WHY = {
     "too_many": "That's more than one place at once",
 }
 ONLY_ONE = "☝️ Only one of these exists (you said so)."
-# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332).
-PRONOUNCED = re.compile(r"\bpronounc|\bsounds? like\b", re.IGNORECASE)
-SPELLING_NOT_SOUND = (
-    "That looks like how to say the name. Type only how it's spelled here. To change how it "
-    "sounds, use 🔊 How to say it on the name card."
-)
+# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
+# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves.
+PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
+SPELLING_ONLY = "That looks like how to say the name. Type only how it's spelled here."
+SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it box below."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
@@ -1206,7 +1205,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         campaign, old = found
         new = " ".join(self.name.value.split())
         if PRONOUNCED.search(new):  # how to say it is not how to spell it (#2332)
-            await _tell(interaction, SPELLING_NOT_SOUND)
+            await _tell(interaction, SPELLING_AND_SOUND if self.spoken else SPELLING_ONLY)
             return
         if name_key(new) != name_key(old):
             clash = await known_as(memory, campaign, new)
