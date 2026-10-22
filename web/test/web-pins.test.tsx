@@ -60,8 +60,8 @@ describe("a DM's pins", () => {
   it("shows which connection is pinned, and the legend says what 📌 means", async () => {
     const panel = await openPanel(pageWith(graph()));
     const rows = within(panel).getAllByRole("listitem");
-    expect(within(rows[0]!).getByText(w.pinnedWords)).toBeTruthy();
-    expect(within(rows[1]!).queryByText(w.pinnedWords)).toBeNull();
+    expect(within(rows[0]!).getByText(`${w.pinMark} ${w.pinnedWords}`)).toBeTruthy();
+    expect(within(rows[1]!).queryByText(`${w.pinMark} ${w.pinnedWords}`)).toBeNull();
     expect(within(rows[1]!).getByText(w.pinHint)).toBeTruthy(); // said where the DM acts
     expect(screen.getByText(w.legendPinned)).toBeTruthy();
   });
@@ -127,6 +127,7 @@ describe("nobody else sees a pin", () => {
     const dmPlayers = await api.webGraph!("100.cmp1", { center: null, hops: 6, view: "players" });
     const peek = await api.webGraph!("100.cmp1.web-player", { center: null, hops: 6, view: "full" }).catch(() => null);
     const pinned = (g: WebGraph | null) => (g?.edges ?? []).some((e) => e.links.some((l) => l.pinned));
+    expect(peek).not.toBeNull(); // (the player's peek is allowed here, so this really checks the peeker's web)
     expect(pinned(dmFull)).toBe(true);
     expect(pinned(dmPlayers)).toBe(false);
     expect(pinned(peek)).toBe(false);
