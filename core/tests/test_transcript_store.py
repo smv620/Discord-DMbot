@@ -473,7 +473,7 @@ class BotTests(DatabaseTest):
             asked.append(ids)
             return await real(gid, session_id, ids)
 
-        self.bot._keep_speaker_names = counting  # type: ignore[method-assign]
+        self.bot._keep_speaker_names = counting  # type: ignore[method-assign,assignment]
         self.said(table, PLAYER, "again", 3)
         await self.bot.save_transcript(table)
         self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
