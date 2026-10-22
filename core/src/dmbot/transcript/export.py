@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import (
     QUESTION_KINDS,
@@ -54,10 +54,11 @@ TYPED_NOTE = (
     "version."
 )
 HOW_TO_READ = (
-    "Each line: [time since start] (person) {their character}: what they said. "
-    "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
-    "is speaking as that character. {table_talk} is talk about the rules or running the "
-    "game; {non-game_content} is chat that isn't about the game (these are not characters). "
+    "Each line: [time since start] (person) {their character}: what they said. A person marked "
+    "DM is the Dungeon Master. {narrating} means the DM is describing the scene; an NPC's name "
+    "in braces means the DM is speaking as that character. {table_talk} is out-of-character talk "
+    'about the rules or running the game, like "roll initiative" or "what\'s my AC?"; '
+    "{non-game_content} is chat that isn't about the game (these two are not characters). "
     "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
     "as-heard file keeps every word."
 )
@@ -74,6 +75,69 @@ def clean_name(raw: str | None) -> str:
     name = " ".join((raw or "").split())  # line breaks and tabs become spaces
     name = "".join(c for c in name if unicodedata.category(c) not in ("Cf", "Cc"))
     return name.strip()[:NAME_MAX] or UNKNOWN_SPEAKER
+
+
+class Label(str):
+    """A speaker's label made by `distinct_names`: already safe, so its "(2)" is kept as it is."""
+
+
+def _is_comma(char: str) -> bool:
+    # every comma there is (full-width, small, Arabic…) and the look-alikes that read as one: the
+    # low quotation marks U+201A and U+201E, the ideographic comma U+3001, the low accent U+02CF,
+    # the Greek numeral sign U+0375 and the cedilla (U+00B8, which folds to a combining U+0327)
+    return (
+        "COMMA" in unicodedata.name(char, "")
+        or char in "\u201a\u201e\u3001\u02cf\u0375\u00b8\u0327"
+    )
+
+
+def _is_bracket(char: str) -> bool:
+    # every opening and closing bracket of any script (Unicode Ps and Pe), not only ()[]{}: the
+    # medium and flattened ornament parentheses and the angle brackets read as the "(2)" that tells
+    # two people with one name apart
+    return unicodedata.category(char) in ("Ps", "Pe")
+
+
+def person_name(raw: str | None) -> str:
+    """A speaker's name as a file shows it, made safe to stand in a "(Name, DM)" label (#2337): no
+    brackets (so it cannot look like another line's label or the "(2)" that tells two people with
+    one name apart) and no comma of any look (so only the DM path ever writes ", DM"). Compatible
+    forms are folded first, so a full-width look-alike goes the same way."""
+    name = unicodedata.normalize("NFKC", clean_name(raw))
+    name = "".join(" " if _is_comma(c) else c for c in name if not _is_bracket(c))
+    return " ".join(name.split()) or UNKNOWN_SPEAKER
+
+
+def distinct_names(names: Mapping[int, str | None]) -> dict[int, Label]:
+    """Labels for these people, in the order given: a name safe for a label (`person_name`), and
+    for a second person with the same name (any case) " (2)", a third " (3)" (#2337). The
+    brackets are taken out of every name first, so no chosen name can be, or collide with, a
+    suffix made here."""
+    seen: dict[str, int] = {}
+    out: dict[int, Label] = {}
+    for user_id, raw in names.items():
+        name = person_name(raw)
+        key = name.casefold()
+        seen[key] = seen.get(key, 0) + 1
+        out[user_id] = Label(name if seen[key] == 1 else f"{name} ({seen[key]})")
+    return out
+
+
+def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
+    """The people a file of this version names, in the order each first speaks in it. DMbot's own
+    answers are not a person; the cleaned version leaves out typed chat and sidebar lines, so
+    someone who only typed or asked DMbot is not listed there (a gap in the numbers or a
+    "(2)" would hint at a hidden person). One order for the website and the Discord download, so
+    a person has the same label in both."""
+    order: list[int] = []
+    for line in sorted(lines, key=lambda x: x.started_ms):
+        if line.sidebar and line.sidebar not in QUESTION_KINDS:
+            continue
+        if version == CLEANED and (line.sidebar or line.typed):
+            continue
+        if line.user_id not in order:
+            order.append(line.user_id)
+    return order
 
 
 def clock(seconds: float) -> str:
@@ -179,12 +243,16 @@ def label(
     character: str | None = None,
     topic: str = GAME,
     entity: str = "",
+    *,
+    safe: bool = False,
 ) -> str:
     """`[0:42:10] (Mia) {Cerric}`, or `[0:42:10] (Sam)` without a character. Table talk and
     off-topic talk say so instead of the character: `[0:42:10] (Mia) {table_talk}`. A line
     said as someone else (the DM narrating, or voicing an NPC, #53) shows that instead of
-    the speaker's own character: `[0:42:10] (Sam) {narrating}`, `(Sam) {Brother Hiro}`."""
-    speaker, character = _plain(speaker), _plain(character) if character else None
+    the speaker's own character: `[0:42:10] (Sam) {narrating}`, `(Sam) {Brother Hiro}`. `safe`: the
+    speaker is a label `render` made (it may hold the "(2)" and ", DM" it wrote)."""
+    speaker = speaker if safe else _plain(speaker)
+    character = _plain(character) if character else None
     if entity:
         character = _plain(entity)
     character = TOPIC_TAGS.get(topic, character)
@@ -203,17 +271,27 @@ def render(
     names: Mapping[int, str],
     *,
     characters: Mapping[int, str] | None = None,
+    dms: Collection[int] = (),
     running: bool = False,
     version: str = AS_HEARD,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
-    'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
+    'Someone'); `characters`: speaker ID → the character they play; `dms`: the speakers who are
+    DMs of the campaign, shown as "(Name, DM)" (#2337). `running`: DMbot
     is still recording this session. `version`: CLEANED or AS_HEARD. The DM sidebar lines
     (#935) are in the as-heard version, for everyone who may read it, and never in the
     cleaned one (owner, #933)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
+
+    def person(user_id: int) -> str:
+        raw = names.get(user_id)
+        # A label from `distinct_names` is safe as it is; any other name is made safe here, with
+        # no comma left in it: only a DM is marked, and nobody can pass as one by their name.
+        name = str(raw) if isinstance(raw, Label) else person_name(raw)
+        return f"{name}, DM" if user_id in dms else name
+
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
     timed: list[tuple[int, str]] = []  # (when it started, the line)
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
@@ -241,36 +319,33 @@ def render(
         if item.speaker not in shown:
             character = playing.get(item.speaker)
             shown[item.speaker] = (
-                clean_name(names.get(item.speaker)),
+                person(item.speaker),
                 clean_name(character) if character else None,
             )
         when = clock((item.started_ms - start_ms) / 1000)
         who = (
-            label(when, shown[item.speaker][0])
+            label(when, shown[item.speaker][0], safe=True)
             if item.skipped
-            else label(when, *shown[item.speaker], item.said_as, item.entity)
+            else label(when, *shown[item.speaker], item.said_as, item.entity, safe=True)
         )  # a skipped note says what it is, with no character
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
             timed.append((item.started_ms, f"{who} {item.text}"))
         else:
             timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
     for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
-        asker = (
-            DMBOT_NAME
-            if line.sidebar not in QUESTION_KINDS
-            else clean_name(names.get(line.user_id))
-        )
+        asker = DMBOT_NAME if line.sidebar not in QUESTION_KINDS else person(line.user_id)
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
-        timed.append((line.started_ms, f"[{when}] ({_plain(asker)}) {tag}: {said}"))
+        timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}"))
     for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
         who = label(
             when,
-            clean_name(names.get(line.user_id)),
+            person(line.user_id),
             clean_name(playing[line.user_id]) if line.user_id in playing else None,
+            safe=True,
         )
         timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
