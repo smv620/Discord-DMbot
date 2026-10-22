@@ -5,11 +5,13 @@ Invented names throughout."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
 
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import NewName
 from dmbot.memory.store import MemoryStore
 from dmbot.web import all_names, sessions
 from dmbot.web.app import create_app
@@ -85,7 +87,7 @@ class TheDmsList(Listing):
             got["kinds"],
             [
                 {"key": "item", "label": "Items", "count": 1},
-                {"key": "npc", "label": "NPCs", "count": 1},
+                {"key": "npc", "label": "People", "count": 1},
                 {"key": "place", "label": "Places", "count": 1},
             ],
         )
@@ -312,6 +314,68 @@ class TheDoor(Listing):
         self.assertEqual(callers("dmbot_web_all_names("), {"schema.py", "web/all_names.py"})
 
 
+class TheSpeed(Listing):
+    async def test_a_big_campaign_reads_fast_before_the_database_has_statistics(self) -> None:
+        # Right after a restore or a big import nothing has been ANALYZEd: the secret-spelling check
+        # used to run once per entry over all its names (21 s for 5,000 names and 15,000 others).
+        names = [
+            NewName(
+                f"Name {i:05d} Thing", "npc", "confirmed",
+                others=(f"Alias a{i}", f"Other b{i}", f"Third c{i}"),
+                secrets=(f"Hidden s{i}",) if i % 50 == 0 else (),
+            )
+            for i in range(3000)
+        ]  # fmt: skip
+        async with self.db.guild(self.g) as conn:  # (a campaign nobody has analyzed yet)
+            await conn.execute("SELECT 1")
+        await self.memory._add_names(self.g, self.one.id, names, source=DM_SOURCE)
+        started = time.monotonic()
+        page = await self.page()
+        took = time.monotonic() - started
+        self.assertEqual(page["total"], 3003)
+        self.assertLess(took, 5.0, f"the list took {took:.1f} s")
+
+    async def test_a_big_list_refreshes_the_statistics_and_a_small_one_does_not(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        big = [NewName(f"Bulk {i:04d}", "place", "confirmed") for i in range(503)]
+        with patch.object(MemoryStore, "analyze", AsyncMock()) as analyzed:
+            await self.memory.add_names(self.g, self.one.id, big[:3], source=DM_SOURCE)
+            analyzed.assert_not_awaited()
+            await self.memory.add_names(self.g, self.one.id, big[3:], source=DM_SOURCE)
+            analyzed.assert_awaited_once_with(self.g)
+
+    async def test_refreshing_never_fails_the_import_that_asked(self) -> None:
+        await self.memory.analyze(self.g)  # runs
+        from unittest.mock import patch
+
+        with patch.object(self.db, "guild", side_effect=RuntimeError("no rights")):
+            await self.memory.analyze(self.g)  # best effort: nothing raised
+
+    async def test_the_secret_spelling_check_still_marks_the_same_entries(self) -> None:
+        both = await self.add("Veil", "npc")
+        await self.alias(both, "veil", secret=True)  # its own spelling, as a secret name
+        got = {n["name"]: n for n in (await self.page())["names"]}
+        self.assertTrue(got["Veil"]["secret"])
+        self.assertFalse(got["Mira Voss"]["secret"])  # a secret *other* name is not the entry's own
+
+
+class TheDoorSettings(Listing):
+    async def test_the_door_keeps_its_pinned_search_path_and_no_public_execute(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT proname, proconfig::text AS cfg, prosecdef,"
+                " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
+                " FROM pg_proc WHERE proname = 'dmbot_web_all_names'"
+            )
+            rows = await cur.fetchall()
+        self.assertGreaterEqual(len(rows), 1)  # (one for each test schema)
+        for row in rows:
+            self.assertIn("search_path", row["cfg"] or "", row["proname"])
+            self.assertTrue(row["prosecdef"], row["proname"])
+            self.assertFalse(row["public_may"], row["proname"])
+
+
 class TheRoute(Listing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -338,6 +402,9 @@ class TheRoute(Listing):
         past = await self.client.get(url, params={"page": 4})
         self.assertEqual((past.status_code, past.json()), (400, {"error": "bad_page"}))
         self.assertEqual((await self.client.get(url, params={"sort": "x"})).status_code, 400)
+        for bad in ("abc", "1.5", "", "0", "-2", "99999999999999999999"):
+            got = await self.client.get(url, params={"page": bad})
+            self.assertEqual((got.status_code, got.json()), (400, {"error": "bad_page"}), bad)
         other = await self.client.get(f"/me/campaigns/{self.g}.{'0' * 32}/all-names")
         self.assertEqual((other.status_code, other.json()), (404, {"error": "not_found"}))
         anonymous = httpx.AsyncClient(
