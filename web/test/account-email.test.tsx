@@ -144,6 +144,29 @@ describe("opening the emailed link", () => {
     expect(sessionStorage.getItem("dmbot:email-confirm")).toBeNull();
   });
 
+  it("forgets the code after a bad link, from storage and from the address", async () => {
+    sessionStorage.clear();
+    const api = mockApi("try-it");
+    await api.changeEmail!("new@example.org");
+    window.history.replaceState(null, "", "/account#email-confirm=wrong-code");
+    render(<Account api={api} go={vi.fn()} hash="#email-confirm=wrong-code" />);
+    expect(await screen.findByText(text.emailConfirmBad)).toBeTruthy();
+    expect(sessionStorage.getItem("dmbot:email-confirm")).toBeNull();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("forgets a stored code the API answered 'in use' to, and says why", async () => {
+    const api = mockApi("try-it");
+    await api.changeEmail!("new@example.org");
+    api.confirmEmail = () => Promise.reject(new ApiError("in-use"));
+    sessionStorage.setItem("dmbot:email-confirm", "good-code");
+    window.history.replaceState(null, "", "/account#email-confirm=good-code");
+    render(<Account api={api} go={vi.fn()} hash="#email-confirm=good-code" />);
+    expect(await screen.findByText(text.errors["in-use"] ?? "")).toBeTruthy();
+    expect(sessionStorage.getItem("dmbot:email-confirm")).toBeNull();
+    expect(window.location.hash).toBe("");
+  });
+
   it("keeps the code when the answer never came, so it can be tried again", async () => {
     sessionStorage.clear();
     const api = mockApi("try-it");
@@ -243,6 +266,15 @@ describe("any other email", () => {
     fireEvent.click(screen.getByRole("button", { name: text.cancel }));
     fireEvent.click(screen.getByRole("button", { name: text.emailChange }));
     expect(screen.queryByText(text.emailTypeFirst)).toBeNull();
+  });
+
+  it("says it is already their email when no link was sent", async () => {
+    const { api } = await open();
+    api.changeEmail = () => Promise.resolve({ pending: null });
+    fireEvent.input(screen.getByLabelText(text.emailNewLabel), { target: { value: "dm@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: text.emailSend }));
+    expect(await screen.findByText(text.emailAlready)).toBeTruthy();
+    expect(screen.queryByText(text.emailSaved)).toBeNull();
   });
 
   it("says the mail could not be sent, and leaves nothing waiting", async () => {

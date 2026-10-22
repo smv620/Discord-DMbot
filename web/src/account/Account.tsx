@@ -1429,6 +1429,8 @@ function EmailSection({ hash }: { hash: string }) {
   const [editing, setEditing] = useState(false);
   const [address, setAddress] = useState("");
   const [sent, setSent] = useState(false);
+  // The API answered with nothing waiting: the address is the one already in use, so no link was sent.
+  const [nothingSent, setNothingSent] = useState(false);
   const [typeFirst, setTypeFirst] = useState(false);
   const [portalOff, setPortalOff] = useState(false);
   const box = useRef<HTMLInputElement>(null);
@@ -1468,9 +1470,11 @@ function EmailSection({ hash }: { hash: string }) {
             worked = true;
           },
           (error) => {
-            if (error.kind !== "bad-link") return null;
+            // Any answer from the API spends the code (a bad link, or an address another account took
+            // while it waited); only a connection that failed or a server fault keeps it to try again.
+            if (error.kind === "network" || error.kind === "server") return null;
             answered = true;
-            return text.emailConfirmBad;
+            return error.kind === "bad-link" ? text.emailConfirmBad : (text.errors[error.kind] ?? null);
           },
         );
         // The code goes only once the API has answered it; a network failure leaves it to try again.
@@ -1523,7 +1527,8 @@ function EmailSection({ hash }: { hash: string }) {
     setTypeFirst(false);
     void run(
       async () => {
-        await api.changeEmail?.(address.trim());
+        const answer = await api.changeEmail?.(address.trim());
+        setNothingSent(answer?.pending === null);
         setSent(true);
         setEditing(false);
         setAddress("");
@@ -1568,7 +1573,7 @@ function EmailSection({ hash }: { hash: string }) {
       )}
       {sent && !mine.pending && !editing && (
         <p class="ok" role="status">
-          {text.emailSaved}
+          {nothingSent ? text.emailAlready : text.emailSaved}
         </p>
       )}
       <Notice message={notice} />
