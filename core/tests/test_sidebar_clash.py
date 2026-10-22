@@ -201,7 +201,7 @@ class MoreEngine(unittest.IsolatedAsyncioTestCase):
         async def names(c: Any) -> None:
             return None
 
-        built = Sidebar(ai, INDEX, gate=gate, houses=houses, names=names, settled=settled)  # type: ignore[arg-type]
+        built = Sidebar(ai, INDEX, gate=gate, houses=houses, names=names, settled=settled)
         await built.answer(campaign(), ASK, asker_id=7)
         self.assertNotIn(POTION_B, ai.prompts[0])
         both = await engine(
@@ -316,10 +316,10 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
             text=rule_clash.question_text(*sides),  # type: ignore[misc]
             in_game=False,
         )
-        self.clash.clash = sides  # type: ignore[attr-defined]
+        self.clash.clash = sides
         self.answerer = FakeAnswerer(self.clash)
-        self.sidebar = SidebarService(self.host)  # type: ignore[arg-type]
-        self.sidebar.answerer = self.answerer  # type: ignore[assignment]
+        self.sidebar = SidebarService(self.host)
+        self.sidebar.answerer = self.answerer
         self.now = [1000.0]
         self.sidebar._clock = lambda: self.now[0]
 
@@ -343,6 +343,7 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         reply = AsyncMock(return_value=True)
         await self.sidebar._ask(self.table, DM, "can I drink a potion?", reply, via="typed")
+        assert reply.await_args is not None
         text, view = reply.await_args.args
         self.assertIn("Which one applies?", text)
         self.assertEqual(len(view.children), 2)
@@ -353,7 +354,7 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_players_table_question_tells_the_dm_which_two_and_nothing_else(self) -> None:
         public = FakeAnswer(text="That's one for your DM.", one_for_dm=True)
-        public.clash = self.clash.clash  # type: ignore[attr-defined]
+        public.clash = self.clash.clash
         self.answerer.answer_to_give = public
         self.sidebar.ask_in_chat(self.table, PLAYER, "can I drink a potion as a bonus action?")
         await self.settle()
