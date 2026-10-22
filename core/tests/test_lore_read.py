@@ -123,7 +123,8 @@ class TheExamples(unittest.TestCase):
 class ThePlainList(unittest.TestCase):
     def test_headings_in_any_dress_and_chatter_are_handled(self) -> None:
         found = lr.parse_plain(
-            'Sure! Here you go:\n**NAMES**\n- A | person\n\n## relationships:\n- A — x — B | quote: "q"\nNot Included\n- r'
+            "Sure! Here you go:\n**NAMES**\n- A | person\n\n## relationships:\n"
+            '- A — x — B | quote: "q"\nNot Included\n- r'
         )
         self.assertEqual(
             (found.names, found.links, found.left_out),
