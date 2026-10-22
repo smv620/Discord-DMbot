@@ -16,7 +16,7 @@ import httpx
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import NewName
 from dmbot.memory.store import MemoryStore
-from dmbot.web import all_names, sessions
+from dmbot.web import all_names, names, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
@@ -361,6 +361,91 @@ class TheSpeed(Listing):
         got = {n["name"]: n for n in (await self.page())["names"]}
         self.assertTrue(got["Veil"]["secret"])
         self.assertFalse(got["Mira Voss"]["secret"])  # a secret *other* name is not the entry's own
+
+
+class TheSaying(Listing):
+    """How to say a name (#2317): a DM's rows carry the id of the entry's main name and how it is
+    said; nobody else's do."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bob = await self.signed(BOB, THURSDAY)
+        self.zeth = await self.add("Ka'zeth", "npc")
+        await self.alias(self.zeth, "Ka'zeth")  # the entry's own name, as the narrator reads it
+        await self.alias(self.zeth, "the Pale King")
+
+    async def rows(self, who: Any = None) -> dict[str, dict[str, Any]]:
+        got = await self.page(who)
+        return {n["name"]: n for n in got["names"]}
+
+    async def test_a_dm_gets_the_main_names_id_and_no_spelling_yet(self) -> None:
+        row = (await self.rows())["Ka'zeth"]
+        self.assertRegex(row["aliasId"], r"^[0-9a-f]{32}$")
+        self.assertIsNone(row["saidAs"])
+
+    async def test_the_id_is_the_one_the_said_as_door_takes_and_the_spelling_comes_back(
+        self,
+    ) -> None:
+        row = (await self.rows())["Ka'zeth"]
+        await names.set_said_as(self.web, self.session, self.cref, row["aliasId"], "Kah-zeth")
+        self.assertEqual((await self.rows())["Ka'zeth"]["saidAs"], "Kah-zeth")
+
+    async def test_the_id_is_the_main_name_not_another_name_of_the_entry(self) -> None:
+        row = (await self.rows())["Ka'zeth"]
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT text FROM memory_aliases WHERE guild_id = %s AND id = %s",
+                (self.g, row["aliasId"]),
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertEqual(found["text"], "Ka'zeth")
+
+    async def test_an_entry_with_no_main_name_has_neither_key(self) -> None:
+        row = (await self.rows())["Dawnbreaker"]  # added without an alias of its own name
+        self.assertNotIn("aliasId", row)
+        self.assertNotIn("saidAs", row)
+
+    async def test_a_secret_main_name_has_neither_key(self) -> None:
+        vecnor = await self.add("Vecnor", "npc")
+        await self.alias(vecnor, "Vecnor", secret=True)
+        await self.sql("UPDATE memory_aliases SET said_as = NULL WHERE entity_id = %s", vecnor)
+        row = (await self.rows())["Vecnor"]
+        self.assertNotIn("aliasId", row)
+        self.assertNotIn("saidAs", row)
+
+    async def test_a_manager_who_is_not_a_dm_learns_no_spelling_or_id(self) -> None:
+        row = (await self.rows())["Ka'zeth"]
+        await names.set_said_as(self.web, self.session, self.cref, row["aliasId"], "Kah-zeth")
+        theirs = (await self.rows(self.bob))["Ka'zeth"]
+        self.assertNotIn("aliasId", theirs)
+        self.assertNotIn("saidAs", theirs)
+
+    async def test_the_door_answers_nothing_without_the_server_set_for_the_transaction(
+        self,
+    ) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_web_all_names_said(%s, %s, %s) AS r",
+                (self.g, self.one.id, [self.zeth]),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["r"])
+
+    async def test_the_door_keeps_its_pinned_search_path_and_no_public_execute(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT proconfig::text AS cfg, prosecdef,"
+                " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
+                " FROM pg_proc WHERE proname = 'dmbot_web_all_names_said'"
+            )
+            rows = await cur.fetchall()
+        self.assertGreaterEqual(len(rows), 1)
+        for row in rows:
+            self.assertIn("search_path", row["cfg"] or "")
+            self.assertTrue(row["prosecdef"])
+            self.assertFalse(row["public_may"])
 
 
 class TheDoorSettings(Listing):

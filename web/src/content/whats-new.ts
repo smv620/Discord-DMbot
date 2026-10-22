@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Say a name your way on the Names page",
+    what: "On the website's Names page, open a name with its Change button and a new box says how DMbot's narrator says it. 💡 Suggest fills it in, 🎤 Say it turns your voice into letters, and 🔊 Hear it reads it out. Nothing is saved until you press Save.",
+    reason: "In review (#2317); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "A page for each campaign",
     what: "On My Campaigns, tap a campaign's name to open its own page. It has links to its recaps, house rules, homebrew, story map, names and transcripts, all in one place. Players see only the pages for the whole table.",
     reason: "In review (#2416); held until the API sends each campaign's address and dev1 deploys it.",
