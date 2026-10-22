@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps, { refFromPath } from "../src/account/Recaps";
+import { approveWords } from "../src/content/recap-approve";
 import { text } from "../src/content/recaps";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 
@@ -95,18 +96,21 @@ describe("the review page", () => {
     expect((await screen.findByRole("alert")).textContent).toMatch(/too long/);
   });
 
-  it("has exactly the three decisions, and Post only asks the bot", async () => {
+  it("has the three ways to approve and Try again, and Post only asks the bot (#2419)", async () => {
     const api = renderPage(reviewPath);
     await screen.findByText(text.onlyYou);
-    expect(screen.getByRole("button", { name: text.post })).toBeTruthy();
+    expect(screen.getByRole("button", { name: approveWords.postText })).toBeTruthy();
+    expect(screen.getByRole("button", { name: approveWords.makeAudio })).toBeTruthy();
+    expect(screen.getByRole("button", { name: approveWords.keepIt })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Try again (2 left)" }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: text.drop })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: text.post }));
+    // "Don't post" is gone: a recap the DM doesn't approve simply stays a draft.
+    expect(screen.queryByRole("button", { name: /Don't post/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: approveWords.postText }));
     expect(await screen.findByText(text.posting)).toBeTruthy();
-    expect(api.calls).toContain(`postRecap:${ready.ref}`);
-    expect(screen.queryByRole("button", { name: text.post })).toBeNull();
+    expect(api.calls).toContain(`approveRecap:${ready.ref}:text:post`);
+    expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
   });
 
   it("counts down Try again and greys it at none", async () => {
@@ -132,10 +136,20 @@ describe("the review page", () => {
     }
   });
 
-  it("keeps the recap and says so after Don't post", async () => {
-    renderPage(reviewPath);
-    fireEvent.click(await screen.findByRole("button", { name: text.drop }));
+  it("still shows sensibly an older recap that was set aside with Don't post", async () => {
+    const api = mockApi("table");
+    api.recap = async () => ({
+      ...ready,
+      status: "dropped" as const,
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+      approval: { approved: false, choice: "", approvedAt: null, canApprove: false },
+    });
+    renderPage(reviewPath, api);
     expect(await screen.findByText(text.dropped)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
     expect(screen.queryByRole("button", { name: text.post })).toBeNull();
   });
 
@@ -164,11 +178,11 @@ describe("the review page", () => {
 describe("the page keeps up with the bot", () => {
   it("sends one request when Post is tapped twice quickly", async () => {
     const api = renderPage(reviewPath);
-    const post = await screen.findByRole("button", { name: text.post });
+    const post = await screen.findByRole("button", { name: approveWords.postText });
     fireEvent.click(post);
     fireEvent.click(post);
     await screen.findByText(text.posting);
-    expect(api.calls.filter((c) => c.startsWith("postRecap"))).toHaveLength(1);
+    expect(api.calls.filter((c) => c.startsWith("approveRecap"))).toHaveLength(1);
   });
 
   it("reads the recap again after a refusal, so the buttons match the truth", async () => {
@@ -183,13 +197,13 @@ describe("the page keeps up with the bot", () => {
     };
     let reads = 0;
     api.recap = async () => (reads++ === 0 ? ready : fresh);
-    api.decideRecap = async () => {
+    api.approveRecap = async () => {
       throw new ApiError("not-allowed");
     };
     renderPage(reviewPath, api);
-    fireEvent.click(await screen.findByRole("button", { name: text.post }));
+    fireEvent.click(await screen.findByRole("button", { name: approveWords.postText }));
     expect(await screen.findByText(text.posted)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: text.post })).toBeNull();
+    expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
   });
 
   it("looks again while the recap is being posted, until it is posted", async () => {

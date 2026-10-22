@@ -552,8 +552,8 @@ class TheRoutes(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(recaps_on=True, recap_audio_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
@@ -1075,8 +1075,8 @@ class TheApproval(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
-            clock=lambda: NOW,
+            settings(recaps_on=True, recap_audio_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
@@ -1179,6 +1179,81 @@ class TheApproval(Base):
         await decide(self.web, self.session, self.ref, "drop")
         got = await self.approve("both")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+
+    async def test_approve_and_post_hands_it_to_the_bot_in_one_call(self) -> None:
+        """(#2419) ✅ Approve and post text only: approved with the text-only choice and posting."""
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": True}
+        )
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual((body["status"], body["approval"]["choice"]), ("posting", "text"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("posting", True))
+
+    async def test_approve_and_post_is_only_for_the_text_only_choice(self) -> None:
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "both", "post": True}
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_choice"))
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": "yes"}
+        )
+        self.assertEqual(got.status_code, 422)
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("draft", False))  # nothing half done
+
+    async def test_approve_and_post_that_cannot_post_approves_nothing(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:  # decided in Discord meanwhile
+            await conn.execute("UPDATE recap_jobs SET status = 'posted'")
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": True}
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("posted", False))  # no approval was recorded
+
+    async def test_audio_is_refused_by_the_route_where_recaps_are_off(self) -> None:
+        """With recaps off the route refuses audio (409) and still approves text."""
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        ) as off:
+            off.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            url = f"/me/recaps/{self.ref}/approve"
+            got = await off.post(url, json={"choice": "both"})
+            self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_unavailable"))
+            self.assertEqual((await off.post(url, json={"choice": "text"})).status_code, 200)
+
+    async def test_approving_without_posting_leaves_a_draft_that_can_be_posted_later(self) -> None:
+        """(#2419) 📋 Approve but don't post: approved, nothing sent; Post to the table later."""
+        got = await self.approve("text")
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual((body["status"], body["approval"]["approved"]), ("draft", True))
+        self.assertTrue(body["canPost"])
+        later = await decide(self.web, self.session, self.ref, "post")
+        self.assertEqual(later["status"], "posting")
+
+    async def test_audio_is_refused_where_nothing_here_makes_it(self) -> None:
+        from dmbot.web.recaps import approve_recap
+
+        for why in ("not_set_up", "allowance"):
+            with self.subTest(why), self.assertRaises(RecapError) as no:
+                await approve_recap(
+                    self.web, self.session, self.ref, "both",
+                    audio_in_plan=True, audio_unavailable=why,
+                )  # fmt: skip
+            self.assertEqual(no.exception.code, "audio_unavailable")
+        got = await approve_recap(  # text only is never held back by it
+            self.web, self.session, self.ref, "text",
+            audio_in_plan=True, audio_unavailable="not_set_up",
+        )  # fmt: skip
+        self.assertEqual(got["approval"]["choice"], "text")
 
     async def test_audio_already_under_way_is_not_started_over(self) -> None:
         self.assertEqual((await self.approve("both")).status_code, 200)
