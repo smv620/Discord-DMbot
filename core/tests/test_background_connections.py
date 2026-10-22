@@ -13,10 +13,18 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.ai import Reply
 from dmbot.memory import background as bg
-from dmbot.memory.models import CONFIRMED, MemoryRuleError
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
+from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName
+from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
+from dmbot.ui import names as names_ui
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
+
+
+def shown(press: Any) -> str:
+    return str(press.edit_original_response.await_args.kwargs["content"])
+
 
 TEXT = (
     "Mirelle the Pale serves the Order of the Grey Hand. Brannoch is the brother of Mirelle, "
@@ -128,7 +136,7 @@ class TheChecks(unittest.TestCase):
         self.assertEqual((secret.a, secret.secret, public.secret), ("Belleros", True, False))
 
     def test_the_names_come_before_the_connections_in_the_answer(self) -> None:
-        self.assertEqual(list(bg.SCHEMA["properties"]), ["names", "connections"])  # type: ignore[call-overload]
+        self.assertEqual(list(bg.SCHEMA["properties"]), ["names", "connections"])
 
     def test_the_list_is_capped(self) -> None:
         found = bg.read_answer(reply(), TEXT)
@@ -138,6 +146,46 @@ class TheChecks(unittest.TestCase):
     def test_the_schema_and_instructions_ask_for_connections(self) -> None:
         self.assertEqual(bg.SCHEMA["required"], ["names", "connections"])  # names come first
         self.assertIn("Only connections the text states", bg.instructions())
+
+    def test_knows_and_the_campaigns_own_kinds_are_read(self) -> None:
+        text = "Mirelle knows Brannoch. Mirelle teaches Oakmere."
+        raw = json.dumps(
+            {
+                "connections": [
+                    link("Mirelle", "knows", "Brannoch", "Mirelle knows Brannoch"),
+                    link("Mirelle", "mentor_of", "Oakmere", "Mirelle teaches Oakmere"),
+                    link("Mirelle", "mentor_of", "Brannoch", "Mirelle knows Brannoch"),
+                ]
+            }
+        )
+        plain = bg.read_connections(raw, text)
+        self.assertEqual([c.how for c in plain], ["knows"])  # their own kind is unknown
+        got = bg.read_connections(raw, text, {"mentor_of"})
+        self.assertEqual(sorted(c.how for c in got), ["knows", "mentor_of", "mentor_of"])
+        self.assertIn("mentor_of", json.dumps(bg.schema({"mentor_of": "is a mentor of"})))
+        self.assertNotIn("mentor_of", json.dumps(bg.SCHEMA))
+        self.assertIn('"mentor_of"', bg.instructions({"mentor_of": "is a mentor of"}))
+        self.assertIn("knows", bg.instructions())
+
+    def test_a_pair_the_campaign_has_is_left_out_before_the_cap(self) -> None:
+        found = bg.read_answer(reply(), TEXT)
+        links = bg.read_connections(reply(), TEXT)
+        have = {("Brannoch", "kin_of", "Mirelle")}
+        kept = bg.keep_connections(
+            [links], found, {}, cap=2, skip=lambda c: (c.a, c.how, c.b) in have
+        )
+        self.assertEqual([(c.a, c.b) for c in kept], [("Mirelle", "Order of the Grey Hand"),
+                                                       ("Vale Keep", "Oakmere")])  # fmt: skip
+
+    def test_a_pronoun_is_never_an_end(self) -> None:
+        found = [bg.Found("Mirelle", "npc", (), (), "")]
+        links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
+        self.assertEqual(bg.keep_connections([links], found, {}), [])
+
+    def test_the_room_follows_the_piece(self) -> None:
+        self.assertEqual(bg.room_for("x" * 10), bg.ROOM_MIN)
+        self.assertGreater(bg.room_for("x" * 30_000), bg.room_for("x" * 14_000))
+        self.assertEqual(bg.room_for("x" * 100_000), bg.ROOM_MAX)
 
 
 class ThePath(NamesTest):
@@ -149,6 +197,8 @@ class ThePath(NamesTest):
         self.bot.background_ai = self.ai  # type: ignore[assignment]
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.bot.campaigns.record_confirmation = AsyncMock()  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
 
     async def asyncTearDown(self) -> None:
         _ai_busy.clear()
@@ -162,12 +212,24 @@ class ThePath(NamesTest):
         await it.response.sent[0][1]["view"]._read(press)
         return press
 
-    def offered(self, press: Any) -> Any:
-        sent = press.followup.send.await_args
-        return sent.kwargs["view"] if sent is not None else None
+    async def offer(self, user: int = DM) -> tuple[Any, Any]:
+        """The connections offered now (a new view each time, as after a restart)."""
+        it = self.it(user)
+        asked = await ui_bg.offer_ready(it, self.campaign.id)
+        sent = it.followup.send.await_args
+        return it, (sent.kwargs["view"] if asked and sent is not None else None)
 
     async def relations(self) -> list[Any]:
         return await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+
+    async def waiting(self) -> list[Any]:
+        return await self.store.waiting(GUILD, self.campaign.id)
+
+    async def ids(self) -> dict[str, str]:
+        every = await self.memory.entities(
+            GUILD, self.campaign.id, statuses=["proposed", "confirmed"]
+        )
+        return {e.name: e.id for e in every}
 
     async def confirm_all(self) -> None:
         waiting = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
@@ -175,102 +237,213 @@ class ThePath(NamesTest):
             ids = [e.id for e in waiting if e.type == kind]
             await self.memory.confirm_kinds(GUILD, self.campaign.id, ids, kind, source="dm")
 
-    async def test_the_connections_are_offered_and_nothing_is_stored_yet(self) -> None:
-        press = await self.read()
-        view = self.offered(press)
-        self.assertIsNotNone(view)
-        self.assertEqual(len(view.links), 3)
-        self.assertEqual(await self.relations(), [])
-        self.assertIn("Mirelle", view.text())
-        self.assertIn("> Mirelle the Pale serves", view.text())
+    def button(self, view: Any, label: str) -> Any:
+        return next(b for b in view.children if b.label == label)
 
-    async def test_keep_stores_the_dms_word_once_both_names_are_answered(self) -> None:
-        view = self.offered(await self.read())
+    # ---- what is stored, and when it is asked -------------------------------------------------
+
+    async def test_the_connections_wait_in_the_campaign_and_nothing_is_a_fact_yet(self) -> None:
+        press = await self.read()
+        self.assertEqual(len(await self.waiting()), 3)
+        self.assertEqual(await self.relations(), [])
+        summary = press.edit_original_response.await_args.kwargs
+        self.assertIn("3 connections between names wait", summary["content"])
+        labels = [getattr(b, "label", "") for b in summary["view"].children]
+        self.assertIn("📜 Check the connections", labels)
+
+    async def test_they_are_not_asked_while_a_name_is_still_waiting(self) -> None:
+        await self.read()
+        _, view = await self.offer()
+        self.assertIsNone(view)
+        self.assertEqual(len(await self.waiting()), 3)  # still there for later
+
+    async def test_the_connections_button_before_the_names_says_to_answer_them_first(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        it = self.it()
+        await self.button(view, "📜 Check the connections").callback(it)
+        self.assertIn("Answer its names first", it.followup.send.await_args.args[0])
+
+    async def test_add_all_offers_the_connections_whose_names_it_answered(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        pressed = []
+        for label in [b.label for b in view.children if str(b.label).startswith("✅ Add all")]:
+            it = self.it()
+            await self.button(view, label).callback(it)
+            pressed.append(it)
+        said = [
+            str(c.args[0]) if c.args else ""
+            for it in pressed
+            for c in it.followup.send.await_args_list
+        ]
+        self.assertTrue(any("Connection check" in text for text in said), said)
+
+    async def test_the_end_of_check_new_names_offers_them(self) -> None:
+        await self.read()
         await self.confirm_all()
-        keep = next(b for b in view.children if b.label == "✅ Keep")
-        await keep.callback(self.it())
+        it = self.it()
+        await names_ui.SuggestionReview(self.campaign.id, [])._finish(it, None)
+        offered = it.followup.send.await_args
+        self.assertIsNotNone(offered)
+        self.assertIn(
+            "Connection check",
+            offered.args[0] if offered.args else offered.kwargs.get("content", ""),
+        )
+
+    # ---- the card and the presses -----------------------------------------------------------
+
+    async def test_keep_stores_the_dms_word_and_the_row_goes(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        self.assertIn("Found in:", view.text())
+        self.assertIn("(3 left)", view.text())
+        await self.button(view, "✅ Keep").callback(self.it())
         (rel,) = await self.relations()
-        self.assertEqual((rel.predicate, rel.status, rel.secret), ("serves", CONFIRMED, False))
-        self.assertEqual(len(view.links), 2)
+        self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
+        self.assertEqual(len(await self.waiting()), 2)
 
     async def test_keep_as_secret_stores_a_secret_connection(self) -> None:
-        view = self.offered(await self.read())
+        await self.read()
         await self.confirm_all()
-        secret = next(b for b in view.children if b.label == "🤫 Keep as secret")
-        it = self.it()
-        await secret.callback(it)
+        _, view = await self.offer()
+        await self.button(view, "🤫 Keep as secret").callback(self.it())
         (rel,) = await self.relations()
         self.assertTrue(rel.secret)
-        # Players never see it: the public read leaves it out.
-        self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])  # not public
 
-    async def test_a_name_still_waiting_blocks_keep_and_the_connection_stays(self) -> None:
-        view = self.offered(await self.read())
-        keep = next(b for b in view.children if b.label == "✅ Keep")
-        it = self.it()
-        await keep.callback(it)
-        self.assertEqual(await self.relations(), [])
-        self.assertEqual(len(view.links), 3)
-        self.assertIn("isn't added yet", it.followup.send.await_args.args[0])
-
-    async def test_no_drops_it_and_skip_ends_it_without_storing(self) -> None:
-        view = self.offered(await self.read())
-        await next(b for b in view.children if b.label == "❌ No").callback(self.it())
-        self.assertEqual(len(view.links), 2)
-        await next(b for b in view.children if b.label == "⏭️ Skip remaining").callback(self.it())
-        self.assertEqual(view.links, [])
-        self.assertEqual(await self.relations(), [])
-
-    async def test_only_a_dm_may_answer(self) -> None:
-        view = self.offered(await self.read())
+    async def test_they_survive_a_rebuilt_view_and_a_closed_message(self) -> None:
+        await self.read()
         await self.confirm_all()
-        await next(b for b in view.children if b.label == "✅ Keep").callback(self.it(MANAGER))
-        self.assertEqual(await self.relations(), [])
-        self.assertEqual(len(view.links), 3)
+        _, first = await self.offer()
+        await self.button(first, "❌ No").callback(self.it())
+        _, again = await self.offer()  # as after a restart: a new view reads the store
+        self.assertIn("(2 left)", again.text())
 
-    async def test_the_card_counts_what_is_left_and_the_end_says_what_was_left_out(
-        self,
-    ) -> None:
-        view = self.offered(await self.read())
-        self.assertIn("(3 left)", view.text())
-        await next(b for b in view.children if b.label == "❌ No").callback(self.it())
-        self.assertIn("(2 left)", view.text())
-        await next(b for b in view.children if b.label == "⏭️ Skip remaining").callback(self.it())
+    async def test_no_drops_it_and_skip_the_rest_drops_what_is_ready(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        await self.button(view, "❌ No").callback(self.it())
+        await self.button(view, "⏭️ Skip the rest").callback(self.it())
         self.assertEqual(view.text(), "📜 Done. Kept 0 connections. Left out 3.")
+        self.assertEqual(await self.waiting(), [])
+        self.assertEqual(await self.relations(), [])
 
-    async def test_a_refused_connection_says_what_to_do_not_why(self) -> None:
-        view = self.offered(await self.read())
+    async def test_only_a_dm_may_answer_on_every_button(self) -> None:
+        await self.read()
         await self.confirm_all()
+        _, view = await self.offer()
+        for label in ("✅ Keep", "🤫 Keep as secret", "❌ No", "⏭️ Skip the rest"):
+            await self.button(view, label).callback(self.it(MANAGER))
+        self.assertEqual(len(await self.waiting()), 3)
+        self.assertEqual(await self.relations(), [])
+
+    async def test_a_refused_name_takes_its_connections_away_quietly(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        ids = await self.ids()
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, ids["Oakmere"], REJECTED, source="dm"
+        )
+        left = await self.waiting()
+        self.assertEqual(len(left), 2)
+        self.assertNotIn("Oakmere", [w.object for w in left] + [w.subject for w in left])
+        _, again = await self.offer()
+        self.assertIn("(2 left)", again.text())  # nothing was said about the refused one
+        _ = view
+
+    async def test_a_refused_first_name_takes_its_connections_away_too(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, ids["Vale Keep"], REJECTED, source="dm"
+        )
+        names = {n for w in await self.waiting() for n in (w.subject, w.object)}
+        self.assertNotIn("Vale Keep", names)
+
+    async def test_a_merged_name_carries_its_connections_to_the_one_that_stayed(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Mira", "npc", CONFIRMED)], source="dm"
+        )
+        keep_id = made.value[0]
+        assert keep_id
+        await self.memory.merge(GUILD, self.campaign.id, keep_id, ids["Mirelle"], source="dm",
+                                dm_said_same=True)  # fmt: skip
+        await self.waiting()  # the clean-up moves the rows
+        left = await self.waiting()  # ...and the move is kept: read again
+        subjects = {w.subject for w in left} | {w.object for w in left}
+        self.assertIn("Mira", subjects)
+        self.assertNotIn("Mirelle", subjects)
+
+    async def test_a_connection_the_campaign_already_has_is_not_asked(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Mirelle"], "serves", ids["Order of the Grey Hand"],
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        self.assertEqual(len(await self.waiting()), 2)
+
+    async def test_a_refusal_says_what_to_do_not_why(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
         it = self.it()
         with patch.object(self.memory, "add_relation", side_effect=MemoryRuleError("raw words")):
-            await next(b for b in view.children if b.label == "✅ Keep").callback(it)
+            await self.button(view, "✅ Keep").callback(it)
         said = it.followup.send.await_args.args[0]
         self.assertNotIn("raw words", said)
         self.assertIn("❌ No", said)
+        self.assertEqual(len(await self.waiting()), 3)
 
     async def test_plain_keep_is_off_for_a_connection_that_uses_a_secret_name(self) -> None:
-        view = ui_bg.ConnectionOffer(
-            self.campaign.id, [bg.Connection("Belleros", "located_in", "Waterdeep", "q", True)]
-        )
+        view = ui_bg.ConnectionOffer(self.campaign.id)
+        view._set([Waiting("a", "knows", "b", "q", True, "Belleros", "Waterdeep", True)])
         self.assertTrue(view.keep.disabled)
         self.assertIn("only be kept as secret", view.text())
-        it = self.it()
-        with patch.object(self.memory, "lookup_data", wraps=self.memory.lookup_data) as looked:
-            await view.keep.callback(it)  # even if it is pressed, it is not even tried
-        looked.assert_not_called()
-        self.assertEqual(await self.relations(), [])
-        self.assertEqual(len(view.links), 1)
 
-    async def test_a_name_still_waiting_is_named_in_the_message(self) -> None:
-        view = self.offered(await self.read())
-        it = self.it()
-        await next(b for b in view.children if b.label == "✅ Keep").callback(it)
-        self.assertIn("Mirelle", it.followup.send.await_args.args[0])
+    # ---- the reading --------------------------------------------------------------------------
 
-    async def test_no_connections_means_no_second_message(self) -> None:
-        self.ai.complete.return_value = Reply(reply([]), False)
+    async def test_a_cut_answer_is_asked_again_with_twice_the_room(self) -> None:
+        self.ai.complete.side_effect = [Reply(reply(), True), Reply(reply(), False)]
         press = await self.read()
-        self.assertIsNone(self.offered(press))
+        first, second = (c.kwargs["max_tokens"] for c in self.ai.complete.await_args_list)
+        self.assertEqual(second, 2 * first)
+        self.assertNotIn("missed some names", shown(press))
+
+    async def test_an_answer_cut_twice_tells_the_dm_it_may_be_missing_some(self) -> None:
+        self.ai.complete.side_effect = [Reply(reply(), True), Reply(reply(), True)]
+        press = await self.read()
+        self.assertIn("missed some names", shown(press))
+
+    async def test_the_retry_budget_stops_more_than_four_retries_in_one_reading(self) -> None:
+        spent = [ui_bg.RETRIES_PER_READING]
+        ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply(), True)))
+        done = await ui_bg.read_piece(ai, TEXT, {}, spent)
+        self.assertEqual(ai.complete.await_count, 1)  # no budget: not asked again
+        self.assertTrue(done.cut)
+
+    async def test_the_campaigns_own_kind_is_offered_to_the_ai_and_kept(self) -> None:
+        term = PredicateTerm(
+            "mentor_of", "is a mentor of", "One teaches the other.", ("character",), ("character",),
+            core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD, self.campaign.id, term, examples=["Mira is a mentor of Cerric."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        await self.read()
+        sent = self.ai.complete.await_args
+        self.assertIn("mentor_of", sent.args[0])
+        self.assertIn("mentor_of", json.dumps(sent.kwargs["schema"]))
 
     async def test_the_log_has_counts_only(self) -> None:
         with self.assertLogs("dmbot.ui.name_background", "INFO") as logs:
@@ -278,4 +451,57 @@ class ThePath(NamesTest):
         joined = "\n".join(logs.output)
         self.assertIn("3 connections", joined)
         self.assertNotIn("Mirelle", joined)
-        _ = DM
+        self.assertNotIn("Found in", joined)
+
+    async def test_nothing_is_queued_without_the_store_or_without_connections(self) -> None:
+        self.ai.complete.return_value = Reply(reply([]), False)
+        await self.read()
+        self.assertEqual(await self.waiting(), [])
+
+
+class TheStore(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = BackstoryLinks(self.db)
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Mirelle", "npc", CONFIRMED), NewName("Oakmere", "place", CONFIRMED),
+             NewName("Brannoch", "npc", "proposed")],
+            source="dm",
+        )  # fmt: skip
+        mirelle, oakmere, brannoch = made.value
+        assert mirelle and oakmere and brannoch
+        self.mirelle, self.oakmere, self.brannoch = mirelle, oakmere, brannoch
+
+    async def test_a_pair_is_kept_once_and_only_so_many_wait(self) -> None:
+        link_ = NewLink(self.mirelle, "knows", self.oakmere, "q")
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_, link_]), 1)
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [link_]), 0)
+
+    async def test_one_with_a_waiting_name_is_not_ready_and_stays(self) -> None:
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.brannoch, "q")]
+        )
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertFalse(w.ready)
+
+    async def test_it_goes_with_its_campaign_and_is_isolated_per_server(self) -> None:
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, "q")]
+        )
+        self.assertEqual(await self.store.waiting(GUILD + 1, self.campaign.id), [])
+
+    async def test_waiting_cleans_up_in_a_timely_way_on_a_big_campaign(self) -> None:
+        import time
+
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, "q")]
+        )
+        start = time.monotonic()
+        for _ in range(20):
+            await self.store.waiting(GUILD, self.campaign.id)
+        self.assertLess(time.monotonic() - start, 5)
+
+
+def _unused() -> None:
+    _ = (DM,)

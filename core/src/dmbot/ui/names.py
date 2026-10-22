@@ -1182,6 +1182,9 @@ class SuggestionReview(_Menu):
         else:
             done = "✅ All checked. DMbot will listen for the names you said yes to."
         await _replace(interaction, f"{note}\n\n{done}" if note else done, None)
+        from dmbot.ui.name_background import offer_ready  # (it imports this module)
+
+        await offer_ready(interaction, self.campaign_id)  # a backstory's connections, if ready
 
     async def _saved(
         self,

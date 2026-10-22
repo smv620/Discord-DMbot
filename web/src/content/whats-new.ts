@@ -237,8 +237,8 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
-    title: "Your story's connections, not just its names",
-    what: "When you give DMbot your campaign's background, it also suggests the connections the text says between names, such as who is family or who works for whom. You keep each one, keep it secret from the players, or say no.",
+    title: "Upload your campaign's backstory from the main menu",
+    what: "Upload your campaign's backstory from the main menu: DMbot suggests its names and how they're connected, and you keep what's right.",
     reason: "In review (#2380); held until dev1 deploys it.",
   },
   {

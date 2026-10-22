@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import chunks, request_text
@@ -61,43 +62,52 @@ CONNECTIONS = {
     "enemy": "enemy_of",
     "owns": "owns",
     "works for": "serves",
+    "knows": "knows",
 }
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "names": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "kind": {"type": "string", "enum": list(KINDS)},
-                    "also": {"type": "array", "items": {"type": "string"}},
-                    "secret": {"type": "array", "items": {"type": "string"}},
-                    "quote": {"type": "string"},
+MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
+
+
+def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The answer's shape; the campaign's own relationships are allowed kinds too."""
+    return {
+        "type": "object",
+        "properties": {
+            "names": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "kind": {"type": "string", "enum": list(KINDS)},
+                        "also": {"type": "array", "items": {"type": "string"}},
+                        "secret": {"type": "array", "items": {"type": "string"}},
+                        "quote": {"type": "string"},
+                    },
+                    "required": ["name", "kind", "also", "secret", "quote"],
+                    "additionalProperties": False,
                 },
-                "required": ["name", "kind", "also", "secret", "quote"],
-                "additionalProperties": False,
+            },
+            "connections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "string"},
+                        "how": {"type": "string", "enum": [*CONNECTIONS, *(own or {})]},
+                        "b": {"type": "string"},
+                        "quote": {"type": "string"},
+                    },
+                    "required": ["a", "how", "b", "quote"],
+                    "additionalProperties": False,
+                },
             },
         },
-        "connections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "string"},
-                    "how": {"type": "string", "enum": list(CONNECTIONS)},
-                    "b": {"type": "string"},
-                    "quote": {"type": "string"},
-                },
-                "required": ["a", "how", "b", "quote"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["names", "connections"],
-    "additionalProperties": False,
-}
+        "required": ["names", "connections"],
+        "additionalProperties": False,
+    }
+
+
+SCHEMA = schema()
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,9 +128,11 @@ class Connection:
     secret: bool = False  # an end was found through a secret spelling: it is kept as secret only
 
 
-def instructions() -> str:
+def instructions(own: Mapping[str, str] | None = None) -> str:
     """What the AI is asked to do. The background follows as data, never instructions."""
     kinds = ", ".join(KINDS)
+    words = [*CONNECTIONS, *(own or {})]
+    theirs = "".join(f'; a {how} (use "{key}")' for key, how in (own or {}).items())
     return (
         "You help a Dungeon Master list the names in their own campaign background. Read the "
         "text inside <document> tags and list every in-world proper noun a player might say at "
@@ -142,13 +154,24 @@ def instructions() -> str:
         "creature or people in general (elves, goblins). Each name once.\n\n"
         "Then list the connections the text says plainly between two of those names. For each:\n"
         "- a and b: the two names as written in the text, never the same one twice.\n"
-        f'- how: exactly one of {", ".join(CONNECTIONS)}. It reads "a <how> b": a is family '
+        f'- how: exactly one of {", ".join(words)}. It reads "a <how> b": a is family '
         "of b; a is a member of b; a is in b (a place or thing located in a place, never a "
-        "person in a group); a is a friend of b; a is an enemy of b; a owns b; a works for b.\n"
+        "person in a group); a is a friend of b; a is an enemy of b; a owns b; "
+        f"a works for b; a knows b{theirs}.\n"
         f"- quote: one short quote copied exactly from the text that holds both names, at most "
         f"{QUOTE_WORDS} words.\n"
         "Only connections the text states. Never guess, never infer. Empty if there are none."
     )
+
+
+ROOM_MIN, ROOM_MAX = 2000, 8000  # the answer's room, in tokens, for one piece
+RETRY_MAX = 16_000  # a cut answer is asked for once more with twice the room, up to this
+
+
+def room_for(piece: str) -> int:
+    """The room an answer to this piece gets: names and connections are about one in every 6
+    characters of the text at most, so a long piece gets more room than a short one."""
+    return max(ROOM_MIN, min(ROOM_MAX, len(piece) // 6 + 1000))
 
 
 def pieces(text: str) -> list[str]:
@@ -416,7 +439,7 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
     return out
 
 
-def read_connections(reply: str, piece: str) -> list[Connection]:
+def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
     names are checked against the merged list later (`keep_connections`)."""
@@ -430,7 +453,8 @@ def read_connections(reply: str, piece: str) -> list[Connection]:
         if not isinstance(item, dict):
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
-        how = CONNECTIONS.get(str(item.get("how", "")).strip().lower())
+        word = str(item.get("how", "")).strip().lower()
+        how = CONNECTIONS.get(word) or (word if word in own else None)
         if how is None or not all(isinstance(x, str) for x in (a, b, quote)):
             continue
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
@@ -463,6 +487,7 @@ def keep_connections(
     known: Mapping[str, str],
     *,
     cap: int = MAX_CONNECTIONS,
+    skip: Callable[[Connection], bool] | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -496,6 +521,8 @@ def keep_connections(
             if (ka, c.how, kb) in seen:
                 continue
             seen.add((ka, c.how, kb))
+            if skip is not None and skip(Connection(a, c.how, b, c.quote)):
+                continue  # the campaign has it already, or an end is no name it has
             out.append(
                 Connection(a, c.how, b, c.quote, name_key(c.a) in hidden or name_key(c.b) in hidden)
             )

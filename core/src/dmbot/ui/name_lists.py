@@ -375,23 +375,10 @@ class AddMany(_Menu):
             await interaction.response.send_modal(UploadForm(self.campaign_id))
 
     async def _background(self, interaction: discord.Interaction) -> None:
-        from dmbot.ui.name_background import ONLY_DMS, BackgroundMenu, rights_text
+        from dmbot.ui.name_background import open_background
 
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None:
-            return
-        if interaction.user.id not in campaign.dm_user_ids:
-            await _tell(interaction, ONLY_DMS)
-            return
         self.origin = None
-        await _send(
-            interaction,
-            "📜 **Names from your story.** Give DMbot your campaign's background and it "
-            "suggests the names in it for you to check, and the connections between them "
-            "(who is family, who is in which group). It keeps only what you say yes to.\n"
-            f"{rights_text()}",
-            BackgroundMenu(self.campaign_id),
-        )
+        await open_background(interaction, self.campaign_id)
 
     async def _template(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)
