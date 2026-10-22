@@ -134,6 +134,25 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Your DM can start it again.", sent[11])
         self.assertNotIn("Stop when quiet", sent[11])
 
+    async def test_a_bot_in_the_voice_channel_gets_no_message(self) -> None:
+        """The real `_people_in_voice`, not a stand-in: a bot member is never told (#2288)."""
+        bot = fake_bot(people=[], minutes=10)
+        human = SimpleNamespace(id=11, bot=False)
+        other_bot = SimpleNamespace(id=99, bot=True)
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.members = [human, other_bot]
+        bot.get_channel = lambda _id: voice
+        bot._people_in_voice = DMBot._people_in_voice.__get__(bot)
+        self.table = bot.tables[GUILD]
+        self.assertEqual(bot._people_in_voice(self.table), [11])
+        await self.check(bot, 600)
+        await self.check(bot, 600 + WARN_S)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        told = {c.args[0] for c in bot._dm_user.await_args_list}
+        self.assertEqual(told, {DM, 11})
+        self.assertNotIn(99, told)
+
     async def test_a_closed_inbox_never_breaks_the_stop_or_the_other_messages(self) -> None:
         bot = fake_bot(people=[11, 12], minutes=10)
         bot._dm_user = AsyncMock(side_effect=[False, True, True])
