@@ -273,6 +273,33 @@ class Cards(base.NamesTest):
         shown = await self.page()
         self.assertIn("👁️ Show to players", self.labels(shown))
 
+    async def test_pin_and_unpin_use_what_the_page_showed(self) -> None:
+        await self.know("Kesh")
+        page = await self.page()
+        self.assertIn("📌 Pin as 100% truth", self.labels(page))
+        it = self.it()
+        await page._pin(it)
+        self.assertIn("Pinned as 100% truth", it.response.edited[0][0])
+        (relation,) = await self.relations()
+        self.assertEqual(
+            await self.memory.pinned_connections(GUILD, self.campaign.id), {relation.id}
+        )
+        again = self.it()
+        await page._pin(again)  # the stale page still says "Pin": a double press changes nothing
+        self.assertIn(
+            "already like that", str(again.response.sent or again.followup.send.await_args)
+        )
+        shown = await self.page()
+        self.assertIn("📌 Unpin", self.labels(shown))
+        await shown._pin(self.it())
+        self.assertEqual(await self.memory.pinned_connections(GUILD, self.campaign.id), set())
+
+    async def test_a_manager_has_no_pin(self) -> None:
+        await self.know("Kesh")
+        dm_page = await self.page()
+        await dm_page._pin(self.it(MANAGER))
+        self.assertEqual(await self.memory.pinned_connections(GUILD, self.campaign.id), set())
+
     async def test_a_backstory_connection_is_shown_to_players_from_here_and_undo_hides_it(
         self,
     ) -> None:

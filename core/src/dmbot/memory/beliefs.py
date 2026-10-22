@@ -306,6 +306,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
                 row["status"],
                 list(row["evidence_ids"]),
                 row["session_at"],
+                bool(row["pinned"]),
             )
 
         same = mine is not None and shape(mine) == shape(belief)

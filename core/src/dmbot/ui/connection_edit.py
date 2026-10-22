@@ -18,7 +18,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory import link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, MemoryRuleError, Relation
+from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import all_names, logic
@@ -105,6 +105,7 @@ class Found:
     names: CampaignLookup
     relation: Relation
     secrets: bool
+    pinned: bool = False  # the DM's 📌 100% truth (#2447); only read for a DM
 
 
 async def _find(
@@ -132,7 +133,10 @@ async def _find(
     if relation is None or relation.status != CONFIRMED:
         await _tell(interaction, GONE_LINK)
         return None
-    return Found(campaign, memory, names, relation, secrets)
+    pinned = secrets and relation.id in await memory.pinned_connections(
+        campaign.guild_id, campaign.id
+    )
+    return Found(campaign, memory, names, relation, secrets, pinned)
 
 
 def _said(found: Found) -> str:
@@ -152,6 +156,7 @@ async def show_one(
         interaction,
         f"**{_said(found)}**"
         + (" 🤫" if found.relation.secret else " 🙈" if found.relation.unrevealed else "")
+        + (" 📌" if found.pinned else "")
         + "\n"
         + (
             "Change the words, hide it, or remove it."
@@ -198,6 +203,16 @@ class OneConnection(_Menu):
                     label="👁️ Show to players" if self.secret else "🤫 Hide from players",
                     style=grey,
                     row=1,
+                )
+            )
+        if found.secrets:  # the DM's word that it is true in the story (#2447)
+            self.pinned = found.pinned
+            self.add_item(
+                _Button(
+                    self._pin,
+                    label="📌 Unpin" if self.pinned else "📌 Pin as 100% truth",
+                    style=grey,
+                    row=2,
                 )
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
@@ -287,6 +302,32 @@ class OneConnection(_Menu):
             f"🤫 Hidden from players: {_said(found)}. Not right? Edit it again."
             if target
             else f"👁️ Players can see it now: {_said(found)}. {UNDO_NOTE}"
+        )
+        await self._changed(interaction, found, note, undo=written.batch)
+
+    async def _pin(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        target = not self.pinned  # from what the page showed: a double press never flips back
+        if found.pinned == target:
+            await _tell(interaction, "It's already like that. Press Back to see the card.")
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.pin(c.guild_id, c.id, found.relation.id, target, source=DM)
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        note = (
+            f"📌 Pinned as 100% truth: {_said(found)}. DMbot will tell you if a session says "
+            "otherwise. Press 📌 Unpin to take it back."
+            if target
+            else f"📌 Unpinned: {_said(found)}."
         )
         await self._changed(interaction, found, note, undo=written.batch)
 

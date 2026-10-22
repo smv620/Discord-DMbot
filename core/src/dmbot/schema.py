@@ -10685,7 +10685,8 @@ PINNED_TRUTH = """
     """ + _door_pinned.replace(
     _PINNED_LINK,
     _PINNED_LINK[:-1]
-    + ",\n                    'pinned', sees_all AND EXISTS (SELECT 1 FROM memory_beliefs tb"
+    + ",\n                    'pinned', (is_dm AND sees_all) AND EXISTS"
+    " (SELECT 1 FROM memory_beliefs tb"
     " JOIN memory_perspectives tp ON tp.guild_id = tb.guild_id"
     " AND tp.campaign_id = tb.campaign_id AND tp.id = tb.perspective_id"
     " WHERE tp.kind = 'truth' AND tb.guild_id = r.guild_id AND tb.campaign_id = r.campaign_id"
