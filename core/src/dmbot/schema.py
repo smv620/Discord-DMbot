@@ -9726,6 +9726,50 @@ NAME_ACTIONS = (
 """
 )
 
+RECAP_ADDRESS_CO_DM = """
+    -- A co-DM with no recap job of their own gets the recap email too (#2360): the address is
+    -- answered for any DM of a campaign that has a recap job in this server, not only for the DM
+    -- the job was made for. Still one person's own address, still only while the recap worker's
+    -- door is open, and never for someone who is not a DM of that campaign. The rows read are
+    -- this server's (forced row-level security), so no other server's DMs are seen.
+    CREATE OR REPLACE FUNCTION dmbot_recap_address(who BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found TEXT;
+        before TEXT := COALESCE(current_setting('dmbot.recap_mail_lookup', true), '');
+    BEGIN
+        IF dmbot_recap_mail() IS DISTINCT FROM 'mail' THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM recap_jobs j
+            WHERE j.dm_user_id = who
+               OR EXISTS (
+                   SELECT 1 FROM campaign_dms d
+                   WHERE d.guild_id = j.guild_id AND d.campaign_id = j.campaign_id
+                     AND d.user_id = who)
+        ) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_mail_lookup', 'on', true);
+        SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
+        PERFORM set_config('dmbot.recap_mail_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_address(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -9921,6 +9965,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

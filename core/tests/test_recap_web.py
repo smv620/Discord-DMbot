@@ -1294,6 +1294,22 @@ class TheAddressDoor(Base):
         assert row is not None
         self.assertIsNone(row["a"])
 
+    async def test_a_co_dm_with_no_job_of_their_own_gets_their_address(self) -> None:
+        carol = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")
+        await sessions.sign_in(self.web, carol, [THURSDAY], now=NOW, days=30)
+        self.assertIsNone(await self.store.address(THURSDAY.id, carol.id))  # not a DM yet
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, carol.id)
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+
+    async def test_someone_who_is_not_a_dm_there_still_gets_none(self) -> None:
+        dave = SimpleNamespace(id=4004, name="Dave", email="dave@example.com")
+        await sessions.sign_in(self.web, dave, [THURSDAY], now=NOW, days=30)
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))
+        # a DM of a campaign that has no recap job does not count either
+        empty = await self.campaigns.create(THURSDAY.id, "Empty", dave.id)
+        self.assertIsNotNone(empty)
+        self.assertIsNone(await self.store.address(THURSDAY.id, dave.id))
+
     def test_only_the_recap_code_opens_the_door(self) -> None:
         self.assertEqual(callers(".recap_mail("), {"recaps/store.py", "schema.py"})
         self.assertEqual(callers("dmbot_recap_address("), {"recaps/store.py", "schema.py"})
