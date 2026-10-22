@@ -618,12 +618,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         r.audio = { state: "queued", error: "", current: false, canAskAgain: false };
       if (options?.post) {
         // As the API does in the same call: handed to the bot, so nothing is left to edit or post.
+        const now = Math.floor(Date.now() / 1000);
         Object.assign(r, {
           status: "posting",
           canEdit: false,
           canPost: false,
           canDrop: false,
           canTryAgain: false,
+          postingSince: now,
+          postingStep: "check",
+          serverNow: now,
         });
       }
       return { ...r };
@@ -1238,7 +1242,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (action === "again" && !r.canTryAgain)
         throw new ApiError("not-allowed");
       if (action === "post")
-        Object.assign(r, { status: "posting", canEdit: false, canPost: false });
+        {
+          const now = Math.floor(Date.now() / 1000);
+          Object.assign(r, {
+            status: "posting",
+            canEdit: false,
+            canPost: false,
+            postingSince: now,
+            postingStep: "check",
+            serverNow: now,
+          });
+        }
       if (action === "drop")
         Object.assign(r, { status: "dropped", canEdit: false, canPost: false });
       if (action === "again") r.triesLeft -= 1;

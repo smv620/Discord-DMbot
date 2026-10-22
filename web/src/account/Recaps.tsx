@@ -32,6 +32,7 @@ import CuedText, { hasCues } from "./CuedText";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
+import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
@@ -39,6 +40,8 @@ import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
 
 const POLL_MS = 5000;
+/** Waits between looks while something is going out: soon at first, then settling to POLL_MS. */
+const POLL_STEPS_MS = [3000, 3000, 4000, POLL_MS];
 /** How long, after Try again, a read that still shows the old failure is ignored. */
 const STALE_FAILURE_MS = 60_000;
 
@@ -445,11 +448,27 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     recap !== null &&
     !isHeld(recap) &&
     (recap.working || recap.status === "posting" || recap.audio?.state === "queued");
+  // Quietly, and backing off: about every 3 seconds at first, then every 5, and no looking at all
+  // while the tab is hidden (it looks at once when the tab is shown again) (#2419).
   useEffect(() => {
     if (!waiting || !api.recap) return;
-    const timer = setInterval(() => {
-      if (inFlight.current) return;
-      api.recap?.(recapRef).then((read) => {
+    let stopped = false;
+    let step = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (): void => {
+      if (stopped || document.hidden) return;
+      const wait = POLL_STEPS_MS[Math.min(step, POLL_STEPS_MS.length - 1)] ?? POLL_MS;
+      step += 1;
+      timer = setTimeout(look, wait);
+    };
+    const look = (): void => {
+      if (stopped) return;
+      if (document.hidden) return; // the visibility handler starts it again
+      if (inFlight.current) {
+        schedule();
+        return;
+      }
+      void api.recap?.(recapRef).then((read) => {
         // Right after Try again, a read that still shows the old failure (the API is a moment behind)
         // must not bring the failure box back: the press used one try, so the old failure has one more.
         const stale = staleFailure.current;
@@ -458,14 +477,31 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         // "DMbot is making it again" is true only while it is being made (#2333).
         if (!read.working) setNote((now) => (now?.message === text.tryingAgain ? null : now));
         setRecap(read);
-      }, () => undefined);
-    }, POLL_MS);
-    return () => clearInterval(timer);
+      }, () => undefined).finally(schedule);
+    };
+    const shown = (): void => {
+      if (document.hidden || stopped) return;
+      if (timer !== undefined) clearTimeout(timer);
+      step = 0;
+      look();
+    };
+    document.addEventListener("visibilitychange", shown);
+    schedule();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", shown);
+    };
   }, [api, recapRef, waiting]);
 
   // Once a recap has said it is waiting for its check, the line stays through the short gaps where
   // the API says something else (a service hiccup between tries), until it is ready or has failed.
   const sawWaiting = useRef(false);
+  // The recap was being posted and is a draft again: the bot gave up, so the page says so instead of
+  // looking as if nothing happened (#2419). Cleared once it is posted.
+  const sawPosting = useRef(false);
+  if (recap?.status === "posting") sawPosting.current = true;
+  else if (recap?.status !== "draft") sawPosting.current = false;
   if (recap?.waitingForCheck) sawWaiting.current = true;
   else if (!recap || !recap.working || recap.state === "failed") sawWaiting.current = false;
 
@@ -615,6 +651,14 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {recap.status === "posted" && (
         <p class="ok" role="status">
           {text.posted}
+          {discordLink(recap.postedUrl) && (
+            <>
+              {" "}
+              <a href={discordLink(recap.postedUrl) ?? undefined} rel="noopener noreferrer">
+                {text.postedLink}
+              </a>
+            </>
+          )}
         </p>
       )}
       {recap.status === "posted" && recap.respelledAt && (
@@ -622,9 +666,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           <strong>{text.respelledHeading}.</strong> {text.respelled(sessionDay(recap.respelledAt))}
         </p>
       )}
-      {recap.status === "posting" && (
-        <p class="ok" role="status">
-          {text.posting}
+      <RecapProgress recap={recap} />
+      {recap.status === "draft" && sawPosting.current && !recap.working && (
+        <p class="warn" role="status">
+          {text.postFailed}
         </p>
       )}
       {recap.status === "dropped" && <p role="status">{text.dropped}</p>}

@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "See your recap going out",
+    what: "After you post a recap or ask for its audio, the page shows it working: what step it is on, a running clock that is still right when you come back, and then a link to the message in Discord, or what went wrong.",
+    reason: "In review (#2436); held until dev1 deploys it and the bot records the steps (#2435).",
+  },
+  {
+    date: "2026-10-22",
     title: "See where a new name was said",
     what: "When DMbot asks you to check a name it heard, it now shows two short bits of what was said around it, with who said each line and when. A 🔎 More places button shows more, and 📜 Open in transcript opens that session on the website.",
     reason: "In review (#2329); held until dev1 deploys it.",

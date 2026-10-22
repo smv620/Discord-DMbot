@@ -103,8 +103,21 @@ export const text = {
   busy: "Working…",
   noTriesLeft:
     "You have tried twice. You can still edit it or approve it.",
-  posting:
-    "Sent. DMbot will check it once more, then post it. Check back here to see if it posted.",
+  posting: "Getting it ready for Discord…",
+  /** The step the bot is on (`postingStep`), said plainly. */
+  step: {
+    check: "Checking it once more",
+    post: "Posting to your table",
+    audio: "Making the audio…",
+  },
+  /** Said while the audio is being made (nothing is posted until the DM says so). */
+  audioMaking: "Making the audio…",
+  /** The running time, read out for people who can't see it (not live, so it is not repeated). */
+  clockLabel: "Time so far",
+  postedLink: "See it in Discord",
+  /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
+  postFailed:
+    "DMbot couldn't post it this time. Nothing went to your table, and the recap is still saved here. Press Approve and post text only to try again.",
   posted: "This recap was posted to your table.",
   dropped:
     "You chose not to post this recap. It stays here, and nobody else sees it.",
