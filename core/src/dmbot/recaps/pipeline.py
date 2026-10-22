@@ -885,7 +885,11 @@ class RecapWorker:
                 )
         self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
-            log.info("Recap: a draft failed %d check(s)", len(problems))  # counts only
+            log.info(
+                "Recap: a draft failed %d check(s): %s",
+                len(problems),
+                ", ".join(cl.kinds(problems)),
+            )  # names only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
@@ -1046,7 +1050,9 @@ class RecapWorker:
                 if self._on_problems is not None:
                     self._on_problems(job.state, job.attempt, problems)
                 log.info(
-                    "Recap: the revision failed %d check(s); the first draft stands", len(problems)
+                    "Recap: the revision failed %d check(s) (%s); the first draft stands",
+                    len(problems),
+                    ", ".join(cl.kinds(problems)),
                 )
                 if self._on_note is not None:
                     weak = ", ".join(rd.weak(grade)) or "a score"
