@@ -47,6 +47,19 @@ export interface Campaign {
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
+  /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
+   * from an API older than that: the campaign is then not linked. */
+  ref?: string;
+}
+
+/** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+export interface CampaignPage {
+  ref: string;
+  name: string;
+  serverName: string;
+  /** "owner" and "co-dm" are the campaign's DMs; "player" is anyone else in its server. */
+  role: "owner" | "co-dm" | "player";
+  importsOn?: boolean;
 }
 
 /** A Discord server you manage. */
@@ -1063,6 +1076,8 @@ export interface AccountApi {
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
+  /** One campaign's page (#2416). Missing from an API older than that. */
+  campaignPage?(campaignRef: string): Promise<CampaignPage>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -1251,6 +1266,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_email: "bad-email",
   in_use: "in-use",
   bad_target: "bad-target",
+  // The web's views: a visit the API doesn't know is no more than a failed try, so the page says
+  // its generic line rather than a reason (#2405).
+  bad_visit: "server",
   peek_off: "peek-off",
   not_in_server: "not-in-server",
   bad_name: "bad-name",
@@ -1684,6 +1702,8 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
         withLinks({ files, plan }, links),
       )) as ImportStarted,
+    campaignPage: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
     npcPage: async (ref, entry) =>
       (await call(
         "GET",
@@ -1753,6 +1773,9 @@ export function httpApi(
     webSize: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      // The size is of the web in the view being asked for, so a DM in Players View or a player
+      // peeking must not be told the size of the other one.
+      if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
