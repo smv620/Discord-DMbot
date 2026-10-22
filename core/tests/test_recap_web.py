@@ -1131,6 +1131,24 @@ class TheApproval(Base):
             f"/me/recaps/{self.ref}/approve", json={"choice": "text", "post": True}
         )
         self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved), ("posted", False))  # no approval was recorded
+
+    async def test_audio_is_refused_by_the_route_where_recaps_are_off(self) -> None:
+        """With recaps off the route refuses audio (409) and still approves text."""
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, SITE),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+        ) as off:
+            off.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            url = f"/me/recaps/{self.ref}/approve"
+            got = await off.post(url, json={"choice": "both"})
+            self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_unavailable"))
+            self.assertEqual((await off.post(url, json={"choice": "text"})).status_code, 200)
 
     async def test_approving_without_posting_leaves_a_draft_that_can_be_posted_later(self) -> None:
         """(#2419) 📋 Approve but don't post: approved, nothing sent; Post to the table later."""

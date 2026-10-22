@@ -25,6 +25,13 @@ import {
 import { CueProblems } from "./CueParts";
 import { keepFocus } from "./focus";
 
+/** The text was approved but the post step after it failed: the page says both. */
+class ApprovedNotPosted extends Error {
+  constructor(readonly original: unknown) {
+    super("approved, not posted");
+  }
+}
+
 const AUDIO_CHOICES: ApproveChoice[] = ["voice", "music", "both"];
 
 /** The campaign's address, from the recap's: `<server>.<campaign>.<session>` without the session. */
@@ -102,7 +109,9 @@ export default function RecapApprove({
   if (!open || !approval) return null;
   const { approveRecap, decideRecap } = api;
 
-  const fail = async (error: unknown) => {
+  const fail = async (failure: unknown) => {
+    const late = failure instanceof ApprovedNotPosted;
+    const error = late ? failure.original : failure;
     const kind = error instanceof ApiError ? error.kind : "server";
     const found = error instanceof ApiError ? error.cueProblems : [];
     setCues(found);
@@ -112,7 +121,7 @@ export default function RecapApprove({
         ? found.length > 0
           ? null
           : words.cuesUnlisted
-        : (approveErrors[kind] ?? errors.other),
+        : `${late ? `${words.approvedNotPostedPrefix} ` : ""}${approveErrors[kind] ?? errors.other}`,
     );
     // The plan or the month changed under us: stop offering the audio.
     if (kind === "not-in-plan") setWhy("plan");
@@ -170,7 +179,7 @@ export default function RecapApprove({
           return await decideRecap(recap.ref, "post");
         } catch (error) {
           onRecap(next); // approved and not posted: say so, and say why the post failed
-          throw error;
+          throw new ApprovedNotPosted(error);
         }
       }
       return next;
@@ -291,7 +300,7 @@ export default function RecapApprove({
                   type="button"
                   class="button"
                   ref={audioBtnRef}
-                  aria-describedby={why ? "recap-audio-why" : undefined}
+                  aria-describedby={why !== "" ? "recap-audio-why" : undefined}
                   disabled={busy !== null || why !== ""}
                   onClick={() => {
                     setPicking(true);
@@ -311,9 +320,13 @@ export default function RecapApprove({
                   {busy === "text" ? words.busy : words.keepIt}
                 </button>
               </div>
-              {why && (
+              {why !== "" && (
                 <p id="recap-audio-why" class="muted small">
-                  {why === "unknown" ? words.audioUnknown : words.audioWhy[why]}
+                  {why === undefined
+                    ? words.audioChecking
+                    : why === "unknown"
+                      ? words.audioUnknown
+                      : words.audioWhy[why]}
                 </p>
               )}
             </>

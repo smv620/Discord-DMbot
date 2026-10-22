@@ -71,7 +71,7 @@ export const text = {
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
-  failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
+  failed: "DMbot couldn't write this recap. Press Try again, or leave it.",
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
   textHeading: "Recap",

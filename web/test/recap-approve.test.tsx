@@ -80,6 +80,22 @@ describe("the three ways to approve", () => {
     expect(api.calls).toContain(`postRecap:${ready.ref}`);
   });
 
+  it("✅ says it was approved but not posted when the post that follows fails", async () => {
+    const api = mockApi("table");
+    const approve = api.approveRecap!.bind(api);
+    api.approveRecap = async (ref, choice) => approve(ref, choice); // an older API: approve only
+    api.decideRecap = async () => {
+      throw new ApiError("network");
+    };
+    await open(api);
+    fireEvent.click(screen.getByRole("button", { name: w.postText }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      `${w.approvedNotPostedPrefix} ${approveErrors.network}`,
+    );
+    expect(screen.getByText(w.notPosted)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.postLater })).toBeTruthy();
+  });
+
   it("📋 approves and posts nothing, and says so with the text to copy", async () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.keepIt }));
