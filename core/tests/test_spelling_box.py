@@ -27,5 +27,6 @@ class SpellingBox(unittest.IsolatedAsyncioTestCase):
         ):
             await form.on_submit(MagicMock())
         told.assert_awaited_once()
+        assert told.await_args is not None
         self.assertEqual(told.await_args.args[1], name_card.SPELLING_NOT_SOUND)
         memory.rename_entity.assert_not_awaited()
