@@ -10684,8 +10684,7 @@ PINNED_TRUTH = """
     ALTER TABLE backstory_links ADD COLUMN truth BOOLEAN NOT NULL DEFAULT false;
     """ + _door_pinned.replace(
     _PINNED_LINK,
-    _PINNED_LINK[:-1]
-    + ",\n                    'pinned', (is_dm AND sees_all) AND EXISTS"
+    _PINNED_LINK[:-1] + ",\n                    'pinned', (is_dm AND sees_all) AND EXISTS"
     " (SELECT 1 FROM memory_beliefs tb"
     " JOIN memory_perspectives tp ON tp.guild_id = tb.guild_id"
     " AND tp.campaign_id = tb.campaign_id AND tp.id = tb.perspective_id"
