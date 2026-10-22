@@ -159,6 +159,17 @@ class TheReaders(unittest.TestCase):
         )
         self.assertEqual(house_reader.house_text_of("r.md", b"# Rules\n- one"), "# Rules\n- one")
 
+    def test_a_hostile_run_of_cell_openings_is_read_quickly(self) -> None:
+        import time as clock
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr("xl/worksheets/sheet1.xml", "<c " * 400_000)  # (no `>` anywhere)
+        began = clock.monotonic()
+        with self.assertRaises(DocumentError):
+            house_reader.house_text_of("r.xlsx", out.getvalue())  # (no text in it)
+        self.assertLess(clock.monotonic() - began, 3.0)
+
     def test_a_scanned_pdf_says_so(self) -> None:
         with self.assertRaises(DocumentError) as caught:
             house_reader.house_text_of("scan.pdf", blank_pdf())
@@ -236,9 +247,9 @@ class TheList(unittest.IsolatedAsyncioTestCase):
         rules.append(one("Do thing 000.", "Table rule number 000 is that we do thing 000"))  # twice
         rules.append(one("x" * 501, "Table rule number 001 is that we do thing 001"))  # too long
         found = await self.read(FakeAI(answer(rules)), text, existing=[("Do thing 001.", None)])
-        self.assertEqual(len(found.rules), 200)
+        self.assertEqual(len(found.rules), 199)  # (200 in all with its own rule)
         self.assertEqual((found.repeats, found.too_long), (2, 1))
-        self.assertEqual(found.over_cap, 29)  # 229 new (one was already a rule) - 200 kept
+        self.assertEqual(found.over_cap, 30)  # 229 new - the 199 that fit beside the one it has
 
     async def test_a_cut_answer_is_asked_again_with_twice_the_room(self) -> None:
         cut = Reply('{"published_book": false, "rules": [{"text"', True, 10, 10, "m")
@@ -403,21 +414,51 @@ class Offering(SyncTest):
         assert words is not None
         self.assertIn("couldn't find any house rules", words)
 
-    async def test_an_unchanged_linked_file_makes_no_second_ai_call(self) -> None:
+    async def test_an_unchanged_linked_file_makes_no_second_call_at_a_session_start(
+        self,
+    ) -> None:
         self.links.link = DOC
         await self.compare(from_link=True)
         self.assertEqual(len(self.ai.calls), 1)
         self.assertEqual(self.remembering.read_fp, house_reader.fingerprint_of(NOTES))
         self.assertIsNone(await self.compare(from_link=True))  # a session start: silent
-        self.assertEqual(await self.compare(from_link=True, respect_ignore=False), hs.UNCHANGED)
         self.assertEqual(len(self.ai.calls), 1)
         await self.compare(NOTES + "Crits are doubled.\n", from_link=True)  # the file changed
         self.assertEqual(len(self.ai.calls), 2)
+
+    async def test_compare_now_reads_again_so_a_lost_offer_can_be_asked_for(self) -> None:
+        self.links.link = DOC
+        await self.compare(from_link=True)
+        await self.compare(from_link=True, respect_ignore=False)  # the DM asked to look
+        self.assertEqual(len(self.ai.calls), 2)
+
+    async def test_an_offer_that_could_not_be_sent_is_not_recorded_as_read(self) -> None:
+        self.links.link = DOC
+        self.send_works = False
+        await self.compare(from_link=True)
+        self.assertIsNone(self.remembering.read_fp)
+        self.send_works = True
+        await self.compare(from_link=True)  # the next session start offers it again
+        self.assertEqual(len(self.ai.calls), 2)
+        self.assertEqual(len(self.sent), 2)
+
+    async def test_the_campaigns_own_rules_count_against_its_200(self) -> None:
+        self.store.rules[:] = [rule(n, f"Own rule {n}") for n in range(1, 200)]  # 199 of 200
+        await self.compare()
+        text, _ = self.sent[-1]
+        self.assertIn("I found 1 new house rule", text)
+        self.assertIn("1 more are left out: a campaign holds at most 200", text)
 
     async def test_an_upload_is_read_every_time(self) -> None:
         await self.compare()
         await self.compare()
         self.assertEqual(len(self.ai.calls), 2)
+
+    async def test_a_read_that_gave_nothing_does_not_use_up_the_days_reads(self) -> None:
+        self.ai.replies = ["garbage"]
+        await self.compare()
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        self.assertEqual(hs._ai_reads[(1, today)], 0)
 
     async def test_one_read_at_a_time_and_a_daily_limit_for_a_server(self) -> None:
         hs._ai_busy.add(1)

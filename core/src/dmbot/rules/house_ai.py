@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 Complete = Callable[..., Awaitable[Reply]]
 
 TIMEOUT_S = 120.0
-MIN_QUOTE = 12  # a quote shorter than this proves nothing: it would be found in almost any text
+MIN_QUOTE = 20  # a quote shorter than this proves nothing: it would be found in almost any text
 QUOTE_MAX = 300
 ROOM_MIN, ROOM_MAX = 2_000, 32_000  # tokens of answer; the retry may double the room, up to this
 RETRY_MAX = 64_000
@@ -69,7 +69,6 @@ SYSTEM = (
 )
 
 NOT_READ = "I couldn't read that file just now. Try again in a minute."
-NO_AI = "Reading that kind of file needs DMbot's AI, which isn't on for this campaign."
 
 
 def room_for(chars: int) -> int:
@@ -105,6 +104,7 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
     campaign's rules."""
     haystack = norm(source)
     seen = {(norm(w), norm(i) if i else None) for w, i in existing}
+    room = max(0, HOUSE_RULES_MAX - len(existing))  # a campaign holds at most 200 in all
     kept: list[Candidate] = []
     unquoted = too_long = repeats = over = 0
     for item in items:
@@ -125,7 +125,7 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
         if key in seen:
             repeats += 1
             continue
-        if len(kept) >= HOUSE_RULES_MAX:
+        if len(kept) >= room:
             over += 1
             continue
         seen.add(key)

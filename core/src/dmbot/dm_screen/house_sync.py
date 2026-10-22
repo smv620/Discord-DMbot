@@ -35,7 +35,7 @@ from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.name_documents import DocumentError
 from dmbot.mentions import NO_PINGS
-from dmbot.rules import house_ai, house_file, house_file_sync, house_reader
+from dmbot.rules import house, house_ai, house_file, house_file_sync, house_reader
 from dmbot.rules.house_file_sync import Applied, Item
 
 log = logging.getLogger(__name__)
@@ -58,8 +58,9 @@ FOUND_NOTE = (
     "_Nothing is saved until you press a button. **Review** lets you read them one at a time._"
 )
 FOUND_FILE = (
-    "Here is what I found, numbered like your house rules. Check it, fix it, and upload it back "
-    "if you like."
+    "Here are the new rules I found, numbered like your house rules (only the new ones; "
+    "📥 Download rules in `/dmbot houserules` has your whole list). Check them, fix them, and "
+    "upload the file back if you like."
 )
 NOTHING_CHANGES = (
     "_Nothing changes until you press a button. Review lets you go one rule at a time._"
@@ -81,7 +82,6 @@ NO_AI_PLAN = (
     "the rules in DMbot's numbered list instead (📥 Download rules in `/dmbot houserules` "
     "shows how). Nothing was changed."
 )
-UNCHANGED = "Your file hasn't changed since I last read it. Nothing to change."
 BUSY = "I'm still reading another file for this server. Try again in a minute."
 TOO_MANY_READS = (
     f"This server has reached today's limit for reading files ({HOUSE_AI_READS_PER_DAY}). Try "
@@ -499,15 +499,18 @@ async def _compare_numbered(
         big,
         file_name=file_name,
     )
-    return await _offer(bot, campaign, pending, send)
+    await _offer(bot, campaign, pending, send)
+    return None
 
 
-async def _offer(bot: Any, campaign: Campaign, pending: Pending, send: Send) -> str | None:
+async def _offer(bot: Any, campaign: Campaign, pending: Pending, send: Send) -> bool:
+    """Put the offer in front of the DM. False when it could not be sent."""
     bot.house_syncs.drop_campaign(campaign.guild_id, campaign.id)  # the older ones are stale
     key = bot.house_syncs.add(pending)
     if not await send(offer_text(pending), offer_view(campaign.guild_id, key, pending)):
         bot.house_syncs.drop(key)
-    return None
+        return False
+    return True
 
 
 def _found_summary(found: house_ai.Found, source: str) -> str:
@@ -515,7 +518,12 @@ def _found_summary(found: house_ai.Found, source: str) -> str:
     many = f"{count} new house rule" + ("" if count == 1 else "s")
     skipped = found.repeats
     extra = f" ({skipped} more already in your list, left out)" if skipped else ""
-    return f"**I found {many} in {source}**{extra}."
+    full = (
+        f" {found.over_cap} more are left out: a campaign holds at most {house.HOUSE_RULES_MAX}."
+        if found.over_cap
+        else ""
+    )
+    return f"**I found {many} in {source}**{extra}.{full}"
 
 
 async def _compare_found(
@@ -538,11 +546,10 @@ async def _compare_found(
         return FAILED
     fingerprint = house_reader.fingerprint_of(text)
     link = await links.get(gid, campaign.id) if from_link and links is not None else None
-    if link is not None:
-        if link.read == fingerprint:  # the file is as the AI last read it: no call
-            return None if respect_ignore else UNCHANGED
-        if respect_ignore and link.ignored == fingerprint:
-            return None
+    # A session start: a file as the AI last read it (or as the DM said to ignore) makes no call.
+    # 🔄 Compare now reads again, so an offer that was lost can always be asked for.
+    if link is not None and respect_ignore and fingerprint in (link.read, link.ignored):
+        return None
     day = time.strftime("%Y-%m-%d", time.gmtime())
     if gid in _ai_busy:
         return BUSY
@@ -560,13 +567,13 @@ async def _compare_found(
     finally:
         _ai_busy.discard(gid)
     if found.unread:
+        _ai_reads[(gid, day)] -= 1  # a read that gave nothing does not use up the day's reads
         return NOT_READ
-    if link is not None and links is not None:  # read once per change, found anything or not
-        await links.set_read(gid, campaign.id, fingerprint)
-    if found.published_book:
-        return BOOK
-    if not found.rules:
-        return NOTHING_FOUND
+    remember = link is not None and links is not None
+    if found.published_book or not found.rules:
+        if remember:  # nothing to offer: this version is done with
+            await links.set_read(gid, campaign.id, fingerprint)
+        return BOOK if found.published_book else NOTHING_FOUND
     first = max((r.number for r in mine), default=0) + 1
     added = tuple(
         house_file.FileRule(first + i, c.text, c.instead_of) for i, c in enumerate(found.rules)
@@ -582,7 +589,11 @@ async def _compare_found(
         file_name=file_name,
         found_text=_found_file(campaign, added),
     )
-    return await _offer(bot, campaign, pending, send)
+    if not await _offer(bot, campaign, pending, send):
+        return None  # not seen by the DM, so not recorded as read: the next start offers it again
+    if remember:
+        await links.set_read(gid, campaign.id, fingerprint)
+    return None
 
 
 def _found_file(campaign: Campaign, rules: Sequence[house_file.FileRule]) -> str:

@@ -181,9 +181,11 @@ def _docx_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
 
 # One pass over a worksheet: a cell opens (`<c ...>`), holds a value (`<v>`) or inline text
 # (`<t>`), and a row ends. `[^<]*` can't run past a tag, so there is no slow matching.
-_XLSX_TOKENS = re.compile(r"<c\b([^>]*)>|<v>([^<]*)</v>|<t(?:\s[^>]*)?>([^<]*)</t>|(</row>)|(</c>)")
+_XLSX_TOKENS = re.compile(
+    r"<c\b([^>]{0,300})>|<v>([^<]*)</v>|<t(?:\s[^>]{0,300})?>([^<]*)</t>|(</row>)|(</c>)"
+)
 _XLSX_TYPE = re.compile(r'\bt="([a-zA-Z]+)"')
-_XLSX_SHARED = re.compile(r"<t(?:\s[^>]*)?>([^<]*)</t>|</si>")
+_XLSX_SHARED = re.compile(r"<t(?:\s[^>]{0,300})?>([^<]*)</t>|</si>")
 _XLSX_SHEET = re.compile(r"^xl/worksheets/sheet(\d+)\.xml$")
 MAX_SHEETS = 10
 CELL_JOIN = " | "
