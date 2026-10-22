@@ -206,11 +206,72 @@ describe("what a DM can do", () => {
     const api = open();
     await ready();
     const row = await edit("Gorrak");
-    fireEvent.click(row.getByLabelText(w.secretCheck));
-    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"secret","secret":true}'));
-    await waitFor(() => expect((within(rowOf("Gorrak")).getByLabelText(w.secretCheck) as HTMLInputElement).checked).toBe(true));
-    fireEvent.click(within(rowOf("Gorrak")).getByLabelText(w.secretCheck));
-    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"secret","secret":false}'));
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":true}'));
+    await waitFor(() => expect((within(rowOf("Gorrak")).getByLabelText(w.hideCheck) as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(within(rowOf("Gorrak")).getByLabelText(w.hideCheck));
+    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":false}'));
+  });
+
+  it("shows the hide switch from `hidden` only, not from a secret flag", async () => {
+    const api = mockApi("table");
+    const read = api.allNames!.bind(api);
+    api.allNames = async (r, q) => {
+      const page = await read(r, q);
+      // A secret main name, with no `hidden` at all: the switch is the entry's, so it stays unticked.
+      return { ...page, names: page.names.map(({ hidden: _hidden, ...n }) => ({ ...n, secret: true })) };
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    expect((row.getByLabelText(w.hideCheck) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("says a change may still happen when the bot never answers, and reads the list again", async () => {
+    const api = mockApi("table");
+    api.changeName = async () => {
+      throw new ApiError("still-waiting");
+    };
+    open(DM, api);
+    await ready();
+    const before = calls(api, "allNames").length;
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    expect(await screen.findByText(w.errors["still-waiting"]!)).toBeTruthy();
+    await waitFor(() => expect(calls(api, "allNames").length).toBeGreaterThan(before));
+  });
+
+  it("shows Waiting for DMbot… while a change is out, and clears it after", async () => {
+    const api = mockApi("table");
+    let finish: () => void = () => {};
+    api.changeName = () => new Promise((go) => (finish = () => go({ removed: true })));
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    const line = await screen.findByText(w.waiting);
+    expect(line.getAttribute("role")).toBe("status");
+    finish();
+    await waitFor(() => expect(screen.queryByText(w.waiting)).toBeNull());
+  });
+
+  it("says a change may still happen, never that nothing was changed", async () => {
+    expect(w.errors["still-waiting"]).toContain("may still happen");
+    expect(w.errors["still-waiting"]).not.toContain("nothing was changed");
+    expect(w.hideCheck).toBe("🙈 Hide from players");
+  });
+
+  it("gives a refused target its own words, not 'try again'", async () => {
+    const api = mockApi("table");
+    api.changeName = async () => {
+      throw new ApiError("bad-target");
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    expect(await screen.findByText(w.errors["bad-target"]!)).toBeTruthy();
+    expect(w.errors["bad-target"]).not.toMatch(/try again/i);
   });
 
   it("merges into a name picked from a search, only after a confirmation", async () => {

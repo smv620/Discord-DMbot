@@ -8824,6 +8824,28 @@ NAMES_LATER = f"""
     );
     """ + _isolate("name_later")
 
+BACKSTORY_LINKS = f"""
+    -- The connections a backstory reading found between names (#2380; docs/PLAN.md, "Names at
+    -- scale"), waiting for the DM to keep or refuse each. The same lifetime as the backstory's
+    -- name suggestions: until the DM answers, the campaign is deleted, or an end is refused. Two
+    -- entries, the relationship's key, a short quote of the DM's own text as evidence (never the
+    -- text) and whether the text wrote it with a secret spelling. Deleted with either entry and
+    -- with the campaign, left out of backups (a wait, not content), isolated per server.
+    CREATE TABLE backstory_links (
+        {_memory_scope()}
+        subject_id TEXT NOT NULL,
+        predicate  TEXT NOT NULL CHECK (char_length(predicate) BETWEEN 1 AND 80),
+        object_id  TEXT NOT NULL,
+        quote      TEXT NOT NULL CHECK (char_length(quote) <= 400),
+        secret     BOOLEAN NOT NULL DEFAULT false,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, subject_id, predicate, object_id),
+        CHECK (subject_id <> object_id),
+        {_entity_link("subject_id")},
+        {_entity_link("object_id")}
+    );
+    """ + _isolate("backstory_links")
+
 NAME_ANSWERS = (
     f"""
     -- The names a recap kept that DMbot did not know (#2027) and that the DM is asked to check, now
@@ -9970,6 +9992,52 @@ WEB_RELATIONSHIPS = r"""
         FROM PUBLIC;
 """
 
+RECAP_ADDRESS_CO_DM = """
+    -- A co-DM with no recap job of their own gets the recap email too (#2360): the address is
+    -- answered for any CURRENT DM of a campaign that has a recap job or a held recap (a recap
+    -- waiting for name answers, whose waiting email also goes to the DMs) in this server. Being the
+    -- DM a job was made for is no longer enough: someone who has since stopped being a DM of the
+    -- campaign gets nothing. Still one person's own address, still only while the recap worker's
+    -- door is open. The rows read are this server's (forced row-level security), so no other
+    -- server's DMs are seen.
+    CREATE OR REPLACE FUNCTION dmbot_recap_address(who BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found TEXT;
+        before TEXT := COALESCE(current_setting('dmbot.recap_mail_lookup', true), '');
+    BEGIN
+        IF dmbot_recap_mail() IS DISTINCT FROM 'mail' THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM campaign_dms d
+            WHERE d.user_id = who
+              AND (EXISTS (SELECT 1 FROM recap_jobs j
+                           WHERE j.guild_id = d.guild_id AND j.campaign_id = d.campaign_id)
+                   OR EXISTS (SELECT 1 FROM recap_holds h
+                              WHERE h.guild_id = d.guild_id AND h.campaign_id = d.campaign_id))
+        ) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_mail_lookup', 'on', true);
+        SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
+        PERFORM set_config('dmbot.recap_mail_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_address(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10166,7 +10234,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
+    ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
 )
 
@@ -10206,6 +10276,7 @@ ISOLATED_TABLES = (
     "recap_dictionaries",
     "recap_holds",
     "name_later",
+    "backstory_links",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
