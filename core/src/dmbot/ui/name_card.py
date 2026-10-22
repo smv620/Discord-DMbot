@@ -47,7 +47,7 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import logic
+from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -90,7 +90,16 @@ FLAG_WHY = {
     "too_many": "That's more than one place at once",
 }
 ONLY_ONE = "☝️ Only one of these exists (you said so)."
+# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
+# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves.
+PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
+SPELLING_ONLY = "That looks like how to say the name. Type only how it's spelled here."
+SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it box below."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
+# A state the DM flips (#2321): the label says what pressing does, not what is now.
+HIDE_BUTTON = "🙈 Hide from players"
+SHOW_BUTTON = "👀 Players know it now"
+HIDDEN_LINE = "🙈 Hidden from players. Only you see it."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"
 THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
@@ -300,8 +309,8 @@ def card_text(
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
-    if entity.audience_limited and not secrets:
-        return None  # a clue only some people know is the DM's alone (#1649)
+    if entity.unseen_by_players and not secrets:
+        return None  # a clue only some people know (#1649), or a name they don't know yet (#2321)
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
     others = [
@@ -311,7 +320,7 @@ def card_text(
     ]
     # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
     hidden = [
-        _md(e.text) for e in mine if e.secret and not (entity.audience_limited and e.key == own)
+        _md(e.text) for e in mine if e.secret and not (entity.unseen_by_players and e.key == own)
     ]
     heard = lookup.heard.get(entity_id)
     when = (
@@ -328,6 +337,8 @@ def card_text(
         lines.extend(thread_lines)
     if book_line and secrets:  # who this is in the DM's adventure: the DM's alone (#1715)
         lines.append(book_line)
+    if entity.hidden_from_players and secrets:
+        lines.append(HIDDEN_LINE)
     if entity.audience_limited:
         knowers = sorted(
             (
@@ -530,6 +541,12 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        hide=(  # (drawn whenever it is on, so a DM can always turn it off)
+            entity.hidden_from_players
+            if secrets
+            and (entity.hidden_from_players or not (entity.is_player_character or entity.party))
+            else None
+        ),
         standing=(
             entity.type in ("character", "faction", "place")
             and not entity.is_player_character
@@ -679,6 +696,7 @@ class NameCard(_Menu):
         led: bool = False,
         book: bool = False,
         say: bool = False,
+        hide: bool | None = None,
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
         finish_past: int | None = None,
@@ -688,7 +706,7 @@ class NameCard(_Menu):
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
-        if undo_connection is not None:  # last row but one: out of the way of the edits
+        if undo_connection is not None:  # rows 0 and 1, because row 4 is Show all's (#2339)
             self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
         if undo_spelling is not None:
             self.add_item(UndoSpellingButton(campaign_id, entity_id, undo_spelling))
@@ -705,6 +723,13 @@ class NameCard(_Menu):
         if others:
             self.add_item(_Button(self._edit_others, label="Edit other names", style=grey, row=1))
         self.add_item(_Button(self._same, label="🔗 Same as…", style=grey, row=1))
+        self.hidden = bool(hide)
+        if hide is not None:  # the DM's switch (#2321); None: not for this person or entry
+            self.add_item(
+                _Button(
+                    self._flip_hidden, label=SHOW_BUTTON if hide else HIDE_BUTTON, style=grey, row=1
+                )
+            )
         # Row 2, so row 1's buttons don't clip on a phone (#393).
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if say:  # how the recap narrator says this name (#2171), the same as the website's field
@@ -747,6 +772,10 @@ class NameCard(_Menu):
                 options=[discord.SelectOption(label=label, value=key) for key, label in cut],
                 row=4,
             )
+            # Row 4 is the menu's alone (a select takes a whole row): the Undo and Finish buttons
+            # sit on rows 0 and 1, which have room, because one on row 4, or on row 3 beside a
+            # thread's five buttons, made the card fail to build (#2339: "item would not fit at
+            # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
 
     async def _book(self, interaction: discord.Interaction) -> None:
@@ -839,6 +868,35 @@ class NameCard(_Menu):
         await _answer_first(interaction, in_place=True)
         self.stop()
         await show_audience(interaction, self.campaign_id, self.entity_id)
+
+    async def _flip_hidden(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, "Only the DM can change that.")
+            return
+        now = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        hide = not (
+            now.hidden_from_players if now is not None else self.hidden
+        )  # (not a stale card)
+        try:
+            await memory.set_hidden_from_players(
+                campaign.guild_id, campaign.id, self.entity_id, hide, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        note = (
+            f"🙈 **{_md(name)}** is hidden. Only you can see it."
+            if hide
+            else f"👀 Players can see **{_md(name)}** now."
+        )
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
     async def _one_of_a_kind(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -1072,7 +1130,7 @@ async def _names_around(
     kept = any(a.entity_id == entity_id and a.key == old_key and a.kind == "old" for a in everyone)
     longer = [a.text for a in everyone if a.key != old_key and contains(a.text, old)]
     entities = await memory.entities(campaign.guild_id, campaign.id)
-    private = {e.id: e.name for e in entities if e.audience_limited or e.type in DM_ONLY_TYPES}
+    private = {e.id: e.name for e in entities if e.unseen_by_players or e.type in DM_ONLY_TYPES}
     hidden = [a.text for a in everyone if a.secret or a.entity_id in private]
     hidden += private.values()
     return kept, longer, hidden
@@ -1098,7 +1156,7 @@ async def _respell_past(
     if (
         written.batch is None
         or not renamed_key(old, new)
-        or entity.audience_limited
+        or entity.unseen_by_players
         or entity.type in DM_ONLY_TYPES
     ):
         return PastNote()
@@ -1197,6 +1255,9 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
             return
         campaign, old = found
         new = " ".join(self.name.value.split())
+        if PRONOUNCED.search(new):  # how to say it is not how to spell it (#2332)
+            await _tell(interaction, SPELLING_AND_SOUND if self.spoken else SPELLING_ONLY)
+            return
         if name_key(new) != name_key(old):
             clash = await known_as(memory, campaign, new)
             if clash is not None and name_key(clash) != name_key(old):
@@ -1569,7 +1630,7 @@ class UndoConnectionButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unconn:{campaign_id}:{entity_id}:{batch}",
-                row=3,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1628,7 +1689,7 @@ class UndoSpellingButton(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:unspell:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=0,
             )
         )
         self.campaign_id = campaign_id
@@ -1709,7 +1770,7 @@ class FinishPastButton(
                 label="Finish the past transcripts",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"dmbot:finish:{campaign_id}:{entity_id}:{batch}",
-                row=4,
+                row=1,
             )
         )
         self.campaign_id = campaign_id
@@ -1749,7 +1810,7 @@ class FinishPastButton(
             entity is None
             or name_key(entity.name) != name_key(new)  # the name was changed again since
             or not kept
-            or entity.audience_limited
+            or entity.unseen_by_players
             or entity.type in DM_ONLY_TYPES
         ):
             await _tell(interaction, "That fix is out of date, so nothing was changed.")
@@ -2557,14 +2618,17 @@ async def show_matches(interaction: discord.Interaction, campaign_id: str, typed
     if len(matches) == 1:
         await show_card(interaction, campaign.id, matches[0].entity_id)
         return
-    options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
+    options = all_names.with_choice(
+        [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches],
+        left_out=len(matches) >= MAX_RESULTS,  # only the closest ones are listed
+    )
     view = Matches(campaign.id, typed, options)
     if not matches:
         text = f"No name like **{_md(typed)}**."
     elif len(matches) >= MAX_RESULTS:
         text = (
-            f"**Names like {_md(typed)}:** the closest {MAX_RESULTS}. Type more of the name to "
-            "narrow it."
+            f"**Names like {_md(typed)}:** the closest {all_names.NAMES_MAX}. "
+            "Type more of the name to narrow it."
         )
     else:
         text = f"**Names like {_md(typed)}:** pick one."
@@ -2594,6 +2658,9 @@ class Matches(_Menu):
         )
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        if all_names.chosen(self.pick.values):
+            await all_names.reply(interaction, self.campaign_id)  # the menu stays for more
+            return
         self.stop()
         await show_card(interaction, self.campaign_id, self.pick.values[0], replace=True)
 

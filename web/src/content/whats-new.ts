@@ -230,6 +230,30 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-22",
+    title: "Open any NPC and keep your own notes on them",
+    what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
+    reason: "In review (#2266); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Recaps are shorter",
+    what: "Recaps are shorter, so the game starts sooner: about 150 words for a one-hour game, 300 for three hours, and 450 at most.",
+    reason: "In review (#2368); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
+    title: "All your names on the website",
+    what: "When a name list in Discord is too long to show everything, its last choice is now \"All names on the website\". It gives you a private button that opens the whole list.",
+    reason: "In review (#2294); held until dev1 deploys it and the website's Names page is live (#2295, WebDev).",
+  },
+  {
+    date: "2026-10-22",
+    title: "Keep a name from the players until they learn it",
+    what: "When you add a name, 🙈 Hide from players keeps it to yourself: not in the NPC list, answers or recaps. On its card, 👀 Players know it now shows it to everyone when the players find out.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-21",
     title: "Pick the other name from a list",
     what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
@@ -423,7 +447,7 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
-    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
+    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 5, 10, 15 or 30 minutes (10 to start). When it stops, it sends you a private message saying why and where to change it, and tells each person still in the voice channel.",
     reason: "Merged with #2038 (#2041); held until dev1 deploys it.",
   },
   {

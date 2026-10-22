@@ -70,6 +70,11 @@ def page_url(site_url: str, guild_id: int, campaign_id: str) -> str:
 MAX_LINKS = 5  # a message holds five buttons in a row
 
 
+def link(url: str, *, row: int | None = None) -> discord.ui.Button[Any]:
+    """📥 Import sessions as a link button (#2300): one tap to the page, no reply in between."""
+    return discord.ui.Button(label=LABEL, emoji="📥", url=url, row=row)
+
+
 async def reply(interaction: discord.Interaction, mine: Sequence[Campaign]) -> None:
     """The one private answer of the button and the command, in the order that tells a player
     nothing: not a DM (`mine` empty), then not switched on, then no website. One link button for

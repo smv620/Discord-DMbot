@@ -5,10 +5,10 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and its length follows the session's: about 100 words plus
-  100 for each hour played (`length_for`), at most 700, from half of that to 20% over it (35% over
-  on the last try: length is a quality target and not a grounding rule, owner decisions on #2013
-  and #2058);
+- it opens with an emotion cue `《…》` and its length follows the session's: about 75 words plus
+  75 for each hour played (`length_for`), at most 450, from half of that to 20% over it (35% over
+  on the last try: length is a quality target and not a grounding rule, owner decisions on #2013,
+  #2058 and, for the shorter numbers, #2368);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
+from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.text import (
@@ -45,17 +46,19 @@ from dmbot.recaps.text import (
     words,
 )
 
-BASE_WORDS = 100  # the recap's length: this many words, and 100 more for each hour played
-WORDS_PER_HOUR = 100
-WORDS_CEILING = 700  # a 6-hour session or longer
+BASE_WORDS = 75  # the recap's length: this many words, and 75 more for each hour played (#2368)
+WORDS_PER_HOUR = 75
+WORDS_CEILING = 450  # a 5-hour session or longer
 RANGE = 0.20  # a draft up to this far over the target passes
 LAST_UP = 0.35  # on the last try a draft this far over the target still passes
 BELOW = 0.50  # a draft of at least this share of the target passes, on every try (owner, #2058)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
+# The longest at all: the last try's limit at 8 characters a word, so the web editor never refuses a
+# draft the length check passed.
 SUMMARY_MAX = (
-    round(WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD) + FIXED_LINES_ROOM
+    round(WORDS_CEILING * (1 + LAST_UP)) * CHARS_PER_WORD + FIXED_LINES_ROOM
 )  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
@@ -245,14 +248,15 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """100 words and 100 for each hour played, to the nearest 10 and at most 700 (0.5 hours 150, 1
-    hour 200, 3 hours 400, 6 hours or more 700). A draft passes from half the target (the owner
-    asked for 50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
+    """75 words and 75 for each hour played, to the nearest 10 with a half rounding up (Python's
+    round() would make 2 hours 220) and at most 450: 0.5 hours 110, 1 hour 150, 2 hours 230,
+    3 hours 300, 5 hours or more 450. A draft passes from half the target (the owner asked for
+    50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
     limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
     a paragraph for every 100 words (2 or more), 8 characters for each word of the longest
     accepted draft (so the cap never cuts a draft the length check passes) and a token budget for
     the words, the music prompts and the form."""
-    target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
+    target = min(WORDS_CEILING, int((BASE_WORDS + WORDS_PER_HOUR * hours) / 10 + 0.5) * 10)
     low = round(target * BELOW)
     high = round(target * (1 + RANGE))
     last_high = round(target * (1 + LAST_UP))
@@ -524,11 +528,18 @@ def prose_message(
     names: Collection[str],
     day: int | None,
     retold: str = "",
+    ending: Sequence[Beat] | None = None,
 ) -> str:
+    """`beats`: the ones the writer is shown (at most a few for a short session). `ending`: the
+    session's real last beats, the pair the ending check looks for (`check_prose`); the shown beats
+    are a pick, so their last two are not the session's last two (the second-to-last of a pick is
+    any beat of the middle), and a writer told to end there ends on the wrong beat."""
     parts = [f"<beats>\n{sheet(beats, notes=True)}\n</beats>"]
-    if beats:  # where the session stopped, said apart so the last section is set exactly there
-        parts.append(f"<ending>\n{sheet(beats[-2:], notes=True)}\n</ending>")
-    names = {*names, *(w for b in beats for w in b.who)}  # the beats' own names are allowed too
+    stop = list(ending[-2:]) if ending else list(beats[-2:])
+    if stop:  # where the session stopped, said apart so the last section is set exactly there
+        parts.append(f"<ending>\n{sheet(stop, notes=True)}\n</ending>")  # (may be beats not shown)
+    # the beats' own names are allowed too, the ending's included (it may not be among the shown)
+    names = {*names, *(w for b in beats for w in b.who), *(w for b in stop for w in b.who)}
     if previous.strip():
         parts.append(
             f"<previous>\n{quoted(' '.join(previous.split())[:PREVIOUS_MAX])}\n</previous>"
@@ -787,11 +798,13 @@ def kept_names(
     narration = narration_of(text)
     lists = _known(beats, allowed_names, previous, setting)
     heard = set(words(transcript))
+    cued = not_names.cued_in(transcript)  # a pronoun is offered only where a line names it (#2358)
     single = sorted(
         {
             n
             for n in proper_nouns(narration, sentence_starts=True)
-            if not _all_known(n, lists)
+            if not_names.allowed(n, cued)
+            and not _all_known(n, lists)
             and _all_known(n, heard)
             and not _ordinary_opener(n, narration, transcript)
             and not names_a_secret(n, secret_names, allowed_names)
@@ -836,6 +849,45 @@ def ends_on(narration: str, last: Sequence[Beat]) -> bool:
     return any(w[:5] in stems for w in words(narration)[-ENDING_WORDS:] if len(w) >= 4)
 
 
+STILL_MARGIN = 2  # words: a retry that moved by no more than this has not moved
+
+
+def length_range(length: Length, last: bool) -> tuple[int, int]:
+    """The words a draft may have on this try: the last try may run over by 35%."""
+    return (length.last_low, length.last_high) if last else (length.low, length.high)
+
+
+def length_steer(count: int, length: Length, last: bool = False) -> str:
+    """Which way and how far to move a draft whose length is off, or "" if it fits. Made in code,
+    word for word the same every time (the owner's rule, 2026-10-22): the distance is to the
+    target, not to the edge of the range."""
+    low, high = length_range(length, last)
+    if count < low:
+        return f"Make it longer by about {length.target - count} words"
+    if count > high:
+        return f"Make it shorter by about {count - length.target} words"
+    return ""
+
+
+def length_move(before: tuple[int, int] | None, count: int, length: Length, last: bool) -> str:
+    """Did a retry move the length the way it was steered? `before`: (words, +1 if that draft was
+    too short or -1 if too long), or None for the first draft. "" when it fits the range now, or
+    moved the right way and is still off (steer it again); otherwise why it is stopped: "stuck"
+    (it moved the wrong way or by no more than `STILL_MARGIN`) or "overshot" (it went past the
+    other end of the range)."""
+    low, high = length_range(length, last)
+    if before is None or low <= count <= high:
+        return ""
+    words_before, wanted = before
+    if wanted > 0:  # it was too short
+        if count > high:
+            return "overshot"
+        return "stuck" if count <= words_before + STILL_MARGIN else ""
+    if count < low:  # it was too long
+        return "overshot"
+    return "stuck" if count >= words_before - STILL_MARGIN else ""
+
+
 def check_prose(
     prose: Prose,
     *,
@@ -870,7 +922,8 @@ def check_prose(
     ):
         problems.append(
             f"Your draft was {count} words. This session ran about {length.hours:g} hours: "
-            f"write about {length.target} words, between {length.low} and {length.high}"
+            f"write about {length.target} words, between {length.low} and {length.high}. "
+            f"{length_steer(count, length, last)}"
         )
     if len(summary) > length.summary_max:
         problems.append(f"the summary is over {length.summary_max} characters")

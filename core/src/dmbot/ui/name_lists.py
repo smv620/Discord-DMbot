@@ -62,7 +62,7 @@ from dmbot.memory.name_list import (
 )
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import logic
+from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -220,13 +220,16 @@ class Browse(_Menu):
                 self.open = _Select(
                     self._open,
                     placeholder="✏️ Fix, change or remove a name…",
-                    options=[
-                        discord.SelectOption(
-                            label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),
-                            value=e,
-                        )
-                        for e in self.shown
-                    ],
+                    options=all_names.with_choice(
+                        [
+                            discord.SelectOption(
+                                label=logic.shorten(names.entities[e].name, logic.OPTION_LABEL_MAX),
+                                value=e,
+                            )
+                            for e in self.shown
+                        ],
+                        left_out=self.total > 1,  # the other pages' names are not in this menu
+                    ),
                     row=1,
                 )
                 self.add_item(self.open)
@@ -301,6 +304,9 @@ class Browse(_Menu):
         from dmbot.ui.name_card import show_card
 
         if self.open is not None:
+            if all_names.chosen(self.open.values):
+                await all_names.reply(interaction, self.campaign_id)
+                return
             await show_card(interaction, self.campaign_id, self.open.values[0])
 
 
@@ -1746,7 +1752,7 @@ def download_files(
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = (
-            tuple(a.text for a in mine if a.secret and not (e.audience_limited and a.key == own))
+            tuple(a.text for a in mine if a.secret and not (e.unseen_by_players and a.key == own))
             if secrets
             else ()
         )

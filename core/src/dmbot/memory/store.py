@@ -126,6 +126,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
 
 PERSON = "person"
 PLAYS = "plays"
@@ -181,7 +182,7 @@ def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
-        r["audience_limited"], r["party"],
+        r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
     )  # fmt: skip
 
 
@@ -309,6 +310,16 @@ class PersonAdded:
     flagged: tuple[str, ...]  # characters named but not linked: played by someone else, or unknown
 
 
+def hidden_old_pronoun(entity: Entity) -> bool:
+    """A suggestion from before the pronoun gate that is a pronoun: never offered (#2358)."""
+    return (
+        entity.status == PROPOSED
+        and entity.source != DM
+        and entity.made_before_name_gate
+        and not_names.is_not_name(entity.name)
+    )
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -423,7 +434,12 @@ class MemoryStore:
             rows = await scope.select(
                 ENTITIES, " AND status = ANY(%s) ORDER BY name, id", [list(statuses)]
             )
-            return [_entity(r) for r in rows]
+            found = [_entity(r) for r in rows]
+        # Suggestions made before pronouns were kept out ("We", "I'll") are still stored; they
+        # are not offered again (#2358). Later ones passed the gate when they were made (a naming
+        # cue let "We" through), so only the old ones, marked by the database, are looked at
+        # again. A name the DM added or confirmed is never hidden.
+        return [e for e in found if not hidden_old_pronoun(e)]
 
     async def aliases(
         self,
@@ -1291,6 +1307,26 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await _audience(scope, clue_id)
 
+    async def set_hidden_from_players(
+        self, guild_id: int, campaign_id: str, entity_id: str, hidden: bool, *, source: str
+    ) -> Written[Entity]:
+        """The DM's switch "Players don't know this one yet" (#2321), on any entry: on, the entry
+        is the DM's alone like a clue only some know; off ("Players know it now"), everyone
+        sees it. Not a clue's audience (`set_audience_limited`), which has its own rules."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if hidden and (
+                current["type"] == PERSON
+                or current["party"]
+                or current["role"] == PLAYER_CHARACTER
+                or current["played_by"] is not None
+            ):  # a player's character is named in the transcript file and the table list
+                raise MemoryRuleError("A player's character can't be hidden from the players.")
+            row = await w.update(ENTITIES, entity_id, {"hidden_from_players": hidden})
+            return Written(_entity(row), w.batch)
+
     async def set_audience_limited(
         self, guild_id: int, campaign_id: str, clue_id: str, limited: bool, *, source: str
     ) -> Written[Entity]:
@@ -1401,13 +1437,19 @@ class MemoryStore:
         description: str = "",
         played_by: int | None = None,
         role: str | None = None,
+        hidden_from_players: bool = False,
     ) -> Written[Entity]:
         """A new person, place or thing, with its name as the first alias. `role`: for a
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
-        Discord user playing a player character."""
+        Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
+        know this one yet" (#2321), theirs to say."""
+        if hidden_from_players and source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
         check_named(type, name)
         type, role = resolve_kind(type, role)
+        if hidden_from_players and (role == PLAYER_CHARACTER or played_by is not None):
+            raise MemoryRuleError("A player's character can't be hidden from the players.")
         if type == PERSON:
             raise MemoryRuleError(PERSON_NOT_LISTED)  # only DMbot makes these
         _check_choice(status, LIVE, "entity status")
@@ -1436,6 +1478,7 @@ class MemoryStore:
                     "role": role,
                     "needs_look": False,
                     "unique_item": None,
+                    "hidden_from_players": hidden_from_players,
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
@@ -2330,6 +2373,10 @@ class MemoryStore:
                     ),
                     # A clue only some people know stays so if either was (#1649).
                     "audience_limited": kept["audience_limited"] or gone["audience_limited"],
+                    # And so does an entry the players don't know yet (#2321).
+                    "hidden_from_players": (
+                        kept["hidden_from_players"] or gone["hidden_from_players"]
+                    ),
                 }
                 if merged != {k: kept[k] for k in merged}:
                     await w.update(ENTITIES, keep_id, merged)
