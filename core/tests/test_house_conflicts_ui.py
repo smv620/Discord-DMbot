@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import discord
+
 from dmbot.ai import Reply
 from dmbot.rules import conflicts, house_file_sync
 from dmbot.rules.conflicts import Checked, Disagreement, Existing
@@ -345,4 +347,5 @@ class TheQuotedWords(unittest.TestCase):
         text = view.prompt()
         self.assertIn(r"A \*potion\* is a \_bonus\_ action", text)
         self.assertIn(r"A \*\*potion\*\* is an item interaction", text)
-        self.assertEqual([c.label for c in view.children][-2:], ["Rule 4 wins", "Cancel"])
+        labels = [c.label for c in view.children if isinstance(c, discord.ui.Button)]
+        self.assertEqual(labels[-2:], ["Rule 4 wins", "Cancel"])
