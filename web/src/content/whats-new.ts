@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Three clear ways to approve a recap",
+    what: "On a recap's page, Approve and post text only, Approve and make audio to review, or Approve but don't post. Audio is greyed with the reason when it can't be made. If you don't post, you can copy the text and post it later.",
+    reason: "In review (#2428); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
