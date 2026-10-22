@@ -18,15 +18,17 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import notify, sheets
+from dmbot.memory import beliefs, notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
+    BELIEFS,
     CLAIMS,
     CORRECTIONS,
     ENTITIES,
     FLAGS,
     IMPRESSIONS,
+    PERSPECTIVES,
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
@@ -40,11 +42,14 @@ from dmbot.memory._changes import (
 from dmbot.memory.checks import FLAG_KINDS
 from dmbot.memory.models import (
     ALIAS_KINDS,
+    BELIEF_STATUSES,
     CLAIM_STATUSES,
     CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
     ENTITY_STATUSES,
+    EVIDENCE_ID_MAX,
+    EVIDENCE_MAX,
     FIX,
     HOWS,
     KEEP,
@@ -54,6 +59,7 @@ from dmbot.memory.models import (
     LINK_SOURCE_MAX,
     LIST_MAX,
     NAME_MAX,
+    PERSPECTIVE_KINDS,
     PLAYER_CHARACTER,
     ROLES,
     SOURCES,
@@ -87,6 +93,8 @@ _TAGS: dict[str, Table] = {
     "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
+    "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
+    "belief": BELIEFS,
     "impression": IMPRESSIONS,
     "attitude": ATTITUDES,
     "correction": CORRECTIONS,
@@ -120,9 +128,17 @@ _TEXT_LIMITS = {
     "model": 80,
 }
 _CHOICES: dict[str, Sequence[str]] = {
-    "status": (*ENTITY_STATUSES, ACTIVE, DEPRECATED, "open", "resolved", *CLAIM_STATUSES),
+    "status": (
+        *ENTITY_STATUSES,
+        ACTIVE,
+        DEPRECATED,
+        "open",
+        "resolved",
+        *CLAIM_STATUSES,
+        *BELIEF_STATUSES,
+    ),
     "how": HOWS,
-    "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS),
+    "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
     "edition": LINK_EDITIONS,
@@ -130,18 +146,19 @@ _CHOICES: dict[str, Sequence[str]] = {
     "source": SOURCES,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
-        "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id"}  # fmt: skip
+        "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
+        "perspective_id", "manipulated_by"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-         "max_per_subject", "closed_at"}  # fmt: skip
+         "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
 _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
-          "mention_ids", "covers", "not_this", "synonyms"}  # fmt: skip
+          "mention_ids", "covers", "not_this", "synonyms", "evidence_ids"}  # fmt: skip
 _NULLABLE = {
     "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
-    "session_started_at", "decided_at", "said_as", "from_set",
+    "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
 }  # fmt: skip
 
 
@@ -255,6 +272,9 @@ class MemorySection:
                     )
             # Check links now, not at commit, so a broken file gives a plain message.
             await conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+            if not by_tag["perspective"]:
+                # a file from before beliefs: worked out from its connections, as the migration did
+                await beliefs.backfill(conn, guild_id, campaign_id)
         except (pg_errors.IntegrityError, pg_errors.DataError) as exc:
             raise CampaignError(DAMAGED) from exc
         await bump_version(conn, guild_id, campaign_id)
@@ -304,6 +324,15 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_claim(raw)
         elif raw.get("status") == "dropped":
             raise CampaignError(DAMAGED)  # only a claim can be dropped
+        if table is BELIEFS and (
+            len(raw["evidence_ids"]) > EVIDENCE_MAX
+            or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])
+        ):
+            raise CampaignError(DAMAGED)
+        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party")) != (
+            raw["entity_id"] is None
+        ):
+            raise CampaignError(DAMAGED)  # only a character's perspective points at an entry
         if table is ALIASES and raw["secret"] and raw["said_as"] is not None:
             raise CampaignError(DAMAGED)  # a secret name is never given to the narrator
         if table is ALIASES:  # worked out again, not taken from the file
@@ -357,6 +386,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "party": False,
                 "hidden_from_players": False,  # from before #2321
                 "made_before_name_gate": True,  # a file from before the gate holds old rows (#2358)
+                "manipulated_by": None,  # from before beliefs (#2409)
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "alias":

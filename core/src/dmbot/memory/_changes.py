@@ -77,6 +77,7 @@ ENTITIES = Table(
         "party",
         "hidden_from_players",
         "made_before_name_gate",
+        "manipulated_by",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -85,6 +86,7 @@ ENTITIES = Table(
         "party": False,
         "hidden_from_players": False,
         "made_before_name_gate": False,
+        "manipulated_by": None,  # the evidence this one faked (#2409)
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -164,6 +166,15 @@ ATTITUDES = Table(
     ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
      "created_at", "closed_at"),
 )  # fmt: skip
+# Who holds beliefs (The truth, The party, a character) and what each believes of a connection
+# (#2409). A belief is never edited: a new row is the new belief, the newest `version` wins.
+PERSPECTIVES = Table("memory_perspectives", "id", ("id", "kind", "entity_id", "created_at"))
+BELIEFS = Table(
+    "memory_beliefs",
+    "id",
+    ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
+     "evidence_ids", "seq", "recorded_at"),
+)  # fmt: skip
 # The DM's word that a book entry and a table entry are one, or are not (#1715).
 PLAN_SAME_AS = Table(
     "plan_same_as",
@@ -175,7 +186,8 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION)  # fmt: skip
+       STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
+       BELIEFS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -209,6 +221,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_attitudes", "holder_id", False),
         ("memory_attitudes", "toward_id", False),
         ("plan_same_as", "entity_id", False),
+        ("memory_perspectives", "entity_id", False),
+        ("memory_entities", "manipulated_by", False),
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
@@ -216,7 +230,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     "memory_relations": (
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
+        ("memory_beliefs", "relation_id", False),
     ),
+    "memory_perspectives": (("memory_beliefs", "perspective_id", False),),
 }
 
 
@@ -282,6 +298,9 @@ class Changes(Scope):
         self.undoes = undoes
         self.batch: int | None = None
         self.tables: set[str] = set()  # tables this write changed
+        self.perspectives: dict[str, str] | None = (
+            None  # The truth's and The party's ids, once known
+        )
 
     async def insert(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
         cols = ("guild_id", "campaign_id", *table.columns)
@@ -298,6 +317,8 @@ class Changes(Scope):
         assert raw is not None
         after = row_of(raw, table)
         await self._log(table, after[table.key], "insert", None, after)
+        if table is RELATIONS and self.undoes is None:
+            await self._beliefs_follow(after)
         return after
 
     async def update(self, table: Table, row_id: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -327,13 +348,30 @@ class Changes(Scope):
         await self._log(table, row_id, "update", before, after)
         if "status" in changes:
             await self._forget_later(table, [after])
+        if (
+            table is RELATIONS
+            and self.undoes is None
+            and ("status" in changes or "secret" in changes)
+        ):
+            await self._beliefs_follow(after)
         return after
+
+    async def _beliefs_follow(self, relation: dict[str, Any]) -> None:
+        """A connection was written: keep The truth's and The party's belief in step with it, in the
+        same change (#2409). Imported here: the module needs the tables above."""
+        from dmbot.memory import beliefs
+
+        await beliefs.follow(self, relation)
 
     async def delete(self, table: Table, row_id: str) -> None:
         """Delete one row. Refused while anything still links to it (see DEPENDENTS)."""
         before = await self.get(table, row_id)
         if before is None:
             return
+        if table is RELATIONS and self.undoes is None:
+            # its beliefs go with it, each logged, so an Undo brings the connection back whole
+            for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
+                await self.delete(BELIEFS, belief["id"])
         for dep_table, column, is_list in DEPENDENTS.get(table.name, ()):
             test = "%s = ANY({})" if is_list else "{} = %s"
             query = sql.SQL(
