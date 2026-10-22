@@ -85,6 +85,8 @@ def _form(run: str) -> tuple[str, frozenset[str]]:
     return run, frozenset(sound_codes(run)) if len(run) >= MIN_SOUND_LETTERS else frozenset()
 
 
+LONGEST_SPELLED = 60  # longer runs are filed only as they are: the work grows with length squared
+LONGEST_TWO_OFF = 24  # and two letters off is looked for only up to here
 MAX_FILE = 200  # names under one spelling or sound; more than this is no clue to anything
 
 
@@ -92,11 +94,11 @@ def _spellings(run: str) -> set[str]:
     """The run itself and the runs with one letter taken out (and, for a run long enough to be
     two letters off a longer name, two letters out): two names a letter or two apart share one."""
     found = {run}
-    if len(run) < MIN_LETTERS:
-        return found
+    if len(run) < MIN_LETTERS or len(run) > LONGEST_SPELLED:
+        return found  # (a very long name is only ever the same letters as another)
     once = {run[:k] + run[k + 1 :] for k in range(len(run))}
     found |= once
-    if len(run) >= SHORT_NAME - 1:
+    if SHORT_NAME - 1 <= len(run) <= LONGEST_TWO_OFF:
         found |= {r[:k] + r[k + 1 :] for r in once for k in range(len(r))}
     return found
 

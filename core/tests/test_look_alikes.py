@@ -106,6 +106,12 @@ class WhatLooksAlike(unittest.TestCase):
         self.assertLess(calls, 500_000)  # not the 12 million pairs of comparing everyone
         self.assertLess(time.perf_counter() - start, 15.0)
 
+    def test_very_long_names_do_not_make_it_slow(self) -> None:
+        names = [Name(f"{i:032x}", ("ab" * 50) + str(i)) for i in range(3000)]
+        start = time.perf_counter()
+        la.find(names)
+        self.assertLess(time.perf_counter() - start, 10.0)
+
     def test_empty_one_and_unreadable_names(self) -> None:
         self.assertEqual(la.find([]), [])
         self.assertEqual(la.find([Name("a" * 32, "Belleros")]), [])
