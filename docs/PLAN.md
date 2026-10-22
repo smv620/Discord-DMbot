@@ -1379,6 +1379,13 @@ so the docs always show names the way Discord does. For the campaign
     that NPC's page on the website. It is a plain link button, so no click is handled by the bot,
     nothing breaks after a restart, and the message text is unchanged. The link carries the entry's
     reference in its address, not in the text.
+  - **The name is the button** (owner, 2026-10-22, replacing 📖 Open, which looked sloppy repeated down the
+    list): each NPC's message is the button itself, labelled with the kind's icon, the name and the kind
+    ("👤 Belleros · NPC" style; at most 80 characters, cut with "…"). Its other lines ("Also called: …") sit
+    beside it, as text with the button on the same line, using Discord's newer message layout (a section
+    with a button). With no other lines the message is just the button. With no website address the message
+    stays as it was, the name in bold and no button. Existing messages are replaced once, because a message
+    can't switch to the newer layout by an edit.
   - **Who sees the page:** anyone in the campaign's Discord server, signed in on the website with
     Discord, the same people who may read the transcripts. Someone not in that server gets "This
     page is for the people in that Discord server."
