@@ -275,7 +275,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=[settings.site_origin],  # exactly the website, never echoed back
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],  # every method a route uses (#2415)
         allow_headers=[REQUEST_HEADER, CSRF_HEADER, "Content-Type"],
         max_age=600,
     )
