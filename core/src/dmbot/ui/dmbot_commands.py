@@ -777,6 +777,10 @@ class RestoreChoice(_Menu):
                 log.exception("Restoring a backup failed")
                 await _replace(interaction, RESTORE_FAILED, None)
                 return
+        # A big restore adds thousands of rows at once: refresh the planner's statistics (#2376).
+        memory = getattr(bot, "memory", None)
+        if memory is not None:
+            await memory.analyze(guild.id)
         # The restored (or replaced) campaign's rules channel, if it has one, shows the new rules.
         changed = getattr(bot, "_rules_archive_changed", None)
         if changed is not None and replace_id is not None:

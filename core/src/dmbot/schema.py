@@ -9543,6 +9543,35 @@ ALL_NAMES_PAGE = r"""
     REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
         FROM PUBLIC;
 """
+# The All names door again (#2376, migration 0174): the check for an entry whose own spelling is
+# also a secret name ran once per entry over all of its names, which took seconds on a big campaign
+# before the database had statistics (right after a restore or an import). It is now found from the
+# secret names alone and joined once. The result is the same. 0170 is already applied everywhere,
+# so this redefines the door; a redefined function loses its pinned settings, so they are set again.
+_SECRET_EACH = """                   EXISTS (SELECT 1 FROM memory_aliases a
+                           WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,"""
+_SECRET_ONCE = """                   (e.id IN (SELECT s.entity_id FROM secret_own s)) AS secret,"""
+_SECRET_CTE = """        WITH secret_own AS (
+            SELECT DISTINCT a.entity_id
+            FROM memory_aliases a
+            JOIN memory_entities en ON en.guild_id = a.guild_id AND en.campaign_id = a.campaign_id
+                                   AND en.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.secret AND a.status <> 'rejected'
+              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+        ), base AS ("""
+assert _SECRET_EACH in ALL_NAMES_PAGE and ALL_NAMES_PAGE.count("        WITH base AS (") == 1
+ALL_NAMES_SPEED = (
+    ALL_NAMES_PAGE.replace(
+        "CREATE FUNCTION dmbot_web_all_names(", "CREATE OR REPLACE FUNCTION dmbot_web_all_names(", 1
+    )
+    .replace(_SECRET_EACH, _SECRET_ONCE, 1)
+    .replace("        WITH base AS (", _SECRET_CTE, 1)
+)
 # Which suggested names were made before pronouns were kept out of them (#2358). The default
 # marks every existing row (a constant default is stored as metadata: no UPDATE runs, so no
 # row-level-security policy is opened) and is then changed, so every row written from now on is
@@ -9921,6 +9950,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
