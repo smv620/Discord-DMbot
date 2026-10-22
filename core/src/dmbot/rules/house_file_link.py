@@ -44,7 +44,9 @@ class FileLink:
             host = yarl.URL(fetch.direct_url(self.link).human_repr()).host
         except fetch.LinkError:
             host = None
-        return host or "a link"
+        # OneDrive's file API is the address a share link is read from; the person shared a
+        # onedrive.live.com page, so that is the site to name.
+        return "onedrive.live.com" if host == "api.onedrive.com" else host or "a link"
 
 
 def clean_link(raw: str) -> str:
