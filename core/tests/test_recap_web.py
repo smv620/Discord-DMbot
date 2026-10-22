@@ -27,6 +27,7 @@ from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
@@ -321,6 +322,47 @@ class TheDmsPage(Base):
             self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
         )
         self.assertIsNone(loose["transcriptsDeletedAt"])
+
+    async def test_a_recap_says_which_session_it_is_and_how_long_it_ran(self) -> None:
+        """(#2418) The number is the transcripts page's own (`TranscriptSession.number`), the length
+        is when the session ended minus when it started, and neither is made up: a recap whose
+        session isn't saved, or is still listening, leaves the missing part null. Another DM's
+        campaign with a session at the same time is not mixed in."""
+        transcripts = TranscriptStore(self.db)
+
+        async def played(campaign_id: str, start: int, end: int | None) -> None:
+            """A session with one line (the transcripts list shows only sessions with lines)."""
+            sid = await transcripts.open_session(THURSDAY.id, campaign_id, start)
+            await transcripts.add_lines(
+                THURSDAY.id, sid, [Line(start * 1000 + 1000, ALICE.id, "we go", "we go")]
+            )
+            if end is not None:
+                await transcripts.end_session(THURSDAY.id, sid, end)
+
+        # "One" has an earlier session (number 1) before the one its recap is about (number 2).
+        await played(self.one.id, 50, 90)
+        for campaign in (self.one, self.two):
+            await played(campaign.id, 100, 100 + 2 * 3600 + 35 * 60)
+        read = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual((read["sessionNumber"], read["sessionSeconds"]), (2, 9300))
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(
+            {r["campaign"]: (r["sessionNumber"], r["sessionSeconds"]) for r in listed},
+            {"One": (2, 9300)},
+        )
+        # Still listening: the number is known, the length is not.
+        await played(self.one.id, 500, None)
+        await self.store.enqueue(THURSDAY.id, self.one.id, 500, dm_user_id=ALICE.id)
+        running = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
+        )
+        self.assertEqual((running["sessionNumber"], running["sessionSeconds"]), (3, None))
+        # No session at its time: neither.
+        await self.store.enqueue(THURSDAY.id, self.one.id, 900, dm_user_id=ALICE.id)
+        loose = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 900)
+        )
+        self.assertEqual((loose["sessionNumber"], loose["sessionSeconds"]), (None, None))
 
     async def test_a_recap_says_when_a_fixed_spelling_changed_its_text(self) -> None:
         # Never respelled: null. The bot writes respelled_at when it carries a fixed spelling into

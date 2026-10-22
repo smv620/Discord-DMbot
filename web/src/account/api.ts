@@ -217,6 +217,11 @@ export interface Recap {
   serverName?: string;
   /** Unix seconds the session started. */
   sessionAt: number;
+  /** The session's number in its campaign, as the transcripts number it (#2418); missing from an
+   * older API, null when it can't be found. */
+  sessionNumber?: number | null;
+  /** How long the session ran, in seconds; null while it is still listening or if unknown. */
+  sessionSeconds?: number | null;
   gameDay: string | null;
   state: string;
   status: "draft" | "posting" | "posted" | "dropped";
@@ -291,6 +296,11 @@ export interface PublicRecap {
   postedAt: number;
   /** Only the kinds that exist; each is a full address that needs no sign-in. */
   audio: { voice?: string; music?: string };
+  /** When it was played (Unix seconds), which session it was and how long it ran (#2418). Left out
+   * by an older API. */
+  sessionAt?: number | null;
+  sessionNumber?: number | null;
+  sessionSeconds?: number | null;
 }
 
 /** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a

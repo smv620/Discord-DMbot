@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Every recap says which session it is", // until #2418 merges and dev1 deploys it
       "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
       "Upload your campaign's backstory from the main menu", // until #2380 merges and dev1 deploys it
       "Recaps are shorter", // until #2368 merges and dev1 deploys it
