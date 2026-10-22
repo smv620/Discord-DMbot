@@ -126,8 +126,9 @@ class CampaignLookup:
                 a.text,
                 a.key,
                 a.kind,
-                # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
-                # must never write it into the shared transcript, and it is the DM's alone.
+                # A clue only some people know (#1649), or an entry the DM hasn't told the players
+                # of (#2321), is as secret as a secret name: the Cleaner must never write it into
+                # the shared transcript, and it is the DM's alone.
                 a.secret or entities[a.entity_id].unseen_by_players,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words

@@ -1295,7 +1295,7 @@ class MemoryStore:
         self, guild_id: int, campaign_id: str, entity_id: str, hidden: bool, *, source: str
     ) -> Written[Entity]:
         """The DM's switch "Players don't know this one yet" (#2321), on any entry: on, the entry
-        is the DM's alone like a clue only some know; off ("Players know them now"), everyone
+        is the DM's alone like a clue only some know; off ("Players know it now"), everyone
         sees it. Not a clue's audience (`set_audience_limited`), which has its own rules."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")

@@ -204,3 +204,42 @@ class Doors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThePresser(unittest.IsolatedAsyncioTestCase):
+    """The card's button re-checks who presses it: it is the only gate, because the handler
+    always writes as the DM."""
+
+    async def press(self, user_id: int) -> tuple[Any, Any]:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        card = name_card.NameCard("c" * 32, "e" * 32, hide=False)
+        memory = MagicMock()
+        memory.entity = AsyncMock(return_value=SimpleNamespace(hidden_from_players=False))
+        memory.set_hidden_from_players = AsyncMock()
+        told = AsyncMock()
+        campaign = SimpleNamespace(guild_id=1, id="c" * 32, dm_user_ids=frozenset({7}))
+        interaction = MagicMock()
+        interaction.user.id = user_id
+        with (
+            patch.object(name_card, "_answer_first", AsyncMock()),
+            patch.object(name_card, "_current", AsyncMock(return_value=(campaign, "Mira"))),
+            patch.object(name_card, "_memory", lambda _it: memory),
+            patch.object(name_card, "_tell", told),
+            patch.object(name_card, "changed", MagicMock()),
+            patch.object(name_card, "show_card", AsyncMock()),
+        ):
+            await card._flip_hidden(interaction)
+        return told, memory.set_hidden_from_players
+
+    async def test_someone_who_may_not_see_secrets_changes_nothing(self) -> None:
+        told, write = await self.press(99)
+        write.assert_not_awaited()
+        self.assertEqual(told.await_args.args[1], "Only the DM can change that.")
+
+    async def test_a_dm_hides_it(self) -> None:
+        told, write = await self.press(7)
+        write.assert_awaited_once()
+        self.assertEqual(write.await_args.args[3], True)
+        told.assert_not_awaited()
