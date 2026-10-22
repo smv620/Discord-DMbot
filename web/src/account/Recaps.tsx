@@ -38,6 +38,22 @@ import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
 
 const POLL_MS = 5000;
+/** How long, after Try again, a read that still shows the old failure is ignored. */
+const STALE_FAILURE_MS = 60_000;
+
+/** What the page shows the moment Try again is accepted (#2333): the new run is under way and nothing
+ * can be done until a read says it has ended, whatever the answer still says about the old failure. */
+export function optimisticTryAgain(next: Recap): Recap {
+  return {
+    ...next,
+    working: true,
+    state: next.state === "failed" ? "working" : next.state,
+    canTryAgain: false,
+    canDrop: false,
+    canPost: false,
+    canEdit: false,
+  };
+}
 
 type Load =
   | { kind: "loading" }
@@ -417,6 +433,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     };
   }, [api, recapRef]);
 
+  // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
+  const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
+
   // While DMbot is writing it or posting it, look again every few seconds.
   const waiting =
     recap !== null &&
@@ -426,7 +445,14 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     if (!waiting || !api.recap) return;
     const timer = setInterval(() => {
       if (inFlight.current) return;
-      api.recap?.(recapRef).then(setRecap, () => undefined);
+      api.recap?.(recapRef).then((read) => {
+        // Right after Try again, a read that still shows the old failure (the API is a moment behind)
+        // must not bring the failure box back: the press used one try, so the old failure has one more.
+        const stale = staleFailure.current;
+        if (stale && Date.now() < stale.until && read.state === "failed" && !read.working && read.triesLeft >= stale.triesLeft) return;
+        staleFailure.current = null;
+        setRecap(read);
+      }, () => undefined);
     }, POLL_MS);
     return () => clearInterval(timer);
   }, [api, recapRef, waiting]);
@@ -526,11 +552,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       const next = await api.decideRecap(recap.ref, action);
       // Once Try again is accepted the new run is under way, whatever the answer still says about the
       // old failure: show only the working state until a read says the run has ended (#2333).
-      setRecap(
-        action === "again"
-          ? { ...next, working: true, state: next.state === "failed" ? "working" : next.state, canTryAgain: false, canDrop: false, canPost: false, canEdit: false }
-          : next,
-      );
+      const before = recap?.triesLeft ?? 0;
+      if (action === "again" && !isHeld(next)) {
+        staleFailure.current = { triesLeft: before, until: Date.now() + STALE_FAILURE_MS };
+        setRecap(optimisticTryAgain(next));
+      } else setRecap(next);
       setEditing(false);
       // Post and Don't post are said by the status lines above; only Try again needs a note.
       if (action === "again") setNote({ ok: true, message: text.tryingAgain });

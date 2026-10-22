@@ -9,7 +9,7 @@ import type { Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { choiceWords } from "../src/content/recap-choices";
-import { againLabel, statusLine, text } from "../src/content/recaps";
+import { againLabel, text } from "../src/content/recaps";
 
 afterEach(() => {
   cleanup();
@@ -55,7 +55,7 @@ describe("Try again on a failed recap", () => {
     expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
     expect(screen.queryByRole("button", { name: text.drop })).toBeNull();
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
-    expect(screen.getByText(statusLine({ ...running(0) } as Recap))).toBeTruthy();
+    expect(screen.getByText("Being made")).toBeTruthy();
     expect(screen.queryByText("Couldn't be made")).toBeNull();
   });
 
@@ -76,9 +76,43 @@ describe("Try again on a failed recap", () => {
   });
 });
 
+describe("when the run ends", () => {
+  it("gives Post and Edit back if it worked", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    open(failed(1), { ...base, triesLeft: 0, canTryAgain: false });
+    await screen.findByText(text.failed);
+    fireEvent.click(screen.getByRole("button", { name: againLabel(1) }));
+    await screen.findByText(text.working);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(await screen.findByRole("button", { name: text.post })).toBeTruthy();
+    expect(screen.getByRole("button", { name: text.edit })).toBeTruthy();
+    expect(screen.queryByText(text.working)).toBeNull();
+  });
+
+  it("ignores a read that still shows the old failure, then follows the real one", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // The API is a moment behind: the first poll still says "failed, one try left".
+    open(failed(1), failed(1), { ...base, triesLeft: 0, canTryAgain: false });
+    await screen.findByText(text.failed);
+    fireEvent.click(screen.getByRole("button", { name: againLabel(1) }));
+    await screen.findByText(text.working);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.queryByText(text.failed)).toBeNull();
+    expect(screen.getByText(text.working)).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(await screen.findByRole("button", { name: text.post })).toBeTruthy();
+  });
+});
+
 describe("a recap that is being made", () => {
   it("offers no Don't post and no 'tried twice' line until the run has ended", async () => {
-    open({ ...running(0) });
+    open({ ...running(0), triesLeft: 0 });
     await screen.findByText(text.working);
     expect(screen.queryByRole("button", { name: text.drop })).toBeNull();
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
