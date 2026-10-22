@@ -58,6 +58,14 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   const pageNow = useRef(1);
   const queryNow = useRef({ q, kind, sort });
   queryNow.current = { q, kind, sort };
+  // Names ticked for "Merge selected" (#2427): kept across searches and pages, so look-alikes found
+  // by different searches can be merged together.
+  const [picked, setPicked] = useState<NameRow[]>([]);
+  const [merging, setMerging] = useState(false);
+  const [keepId, setKeepId] = useState("");
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const mergeHeading = useRef<HTMLHeadingElement>(null);
+  const mergeOpener = useRef<HTMLButtonElement>(null);
   const newsBox = useRef<HTMLParagraphElement>(null);
   const first = useRef(true);
   const sayings = useRef(0);
@@ -108,6 +116,67 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     // `load` reads the latest query through a ref, so only these three restart the read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref, q, kind, sort]);
+
+  // The most-mentioned name first, as the one to keep by default.
+  const ordered = [...picked].sort(
+    (a, b) => (b.mentions ?? 0) - (a.mentions ?? 0) || a.name.localeCompare(b.name),
+  );
+
+  useEffect(() => {
+    if (merging) mergeHeading.current?.focus();
+  }, [merging]);
+
+  // Fewer than two ticked: the question is gone with the bar, and must not come back by itself.
+  useEffect(() => {
+    if (picked.length < 2) setMerging(false);
+  }, [picked.length]);
+
+  function pick(row: NameRow): void {
+    setPicked((now) => (now.some((r) => r.id === row.id) ? now.filter((r) => r.id !== row.id) : [...now, row]));
+  }
+
+  function openMerge(): void {
+    setKeepId(ordered[0]?.id ?? "");
+    setNews(null);
+    setMerging(true);
+  }
+
+  function closeMerge(): void {
+    setMerging(false);
+    setTimeout(() => mergeOpener.current?.focus(), 0);
+  }
+
+  /** Every ticked name into the one kept: one queued change, waited for like the others (#2427). */
+  async function mergeMany(): Promise<void> {
+    if (!ref || !api.changeName || mergeBusy) return;
+    const keep = ordered.find((r) => r.id === keepId) ?? ordered[0];
+    if (!keep) return;
+    const others = ordered.filter((r) => r.id !== keep.id);
+    setMergeBusy(true);
+    try {
+      await api.changeName(ref, keep.id, { action: "merge-many", others: others.map((r) => r.id) });
+      setPicked([]);
+      setMerging(false);
+      setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
+      setTimeout(() => newsBox.current?.focus(), 0);
+      await load(pageNow.current, true);
+    } catch (error) {
+      const said = refusal(error);
+      if (said === null) {
+        setView("signed-out");
+        return;
+      }
+      setNews({ ok: false, text: said, n: ++sayings.current });
+      if (error instanceof ApiError && (error.kind === "still-waiting" || error.kind === "not-found")) {
+        // It may have happened, or a name is gone: read the list again and start the ticking over.
+        setPicked([]);
+        setMerging(false);
+        await load(pageNow.current, true);
+      }
+    } finally {
+      setMergeBusy(false);
+    }
+  }
 
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
   async function act(row: NameRow, change: NameChange, ok: string): Promise<string | null> {
@@ -244,6 +313,32 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
+      {data.canEdit && picked.length >= 2 && (
+        <section class="panel merge-bar" aria-label={words.selected(picked.length)}>
+          <p role="status">{words.selected(picked.length)}</p>
+          <div class="row">
+            <button type="button" class="button" ref={mergeOpener} disabled={merging || mergeBusy} onClick={openMerge}>
+              {words.mergeSelected}
+            </button>
+            <button type="button" class="button secondary" disabled={mergeBusy} onClick={() => setPicked([])}>
+              {words.clearSelected}
+            </button>
+          </div>
+          {merging && (
+            <MergeMany
+              ordered={ordered}
+              kinds={data.kinds}
+              keepId={keepId}
+              onKeep={setKeepId}
+              busy={mergeBusy}
+              headingRef={mergeHeading}
+              onYes={() => void mergeMany()}
+              onNo={closeMerge}
+            />
+          )}
+        </section>
+      )}
+
       {shown.length === 0 ? (
         <p class="muted">{q.trim() !== "" || kind !== "" ? words.noMatch : words.noNames}</p>
       ) : (
@@ -254,6 +349,8 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
               row={row}
               kinds={data.kinds}
               canEdit={data.canEdit}
+              ticked={picked.some((r) => r.id === row.id)}
+              onTick={() => pick(row)}
               open={editing === row.id}
               onToggle={() => setEditing(editing === row.id ? null : row.id)}
               act={act}
@@ -279,6 +376,84 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   );
 }
 
+/** "A, B and C". */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The small question under the bar: which name to keep, a warning when the kinds differ, and one
+ * confirmation that names every name that goes (#2427). Escape cancels. */
+function MergeMany({
+  ordered,
+  kinds,
+  keepId,
+  onKeep,
+  busy,
+  headingRef,
+  onYes,
+  onNo,
+}: {
+  ordered: NameRow[];
+  kinds: NameKind[];
+  keepId: string;
+  onKeep: (id: string) => void;
+  busy: boolean;
+  headingRef: { current: HTMLHeadingElement | null };
+  onYes: () => void;
+  onNo: () => void;
+}) {
+  const keep = ordered.find((r) => r.id === keepId) ?? ordered[0];
+  if (!keep) return null;
+  const others = ordered.filter((r) => r.id !== keep.id);
+  const kindKeys = [...new Set(ordered.map((r) => r.kind))];
+  return (
+    <div
+      class="stack"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="merge-many-heading"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) onNo();
+      }}
+    >
+      <h3 id="merge-many-heading" tabIndex={-1} ref={headingRef}>
+        {words.mergeManyHeading}
+      </h3>
+      <p class="small muted">{words.mergeManyLead}</p>
+      <div role="radiogroup" aria-labelledby="merge-many-heading" class="stack">
+        {ordered.map((r) => (
+          <label class="choice" key={r.id}>
+            <input
+              type="radio"
+              name="merge-keep"
+              checked={r.id === keep.id}
+              disabled={busy}
+              onChange={() => onKeep(r.id)}
+            />{" "}
+            {r.name}
+            {r.mentions !== undefined && <span class="muted small"> · {words.mentionsOf(r.mentions)}</span>}
+          </label>
+        ))}
+      </div>
+      {kindKeys.length > 1 && (
+        <p class="note" role="note">
+          {words.mergeManyKinds(listOf(kindKeys.map((k) => kindWords(kinds, k))))}
+        </p>
+      )}
+      <p>{words.mergeManyAsk(listOf(others.map((r) => r.name)), keep.name)}</p>
+      <div class="row">
+        <button type="button" class="button" aria-busy={busy} disabled={busy} onClick={onYes}>
+          {busy ? words.mergeManyBusy : words.mergeManyYes}
+        </button>
+        <button type="button" class="button secondary" disabled={busy} onClick={onNo}>
+          {words.mergeManyNo}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function kindWords(kinds: NameKind[], key: string): string {
   return kinds.find((k) => k.key === key)?.label ?? key;
 }
@@ -287,6 +462,9 @@ interface ItemProps {
   row: NameRow;
   kinds: NameKind[];
   canEdit: boolean;
+  /** Ticked for "Merge selected" (DMs only, #2427). */
+  ticked: boolean;
+  onTick: () => void;
   open: boolean;
   onToggle: () => void;
   act: (row: NameRow, change: NameChange, ok: string) => Promise<string | null>;
@@ -295,11 +473,22 @@ interface ItemProps {
   campaignPath: string;
 }
 
-function NameItem({ row, kinds, canEdit, open, onToggle, act, api, refId, campaignPath }: ItemProps) {
+function NameItem({ row, kinds, canEdit, ticked, onTick, open, onToggle, act, api, refId, campaignPath }: ItemProps) {
   const panel = `name-edit-${row.id}`;
   return (
     <li class="name-row">
       <div class="name-head">
+        {canEdit && (
+          <label class="name-tick">
+            <input
+              type="checkbox"
+              class="name-pick"
+              checked={ticked}
+              aria-label={words.pickLabel(row.name)}
+              onChange={onTick}
+            />
+          </label>
+        )}
         <span class="campaign-name">{row.name}</span>
         <span class="tags">
           <span class="tag">{kindWords(kinds, row.kind)}</span>

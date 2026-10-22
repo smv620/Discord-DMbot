@@ -766,6 +766,9 @@ export interface NameRow {
   secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
   npcId: string | null;
+  /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
+   * from an API that doesn't send it. */
+  mentions?: number;
 }
 
 export interface NameKind {
@@ -807,6 +810,8 @@ export type NameChange =
   | { action: "hide"; hidden: boolean }
   | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
+  // Several names into the one the request is about (the kept name): one change, one Undo (#2427).
+  | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
 /** What the bot says about a queued name change (#2294). */

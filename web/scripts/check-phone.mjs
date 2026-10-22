@@ -187,6 +187,13 @@ const pages = [
     await page.getByRole("button", { name: "Remove this name" }).click();
     await page.getByRole("button", { name: "Yes, remove it" }).waitFor();
   }],
+  ["names: two ticked, and which to keep", "/account/names/100.cmp1?demo=table", async (page) => {
+    // Two names of different kinds, so the question, its warning and the confirmation are all there.
+    await page.getByLabel("Select Mira Voss").check();
+    await page.getByLabel("Select Brynwater Crossing").check();
+    await page.getByRole("button", { name: /Merge selected/ }).click();
+    await page.getByRole("button", { name: "Merge", exact: true }).waitFor();
+  }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],

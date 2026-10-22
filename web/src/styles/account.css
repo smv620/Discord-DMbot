@@ -721,6 +721,23 @@
     overflow-wrap: anywhere;
   }
 
+  /* The label is the thumb's target (44 px); the box inside it is only what is drawn. */
+  .account .name-tick {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    flex: none;
+  }
+
+  .account .name-pick {
+    width: 1.4rem;
+    height: 1.4rem;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
   .account .name-head {
     display: flex;
     flex-wrap: wrap;
