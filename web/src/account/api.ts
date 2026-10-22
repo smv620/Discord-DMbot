@@ -303,8 +303,8 @@ export type ShareAction = "on" | "off" | "new";
 export interface PublicRecap {
   title: string;
   text: string;
-  /** Unix seconds. */
-  postedAt: number;
+  /** Unix seconds; null for a recap the DM approved and shared without posting it (#2419). */
+  postedAt: number | null;
   /** Only the kinds that exist; each is a full address that needs no sign-in. */
   audio: { voice?: string; music?: string };
   /** When it was played (Unix seconds), which session it was and how long it ran (#2418). Left out
@@ -950,7 +950,7 @@ export type ApiErrorKind =
   | "bad-mapping" // the speaker choices don't fit the files (#2107)
   | "bad-date" // a session's date is not a date (#2107)
   | "no-lines-kept" // every line of a file would be dropped (#2107)
-  | "not-posted" // only a posted recap can have a public link (#2118)
+  | "not-posted" // only a posted or approved recap can have a public link (#2118, #2119)
   | "bad-action" // not one of on, off or new (#2118)
   | "server"; // anything else
 

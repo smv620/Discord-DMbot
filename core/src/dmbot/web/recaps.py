@@ -114,8 +114,17 @@ def _approval_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
     }
 
 
+def _shareable(row: dict[str, Any]) -> bool:
+    """A recap that may have a public link (#2118, #2119): one being posted or posted, or a ready
+    draft whose text is still exactly the text the DM approved (#2419, "Approve but don't post").
+    The database's doors check the same rule themselves."""
+    if row["status"] in ("posting", "posted"):
+        return True
+    return row["status"] == "draft" and row["state"] == "ready" and _approved(row)
+
+
 def _share_view(row: dict[str, Any]) -> dict[str, Any]:
-    token = row.get("share_token") if row["status"] == "posted" else None
+    token = row.get("share_token") if _shareable(row) else None
     return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
@@ -518,7 +527,7 @@ async def post_checks(
     names = (await cur.fetchone() or {}).get("r")
     if names is None:  # not a DM of the campaign: nothing is said about the recap
         raise RecapError("not_found" if must_be_posted else "not_allowed")
-    if must_be_posted and row["status"] != "posted":
+    if must_be_posted and not _shareable(row):
         raise RecapError("not_posted")
     text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])
     if names_a_secret(text, names["secret"], names["allowed"]):

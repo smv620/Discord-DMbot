@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Share a recap you haven't posted",
+    what: "After Approve but don't post, you can make a link to the recap and share it your own way, without posting it to your Discord table. The link is made only when you ask, you can turn it off any time, and if you change the text it stops opening until you approve it again.",
+    reason: "In review (#2428, with its link in the pull request after it); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Transcripts show real names",
     what: "On the website, a transcript now shows each person's Discord name and marks the game master as DM, instead of Speaker 1 and Speaker 2. Older sessions are filled in where DMbot can still find the person.",
     reason: "In review (#2337); held until dev1 deploys it.",

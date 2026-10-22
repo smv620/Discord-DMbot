@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Share a recap you haven't posted",
       "Transcripts show real names", // until #2337 merges and dev1 deploys it
       "Three clear ways to approve a recap",
       "Every recap says which session it is", // until #2418 merges and dev1 deploys it

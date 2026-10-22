@@ -159,6 +159,61 @@ class TheLink(Shared):
         body = (await self.public.get(f"/recaps/{token}")).json()
         self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, None))
 
+    async def approve_text(self) -> None:
+        got = await self.dm.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual(got.status_code, 200, got.text)
+
+    async def test_an_approved_unposted_recap_gets_a_link_only_when_asked(self) -> None:
+        """(#2419) Approving does not make a link; pressing the button does. It then opens with no
+        sign-in, though it was never posted."""
+        await self.approve_text()
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual((view["status"], view["share"]), ("draft", {"on": False, "path": None}))
+        token = await self.token()
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["title"], got.json()["postedAt"]), ("The Silver Lock", None))
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertTrue(view["share"]["on"])
+
+    async def test_a_draft_that_was_never_approved_never_gets_a_link(self) -> None:
+        got = await self.share("on")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_posted"))
+        got = await self.share("new")
+        self.assertEqual(got.status_code, 409)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM recap_jobs WHERE share_token IS NOT NULL"
+            )
+            self.assertEqual(((await cur.fetchone()) or {})["n"], 0)
+
+    async def test_an_edit_after_sharing_hides_the_recap_until_it_is_approved_again(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
+        saved = await self.dm.put(
+            f"/me/recaps/{self.ref}", json={"summary": "A new ending.", "housekeeping": []}
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual(view["share"], {"on": False, "path": None})  # the page shows no live link
+        await self.approve_text()
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual((got.status_code, got.json()["text"]), (200, "A new ending."))
+
+    async def test_a_turned_off_link_on_an_unposted_recap_answers_not_found(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        self.assertEqual((await self.share("off")).status_code, 200)
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+
+    async def test_the_link_keeps_working_when_the_recap_is_posted_later(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        await self.post_it()
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
+
     async def test_asking_again_for_the_link_gives_the_same_one(self) -> None:
         await self.post_it()
         first = await self.token()
