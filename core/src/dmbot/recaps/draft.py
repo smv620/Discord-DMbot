@@ -55,7 +55,7 @@ SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file 
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
 SUMMARY_MAX = (
-    round(WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD) + FIXED_LINES_ROOM
+    round(WORDS_CEILING * (1 + LAST_UP)) * CHARS_PER_WORD + FIXED_LINES_ROOM
 )  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140

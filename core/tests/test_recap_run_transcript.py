@@ -453,7 +453,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             asked.append(question)
             return ask
 
-        # The canned recap is a 2.5-hour session's length (#2013): a file this small is not.
+        # The canned recap is a 3.5-hour session's length (#2013): a file this small is not.
         args = run.parse_args([*argv, *([] if "--hours" in argv else ["--hours", "2.5"])])
         fast = fx.Canned(*(answers or []))
         out = io.StringIO()

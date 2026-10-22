@@ -28,7 +28,7 @@ from tests.test_recap_audio_step import Fake, Mixer
 def inputs(**kw: Any) -> pl.Inputs:
     base: dict[str, Any] = {
         "lines": fx.lines(), "dm_ids": {fx.DM}, "allowed_names": list(fx.NAMES),
-        "secret_names": [], "previous": "", "day": 4, "hours": 2.5,  # the canned recap's length
+        "secret_names": [], "previous": "", "day": 4, "hours": 3.5,  # the canned recap's length
     }  # fmt: skip
     return pl.Inputs(**{**base, **kw})
 
