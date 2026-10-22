@@ -124,21 +124,26 @@ class TheLink(Shared):
         mixed in, and a session still listening has no length."""
         transcripts = TranscriptStore(self.db)
 
-        async def played(campaign_id: str, start: int, end: int | None) -> None:
+        async def played(campaign_id: str, start: int, end: int | None) -> str:
             sid = await transcripts.open_session(THURSDAY.id, campaign_id, start)
             await transcripts.add_lines(
                 THURSDAY.id, sid, [Line(start * 1000 + 1000, ALICE.id, "we go", "we go")]
             )
             if end is not None:
                 await transcripts.end_session(THURSDAY.id, sid, end)
+            return sid
 
-        await played(self.one.id, 50, 90)  # Session 1 of "One"
-        await played(self.one.id, 100, 100 + 2 * 3600 + 35 * 60)  # Session 2: this recap's
+        # An earlier session whose transcript retention has deleted still counts, as on the
+        # transcripts page ("Session 1" stays 1), so this recap's number does not slip.
+        gone = await played(self.one.id, 20, 40)
+        await transcripts.delete_session_transcript(THURSDAY.id, self.one.id, gone, 10**6, 300)
+        await played(self.one.id, 50, 90)  # Session 2 of "One"
+        await played(self.one.id, 100, 100 + 2 * 3600 + 35 * 60)  # Session 3: this recap's
         await played(self.two.id, 100, 130)  # another campaign's, at the same time
         await self.post_it()
         token = await self.token()
         body = (await self.public.get(f"/recaps/{token}")).json()
-        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (2, 9300))
+        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, 9300))
         self.assertEqual(
             set(body),
             {"title", "text", "postedAt", "audio", "sessionAt", "sessionNumber", "sessionSeconds"},
@@ -152,7 +157,7 @@ class TheLink(Shared):
                 (self.one.id,),
             )
         body = (await self.public.get(f"/recaps/{token}")).json()
-        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (2, None))
+        self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, None))
 
     async def test_asking_again_for_the_link_gives_the_same_one(self) -> None:
         await self.post_it()

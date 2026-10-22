@@ -9868,7 +9868,8 @@ SHARED_RECAP_SESSION = """
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         job recap_jobs%ROWTYPE;
-        sess RECORD;
+        sess_number BIGINT;
+        sess_seconds BIGINT;
         out JSONB;
     BEGIN
         IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
@@ -9883,21 +9884,22 @@ SHARED_RECAP_SESSION = """
         PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
         PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
         -- Which session it was and how long it ran, as the transcripts page numbers and times it
-        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the saved sessions
-        -- with lines). Only these two numbers leave: nothing of the transcript itself.
-        SELECT x.number, x.seconds INTO sess FROM (
+        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
+        -- sessions, those whose transcripts were deleted by retention included). Only these two numbers
+        -- leave: nothing of the transcript itself.
+        SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
             SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
                    CASE WHEN t.ended_at IS NULL THEN NULL
                         ELSE GREATEST(t.ended_at - t.started_at, 0) END AS seconds
             FROM transcript_sessions t
             WHERE t.guild_id = job.guild_id AND t.campaign_id = job.campaign_id
-              AND t.line_count > 0) x
-        WHERE x.started_at = job.session_at LIMIT 1;
+              AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) x
+        WHERE x.started_at = job.session_at ORDER BY x.number LIMIT 1;
         out := jsonb_build_object(
             'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
             'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
             'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
-            'sessionNumber', sess.number, 'sessionSeconds', sess.seconds,
+            'sessionNumber', sess_number, 'sessionSeconds', sess_seconds,
             'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
                                  WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
                                 false),
