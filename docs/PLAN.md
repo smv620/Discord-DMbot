@@ -1821,6 +1821,15 @@ names panel nor the speech-to-text hints can be a fixed list.
       knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
       node and connection. Matching what is said at the table, and the after-session "Revealed at the
       table" line, are the next slice.
+    - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migration 0190): the DM's own word that a connection is
+      true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
+      (Unpin takes it back), or answers once per lore upload, "Asserted" (default) or "📌 100% truth", and
+      the connections kept from that upload are pinned. It is a `pinned` flag on the truth belief
+      (`memory_beliefs.pinned`), so Undo, backups and isolation work as for any belief; the web graph
+      shows it to a DM in Full View only. After a session, a claim that clashes with a pinned connection
+      is a heads-up even before the campaign has enough story for the others, worded "Off the rails?"
+      with the line; the DM screen says only how many. Code finds it with the same rules as the other
+      heads-ups, never the AI, and DMbot only points: the DM decides.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
