@@ -81,7 +81,7 @@ class TheMove(unittest.TestCase):
         self.assertEqual(self.move((40, 1), 190, last=True), "")  # 190 fits up to 202
         self.assertEqual(self.move((40, 1), 205, last=True), "overshot")
 
-    def test_the_fix_up_of_sections_never_changes_the_words(self) -> None:
+    def test_the_fix_up_of_sections_leaves_the_words_for_the_length_check(self) -> None:
         text = "《Tense》 one two three. 《Calm》 four five. 《Tense》 six seven eight nine."
         prose = rd.Prose(text, ("a", "b", "c"))
         fixed = rd.fix_prose(prose, 1)
@@ -174,7 +174,7 @@ class TheEnding(WorkerHarness):
         ending = message.split("<ending>")[1].split("</ending>")[0]
         self.assertIn("Mira found a locked door with a silver lock", ending)  # beat 4
         self.assertIn("Oskar picked the lock and something breathed", ending)  # beat 5
-        self.assertNotIn("<ending>", message.split("<ending>")[0])
+        self.assertIn("Mira", message.split("<names>")[1])  # beat 4's own characters are allowed
 
     def test_without_the_sheet_the_block_is_the_shown_beats_last_two_as_before(self) -> None:
         from tests.test_recaps import beats
@@ -211,3 +211,57 @@ class TheLog(WorkerHarness):
             "40 words, 75 to 180 wanted, 1 section(s) of at most 2, about 1.00 hours", line
         )
         self.assertNotIn("calm", " ".join(logged.output))
+
+
+class TheState(WorkerHarness):
+    async def run_drafts(self, *drafts: int, hours: float = 1.0) -> Job:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, draft(drafts[0]), fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(*(draft(n) for n in drafts[1:])),
+            hours=hours,
+        )
+        return await self.go()
+
+    async def test_a_draft_that_fits_but_fails_another_check_starts_the_count_afresh(self) -> None:
+        invented = fx.prose_answer(
+            "《Tense》 " + " ".join(["calm"] * 99) + " Lord Varkus laughed.", "1. Strings."
+        )
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, draft(40), fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(invented, draft(41)),
+            hours=1.0,
+        )
+        with self.assertLogs("dmbot.recaps.pipeline", "INFO") as logged:
+            await self.go()
+        # 40 (short), then 103 words that fit but name Varkus, then 41 (short again): the 41 is
+        # steered afresh, not stopped as "did not move" from the 40 of two drafts ago.
+        self.assertFalse(any("length is stuck" in m for m in logged.output), logged.output)
+
+    async def test_the_last_try_accepts_a_draft_up_to_35_percent_over_after_steering(self) -> None:
+        job = await self.run_drafts(230, 215, 200)  # 202 is the last try's top: 200 fits
+        self.assertEqual(job.state, "ready")
+        self.assertIn("Make it shorter by about 65 words", self.careful.sent[1])
+
+    async def test_a_draft_that_names_a_secret_leaves_its_length_out_of_the_next_comparison(
+        self,
+    ) -> None:
+        await self.setUpWorker(
+            fx.Canned(
+                fx.BEATS_ANSWER,
+                fx.prose_answer("《Tense》 " + " ".join(["calm"] * 38) + " Oskar", "1. Strings."),
+                fx.GRADE_ANSWER,
+                fx.FINISH_ANSWER,
+            ),
+            fx.Canned(draft(41)),
+            hours=1.0,
+            secret=[
+                "calm"
+            ],  # (the draft names it, so it is not sent back and the retry starts over)
+        )
+        job = await self.go()
+        self.assertNotIn("(check: length)", job.last_error)
+
+    async def test_a_failed_job_leaves_no_count_for_the_next_try_again(self) -> None:
+        job = await self.run_drafts(40, 41)  # stuck: fails ours
+        self.assertIn("(check: length)", job.last_error)
+        self.assertNotIn((1, self.one.id, 100), self.worker._lengths)  # type: ignore[attr-defined]

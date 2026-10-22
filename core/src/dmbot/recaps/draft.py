@@ -537,8 +537,9 @@ def prose_message(
     parts = [f"<beats>\n{sheet(beats, notes=True)}\n</beats>"]
     stop = list(ending[-2:]) if ending else list(beats[-2:])
     if stop:  # where the session stopped, said apart so the last section is set exactly there
-        parts.append(f"<ending>\n{sheet(stop, notes=True)}\n</ending>")
-    names = {*names, *(w for b in beats for w in b.who)}  # the beats' own names are allowed too
+        parts.append(f"<ending>\n{sheet(stop, notes=True)}\n</ending>")  # (may be beats not shown)
+    # the beats' own names are allowed too, the ending's included (it may not be among the shown)
+    names = {*names, *(w for b in beats for w in b.who), *(w for b in stop for w in b.who)}
     if previous.strip():
         parts.append(
             f"<previous>\n{quoted(' '.join(previous.split())[:PREVIOUS_MAX])}\n</previous>"

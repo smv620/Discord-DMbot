@@ -229,12 +229,13 @@ class RecapWorker:
         # words only. The worker fills in the event as the answer is checked.
         self._on_call = on_call
         self._last: dict[tuple[int, str, int, str], cl.CallEvent] = {}
+        # The last draft that was too short (+1) or too long (-1): its words and which way, for the
+        # check that a retry moved the length the way it was steered (the owner's rule, #2383).
+        # Dropped with the rejected draft it belongs to.
+        self._lengths: dict[tuple[int, str, int], tuple[int, int]] = {}
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
-        # The last draft that was too short (+1) or too long (-1): its words and which way, for the
-        # check that a retry moved the length the way it was steered (the owner's rule, #2383).
-        self._lengths: dict[tuple[int, str, int], tuple[int, int]] = {}
         self._rejected_prose: dict[tuple[int, str, int], rd.Prose] = {}
         self._rejected_finish: dict[tuple[int, str, int], tuple[str, list[str]]] = {}
         # A draft that passed every check but was graded below the bar, kept while its revision is
@@ -1620,6 +1621,7 @@ class RecapWorker:
 
     def _forget_draft(self, key: tuple[int, str, int]) -> None:
         self._rejected_prose.pop(key, None)
+        self._lengths.pop(key, None)
         self._fallback.pop(key, None)
         self._flags.pop(key, None)
         self._revised.discard(key)
@@ -1963,6 +1965,7 @@ class RecapWorker:
         if names_a_secret(" ".join(texts), inputs.secret_names, inputs.allowed_names):
             self._rejected_prose.pop(key, None)
             self._rejected_finish.pop(key, None)
+            self._lengths.pop(key, None)  # the retry gets no draft to move from
         elif isinstance(draft, rd.Prose):
             self._rejected_prose[key] = draft
         else:
