@@ -3278,7 +3278,14 @@ class DMBot(commands.AutoShardedBot):
     ) -> bool:
         """The DM chose which of two disagreeing house rules applies (#2284); False if there is
         nowhere to keep it or it failed (the DM is told, and nothing was decided)."""
-        if self.house_wins is None or by not in campaign.dm_user_ids:  # checked again here
+        if self.house_wins is None:
+            return False
+        try:  # who is a DM now, not when the question was asked
+            now = await self.campaigns.get(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Couldn't re-read the campaign for a house-rule choice")
+            return False
+        if now is None or by not in now.dm_user_ids:
             return False
         try:
             await self.house_wins.record(campaign.guild_id, campaign.id, winner, loser, by)

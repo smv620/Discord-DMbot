@@ -15,6 +15,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import discord
+
 from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.wins import RuleRef, Win
@@ -33,6 +35,12 @@ def ref_of(rule: HouseRule) -> RuleRef:
     return RuleRef(getattr(rule, "set_name", "") or "", rule.number)
 
 
+def rank_of(rule: HouseRule) -> tuple[bool, bool]:
+    """Where a rule stands: the campaign's own first, then rules merged in from a set, then a
+    followed set's (precedence is unchanged, and the prompt says so)."""
+    return isinstance(rule, FollowedRule), bool(getattr(rule, "from_set", None))
+
+
 def label_of(rule: HouseRule) -> str:
     return f"{'Shared' if isinstance(rule, FollowedRule) else 'House'} rule {rule.number}"
 
@@ -40,8 +48,13 @@ def label_of(rule: HouseRule) -> str:
 def settled(rules: Sequence[HouseRule], wins: Sequence[Win]) -> list[HouseRule]:
     """The rules without the loser of any pair the DM settled, when both are in `rules`."""
     present = {ref_of(r) for r in rules}
-    losers = {w.loser for w in wins if w.loser in present and w.winner in present}
-    return [r for r in rules if ref_of(r) not in losers]
+    pairs = [w for w in wins if w.loser in present and w.winner in present]
+    # A rule that itself lost to another shown rule does not take a third one down with it: in a
+    # chain (A over B, B over C) only B goes, since the DM never ruled on A against C, and in a
+    # cycle nobody goes (the answer may then ask again, and the DM's new choice replaces the old).
+    losing = {w.loser for w in pairs}
+    gone = {w.loser for w in pairs if w.winner not in losing}
+    return [r for r in rules if ref_of(r) not in gone]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +71,9 @@ def _side(rule: HouseRule) -> Side:
     words = " ".join(words.split())
     if len(words) > WORDS_MAX:
         words = words[: WORDS_MAX - 1].rstrip() + "…"
+    # A followed set's words come from another campaign's DM: no markdown, link or ping gets
+    # through into the DM's message.
+    words = discord.utils.escape_markdown(discord.utils.escape_mentions(words))
     return Side(label_of(rule), words, ref_of(rule))
 
 
@@ -80,6 +96,8 @@ def named(field: str, shown: Sequence[HouseRule]) -> tuple[Side, Side] | None:
         if (field or "").strip().lower().strip(" .") not in ("", "none", "n/a", "-"):
             log.info("A sidebar clash line did not name two different rules (%d found)", len(found))
         return None
+    if rank_of(found[0]) != rank_of(found[1]):
+        return None  # the campaign's own rule outranks a merged or followed one: not a question
     return _side(found[0]), _side(found[1])
 
 
@@ -99,6 +117,11 @@ NOTE = (
     "A player's question needed {a} and {b}, which disagree, so I told the table it's one for "
     "you. Ask it yourself to choose which one applies."
 )
+
+
+def said_clash(answer: str) -> bool:
+    """The model's own marker for a clash, as the prompt asks for it."""
+    return answer.strip().strip(".").lower() == "clash"
 
 
 def question_text(a: Side, b: Side) -> str:

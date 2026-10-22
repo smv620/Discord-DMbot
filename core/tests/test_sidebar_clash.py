@@ -14,9 +14,10 @@ from dmbot.rules.followed import FollowedRule
 from dmbot.rules.house import HouseRule
 from dmbot.rules.wins import RuleRef, Win
 from dmbot.sidebar import rule_clash
+from dmbot.sidebar.answer import Sidebar
 from dmbot.sidebar.service import SidebarService
 from dmbot.ui.rule_clash import ClashView
-from tests.test_sidebar_answer import FakeAI, campaign, engine, house
+from tests.test_sidebar_answer import INDEX, FakeAI, campaign, engine, house
 from tests.test_sidebar_service import (
     DM,
     GUILD,
@@ -53,9 +54,34 @@ class Pure(unittest.TestCase):
         assert got is not None
         self.assertEqual([s.label for s in got], ["House rule 1", "House rule 2"])
         self.assertEqual(got[0].ref, RuleRef("", 1))
-        shared = rule_clash.named("House rule 1, Shared rule 2", shown)
-        assert shared is not None
-        self.assertEqual(shared[1].ref, RuleRef("Neighbours", 2))
+        pair = rule_clash.named(
+            "Shared rule 2, Shared rule 3", [followed(2, "A"), followed(3, "B", "Other")]
+        )
+        assert pair is not None
+        self.assertEqual([s.ref for s in pair], [RuleRef("Neighbours", 2), RuleRef("Other", 3)])
+
+    def test_the_campaigns_own_rule_outranks_a_followed_one_so_that_is_not_a_question(self) -> None:
+        shown = [house(1, POTION_A), followed(2, POTION_B)]
+        self.assertIsNone(rule_clash.named("House rule 1, Shared rule 2", shown))
+
+    def test_a_chain_drops_only_the_middle_rule_and_a_cycle_drops_none(self) -> None:
+        a, b, c = house(1, "A"), house(2, "B"), house(3, "C")
+        chain = [
+            Win(RuleRef("", 1), RuleRef("", 2), 7, 0),
+            Win(RuleRef("", 2), RuleRef("", 3), 7, 0),
+        ]
+        self.assertEqual(rule_clash.settled([a, b, c], chain), [a, c])
+        cycle = [*chain, Win(RuleRef("", 3), RuleRef("", 1), 7, 0)]
+        self.assertEqual(rule_clash.settled([a, b, c], cycle), [a, b, c])
+
+    def test_the_rules_words_are_escaped_for_the_dms_message(self) -> None:
+        sides = rule_clash.named(
+            "House rule 1, House rule 2",
+            [house(1, "A *potion* @everyone [x](http://e.example)"), house(2, "B")],
+        )
+        assert sides is not None
+        self.assertNotIn("@everyone", sides[0].words.replace("@\u200beveryone", ""))
+        self.assertIn("\\*potion\\*", sides[0].words)
 
     def test_anything_else_is_dropped(self) -> None:
         shown = [house(1, POTION_A), house(2, POTION_B)]
@@ -134,6 +160,72 @@ class TheEngine(unittest.IsolatedAsyncioTestCase):
         )
         await eng.answer(campaign(), ASK)
         self.assertNotIn("CONFLICT", ai.systems[0])
+
+
+class MoreEngine(unittest.IsolatedAsyncioTestCase):
+    async def test_the_word_clash_is_never_shown_when_its_line_does_not_check_out(self) -> None:
+        for conflict in ("none", "House rule 1, House rule 9", ""):
+            ai = FakeAI([reply_with(conflict)])
+            got = await engine(
+                ai, houses={"c" * 32: [house(1, POTION_A), house(2, POTION_B)]}
+            ).answer(campaign(), ASK)
+            self.assertIsNone(got.clash)
+            self.assertNotIn("clash", got.text.lower().replace("which one applies", ""))
+            table = await engine(
+                FakeAI([reply_with(conflict)]),
+                houses={"c" * 32: [house(1, POTION_A), house(2, POTION_B)]},
+            ).answer(campaign(), ASK, asker_id=8, table=True)
+            self.assertEqual(table.text, "That's one for your DM.")
+
+    async def test_only_a_rule_the_prompt_showed_can_be_named(self) -> None:
+        rules = [house(n, f"Potion rule number {n} about drinking a potion") for n in range(1, 9)]
+        ai = FakeAI([reply_with("House rule 1, House rule 8")])
+        got = await engine(ai, houses={"c" * 32: rules}).answer(campaign(), ASK)
+        shown = {int(n) for n in __import__("re").findall(r"House rule (\d+):", ai.prompts[0])}
+        self.assertLessEqual(len(shown), 5)
+        self.assertEqual(got.clash is not None, {1, 8} <= shown)
+
+    async def test_the_clash_answer_keeps_no_sources_and_the_settled_list_is_wired_in(self) -> None:
+        win = Win(RuleRef("", 1), RuleRef("", 2), 7, 0)
+        ai = FakeAI(["ANSWER: Yes.\nSOURCE: House rule 1\nCONFIDENCE: confident"])
+
+        async def settled(_c: Any) -> list[Win]:
+            return [win]
+
+        async def gate(c: Any, user: int) -> None:
+            return None
+
+        async def houses(c: Any) -> list[HouseRule]:
+            return [house(1, POTION_A), house(2, POTION_B)]
+
+        async def names(c: Any) -> None:
+            return None
+
+        built = Sidebar(ai, INDEX, gate=gate, houses=houses, names=names, settled=settled)  # type: ignore[arg-type]
+        await built.answer(campaign(), ASK, asker_id=7)
+        self.assertNotIn(POTION_B, ai.prompts[0])
+        both = await engine(
+            FakeAI([reply_with("House rule 1, House rule 2")]),
+            houses={"c" * 32: [house(1, POTION_A), house(2, POTION_B)]},
+        ).answer(campaign(), ASK)
+        self.assertEqual(both.sources, ())
+
+
+class TheBot(unittest.IsolatedAsyncioTestCase):
+    async def test_a_dm_who_lost_the_role_since_the_question_cannot_record_a_win(self) -> None:
+        from dmbot.bot import DMBot
+
+        wins = SimpleNamespace(record=AsyncMock())
+        now = SimpleNamespace(dm_user_ids=frozenset({70}))  # DM (7) is no longer one
+        fake = SimpleNamespace(
+            house_wins=wins, campaigns=SimpleNamespace(get=AsyncMock(return_value=now))
+        )
+        stale = SimpleNamespace(guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}))
+        record = DMBot.sidebar_record_win.__get__(fake)
+        self.assertFalse(await record(stale, RuleRef("", 1), RuleRef("", 2), DM))
+        wins.record.assert_not_awaited()
+        self.assertTrue(await record(stale, RuleRef("", 1), RuleRef("", 2), 70))
+        wins.record.assert_awaited_once()
 
 
 class TheButtons(unittest.IsolatedAsyncioTestCase):
@@ -232,13 +324,30 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
     async def settle(self) -> None:
         await asyncio.gather(*self.sidebar._tasks)
 
-    async def test_the_dms_typed_question_gets_the_buttons_and_the_transcript_keeps_no_rules(
-        self,
-    ) -> None:
+    async def test_the_dms_table_chat_question_goes_to_them_alone_with_the_buttons(self) -> None:
+        sides = self.clash.clash
+        self.answerer.answer_to_give = FakeAnswer(
+            text="That's one for your DM.", one_for_dm=True, clash=sides
+        )
         self.sidebar.ask_in_chat(self.table, DM, "can I drink a potion as a bonus action?")
         await self.settle()
-        texts = [t for u, t in self.host.dms] + self.host.chat
-        self.assertTrue(any("Which one applies?" in t for t in texts), texts)
+        self.assertEqual(self.answerer.table_modes, [True])  # no second call that could skip it
+        self.assertTrue(any("Which one applies?" in t for _u, t in self.host.dms), self.host.dms)
+        self.assertFalse(any("Which one applies?" in t for t in self.host.chat))
+        self.assertIsNotNone(self.host.views[-1])  # the buttons are under it
+
+    async def test_the_dms_private_question_gets_the_buttons_and_the_transcript_keeps_no_rules(
+        self,
+    ) -> None:
+        reply = AsyncMock(return_value=True)
+        await self.sidebar._ask(self.table, DM, "can I drink a potion?", reply, via="typed")
+        text, view = reply.await_args.args
+        self.assertIn("Which one applies?", text)
+        self.assertEqual(len(view.children), 2)
+        saved = " ".join(
+            str(line.sidebar) + str(getattr(line, "text", "")) for line in self.host.saved
+        )
+        self.assertNotIn("item interaction", saved)
 
     async def test_a_players_table_question_tells_the_dm_which_two_and_nothing_else(self) -> None:
         public = FakeAnswer(text="That's one for your DM.", one_for_dm=True)

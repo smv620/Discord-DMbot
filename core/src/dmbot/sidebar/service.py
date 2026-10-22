@@ -139,6 +139,10 @@ class Answer(Protocol):
     def one_for_dm(self) -> bool: ...  # a table question that needs the DM (#1187)
     @property
     def question(self) -> str: ...  # the question restated in a few words, or ""
+    @property
+    def clash(
+        self,
+    ) -> tuple[rule_clash.Side, rule_clash.Side] | None: ...  # two rules disagree (#2284)
 
     # (the entries it was built from, #1957: read with getattr, an engine without it has none)
 
@@ -716,8 +720,12 @@ class SidebarService:
         if public and _is_dm(table, user_id) and answer.one_for_dm:
             # The DM's question needs the DM's side of the game (secrets, notes): the table
             # sees only that it was sent, and the answer, with everything, goes to the DM.
-            if not await self._answer_privately(
-                table, user_id, campaign, question, scene, answerer
+            # (a clash the table answer already found is put to the DM as it is: a second call
+            # could skip it and answer from one rule)
+            if not await (
+                self._send_clash(table, user_id, campaign, answer.clash, question, scene, answerer)
+                if answer.clash is not None
+                else self._answer_privately(table, user_id, campaign, question, scene, answerer)
             ):
                 # The table is told only that it failed, never what was asked privately.
                 await reply(self._framed(table, user_id, question, COULDNT_SEND, public))
@@ -761,7 +769,7 @@ class SidebarService:
                 if len(message) > MESSAGE_LIMIT
                 else message
             ]
-        clash = getattr(answer, "clash", None)
+        clash = answer.clash
         if clash is not None and not public:
             under = self._clash_view(
                 campaign,
@@ -1021,7 +1029,7 @@ class SidebarService:
         if not self._still(table, user_id, dm=True):
             return False
         status = "failed"
-        clash = getattr(answer, "clash", None)
+        clash = answer.clash
         view = (
             self._clash_view(
                 campaign,
@@ -1043,6 +1051,27 @@ class SidebarService:
                 return False
         return status == "sent"
 
+    async def _send_clash(
+        self,
+        table: Table,
+        user_id: int,
+        campaign: Campaign,
+        clash: tuple[rule_clash.Side, rule_clash.Side],
+        question: str,
+        scene: str,
+        answerer: Answerer,
+    ) -> bool:
+        """ "Which one applies?" to the DM alone, with a button for each rule (#2284)."""
+        view = self._clash_view(
+            campaign,
+            clash,
+            lambda: self._retry_privately(table, user_id, campaign, question, scene, answerer),
+        )
+        status = await self.host.sidebar_send_dm(user_id, rule_clash.question_text(*clash), view)
+        if status == "forbidden":
+            await self._cant_dm(table, user_id)
+        return status == "sent"
+
     async def _retry_privately(
         self,
         table: Table,
@@ -1054,7 +1083,7 @@ class SidebarService:
     ) -> None:
         """After the DM chose which rule applies: the same private question again."""
         if not await self._answer_privately(table, user_id, campaign, question, scene, answerer):
-            log.info("The sidebar's private answer after a rule choice could not be sent")
+            raise RuntimeError("the private answer after a rule choice could not be sent")
 
     async def _cant_dm(self, table: Table, user_id: int) -> None:
         """The answer couldn't be sent. DMs are closed, so the DM screen is the only place

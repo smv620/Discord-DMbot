@@ -35,6 +35,7 @@ class FakeAnswer:
     parts: tuple[str, ...] = ()
     one_for_dm: bool = False
     question: str = ""  # the AI's few-word restatement of a table question
+    clash: Any = None  # two house rules that disagree (#2284)
 
 
 class FakeAnswerer:

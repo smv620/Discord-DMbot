@@ -593,6 +593,13 @@ class Sidebar:
                 Answer(OFF_TOPIC, in_game=False, model=self._ai.model, parts=(OFF_TOPIC,)),
                 started,
             )
+        if rule_clash.said_clash(fields.answer) and not rule_clash.named(
+            fields.conflict, ctx.house_rules
+        ):
+            # The model said "clash" but the line did not check out: that word is never shown,
+            # and nothing is answered from one rule on its say-so.
+            fields = replace(fields, answer=ONE_FOR_DM if table else NO_INFO_ANSWER, source=None)
+            fields = replace(fields, confidence=None)
         if clash := rule_clash.named(fields.conflict, ctx.house_rules):
             # Two rules the DM has not settled disagree about this (#2284): DMbot answers from
             # neither. The DM is asked; a table question gets "one for your DM" and the DM is told.
@@ -600,11 +607,11 @@ class Sidebar:
             return self._done(
                 Answer(
                     ONE_FOR_DM if table else asked,
-                    in_game=False,
+                    in_game=not table,
                     one_for_dm=table,
                     question=fields.question if table else "",
                     model=reply.model or self._ai.model,
-                    sources=ctx.sources,
+                    sources=(),  # (which rules were involved is not kept in the transcript)
                     parts=(ONE_FOR_DM,) if table else (asked,),
                     clash=clash,
                 ),
