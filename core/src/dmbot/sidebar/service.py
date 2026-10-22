@@ -35,7 +35,8 @@ from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.rules import house_voice
-from dmbot.sidebar import guide_phrase, looked, memo, table_links
+from dmbot.rules.wins import RuleRef
+from dmbot.sidebar import guide_phrase, looked, memo, rule_clash, table_links
 from dmbot.sidebar.ask import AskLimiter, Request, request_in, voiced_by_npc
 from dmbot.transcript.models import (
     SIDEBAR_ANSWER,
@@ -110,6 +111,8 @@ COULDNT_SEND = "I couldn't send that to the DM. Ask again."
 TOO_MANY = "That's a lot of questions at once. Ask again in a minute."
 TYPE_INSTEAD = "I can only read typed questions and voice messages."
 NOT_YOURS = "This isn't your question."
+CLASH_SAVED = "(asked the DM which house rule applies)"  # all the transcript keeps of it
+CLASH_NOTE = rule_clash.NOTE
 TOO_LONG = memo.TOO_LONG
 ECHO_CHARS = 120
 
@@ -136,6 +139,10 @@ class Answer(Protocol):
     def one_for_dm(self) -> bool: ...  # a table question that needs the DM (#1187)
     @property
     def question(self) -> str: ...  # the question restated in a few words, or ""
+    @property
+    def clash(
+        self,
+    ) -> tuple[rule_clash.Side, rule_clash.Side] | None: ...  # two rules disagree (#2284)
 
     # (the entries it was built from, #1957: read with getattr, an engine without it has none)
 
@@ -165,6 +172,10 @@ class Host(Protocol):
     def sidebar_save(self, table: Table, line: Line) -> None: ...
     def sidebar_stt(self) -> str: ...  # the speech-to-text in use: "engine model host"
     async def sidebar_tell_screen(self, table: Table, text: str) -> None: ...
+    # The DM chose which of two disagreeing house rules applies (#2284); False if it was not saved.
+    async def sidebar_record_win(
+        self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
+    ) -> bool: ...
     # The DM's spoken feedback on a waiting recap (#2076); False when there is none to talk about.
     async def sidebar_recap_feedback(self, table: Table, user_id: int, text: str) -> bool: ...
     def sidebar_house_rule(self, table: Table, user_id: int, text: str) -> str: ...
@@ -294,7 +305,10 @@ class SidebarService:
                 if view is None:
                     await message.channel.send(text, allowed_mentions=NO_PINGS)
                 else:
-                    await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
+                    sent = await message.channel.send(text, view=view, allowed_mentions=NO_PINGS)
+                    keep = getattr(view, "keep_message", None)  # a view that edits itself (#2284)
+                    if keep is not None:
+                        keep(sent)
             except discord.HTTPException:
                 return False
             return True
@@ -709,8 +723,12 @@ class SidebarService:
         if public and _is_dm(table, user_id) and answer.one_for_dm:
             # The DM's question needs the DM's side of the game (secrets, notes): the table
             # sees only that it was sent, and the answer, with everything, goes to the DM.
-            if not await self._answer_privately(
-                table, user_id, campaign, question, scene, answerer
+            # (a clash the table answer already found is put to the DM as it is: a second call
+            # could skip it and answer from one rule)
+            if not await (
+                self._send_clash(table, user_id, campaign, answer.clash, question, scene, answerer)
+                if answer.clash is not None
+                else self._answer_privately(table, user_id, campaign, question, scene, answerer)
             ):
                 # The table is told only that it failed, never what was asked privately.
                 await reply(self._framed(table, user_id, question, COULDNT_SEND, public))
@@ -754,7 +772,17 @@ class SidebarService:
                 if len(message) > MESSAGE_LIMIT
                 else message
             ]
-        under = None if public else self._looked_view(table, user_id, campaign, answer)
+        clash = answer.clash
+        under: discord.ui.View | None
+        if clash is not None and not public:
+            under = self._clash_view(
+                campaign,
+                clash,
+                lambda: self._ask(table, user_id, heard, reply, via=via, public=False),
+            )
+            said = CLASH_SAVED  # the transcript keeps that it was asked, not the rules' words
+        else:
+            under = None if public else self._looked_view(table, user_id, campaign, answer)
         for n, part in enumerate(pieces):
             if public and not self._still(table, user_id, dm=dm_only):
                 return  # (right before every post)
@@ -771,7 +799,27 @@ class SidebarService:
                 return
         if answer.refused or not self._still(table, user_id, dm=dm_only):
             return
+        if public and clash is not None and self._note_ok(user_id, "clash"):
+            # A player's table question met two rules that disagree (#2284): the table got "one
+            # for your DM"; the DM is told on the DM screen which two, and nothing else.
+            await self.host.sidebar_tell_screen(
+                table, CLASH_NOTE.format(a=clash[0].label, b=clash[1].label)
+            )
         self._save_lines(table, user_id, heard, question, asked_ms, answer, said, via, public)
+
+    def _clash_view(
+        self,
+        campaign: Campaign,
+        clash: tuple[rule_clash.Side, rule_clash.Side],
+        retry: Callable[[], Awaitable[None]],
+    ) -> discord.ui.View:
+        """The two buttons under the DM's "which one applies?" (#2284)."""
+        from dmbot.ui.rule_clash import ClashView  # (the UI imports the sidebar: late)
+
+        async def record(winner: RuleRef, loser: RuleRef, by: int) -> bool:
+            return await self.host.sidebar_record_win(campaign, winner, loser, by)
+
+        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
 
     def _looked_view(
         self, table: Table, user_id: int, campaign: Campaign, answer: Answer
@@ -985,13 +1033,61 @@ class SidebarService:
         if not self._still(table, user_id, dm=True):
             return False
         status = "failed"
-        for part in (p for text in (answer.parts or (answer.text,)) for p in _parts(text)):
-            status = await self.host.sidebar_send_dm(user_id, part)
+        clash = answer.clash
+        view = (
+            self._clash_view(
+                campaign,
+                clash,
+                lambda: self._retry_privately(table, user_id, campaign, question, scene, answerer),
+            )
+            if clash is not None
+            else None
+        )
+        parts = [p for text in (answer.parts or (answer.text,)) for p in _parts(text)]
+        for n, part in enumerate(parts):
+            last = n == len(parts) - 1
+            status = await self.host.sidebar_send_dm(
+                user_id, part, view if last and view is not None else None
+            )
             if status != "sent":
                 if status == "forbidden":
                     await self._cant_dm(table, user_id)
                 return False
         return status == "sent"
+
+    async def _send_clash(
+        self,
+        table: Table,
+        user_id: int,
+        campaign: Campaign,
+        clash: tuple[rule_clash.Side, rule_clash.Side],
+        question: str,
+        scene: str,
+        answerer: Answerer,
+    ) -> bool:
+        """ "Which one applies?" to the DM alone, with a button for each rule (#2284)."""
+        view = self._clash_view(
+            campaign,
+            clash,
+            lambda: self._retry_privately(table, user_id, campaign, question, scene, answerer),
+        )
+        status = await self.host.sidebar_send_dm(user_id, rule_clash.question_text(*clash), view)
+        if status == "forbidden":
+            await self._cant_dm(table, user_id)
+        return status == "sent"
+
+    async def _retry_privately(
+        self,
+        table: Table,
+        user_id: int,
+        campaign: Campaign,
+        question: str,
+        scene: str,
+        answerer: Answerer,
+    ) -> None:
+        """After the DM chose which rule applies: the same private question again."""
+        if not await self._answer_privately(table, user_id, campaign, question, scene, answerer):
+            raise RuntimeError("the private answer after a rule choice could not be sent")
 
     async def _cant_dm(self, table: Table, user_id: int) -> None:
         """The answer couldn't be sent. DMs are closed, so the DM screen is the only place
@@ -1014,6 +1110,7 @@ class _Private:
     parts: Sequence[str] = (PRIVATE_NOTE,)
     one_for_dm: bool = False
     question: str = ""
+    clash: tuple[rule_clash.Side, rule_clash.Side] | None = None
 
 
 def _campaign_key(table: Table) -> tuple[int, str]:

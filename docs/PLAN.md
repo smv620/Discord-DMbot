@@ -1393,7 +1393,8 @@ so the docs always show names the way Discord does. For the campaign
       anyone in the server may download a backup.
     - Each person can download all of their own notes, and delete them (Delete my notes).
     - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
-      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      into another, its notes move to the one kept, the ones already marked "no longer listed" too: they keep
+      their 30-day clock, and are unmarked only if the kept NPC is listed. When an NPC is rejected or deleted, the person's
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
@@ -3923,8 +3924,8 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   less to read and leaves less room for an answer to be cut off.
   **A draft of the wrong length is steered, not just retried** (owner, 2026-10-22, after Test L's
   rerun failed its checks). When a draft fails only because of its length, the next try tells the writer
-  which way and by how much: "Your draft is 92 words; it must be 110 to 132. Make it longer by about 25
-  words" (or shorter). The next draft must move the right way and land in the range. If it moves the
+  which way and by how much, N being the distance to the target: for a 1-hour session (target 150, range
+  75 to 180), "Your draft is 60 words; it must be 75 to 180. Make it longer by about 90 words" (or shorter). The next draft must move the right way and land in the range. If it moves the
   wrong way, does not move, or overshoots past the other end of the range, the job stops there and
   fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
   same applies to the section count when the fix-up changes the sections: the length is checked again
