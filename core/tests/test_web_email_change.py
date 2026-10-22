@@ -33,6 +33,11 @@ from tests.test_web_role import ensure_web_role, web_url
 NEW = "new-address@example.org"
 
 
+def row_of(row: dict[str, Any] | None) -> dict[str, Any]:
+    assert row is not None
+    return row
+
+
 def confirm_token(link: str) -> str:
     found = re.search(r"#email-confirm=([\w-]+)$", link)
     assert found is not None, link
@@ -220,7 +225,7 @@ class Changing(DatabaseTest):
         # confirm starts: Bob must wait for her and then find it taken.
         async with self.web.user(ALICE.id) as conn:
             free = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (NEW,))
-            self.assertIs((await free.fetchone())["t"], False)
+            self.assertIs(row_of(await free.fetchone())["t"], False)
             bobs = asyncio.create_task(
                 email_change.confirm(self.web, BOB.id, asked[1], now=self.now)
             )
@@ -260,12 +265,12 @@ class Changing(DatabaseTest):
         await self.exist(ALICE, BOB)
         async with self.web.anonymous() as conn:
             cur = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
-            self.assertIsNone((await cur.fetchone())["t"])
+            self.assertIsNone(row_of(await cur.fetchone())["t"])
         async with self.web.user(ALICE.id) as conn:
             mine = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(ALICE),))
-            self.assertIs((await mine.fetchone())["t"], False)
+            self.assertIs(row_of(await mine.fetchone())["t"], False)
             theirs = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
-            self.assertIs((await theirs.fetchone())["t"], True)
+            self.assertIs(row_of(await theirs.fetchone())["t"], True)
 
     async def test_confirming_ends_the_sign_in_links_already_sent(self) -> None:
         await self.exist(ALICE, BOB)
@@ -282,7 +287,7 @@ class Changing(DatabaseTest):
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM email_sign_in_links WHERE user_id = %s", (ALICE.id,)
             )
-            self.assertEqual((await cur.fetchone())["n"], 0)
+            self.assertEqual(row_of(await cur.fetchone())["n"], 0)
 
     async def test_a_waiting_change_is_gone_from_the_page_after_15_minutes(self) -> None:
         async with await self.person(ALICE) as client:
