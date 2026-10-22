@@ -7,11 +7,11 @@ import unittest
 import uuid
 
 from dmbot.campaigns import CampaignStore
-from dmbot.db import Database
+from dmbot.db import Database, drop_schema
 from dmbot.memory.models import PROPOSED
 from dmbot.memory.store import MemoryStore, hidden_old_pronoun
 from dmbot.schema import MIGRATIONS
-from tests.pg import REQUIRE_DB, TEST_URL, drop_schema
+from tests.pg import REQUIRE_DB, TEST_URL
 
 GUILD, DM = 4242, 99
 GATE = "0169_made_before_name_gate"

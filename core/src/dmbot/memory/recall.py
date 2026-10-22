@@ -10,7 +10,8 @@ transcript line it comes from, and `check_citations` confirms an answer cites on
 Who may see what is decided here, before anything is returned (never by the prompt):
 
 - `dm_screen`: everything, secrets included.
-- `players`: no secret facts, no secret names, no clue only some people know, no entry notes
+- `players`: no secret facts, no secret names, no clue only some people know and no entry the DM
+  hasn't told the players of (#2321), no entry notes
   (the DM's own description of an entry), no conditions (alive, dead) and nothing from the
   story plan.
 - `transcript`: always empty. Nothing from here ever goes into a transcript.
@@ -326,7 +327,8 @@ class RecallService:
     async def roster(self, guild_id: int, campaign_id: str) -> list[RosterEntry]:
         """The confirmed NPCs and groups the players may see, groups first, then by name. The
         same rules as the players' audience, not a second copy: `_entries` drops an entry that is
-        not confirmed, whose own name is secret, a clue only some know, a story thread or a deed,
+        not confirmed, whose own name is secret, a clue only some know, an entry the DM hasn't
+        told the players of (#2321), a story thread or a deed,
         and a relation counts only when it is confirmed, true now, not secret and not from the
         story plan. Never player characters or the party. Conditions (dead, missing) and standing
         are other tables and never read here."""
@@ -542,11 +544,14 @@ class RecallService:
         live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
-        # A clue only some people know (#1649) is the DM's alone: the players' audience gets
-        # neither the clue nor, because a fact needs both ends, anyone's `knows` to it.
+        # A clue only some people know (#1649), or an entry the DM hasn't told the players of
+        # (#2321), is the DM's alone: the players' audience gets neither it nor, because a fact
+        # needs both ends, anyone's fact to it.
         # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
         hide_clue = (
-            " AND NOT audience_limited AND NOT type = ANY(%s)" if audience == PLAYERS else ""
+            " AND NOT audience_limited AND NOT hidden_from_players AND NOT type = ANY(%s)"
+            if audience == PLAYERS
+            else ""
         )
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, role FROM memory_entities"

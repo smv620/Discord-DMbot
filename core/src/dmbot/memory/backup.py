@@ -183,6 +183,7 @@ def _valid(column: str, value: object) -> bool:
         "unique_item",
         "audience_limited",
         "party",
+        "hidden_from_players",
         "made_before_name_gate",
     ):
         return isinstance(value, bool)
@@ -354,6 +355,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unique_item": None,
                 "audience_limited": False,
                 "party": False,
+                "hidden_from_players": False,  # from before #2321
                 "made_before_name_gate": True,  # a file from before the gate holds old rows (#2358)
                 **raw,
             }
