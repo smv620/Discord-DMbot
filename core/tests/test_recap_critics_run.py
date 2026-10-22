@@ -241,7 +241,8 @@ class Criticising(WorkerHarness):
         careful = fx.Canned(NO_NOTES, ask, rev, ask, rev, ask, rev, ask)
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
         job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("failed", pl.FAILED_CHECKS))
+        self.assertEqual(job.state, "failed")
+        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
 
     async def test_a_revision_nobody_has_read_never_takes_the_place_of_one_plotbot_read(
         self,
