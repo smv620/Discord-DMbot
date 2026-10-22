@@ -294,7 +294,7 @@ class Beliefs(MemoryTest):
                     self.c,
                     ids["party"],
                     rel,
-                    bad["confidence"],
+                    bad["confidence"],  # type: ignore[arg-type]
                     bad["status"],  # type: ignore[arg-type]
                     source="dm",
                     evidence=bad.get("evidence", ()),  # type: ignore[arg-type]
@@ -427,7 +427,8 @@ class Beliefs(MemoryTest):
 
     async def test_the_party_view_is_exactly_the_connections_players_can_see_today(self) -> None:
         names = [await self.add(f"N{n}") for n in range(6)]
-        shown, hidden = [], []
+        shown: list[str] = []
+        hidden: list[str] = []
         for n in range(1, 6):
             secret = n % 2 == 0
             rel = await self.link(names[0], names[n], secret=secret)
