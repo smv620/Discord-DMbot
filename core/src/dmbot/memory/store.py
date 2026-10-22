@@ -3336,6 +3336,45 @@ class MemoryStore:
             row = await w.update(RELATIONS, relation_id, changes)
             return Written(_relation(row), w.batch)
 
+    async def relation(self, guild_id: int, campaign_id: str, relation_id: str) -> Relation | None:
+        """One connection of any status (rejected ones too), or None. For a retried job to tell
+        "already done" from "never there"; nothing else lists a rejected connection."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(RELATIONS, " AND id = %s", [relation_id])
+            return _relation(rows[0]) if rows else None
+
+    async def change_relation_words(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        predicate: str,
+        detail: str,
+        *,
+        source: str,
+    ) -> Written[Relation]:
+        """New words between the same two names, in ONE change, so one Undo puts the old words
+        back whole. The new connection is added (keeping who sees it) and the old one ended in the
+        same write, so a refusal leaves the old as it was. Words that only differ in capitals are
+        the same connection (the duplicate rule): nothing is ended, and the connection comes back
+        as it is. Words that already exist between the two names reuse that connection, and a
+        secret one never becomes public."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None or current["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            new, _ = await self.add_relation_in(
+                w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
+                status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+            )  # fmt: skip
+            if new.id == relation_id:
+                return Written(new, w.batch)
+            if current["secret"] and not new.secret:
+                new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
+            check_status_change(current["status"], REJECTED, source)
+            await w.update(RELATIONS, relation_id, {"status": REJECTED})
+            return Written(new, w.batch)
+
     async def resolve_flag(
         self, guild_id: int, campaign_id: str, flag_id: str, *, source: str
     ) -> Written[Flag]:
@@ -3721,11 +3760,13 @@ class MemoryStore:
     async def undo_connection(
         self, guild_id: int, campaign_id: str, batch: int, *, within: int, secrets: bool
     ) -> Written[Relation]:
-        """Put back a connection the DM removed (#1566): reverses that one batch, which must be
-        a single change to one connection made by the DM, no more than `within` seconds ago. The
-        row comes back exactly as it was (secret flag, source, status, detail). A secret one is
-        only put back for someone who may see secrets (`secrets`), so a manager who isn't a DM
-        can't touch it. Refused, with nothing written, if the connection changed since."""
+        """Put back a connection the DM removed or reworded (#1566, #2323): reverses that one
+        batch, which must hold only changes to connections made by the DM, one of them ending a
+        connection, no more than `within` seconds ago. A reworded one is the new connection added
+        and the old one ended in that one batch, so both go back together. The ended row comes
+        back exactly as it was (secret flag, source, status, detail). A secret one is only put
+        back for someone who may see secrets (`secrets`), so a manager who isn't a DM can't touch
+        it. Refused, with nothing written, if the connection changed since."""
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT row_id, op, source, made_at, before, after FROM memory_changes"
@@ -3734,23 +3775,31 @@ class MemoryStore:
             )
             rows = await cur.fetchall()
             cur = await w.conn.execute(
-                "SELECT count(*) AS n FROM memory_changes"
-                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
-                (*w.ids, batch),
+                "SELECT table_name, op FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name <> %s",
+                (*w.ids, batch, RELATIONS.name),
             )
-            total = await cur.fetchone()
-            if not rows or total is None or total["n"] != 1:
+            # (new words can raise a check's flag in the same change: it goes back with them)
+            others = await cur.fetchall()
+            if not rows or any(
+                o["table_name"] != FLAGS.name or o["op"] != "insert" for o in others
+            ):
                 raise TooLateToUndo(self._too_late())
-            (row,) = rows
-            after = row["after"] or {}
-            if row["op"] != "update" or row["source"] != DM or after.get("status") != REJECTED:
-                raise MemoryRuleError(NOT_FOUND)  # only a removal by the DM
-            if (row["before"] or {}).get("secret") and not secrets:
-                raise MemoryRuleError(NOT_FOUND)  # a secret is not even mentioned, old or not
-            if w.now - row["made_at"] > within:
+            ended = [
+                r
+                for r in rows
+                if r["op"] == "update" and (r["after"] or {}).get("status") == REJECTED
+            ]
+            if len(ended) != 1 or any(r["source"] != DM for r in rows):
+                raise MemoryRuleError(NOT_FOUND)  # only a removal or rewording by the DM
+            for r in rows:  # a secret is not even mentioned, old or not
+                secret = (r["before"] or {}).get("secret") or (r["after"] or {}).get("secret")
+                if secret and not secrets:
+                    raise MemoryRuleError(NOT_FOUND)
+            if any(w.now - r["made_at"] > within for r in rows):
                 raise TooLateToUndo(self._too_late())
             await undo_batch(w, batch)
-            back = await w.get(RELATIONS, row["row_id"])
+            back = await w.get(RELATIONS, ended[0]["row_id"])
             if back is None:
                 raise MemoryRuleError(NOT_FOUND)
             return Written(_relation(back), w.batch)

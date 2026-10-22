@@ -97,7 +97,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     names: [{ name: "Recaps", file: "dm_screen/recap_panel.py" }],
   },
   {
-    text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. Or press Don't post, which is the same as Not this one on the DM screen. Nothing goes to your players until you press Post to the table.",
+    text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. On your recap page you can also press Approve but don't post, to keep it without sending it. Nothing goes to your players until you press Post to the table or Approve and post text only.",
   },
   {
     text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",

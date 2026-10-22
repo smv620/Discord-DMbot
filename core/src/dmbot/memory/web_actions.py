@@ -19,6 +19,8 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory import link_edits
+from dmbot.memory.link_words import predicate_for
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -26,6 +28,7 @@ from dmbot.memory.models import (
     PRONOUNCED,
     REJECTED,
     MemoryRuleError,
+    Relation,
     lookup_key,
     name_key,
 )
@@ -103,18 +106,26 @@ class ActionStore:
         )
 
     async def finish(
-        self, guild_id: int, action: Action, *, error: str = "", result_id: str = ""
+        self,
+        guild_id: int,
+        action: Action,
+        *,
+        error: str = "",
+        result_id: str = "",
+        result_other: str = "",
     ) -> bool:
         """Done, or failed with why, for the page to read. Only the worker that holds the current
         claim can write. False: not its row any more."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE name_actions SET state = %s, error = %s, result_id = %s"
+                "UPDATE name_actions SET state = %s, error = %s, result_id = %s,"
+                " result_other = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
                     "failed" if error else "done",
                     error,
                     "" if error else result_id,
+                    "" if error else result_other,
                     guild_id,
                     action.id,
                     action.claimed_at,
@@ -139,6 +150,7 @@ class Outcome:
 
     error: str = ""
     result_id: str = ""
+    result_other: str = ""  # a connection's other name: the pair the page draws next (#2323)
 
 
 def _failed(why: str) -> Outcome:
@@ -275,4 +287,74 @@ async def _do(
             return _failed(BAD_TARGET)  # (the door asks for the confirmation; so does this)
         await memory.set_entity_status(guild_id, cid, entity_id, REJECTED, source=DM)
         return Outcome()
+    if a.action.startswith("link-"):
+        return await _link(memory, guild_id, cid, entity_id, a)
     return _failed(FAILED)
+
+
+async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action) -> Outcome:
+    """The relationship web's edits (#2323), through the calls the name card makes. The outcome
+    names the pair, so the page can draw the edge as it now stands."""
+    if a.action == "link-add":
+        other = await memory.entity(guild_id, cid, a.target_id)
+        if (
+            other is None
+            or other.status != CONFIRMED
+            or other.type == PERSON
+            or other.id == entity_id
+        ):
+            return _failed(BAD_TARGET)
+        predicate, detail = predicate_for(a.text)
+        try:
+            await memory.add_relation(
+                guild_id, cid, entity_id, predicate, other.id, source=DM, confidence=1.0,
+                status=CONFIRMED, detail=detail[:100], secret=a.flag,
+            )  # fmt: skip
+        except MemoryRuleError:
+            return _failed(BAD_TARGET)
+        return Outcome(result_id=entity_id, result_other=other.id)
+    # the others name one connection, filed under its first name
+    link = await memory.relation(guild_id, cid, a.target_id)
+    if link is None or entity_id not in (link.subject_id, link.object_id):
+        return _failed(NOT_FOUND)
+    pair = {"result_id": link.subject_id, "result_other": link.object_id}
+    if link.status != CONFIRMED:
+        # A retried job (the first try did its work, then stopped before it was marked done) finds
+        # the connection already ended: that is "done", as for a remove or merge in `apply`.
+        if link.status == REJECTED and await _already(memory, guild_id, cid, link, a):
+            return Outcome(**pair)
+        return _failed(NOT_FOUND)
+    try:
+        if a.action == "link-secret":
+            await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
+        elif a.action == "link-remove":
+            if not a.flag:
+                return _failed(BAD_TARGET)
+            await link_edits.remove(memory, guild_id, cid, link)
+        elif a.action == "link-words":
+            predicate, detail = predicate_for(a.text)
+            await link_edits.change_words(memory, guild_id, cid, link, predicate, detail)
+        else:
+            return _failed(FAILED)
+    except MemoryRuleError:
+        return _failed(BAD_TARGET)
+    return Outcome(**pair)
+
+
+async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:
+    """Whether an ended connection is the work of this very action: a removal (it is ended), or
+    new words (a live connection with those words stands between the same two names)."""
+    if a.action == "link-remove":
+        return a.flag
+    if a.action != "link-words":
+        return False
+    predicate, detail = predicate_for(a.text)
+    return any(
+        r.status == CONFIRMED
+        and r.predicate == predicate
+        and r.detail.casefold() == detail.casefold()
+        and {r.subject_id, r.object_id} == {link.subject_id, link.object_id}
+        for r in await memory.relations(
+            guild_id, cid, entity_id=link.subject_id, include_secret=True
+        )
+    )

@@ -9854,97 +9854,6 @@ NAME_ACTIONS = (
 """
 )
 
-# Merging several names at once (#2426, migration 0183). Three things:
-# 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
-#    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
-#    that one action only;
-# 2. the DM's "Not the same" for two names, remembered so the look-alike finder never offers the
-#    pair again (the DM's alone; never in backups, recall, transcripts or any player view);
-# 3. the All names list says how many times each name was heard (`mentions`), so the page can put
-#    the most used first under "Keep which name?".
-_NAME_ACTION_DOOR = NAME_ACTIONS[
-    NAME_ACTIONS.index("    CREATE FUNCTION dmbot_web_name_action_add(") : NAME_ACTIONS.index(
-        "    -- The state of one action"
-    )
-]
-_MANY = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"
-MERGE_MANY = (
-    r"""
-    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
-    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
-        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
-         'remove'));
-    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
-    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check
-        CHECK (char_length(text) <= CASE WHEN action = 'merge-many' THEN 1700 ELSE 100 END);
-    """
-    + _NAME_ACTION_DOOR.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
-    .replace(
-        "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')",
-        "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',"
-        " 'remove')",
-    )
-    .replace(
-        "char_length(clean) > 100",
-        # (in brackets: plpgsql would take the CASE's THEN for the end of the IF's test)
-        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
-    )
-    .replace(
-        "           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN",
-        "           OR (act = 'merge-many' AND (clean = '' OR clean !~ " + _MANY + "))\n"
-        "           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN",
-    )
-    .replace(
-        "        PERFORM pg_advisory_xact_lock(",
-        """        IF act = 'merge-many' AND (
-               ent = ANY (string_to_array(clean, ' '))
-               OR (SELECT count(DISTINCT x) FROM unnest(string_to_array(clean, ' ')) x)
-                  <> cardinality(string_to_array(clean, ' '))
-               OR (SELECT count(*) FROM memory_entities t
-                   WHERE t.guild_id = g AND t.campaign_id = c
-                     AND t.id = ANY (string_to_array(clean, ' '))
-                     AND t.status = 'confirmed' AND t.type <> 'person')
-                  <> cardinality(string_to_array(clean, ' '))) THEN
-            RETURN jsonb_build_object('status', 'bad_target');
-        END IF;
-        PERFORM pg_advisory_xact_lock(""",
-        1,
-    )
-    + f"""
-    DO $do$
-    BEGIN
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_name_action_add'
-            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
-            ' SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
-    END
-    $do$;
-
-    -- Two names the DM said are not the same: `a_id` sorts before `b_id`, so a pair is one row.
-    -- Gone with either name (and its campaign); isolated per server; not in backups.
-    CREATE TABLE name_not_same (
-        {_memory_scope()}
-        a_id        TEXT NOT NULL,
-        b_id        TEXT NOT NULL,
-        decided_by  BIGINT NOT NULL CHECK (decided_by > 0),
-        created_at  BIGINT NOT NULL,
-        PRIMARY KEY (guild_id, campaign_id, a_id, b_id),
-        CHECK (a_id < b_id),
-        {_entity_link("a_id")},
-        {_entity_link("b_id")}
-    );
-    CREATE INDEX name_not_same_b ON name_not_same (guild_id, campaign_id, b_id);
-    """
-    + _isolate("name_not_same")
-)
-_MENTIONS_OF = """'hidden', p.hidden,
-                    'mentions', (SELECT count(*) FROM memory_mentions m
-                                 WHERE m.guild_id = g AND m.campaign_id = c
-                                   AND m.entity_id = p.id),"""
-assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
-ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
-
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -10091,6 +10000,246 @@ WEB_RELATIONSHIPS = r"""
     REVOKE ALL ON FUNCTION dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)
         FROM PUBLIC;
 """
+
+WEB_LINK_ACTIONS = r"""
+    -- Edits to the connections on the relationship web (#2323), through the same queue as the All
+    -- names page's actions: the website queues them, the bot applies them through the same
+    -- MemoryStore calls as Discord's name card (so the change log and Undo agree) and the page
+    -- polls. New actions: 'link-add' (`entity_id` and `target_id` are the two names, `text` the
+    -- words, `flag` secret), 'link-words' (`target_id` is the connection, `text` the new words),
+    -- 'link-secret' (`target_id`, `flag`) and 'link-remove' (`target_id`, `flag` the confirmation).
+    -- `result_other` is the other end of the pair the page shows afterwards (`result_id` is the
+    -- first), so it can draw the edge as it now stands. No row changes: a new column with a
+    -- constant default, and a wider list of actions.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+         'link-add', 'link-words', 'link-secret', 'link-remove'));
+    ALTER TABLE name_actions ADD COLUMN result_other TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(result_other) <= 32);
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(
+        g BIGINT, c TEXT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        clean TEXT := btrim(regexp_replace(COALESCE(txt, ''), '[[:space:]]+', ' ', 'g'));
+        subject TEXT := ent;
+        is_link BOOLEAN := act LIKE 'link-%';
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN
+               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+                'link-add', 'link-words', 'link-secret', 'link-remove')
+        THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF clean ~ '[[:cntrl:]]' OR char_length(clean) > 100
+           OR (act IN ('spell', 'add-other', 'remove-other', 'secret', 'link-add', 'link-words')
+               AND clean = '')
+           OR (act IN ('kind', 'hide', 'merge', 'remove', 'link-secret', 'link-remove')
+               AND clean <> '')
+           OR (act = 'kind' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
+           OR (act <> 'kind' AND COALESCE(kd, '') <> '')
+           OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
+           OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND COALESCE(tgt, '') <> '')
+           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)
+           OR (act = 'link-words' AND COALESCE(fl, false)) THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF act IN ('remove', 'link-remove') AND fl IS NOT TRUE THEN
+            RETURN jsonb_build_object('status', 'needs_confirm');
+        END IF;
+        IF is_link AND act <> 'link-add' THEN
+            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- confirmed names; the entry the action is filed under is its first name
+            SELECT r.subject_id INTO subject FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
+              AND r.predicate <> 'led_to'
+              AND EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = g
+                          AND x.campaign_id = c AND x.id = r.subject_id
+                          AND x.status = 'confirmed' AND x.type <> 'person')
+              AND EXISTS (SELECT 1 FROM memory_entities y WHERE y.guild_id = g
+                          AND y.campaign_id = c AND y.id = r.object_id
+                          AND y.status = 'confirmed' AND y.type <> 'person');
+            IF NOT FOUND THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF subject IS NULL OR NOT EXISTS (
+               SELECT 1 FROM memory_entities e
+               WHERE e.guild_id = g AND e.campaign_id = c AND e.id = subject
+                 AND e.status = 'confirmed' AND e.type <> 'person') THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF act IN ('merge', 'link-add') AND (tgt = subject OR NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person')) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('name_action:' || g::TEXT || c, 0));
+        DELETE FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 30
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action, kind,
+                                  target_id, text, flag, created_at)
+            VALUES (g, c, rid, subject, dmbot_current_user(), act, COALESCE(kd, ''),
+                    COALESCE(tgt, ''), clean, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r name_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'action', r.action,
+                                  'resultId', r.result_id, 'resultOther', r.result_other);
+    END
+    $fn$;
+    -- (redefined functions lose their pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+# Merging several names at once (#2426, migration 0183). Three things:
+# 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
+#    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
+#    that one action only;
+# 2. the DM's "Not the same" for two names, remembered so the look-alike finder never offers the
+#    pair again (the DM's alone; never in backups, recall, transcripts or any player view);
+# 3. the All names list says how many times each name was heard (`mentions`), so the page can put
+#    the most used first under "Keep which name?".
+_NAME_ACTION_DOOR = WEB_LINK_ACTIONS[
+    WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") : (
+        WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read")
+    )
+]
+_MANY = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"
+_WITH_MANY = (
+    "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',"
+    " 'remove',\n         'link-add', 'link-words', 'link-secret', 'link-remove')"
+)
+assert "'merge', 'remove',\n                'link-add'" in _NAME_ACTION_DOOR
+MERGE_MANY = (
+    r"""
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        """
+    + _WITH_MANY
+    + r""");
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check
+        CHECK (char_length(text) <= CASE WHEN action = 'merge-many' THEN 1700 ELSE 100 END);
+    """
+    + _NAME_ACTION_DOOR.replace(
+        "'merge', 'remove',\n                'link-add'",
+        "'merge', 'merge-many', 'remove',\n                'link-add'",
+    )
+    .replace(
+        "char_length(clean) > 100",
+        # (in brackets: plpgsql would take the CASE's THEN for the end of the IF's test)
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+    )
+    .replace(
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~ " + _MANY + "))\n"
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        1,
+    )
+    .replace(
+        "        PERFORM pg_advisory_xact_lock(",
+        """        IF act = 'merge-many' AND (
+               ent = ANY (string_to_array(clean, ' '))
+               OR (SELECT count(DISTINCT x) FROM unnest(string_to_array(clean, ' ')) x)
+                  <> cardinality(string_to_array(clean, ' '))
+               OR (SELECT count(*) FROM memory_entities t
+                   WHERE t.guild_id = g AND t.campaign_id = c
+                     AND t.id = ANY (string_to_array(clean, ' '))
+                     AND t.status = 'confirmed' AND t.type <> 'person')
+                  <> cardinality(string_to_array(clean, ' '))) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(""",
+        1,
+    )
+    + f"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- Two names the DM said are not the same: `a_id` sorts before `b_id`, so a pair is one row.
+    -- Gone with either name (and its campaign); isolated per server; not in backups.
+    CREATE TABLE name_not_same (
+        {_memory_scope()}
+        a_id        TEXT NOT NULL,
+        b_id        TEXT NOT NULL,
+        decided_by  BIGINT NOT NULL CHECK (decided_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_id, b_id),
+        CHECK (a_id < b_id),
+        {_entity_link("a_id")},
+        {_entity_link("b_id")}
+    );
+    CREATE INDEX name_not_same_b ON name_not_same (guild_id, campaign_id, b_id);
+    """
+    + _isolate("name_not_same")
+)
+_MENTIONS_OF = """'hidden', p.hidden,
+                    'mentions', (SELECT count(*) FROM memory_mentions m
+                                 WHERE m.guild_id = g AND m.campaign_id = c
+                                   AND m.entity_id = p.id),"""
+assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
+ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+
 
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
@@ -10385,6 +10534,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
+    ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
     ("0183_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
 )
 

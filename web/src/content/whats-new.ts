@@ -249,6 +249,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "Three clear ways to approve a recap",
+    what: "On a recap's page, Approve and post text only, Approve and make audio to review, or Approve but don't post. Audio is greyed with the reason when it can't be made. If you don't post, you can copy the text and post it later.",
+    reason: "In review (#2428); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
@@ -766,8 +772,14 @@ export const held: Held[] = [
   {
     date: "2026-10-21",
     title: "See how your names are connected",
-    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
+    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Players see only what the story has told them. The game master can switch between Full View and Players View to check, and a player can choose to peek behind the DM screen, after a warning, if the game master allows it. Connections the party only suspects are drawn dotted, with a ?.",
     reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Connections on a name's card, one to a line",
+    what: "A name's card now lists its connections one to a line, like \"is a member of Frostwolf tribe\". Only a secret one has the 🤫 icon. A new ✏️ Edit a connection… menu lets a game master change the words of a connection, hide it from players or show it, or take it back (with Undo). A long list ends with \"and 12 more\" and a link to the website.",
+    reason: "Held until dev1 deploys it and has seen it on the test server (#2323).",
   },
   {
     date: "2026-10-22",
