@@ -41,7 +41,7 @@ SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
-                    "instead_of": {"type": ["string", "null"]},
+                    "instead_of": {"type": "string"},
                     "quote": {"type": "string"},
                 },
                 "required": ["text", "instead_of", "quote"],
@@ -60,9 +60,9 @@ SYSTEM = (
     "game's official rules, lore, story notes, character sheets or schedules.\n"
     "For each rule give: `text`, the rule in one or two plain sentences in the file's own words "
     "(do not add anything the file does not say); `instead_of`, the official rule it replaces, "
-    "only if the file says so, else null; and `quote`, a short passage copied exactly, word for "
-    "word, from the file where the rule is stated (at least a dozen characters, at most two "
-    "sentences). A rule whose words you cannot quote exactly is not a rule to list.\n"
+    "only if the file says so, else an empty string; and `quote`, a short passage copied "
+    "exactly, word for word, from the file where the rule is stated (at least twenty characters, "
+    "at most two sentences). A rule whose words you cannot quote exactly is not a rule to list.\n"
     "If the file is a published rulebook or adventure (long, with page numbers and chapters) and "
     "not one table's own house rules, set `published_book` to true and list nothing.\n"
     "If the file has no house rules, list nothing. Reply with JSON only."
