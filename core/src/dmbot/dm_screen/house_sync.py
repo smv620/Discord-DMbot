@@ -46,7 +46,7 @@ READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per
 
 CLOSED = (
     "This offer has ended (DMbot restarted, or it was already handled). To compare again, "
-    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now."
+    "press ⚙️ Settings, then 📄 House-rules file, then 🔄 Compare now, or upload the file again."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons."
 FAILED = (
@@ -54,6 +54,13 @@ FAILED = (
     "you try again. If it keeps happening, tell the person who runs DMbot."
 )
 STALE = "That one was already dealt with."
+FOUND_NOTE = (
+    "_Nothing is saved until you press a button. **Review** lets you read them one at a time._"
+)
+FOUND_FILE = (
+    "Here is what I found, numbered like your house rules. Check it, fix it, and upload it back "
+    "if you like."
+)
 NOTHING_CHANGES = (
     "_Nothing changes until you press a button. Review lets you go one rule at a time._"
 )
@@ -62,22 +69,28 @@ BIG_REMOVAL = (
     "looks wrong, press **Not now**; otherwise use **Review**."
 )
 SAME = "Your house-rules file and DMbot's house rules match. Nothing to change."
+HOUSE_AI_READS_PER_DAY = 20  # files read by the AI, a server a day (a linked file: per change)
 BOOK = "Your own house rules only. For a published book, use Share a rulebook."
-NOTHING_FOUND = (
-    "I read your file and found no house rules in it that aren't already in your list. "
-    "Nothing was changed."
-)
+NOTHING_FOUND = "I read your file and found no new house rules. Nothing was changed."
 NOT_READ = (
-    "I couldn't read that file just now, so nothing was changed. Try again in a minute, or "
-    "put the rules in DMbot's numbered format (📥 Download rules shows how)."
+    "I couldn't read that file just now, so nothing was changed. Try again in a minute, or put "
+    "the rules in DMbot's numbered list (📥 Download rules in `/dmbot houserules` shows how)."
+)
+NO_AI_PLAN = (
+    "Reading this kind of file needs the AI, which this campaign's plan doesn't have. You can put "
+    "the rules in DMbot's numbered list instead (📥 Download rules in `/dmbot houserules` "
+    "shows how). Nothing was changed."
 )
 UNCHANGED = "Your file hasn't changed since I last read it. Nothing to change."
-BUSY = "I'm already reading a file for this server. Try again when it's done."
-TOO_MANY_READS = "This server has read its files for today. Try again tomorrow."
+BUSY = "I'm still reading another file for this server. Try again in a minute."
+TOO_MANY_READS = (
+    f"This server has reached today's limit for reading files ({HOUSE_AI_READS_PER_DAY}). Try "
+    "again tomorrow, or use a file in DMbot's numbered list, which has no limit."
+)
 HOUSE_AI_READS_PER_DAY = (
     20  # files read by the AI, a server a day (a linked file counts once per change)
 )
-TOO_BIG = "That file is too big to be a house-rules file. Nothing was changed."
+TOO_BIG = "That file is too big. Send just the house-rules part (up to 10 MB). Nothing was changed."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
 DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
 BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off
@@ -166,6 +179,8 @@ def _md(text: str) -> str:
 
 def offer_text(pending: Pending) -> str:
     extra = f"\n{BIG_REMOVAL}" if pending.big else ""
+    if pending.found_text:  # read by the AI: the DM has seen none of them yet
+        return f"📄 {pending.summary}\n{FOUND_NOTE}"
     return f"📄 {pending.summary}\n{NOTHING_CHANGES}{extra}"
 
 
@@ -185,7 +200,9 @@ def offer_view(guild_id: int, key: str, pending: Pending) -> discord.ui.View:
     if pending.found_text:
         actions.append("file")
     for action in actions:
-        view.add_item(HouseSyncButton(guild_id, key, action, 0, pending.removals))
+        view.add_item(
+            HouseSyncButton(guild_id, key, action, 0, pending.removals, bool(pending.found_text))
+        )
     return view
 
 
@@ -206,8 +223,14 @@ class HouseSyncButton(
         r"(?P<guild>[0-9]{1,20}):(?P<key>[0-9a-f]{8}):(?P<n>[0-9]{1,4})"
     ),
 ):
-    def __init__(self, guild_id: int, key: str, action: str, n: int, removals: int = 0) -> None:
+    def __init__(
+        self, guild_id: int, key: str, action: str, n: int, removals: int = 0, found: bool = False
+    ) -> None:
         label, emoji, style = LABELS[action]
+        if found and action == "all":  # rules nobody has read yet: Review comes first
+            style = discord.ButtonStyle.secondary
+        if found and action == "review":
+            style = discord.ButtonStyle.primary
         if removals:  # Accept all includes removals: say so, and don't make it the easy one
             if action == "all":
                 label, style = f"Accept all ({removals} to remove)", discord.ButtonStyle.secondary
@@ -488,10 +511,10 @@ async def _offer(bot: Any, campaign: Campaign, pending: Pending, send: Send) -> 
 
 def _found_summary(found: house_ai.Found, source: str) -> str:
     count = len(found.rules)
-    many = f"{count} house rule" + ("" if count == 1 else "s")
+    many = f"{count} new house rule" + ("" if count == 1 else "s")
     skipped = found.repeats
-    extra = f" ({skipped} already in your list)" if skipped else ""
-    return f"**I found {many} in {source}**{extra}. Nothing is saved until you press a button."
+    extra = f" ({skipped} more already in your list, left out)" if skipped else ""
+    return f"**I found {many} in {source}**{extra}."
 
 
 async def _compare_found(
@@ -507,7 +530,7 @@ async def _compare_found(
     gid = campaign.guild_id
     allows = getattr(bot, "plan_allows", None)
     if allows is not None and not await allows("ai", gid, campaign):
-        return NOT_READ  # a plan without the AI cannot read this kind of file
+        return NO_AI_PLAN  # a plan without the AI cannot read this kind of file
     store = bot.house_rules
     links = bot.house_file_links
     if store is None:

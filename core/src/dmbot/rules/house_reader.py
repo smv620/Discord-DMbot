@@ -23,6 +23,8 @@ from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     MAX_DOCUMENT_CHARS,
     NO_TEXT,
+    SCANNED_PDF,
+    TYPES_HELP,
     DocumentError,
     decode_text,
     text_of,
@@ -53,9 +55,30 @@ def csv_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
     return "\n".join(lines)
 
 
+SCANNED = (
+    "That PDF is pictures of pages (scanned), so I can't read its words. Save or export it as a "
+    "PDF with real text, or paste the rules into a Word or text file, and try again."
+)
+TYPES = (
+    "I can read PDF, Word (.docx), Excel (.xlsx), CSV, text (.txt) and web page files. Save yours "
+    "as one of those and try again."
+)
+
+
 def house_text_of(filename: str, raw: bytes) -> str:
-    """The text of a house-rules file: `text_of`'s formats, plus a CSV read by rows. Importable by
-    name, so a child process can run it."""
+    """The text of a house-rules file: `text_of`'s formats, plus a CSV read by rows, with the
+    words of this flow (the names reader's point the DM to a names template). Importable by name,
+    so a child process can run it."""
+    try:
+        return _text_of(filename, raw)
+    except DocumentError as exc:
+        words = str(exc)
+        raise DocumentError(
+            SCANNED if words == SCANNED_PDF else TYPES if words == TYPES_HELP else words
+        ) from exc
+
+
+def _text_of(filename: str, raw: bytes) -> str:
     if PurePath(filename).suffix.casefold() == ".csv":
         if len(raw) > MAX_DOCUMENT_BYTES:
             raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")

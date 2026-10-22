@@ -18,7 +18,7 @@ from pypdf import PdfWriter
 from dmbot import fetch
 from dmbot.ai import Reply
 from dmbot.dm_screen import house_sync as hs
-from dmbot.memory.name_documents import SCANNED_PDF, DocumentError
+from dmbot.memory.name_documents import DocumentError
 from dmbot.rules import house_ai, house_reader
 from dmbot.rules.house_file_link import FileLink
 from dmbot.ui import house_file as file_ui
@@ -162,7 +162,7 @@ class TheReaders(unittest.TestCase):
     def test_a_scanned_pdf_says_so(self) -> None:
         with self.assertRaises(DocumentError) as caught:
             house_reader.house_text_of("scan.pdf", blank_pdf())
-        self.assertEqual(str(caught.exception), SCANNED_PDF)
+        self.assertEqual(str(caught.exception), house_reader.SCANNED)
 
     def test_an_empty_file_says_so(self) -> None:
         with self.assertRaises(DocumentError) as caught:
@@ -323,13 +323,23 @@ class Offering(SyncTest):
         self.assertIsNone(await self.compare(file_name="our-rules.pdf"))
         self.assertEqual(len(self.ai.calls), 1)
         text, view = self.sent[-1]
-        self.assertIn("I found 2 house rules in **our-rules.pdf**", text)
+        self.assertIn("I found 2 new house rules in **our-rules.pdf**", text)
         self.assertIn("Nothing is saved until you press a button.", text)
+        self.assertEqual(text.count("press a button"), 1)  # said once
         self.assertEqual(
             [str(b.item.label) for b in view.children],  # type: ignore[attr-defined]
             ["Accept all changes", "Review", "Close", "Download what I found"],
         )
         self.assertEqual(len(self.store.rules), 3)
+
+    async def test_review_comes_first_for_rules_nobody_has_read(self) -> None:
+        import discord
+
+        await self.compare()
+        _, view = self.sent[-1]
+        styles = {str(b.item.label): b.item.style for b in view.children}  # type: ignore[attr-defined]
+        self.assertEqual(styles["Review"], discord.ButtonStyle.primary)
+        self.assertEqual(styles["Accept all changes"], discord.ButtonStyle.secondary)
 
     async def test_accepting_adds_the_rules_with_the_files_name_as_their_source(self) -> None:
         await self.compare(file_name="our-rules.pdf")
@@ -349,6 +359,7 @@ class Offering(SyncTest):
             "4. Roll initiative once, then keep the order. (instead of: Roll every round)", body
         )
         self.assertTrue(sent["ephemeral"])
+        self.assertEqual(it.response.sent[-1][0], hs.FOUND_FILE)
 
     async def test_a_player_cannot_download_it(self) -> None:
         await self.compare()
@@ -364,7 +375,8 @@ class Offering(SyncTest):
         ]
         await self.compare()
         self.assertIn(
-            "I found 1 house rule in your file** (1 already in your list)", self.sent[-1][0]
+            "I found 1 new house rule in your file** (1 more already in your list, left out)",
+            self.sent[-1][0],
         )
 
     async def test_a_rulebook_gets_its_line_and_no_offer(self) -> None:
@@ -383,7 +395,7 @@ class Offering(SyncTest):
         self,
     ) -> None:
         self.bot.plan_allows = AsyncMock(return_value=False)
-        self.assertEqual(await self.compare(), hs.NOT_READ)
+        self.assertEqual(await self.compare(), hs.NO_AI_PLAN)
         self.assertEqual(self.ai.calls, [])
         self.bot.plan_allows = AsyncMock(return_value=True)
         self.bot.house_file_ai = None
@@ -437,7 +449,7 @@ class Offering(SyncTest):
             await hs.check_linked(self.bot, campaign(), self.send, quiet_if_same=True)
         self.assertEqual(len(self.ai.calls), 1)
         self.assertIn("Roll initiative once", self.ai.calls[0]["text"])
-        self.assertIn("I found 1 house rule", self.sent[-1][0])
+        self.assertIn("I found 1 new house rule", self.sent[-1][0])
 
 
 class Uploading(SyncTest):
@@ -464,12 +476,12 @@ class Uploading(SyncTest):
         it = self.interaction()
         await self.form(raw, "our-rules.docx").on_submit(it)
         self.assertIn(
-            "I found 1 house rule in **our-rules.docx**", it.followup.send.await_args.args[0]
+            "I found 1 new house rule in **our-rules.docx**", it.followup.send.await_args.args[0]
         )
 
     async def test_a_scanned_pdf_and_an_empty_file_get_their_lines(self) -> None:
         for raw, name, words in (
-            (blank_pdf(), "scan.pdf", SCANNED_PDF),
+            (blank_pdf(), "scan.pdf", house_reader.SCANNED),
             (b"   ", "empty.txt", "no text"),
         ):
             file_ui._last.clear()

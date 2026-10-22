@@ -192,11 +192,17 @@ CELL_JOIN = " | "
 def _xlsx_part(archive: zipfile.ZipFile, name: str, limit: int) -> str:
     info = archive.getinfo(name)
     if info.file_size > limit:
-        raise DocumentError("That Excel file is too big. Split it into smaller files.")
+        raise DocumentError(
+            "That Excel file is too big. Keep only the sheet with your rules, or split it into "
+            "smaller files."
+        )
     with archive.open(info) as part:
         data = part.read(limit + 1)  # never trust the size it declares
     if len(data) > limit:
-        raise DocumentError("That Excel file is too big. Split it into smaller files.")
+        raise DocumentError(
+            "That Excel file is too big. Keep only the sheet with your rules, or split it into "
+            "smaller files."
+        )
     return data.decode("utf-8", errors="replace")
 
 

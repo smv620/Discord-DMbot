@@ -87,7 +87,7 @@ LINK_LABEL = "🔗 Connect a file"
 CHANGE_LABEL = "🔗 Use another file"
 CHECK_LABEL = "🔄 Compare now"
 UNLINK_LABEL = "Stop using this file"
-UPLOAD_LABEL = "📎 Upload a file (one time)"
+UPLOAD_LABEL = "📎 Upload a file once"
 ONLY_DMS = "Only this campaign's DMs can set up the house-rules file. Ask your DM."
 PICK_FIRST = (
     "Which campaign is this file for? Open `/dmbot houserules`, pick the campaign, then press "
@@ -96,12 +96,12 @@ PICK_FIRST = (
 GONE = "That campaign isn't here any more. Use `/dmbot houserules` to start again."
 NOT_READY = "The house-rules file isn't available right now. Please try again in a moment."
 NOT_LINKED = (
-    "📄 **House-rules file**\nNo file is connected yet. Keep your house rules in a PDF, Word, "
-    "Excel or text file, a Google Doc or Sheet, or a web page, and DMbot reads it at the start "
-    "of every session and offers what's new.\nBefore you paste its web address, set sharing to "
-    "“Anyone with the link can view”. Or upload a file for one reading (it isn't kept).\n"
-    "Your own house rules only. For a published book, use Share a rulebook.\n"
-    "Nothing changes unless you press a button."
+    "📄 **House-rules file**\nKeep your house rules in a PDF, Word, Excel or text file, a Google "
+    "Doc or a web page. DMbot reads it at the start of each session and shows you what's new.\n"
+    "**Connect a file** keeps it up to date. For a Google Doc or web page, set sharing to "
+    "“Anyone with the link can view” first.\n**Upload a file** reads it once and doesn't keep "
+    "it.\nNothing is saved until you press a button.\n"
+    "Your own house rules only. For a published book, use Share a rulebook."
 )
 
 
@@ -232,17 +232,16 @@ async def link_file(interaction: discord.Interaction, campaign: Campaign, link: 
     await _tell(
         interaction,
         f"✅ Connected: **{discord.utils.escape_markdown(saved.site)}**. DMbot will compare it "
-        "with your house rules every time you start a session. Comparing it now…",
+        "with your house rules every time you start a session. Reading it now, this can take "
+        "a minute…",
     )
     await check_now(interaction, current)
 
 
 class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
     link: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
-        label="Web address of your rules file",  # 45 characters at most
-        placeholder=(
-            "A Google Doc or Sheet, Dropbox, OneDrive or web page. Sharing: “Anyone with the link”."
-        ),
+        label="Link to your rules (Doc, PDF, web page)",  # 45 characters at most
+        placeholder="Paste the link. Sharing must be “Anyone with the link”.",
         max_length=2000,
     )
 
@@ -254,7 +253,7 @@ class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
         await link_file(interaction, self.campaign, self.link.value)
 
 
-class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
+class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
     file: discord.ui.Label[UploadForm] = discord.ui.Label(
         text="Your rules (PDF, Word, Excel, text)",  # 45 characters at most
         component=discord.ui.FileUpload(max_values=1),
