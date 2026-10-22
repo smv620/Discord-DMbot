@@ -31,7 +31,7 @@ describe("a campaign's card", () => {
     expect(within(c).getByRole("link", { name: "The Brynwater Crossing" }).getAttribute("href")).toBe(
       "/account/campaigns/100.cmp1",
     );
-    for (const fact of ["12 sessions", "41.5 hours played", "4 players", "27 NPCs"])
+    for (const fact of ["12 sessions", "42 hours played", "4 players", "27 NPCs"])
       expect(within(c).getByText(fact)).toBeTruthy();
     expect(within(c).getByText(/^Started /)).toBeTruthy();
     expect(within(c).getByText(/^Last played /)).toBeTruthy();

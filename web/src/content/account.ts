@@ -225,16 +225,20 @@ export const text = {
   youRunItFree: "You run it",
   youHelp: "You help run it",
   youPlay: "You play in it",
-  // The card's facts (#2460): the same words as Discord's campaign list.
+  // The card's facts (#2460). Keep these words equal to the Discord campaign list's; where Discord has
+  // no such line yet, it should get this one.
   listeningNow: "Listening now",
   factsLabel: (name: string): string => `About ${name}`,
   sessionsFact: (n: number): string => (n === 1 ? "1 session" : `${n} sessions`),
-  hoursFact: (h: number): string => `${h} ${h === 1 ? "hour" : "hours"} played`,
+  hoursFact: (h: number): string => {
+    const whole = Math.round(h);
+    return h < 1 ? "Under 1 hour played" : `${whole} ${whole === 1 ? "hour" : "hours"} played`;
+  },
   playersFact: (n: number): string => (n === 1 ? "1 player" : `${n} players`),
   npcsFact: (n: number): string => (n === 1 ? "1 NPC" : `${n} NPCs`),
   startedFact: (iso: string): string => `Started ${shortDate(iso)}`,
   // The heading over the sections about the person and their account (#2460).
-  myAccountHeading: "My account",
+  myAccountHeading: "My Account",
   handOver: "Hand over",
 
   // Hand over

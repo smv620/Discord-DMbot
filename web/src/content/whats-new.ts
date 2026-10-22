@@ -232,7 +232,7 @@ export const held: Held[] = [
   {
     date: "2026-10-22",
     title: "My Account shows each campaign at a glance",
-    what: "On My Account, each campaign card now shows whether DMbot is listening right now, your part in it, and its sessions, hours played, players, NPCs, when it started and when it was last played. Tap the name to open the campaign. The sections are in a new order: My campaigns, My characters, My plan and billing, then the sections about your account.",
+    what: "Each campaign on My Account now shows at a glance whether DMbot is listening, your part in it, and its sessions, hours played, players, NPCs, start date and last played. Tap the name to open it. The page now lists your campaigns first, then your characters, then your plan and billing.",
     reason: "In review (#2460); held until the API sends the facts and dev1 deploys it.",
   },
   {
