@@ -1824,9 +1824,10 @@ names panel nor the speech-to-text hints can be a fixed list.
       node and connection. **After each session** (and each imported session) a held-back name that a
       recorded person said or typed at the table, by its name or another of its names as whole words, is shown
       to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
-      and the 🤫 spellings never do. The DM screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo,
-      and counts any held-back connection that now joins two shown names, for the DM to show from its page
-      (a connection is never shown by itself: the bot advises, the DM decides).
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
+      step: until the knowledge map review (#2410), the after-session report points to the held-back
+      connections whose names are both revealed now.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.

@@ -6,7 +6,8 @@ Only whole names count, compared the way names are everywhere (`spelling_key`: c
 apostrophes and hyphens ignored), by the name or any of its other names. Only lines of people who
 are recorded now count, the DM's own table speech included; never the DM sidebar (the DM's
 questions to DMbot and its answers), DMbot's own messages, the DM screen or the backstory text. A
-🤫 secret spelling is never looked for here: a secret said aloud has its own question.
+🤫 secret spelling is never looked for here: this module does not handle secrets said aloud;
+the knowledge map review (#2410, "Secrets exposed", with Recant) does.
 """
 
 from __future__ import annotations
