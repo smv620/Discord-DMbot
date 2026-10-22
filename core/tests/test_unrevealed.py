@@ -140,7 +140,10 @@ class TheNames(Held):
     async def test_revealing_a_name_shows_it_in_the_web_and_undo_hides_it(self) -> None:
         fresh = await self.add("Orla Finch", "npc", hidden_from_players=True)
         await self.link("knows", self.mira, fresh, "orla")
-        names = lambda got: {n["id"]: n for n in got["nodes"]}  # noqa: E731
+
+        def names(got: dict[str, Any]) -> dict[str, dict[str, Any]]:
+            return {n["id"]: n for n in got["nodes"]}
+
         theirs = names(await self.graph(self.player, center=self.mira, hops=1))
         self.assertNotIn(fresh, theirs)
         mine = names(await self.graph(center=self.mira, hops=1, view="full"))
