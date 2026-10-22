@@ -207,10 +207,10 @@ describe("what a DM can do", () => {
     await ready();
     const row = await edit("Gorrak");
     fireEvent.click(row.getByLabelText(w.secretCheck));
-    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"secret","secret":true}'));
+    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":true}'));
     await waitFor(() => expect((within(rowOf("Gorrak")).getByLabelText(w.secretCheck) as HTMLInputElement).checked).toBe(true));
     fireEvent.click(within(rowOf("Gorrak")).getByLabelText(w.secretCheck));
-    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"secret","secret":false}'));
+    await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":false}'));
   });
 
   it("merges into a name picked from a search, only after a confirmation", async () => {

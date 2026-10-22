@@ -803,7 +803,9 @@ export type NameChange =
   | { action: "kind"; kind: string }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
-  | { action: "secret"; secret: boolean; other?: string }
+  // "Players don't know this one yet" on the whole entry; `secret` is one other name (#2294).
+  | { action: "hide"; hidden: boolean }
+  | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
   | { action: "remove"; confirm: true };
 

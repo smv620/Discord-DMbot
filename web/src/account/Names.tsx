@@ -473,7 +473,7 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           type="checkbox"
           checked={row.hidden ?? row.secret}
           disabled={working}
-          onChange={(e) => void run({ action: "secret", secret: (e.target as HTMLInputElement).checked }, words.saved)}
+          onChange={(e) => void run({ action: "hide", hidden: (e.target as HTMLInputElement).checked }, words.saved)}
         />
         <span>{words.secretCheck}</span>
       </label>
