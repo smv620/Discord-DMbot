@@ -829,6 +829,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
@@ -1138,6 +1139,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  bad_target: "bad-target",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
   exists: "name-exists",

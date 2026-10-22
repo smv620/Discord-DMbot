@@ -83,6 +83,7 @@ export const namesPage = {
     "needs-confirm": "Press the Yes button to do that.",
     "not-allowed": "Only this campaign's DM can change names.",
     "not-found": "That name is gone. The list is up to date now.",
+    "bad-target": "DMbot can't do that to this name.",
     "still-waiting": "DMbot hasn't finished that yet. It may still happen; the list will show it. Check before trying again.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,

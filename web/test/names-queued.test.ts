@@ -106,7 +106,22 @@ describe("changeName", () => {
     await expect(api.changeName!("100.cmp1", "n1", { action: "merge", into: "n2" })).resolves.toMatchObject({ id: "n2" });
   });
 
+  it("stops at once when the session has ended", async () => {
+    const seen: string[] = [];
+    const fetcher = (async (_url: string, init?: RequestInit) => {
+      seen.push(init?.method ?? "GET");
+      if (init?.method === "POST") return new Response(JSON.stringify({ answer: "a1" }), { status: 202 });
+      return new Response("{}", { status: 401 });
+    }) as typeof fetch;
+    const api = httpApi("https://api.example", fetcher);
+    await expect(api.changeName!("100.cmp1", "n1", { action: "kind", kind: "place" })).rejects.toMatchObject({
+      kind: "signed-out",
+    });
+    expect(seen).toEqual(["POST", "GET"]);
+  });
+
   it.each([
+    ["bad_target", "bad-target"],
     ["not_found", "not-found"],
     ["needs_confirm", "needs-confirm"],
     ["not_allowed", "not-allowed"],

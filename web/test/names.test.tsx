@@ -241,6 +241,39 @@ describe("what a DM can do", () => {
     await waitFor(() => expect(calls(api, "allNames").length).toBeGreaterThan(before));
   });
 
+  it("shows Waiting for DMbot… while a change is out, and clears it after", async () => {
+    const api = mockApi("table");
+    let finish: () => void = () => {};
+    api.changeName = () => new Promise((go) => (finish = () => go({ removed: true })));
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    const line = await screen.findByText(w.waiting);
+    expect(line.getAttribute("role")).toBe("status");
+    finish();
+    await waitFor(() => expect(screen.queryByText(w.waiting)).toBeNull());
+  });
+
+  it("says a change may still happen, never that nothing was changed", async () => {
+    expect(w.errors["still-waiting"]).toContain("may still happen");
+    expect(w.errors["still-waiting"]).not.toContain("nothing was changed");
+    expect(w.hideCheck).toBe("🙈 Hide from players");
+  });
+
+  it("gives a refused target its own words, not 'try again'", async () => {
+    const api = mockApi("table");
+    api.changeName = async () => {
+      throw new ApiError("bad-target");
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    expect(await screen.findByText(w.errors["bad-target"]!)).toBeTruthy();
+    expect(w.errors["bad-target"]).not.toMatch(/try again/i);
+  });
+
   it("merges into a name picked from a search, only after a confirmation", async () => {
     const api = open();
     await ready();
