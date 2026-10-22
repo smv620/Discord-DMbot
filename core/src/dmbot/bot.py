@@ -309,6 +309,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
+from dmbot.rules.wins import WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -1282,6 +1283,13 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.rule_conflict_ai = (  # a saved house rule that disagrees with another (#2284)
+            self.ai_client.tier(FEATURE_TIERS[Feature.RULE_CONFLICTS], Feature.RULE_CONFLICTS)
+            if self.ai_client
+            else None
+        )
+        # Which disagreeing house rule wins, as the DM decided; set where the database is known.
+        self.house_wins: WinsStore | None = None
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
@@ -11601,6 +11609,7 @@ def register_backup_sections(
     by the running bot and by the tests, so a test exports exactly what production does."""
     campaigns.register_section(MemorySection())  # campaign memory goes in backups
     campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+    campaigns.register_section(WinsSection())  # and which disagreeing rule wins (#2284)
     campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
     campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
     campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
@@ -11680,6 +11689,7 @@ async def run(settings: Settings) -> None:
             installs=InstallStore(db),
             recap_holds=recap_hold.HoldStore(db),
         )
+        bot.house_wins = WinsStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from dmbot.rules.conflicts import Checked
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file import Diff, FileRule
 
@@ -162,12 +163,27 @@ def describe(item: Item) -> str:
     )
 
 
+UNCHECKED = (
+    "Couldn't check the file's rules for clashes with your other house rules. "
+    "Added anyway; look them over in `/dmbot houserules`."
+)
+
+
+def _checked_words(item: Item) -> str:
+    return item.rule + (f" (instead of: {item.instead})" if item.instead else "")
+
+
+def _named(number: int, from_set: str | None) -> str:
+    return f"{from_set} rule {number}" if from_set else f"rule {number}"
+
+
 async def apply(
     store: Store,
     guild_id: int,
     campaign_id: str,
     user_id: int,
     items: Sequence[Item],
+    check: Callable[[Sequence[str], frozenset[int]], Awaitable[Checked]] | None = None,
     *,
     source: str = "linked",
     source_name: str | None = None,
@@ -175,7 +191,9 @@ async def apply(
     """Do the items, one by one. One that can't be done is skipped and said, never forced:
     the store refuses it if another DM changed or removed the rule since it was compared.
     A new rule that is already there (the same words) is not added a second time, so doing
-    the same offer twice, or again after a failure part way, never makes copies."""
+    the same offer twice, or again after a failure part way, never makes copies.
+    `check` (#2284) compares the new rules, in one call, with the rules already in force: one that
+    disagrees is not added (the DM adds it by hand and picks which rule wins), and the rest are."""
     out = Applied()
     present: set[tuple[str, str | None]] = set()
     if any(item.kind == ADD for item in items):
@@ -183,11 +201,34 @@ async def apply(
             present = {(r.rule, r.supersedes) for r in await store.list(guild_id, campaign_id)}
         except Exception:
             log.exception("Couldn't read the house rules before adding from the file")
+    held: dict[tuple[str, int], str] = {}  # (kind, file rule number) -> what it disagrees with
+    if check is not None:
+        # New rules and changed ones, in one call. A changed rule's old words are not compared
+        # with (they are being replaced), like Edit's `skip`.
+        fresh = [
+            i
+            for i in items
+            if (i.kind == ADD and (i.rule, i.instead) not in present) or i.kind == CHANGE
+        ]
+        changing = frozenset(i.number for i in fresh if i.kind == CHANGE)
+        found = await check([_checked_words(i) for i in fresh], changing)
+        for d in found.disagreements:
+            at = fresh[d.new - 1]
+            held.setdefault((at.kind, at.number), _named(d.other.number, d.other.from_set))
+        if found.unchecked and fresh:
+            out.skipped.append(UNCHECKED)
     for item in items:
         try:
             if item.kind == ADD:
                 if (item.rule, item.instead) in present:
                     out.done.append(f"Rule {item.number} was already there.")
+                    continue
+                if (ADD, item.number) in held:
+                    out.skipped.append(
+                        f"Rule {item.number} in the file may clash with {held[ADD, item.number]}"
+                        ", so it wasn't added. To add it and pick a winner, use **Add a house "
+                        "rule** in `/dmbot houserules`."
+                    )
                     continue
                 saved = await store.add(
                     guild_id, campaign_id, user_id, item.rule, item.instead,
@@ -203,6 +244,13 @@ async def apply(
                         "(a number is never used twice, so old alerts stay right)."
                     )
             elif item.kind == CHANGE:
+                if (CHANGE, item.number) in held:
+                    out.skipped.append(
+                        f"Rule {item.number} in the file now says something that may clash with "
+                        f"{held[CHANGE, item.number]}, so it wasn't changed. To change it and pick "
+                        "a winner, use **Edit** in `/dmbot houserules`."
+                    )
+                    continue
                 await store.edit(
                     guild_id, campaign_id, user_id, item.number, item.rule, item.instead,
                     unchanged_since=item.version,

@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-21",
+    title: "DMbot asks when two house rules disagree",
+    what: "When you add or change a house rule that says something different from another one, DMbot shows you both and asks which should win. You can replace the old one, or keep both and pick the winner. DMbot never picks for you, and it remembers your answer.",
+    reason: "In review (#2284); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-21",
     title: "Hear and record how a name sounds",
     what: "Beside the box for how a name is said, you can now ask DMbot for a suggestion, say the name out loud and have it turned into letters, and hear the letters read back. Nothing is saved until you save it, and your recording is deleted once it has been turned into letters.",
     reason: "In review (#2317); held until the API (#2316) and the speech recogniser on the server (#2318) are deployed by dev1.",

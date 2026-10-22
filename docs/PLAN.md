@@ -550,6 +550,12 @@ always; DMbot never picks one.
   set), the DM's sidebar quotes both with their numbers and asks "Which one applies?", with buttons
   for each that record the answer. It never chooses. A player's table question gets "That's one for
   your DM.", and the DM is told privately.
+- **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
+  backups first; the answer-time question after. At save, a rule accepted from the linked file that
+  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
+  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  was not checked. Editing or removing a rule forgets what was decided about it, in the same
+  transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
   follows, then homebrew, then the book rules. The check above is only for rules at the same level.
 - **Cost:** one fast call per saved rule. A file accept with many rules checks them in one call.
@@ -4803,3 +4809,11 @@ A player's character, the party and DMbot's own player entries can't be hidden. 
 treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
 until the DM shows it.
 A database trigger clears the flag whenever an entry becomes a player's character or the party, whichever path does it (an import, a change of kind, the plays answer, a merge).
+
+### Recap output room and Try again (#2341, 2026-10-22)
+The beat-sheet call's output room is sized for a full window of beats (`beats.room`) and doubles on the
+retry, so an answer cut off at the first limit is never asked for again at the same one. A recap that
+fails on our side (a cut-off answer, a check, the service) gives back the DM's Try again; one that fails
+for no speakers, funds or stopped recording does not. The failing check's fixed name is in `last_error`
+(`(check: length)`) and the log. dev1 starts a session over with
+`python -m dmbot.devtools.recap_requeue GUILD CAMPAIGN SESSION_AT`.
