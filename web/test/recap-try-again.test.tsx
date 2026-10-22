@@ -9,6 +9,7 @@ import type { Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { choiceWords } from "../src/content/recap-choices";
+import { approveWords } from "../src/content/recap-approve";
 import { againLabel, text } from "../src/content/recaps";
 
 afterEach(() => {
@@ -30,6 +31,8 @@ const failed = (left: number): Recap => ({
   canTryAgain: left > 0,
   triesLeft: left,
   canDrop: true,
+  // A recap that couldn't be made has nothing to approve (the API says so while it isn't ready).
+  approval: { approved: false, choice: "", approvedAt: null, canApprove: false },
 });
 const running = (left: number): Recap => ({ ...failed(left), state: "working", working: true, canTryAgain: false, canDrop: false });
 
@@ -53,7 +56,7 @@ describe("Try again on a failed recap", () => {
     expect(await screen.findByText(text.working)).toBeTruthy();
     expect(screen.queryByText(text.failed)).toBeNull();
     expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: text.drop })).toBeNull();
+    expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
     expect(screen.getByText("Being made")).toBeTruthy();
     expect(screen.queryByText("Couldn't be made")).toBeNull();
@@ -75,7 +78,6 @@ describe("Try again on a failed recap", () => {
     expect(screen.getByText(text.failedNoTries)).toBeTruthy();
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
     expect(screen.queryByText(text.tryingAgain)).toBeNull();
-    expect(screen.getByRole("button", { name: text.drop })).toBeTruthy();
   });
 });
 
@@ -106,7 +108,7 @@ describe("when the run ends", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(await screen.findByRole("button", { name: text.post })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: approveWords.postText })).toBeTruthy();
     expect(screen.getByRole("button", { name: text.edit })).toBeTruthy();
     expect(screen.queryByText(text.working)).toBeNull();
     expect(screen.queryByText(text.tryingAgain)).toBeNull();
@@ -140,7 +142,7 @@ describe("when the run ends", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(await screen.findByRole("button", { name: text.post })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: approveWords.postText })).toBeTruthy();
   });
 });
 
@@ -148,7 +150,7 @@ describe("a recap that is being made", () => {
   it("offers no Don't post and no 'tried twice' line until the run has ended", async () => {
     open({ ...running(0), triesLeft: 0 });
     await screen.findByText(text.working);
-    expect(screen.queryByRole("button", { name: text.drop })).toBeNull();
+    expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
   });
 });

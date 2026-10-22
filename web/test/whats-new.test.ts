@@ -70,6 +70,7 @@ describe("What's new", () => {
     expect(held.map((h) => h.title)).toEqual([
       "See where a new name was said", // until #2329 merges and dev1 deploys it
       "Transcripts show real names", // until #2337 merges and dev1 deploys it
+      "Three clear ways to approve a recap",
       "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
       "Bring your house rules in any file", // until #2377 merges and dev1 deploys it
       "Upload your campaign's backstory from the main menu", // until #2380 merges and dev1 deploys it
