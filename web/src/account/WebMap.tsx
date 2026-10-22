@@ -162,7 +162,6 @@ export default function WebMap({
         ref={svg}
         class="web-svg"
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
-        role="img"
         aria-hidden="true"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
         onPointerDown={down}

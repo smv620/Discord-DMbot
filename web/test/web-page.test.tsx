@@ -52,7 +52,7 @@ describe("reading the web", () => {
   it("draws the names and lists them too", async () => {
     await open();
     // The drawing is hidden from screen readers; the lists carry the same names.
-    expect(screen.getByRole("img", { hidden: true })).toBeTruthy();
+    expect(document.querySelector("svg[aria-label^='A map of']")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "The same web, as a list" })).toBeTruthy();
   });
 
@@ -66,13 +66,13 @@ describe("reading the web", () => {
 
   it("asks for more steps out", async () => {
     const api = await open();
-    fireEvent.change(screen.getByLabelText("Steps out from the middle"), { target: { value: "3" } });
+    fireEvent.input(screen.getByLabelText("Steps out from the middle"), { target: { value: "3" } });
     await waitFor(() => expect(api.calls.some((c) => c.endsWith("hops=3"))).toBe(true));
   });
 
   it("asks before drawing a very big web, and draws it on a yes", async () => {
     const api = await open(".web-big");
-    fireEvent.change(screen.getByLabelText("Steps out from the middle"), { target: { value: "6" } });
+    fireEvent.input(screen.getByLabelText("Steps out from the middle"), { target: { value: "6" } });
     const ask = await screen.findByText(/This will draw \d+ names and may be slow/);
     const n = Number(/draw (\d+)/.exec(ask.textContent ?? "")?.[1]);
     expect(n).toBeGreaterThan(BIG_WEB);
@@ -189,5 +189,108 @@ describe("secrets for someone who is not a DM", () => {
     await screen.findByText("2 names, 1 line");
     expect(document.body.textContent).not.toMatch(/heir/);
     expect(document.body.textContent).toMatch(/serves/);
+  });
+});
+
+describe("the steps box", () => {
+  it("takes a typed number, and a number out of range asks for nothing", async () => {
+    const api = await open();
+    const box = screen.getByLabelText("Steps out from the middle") as HTMLInputElement;
+    expect(box.type).toBe("number");
+    const before = api.calls.length;
+    fireEvent.input(box, { target: { value: "99" } });
+    fireEvent.input(box, { target: { value: "" } });
+    expect(api.calls.length).toBe(before);
+    fireEvent.blur(box);
+    expect(box.value).toBe("2"); // the steps in use come back
+    fireEvent.input(box, { target: { value: "4" } });
+    await waitFor(() => expect(api.calls.some((c) => c.endsWith("hops=4"))).toBe(true));
+  });
+});
+
+describe("saying no to a very big first draw", () => {
+  it("shows the nearest names instead of a blank page", async () => {
+    const api = mockApi("table");
+    const calls: number[] = [];
+    api.webSize = async (_r, q) => ({ names: q.hops > 1 ? BIG_WEB + 1 : 3 });
+    const real = api.webGraph!;
+    api.webGraph = async (r, q) => {
+      calls.push(q.hops);
+      return real(r, q);
+    };
+    render(<Web api={api} path={at()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    await screen.findByText(/names?, \d+ lines?/);
+    expect(calls).toEqual([1]);
+    expect(screen.getByLabelText("Steps out from the middle")).toBeTruthy();
+  });
+});
+
+describe("changing a name", () => {
+  it("lets a DM change spelling and kind, and shows the change", async () => {
+    const api = await open();
+    fireEvent.click(screen.getAllByRole("button", { name: /^Change / })[0] as HTMLElement);
+    const group = screen.getByRole("group", { name: /^About / });
+    fireEvent.input(within(group).getByLabelText("Spelling"), { target: { value: "Zed the Bold" } });
+    fireEvent.click(within(group).getByRole("button", { name: "Save spelling" }));
+    await waitFor(() => expect(api.calls.some((c) => c.includes('"action":"spell"') && c.includes("Zed the Bold"))).toBe(true));
+    expect(await screen.findAllByText(/Zed the Bold/)).not.toHaveLength(0);
+    fireEvent.change(within(screen.getByRole("group", { name: /^About / })).getByLabelText("What it is"), { target: { value: "place" } });
+    fireEvent.click(within(screen.getByRole("group", { name: /^About / })).getByRole("button", { name: "Save what it is" }));
+    await waitFor(() => expect(api.calls.some((c) => c.includes('"action":"kind"') && c.includes("place"))).toBe(true));
+  });
+
+  it("shows a server manager no way to change a name", async () => {
+    await open(".web-manager");
+    expect(screen.queryByRole("button", { name: /^Change / })).toBeNull();
+  });
+});
+
+describe("how many more connections a line has", () => {
+  const stub = (canEdit: boolean) => {
+    const api = mockApi("table");
+    api.webSize = async () => ({ names: 3 });
+    api.webGraph = async () => ({
+      center: "a",
+      nodes: [
+        { id: "a", name: "Mira", kind: "npc" },
+        { id: "b", name: "Garrick", kind: "npc" },
+        { id: "c", name: "Hidden Heir", kind: "npc", secret: true },
+      ],
+      edges: [
+        {
+          a: "a",
+          b: "b",
+          label: "serves",
+          more: 3,
+          links: [
+            { id: "l1", words: "serves", secret: false, direction: "ab" },
+            { id: "l2", words: "owes", secret: false, direction: "ab" },
+            { id: "l3", words: "fears", secret: true, direction: "ab" },
+            { id: "l4", words: "hunts", secret: true, direction: "ab" },
+          ],
+        },
+        { a: "a", b: "c", label: "guards", more: 0, links: [{ id: "l5", words: "guards", secret: false, direction: "ab" }] },
+      ],
+      truncated: false,
+      maxHops: 3,
+      canEdit,
+    });
+    return api;
+  };
+
+  it("says (+3) in the list and on the map for a DM", async () => {
+    render(<Web api={stub(true)} path={at()} />);
+    await screen.findByText("3 names, 2 lines");
+    expect(screen.getByText(/Mira ↔ Garrick: serves \(\+3\)/)).toBeTruthy();
+    expect(document.querySelector(".web-edge-text")?.textContent).toContain("(+3)");
+  });
+
+  it("recounts for someone who is not a DM, and drops a secret name", async () => {
+    render(<Web api={stub(false)} path={at()} />);
+    await screen.findByText("2 names, 1 line");
+    expect(screen.getByText(/Mira ↔ Garrick: owes \(\+1\)/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Hidden Heir/);
+    expect(document.body.textContent).not.toMatch(/fears|hunts/);
   });
 });

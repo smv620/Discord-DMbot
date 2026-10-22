@@ -8,8 +8,9 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { NAME_LIMIT } from "../content/names-words";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
-import { type AccountApi, ApiError, type NameRow, type WebEdge, type WebGraph, type WebLinkChange } from "./api";
+import { type AccountApi, ApiError, type NameChange, type NameRow, type WebEdge, type WebGraph, type WebLinkChange, type WebNode } from "./api";
 import WebMap from "./WebMap";
 import { clampHops } from "./webLayout";
 
@@ -40,6 +41,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [graph, setGraph] = useState<WebGraph | null>(null);
   const [center, setCenter] = useState<string | null>(null);
   const [hops, setHops] = useState(DEFAULT_HOPS);
+  // What is typed in the steps box: it may be half-typed, so it is kept apart from the steps in use.
+  const [hopsText, setHopsText] = useState(String(DEFAULT_HOPS));
+  const [editing, setEditing] = useState<string | null>(null);
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
   const [line, setLine] = useState<{ a: string; b: string } | null>(null);
@@ -66,6 +70,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       setGraph(read);
       setCenter(read.center);
       setHops(clampHops(steps, read.maxHops));
+      setHopsText(String(clampHops(steps, read.maxHops)));
       setLine((now) => (now && read.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
       setView("ok");
     } catch (error) {
@@ -106,6 +111,24 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     return null;
   }
 
+  /** One change to a name (spelling or kind): the same route the Names page uses, then the web is read again. */
+  async function actName(id: string, change: NameChange, ok: string): Promise<string | null> {
+    if (!ref || !api.changeName) return words.errorFallback;
+    try {
+      await api.changeName(ref, id, change);
+    } catch (error) {
+      const said = refusal(error);
+      if (said === null) {
+        setView("signed-out");
+        return "";
+      }
+      return said;
+    }
+    setNews({ ok: true, text: ok, n: ++sayings.current });
+    await load(center, hops, true);
+    return null;
+  }
+
   if (!ref || !api.webGraph) return <p role="status">{words.notYours}</p>;
   if (view === "signed-out")
     return (
@@ -132,7 +155,15 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <button type="button" class="button" onClick={() => void load(big.center, big.hops, true)}>
               {words.bigYes}
             </button>
-            <button type="button" class="button secondary" onClick={() => setBig(null)}>
+            <button
+              type="button"
+              class="button secondary"
+              onClick={() => {
+                // Declining the first draw must not leave a blank page: read the nearest names only.
+                if (!graph) void load(big.center, 1, true);
+                else setBig(null);
+              }}
+            >
               {words.bigNo}
             </button>
           </div>
@@ -187,17 +218,21 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} />
         <label class="field">
           {words.hopsLabel}
-          <select
-            value={String(hops)}
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={maxHops}
+            value={hopsText}
             aria-describedby="web-hops-hint"
-            onChange={(e) => void load(center, Number((e.target as HTMLSelectElement).value))}
-          >
-            {Array.from({ length: maxHops }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={String(n)}>
-                {n}
-              </option>
-            ))}
-          </select>
+            onInput={(e) => {
+              const text = (e.target as HTMLInputElement).value;
+              setHopsText(text);
+              const n = Number(text);
+              if (text.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= maxHops) void load(center, n);
+            }}
+            onBlur={() => setHopsText(String(hops))}
+          />
         </label>
         <p id="web-hops-hint" class="small muted">
           {words.hopsHint(maxHops)}
@@ -266,6 +301,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
                   {words.makeMiddleShort}
                 </button>
+              )}
+              {canEdit && api.changeName && (
+                <button
+                  type="button"
+                  class="button secondary"
+                  aria-expanded={editing === n.id}
+                  aria-label={words.changeFor(n.name)}
+                  onClick={() => setEditing(editing === n.id ? null : n.id)}
+                >
+                  {editing === n.id ? words.doneShort : words.changeShort}
+                </button>
+              )}
+              {canEdit && editing === n.id && (
+                <NodePanel node={n} act={actName} />
               )}
             </li>
           ))}
@@ -502,5 +551,50 @@ function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok
         </p>
       )}
     </form>
+  );
+}
+
+/** A name's spelling and kind, for a DM. Both go through the same route as the Names page. */
+function NodePanel({ node, act }: { node: WebNode; act: (id: string, change: NameChange, ok: string) => Promise<string | null> }) {
+  const [spelling, setSpelling] = useState(node.name);
+  const [kind, setKind] = useState(node.kind);
+  const [problem, setProblem] = useState<string | null>(null);
+  const kinds = Object.keys(words.kinds).includes(node.kind) ? Object.keys(words.kinds) : [node.kind, ...Object.keys(words.kinds)];
+  return (
+    <div class="stack" role="group" aria-label={words.nodePanel(node.name)}>
+      <label class="field">
+        {words.spellLabel}
+        <input type="text" value={spelling} maxLength={NAME_LIMIT} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
+      </label>
+      <button
+        type="button"
+        class="button secondary"
+        onClick={async () => setProblem(await act(node.id, { action: "spell", name: spelling }, words.saved))}
+      >
+        {words.saveSpelling}
+      </button>
+      <label class="field">
+        {words.kindChange}
+        <select value={kind} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
+          {kinds.map((k) => (
+            <option key={k} value={k}>
+              {kindWords(k)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        class="button secondary"
+        onClick={async () => setProblem(await act(node.id, { action: "kind", kind }, words.saved))}
+      >
+        {words.saveKind}
+      </button>
+      {problem && (
+        <p class="warn" role="alert">
+          {problem}
+        </p>
+      )}
+    </div>
   );
 }
