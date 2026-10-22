@@ -217,4 +217,4 @@ async def more_places(
         log.exception("Couldn't read more places a suggested name was said")
         return GONE
     parts = [*texts, *([GONE] if gone else [])]
-    return fit_message("\n".join(parts), limit=1900) or GONE
+    return fit_message("\n".join(parts)) or GONE
