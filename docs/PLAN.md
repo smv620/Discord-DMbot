@@ -4227,6 +4227,18 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     aren't kept after the import, only the stored sessions.
   - **Order:** the importer and its storage with the consent mapping (core and API), then the
     website page, then building the campaign and the optional recaps.
+- **Three plain ways to approve a recap** (owner, 2026-10-22, replacing "Post to the table" and "Don't post",
+  which read as unclear). On the recap page, and the same words on Discord:
+  - **✅ Approve and post text only:** DMbot posts the text to the table, after its last check, as Post did.
+  - **🎙️ Approve and make audio to review:** asks which (voice-over, background music, or both; only what the
+    plan includes), makes it, and shows it on the page to play. Nothing is posted until the DM presses
+    **Post to the table** or **Keep it, don't post** there. Where audio isn't available (the plan, the
+    month's allowance, or narration not set up on the server), the button shows greyed out with the reason.
+  - **📋 Approve but don't post:** the recap is approved and kept, and nothing goes to the table. The page
+    then offers **Copy the text**, the share link and the download, so the DM can share it their own way.
+    It can still be posted later.
+  - **Try again** stays. "Don't post" (setting a recap aside unread) is gone; a recap the DM doesn't approve
+    simply stays a draft.
 - **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
   page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
   number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21
