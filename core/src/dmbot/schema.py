@@ -9854,6 +9854,97 @@ NAME_ACTIONS = (
 """
 )
 
+# Merging several names at once (#2426, migration 0180). Three things:
+# 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
+#    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
+#    that one action only;
+# 2. the DM's "Not the same" for two names, remembered so the look-alike finder never offers the
+#    pair again (the DM's alone; never in backups, recall, transcripts or any player view);
+# 3. the All names list says how many times each name was heard (`mentions`), so the page can put
+#    the most used first under "Keep which name?".
+_NAME_ACTION_DOOR = NAME_ACTIONS[
+    NAME_ACTIONS.index("    CREATE FUNCTION dmbot_web_name_action_add(") : NAME_ACTIONS.index(
+        "    -- The state of one action"
+    )
+]
+_MANY = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"
+MERGE_MANY = (
+    r"""
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove'));
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check
+        CHECK (char_length(text) <= CASE WHEN action = 'merge-many' THEN 1700 ELSE 100 END);
+    """
+    + _NAME_ACTION_DOOR.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    .replace(
+        "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')",
+        "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',"
+        " 'remove')",
+    )
+    .replace(
+        "char_length(clean) > 100",
+        # (in brackets: plpgsql would take the CASE's THEN for the end of the IF's test)
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+    )
+    .replace(
+        "           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN",
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~ " + _MANY + "))\n"
+        "           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN",
+    )
+    .replace(
+        "        PERFORM pg_advisory_xact_lock(",
+        """        IF act = 'merge-many' AND (
+               ent = ANY (string_to_array(clean, ' '))
+               OR (SELECT count(DISTINCT x) FROM unnest(string_to_array(clean, ' ')) x)
+                  <> cardinality(string_to_array(clean, ' '))
+               OR (SELECT count(*) FROM memory_entities t
+                   WHERE t.guild_id = g AND t.campaign_id = c
+                     AND t.id = ANY (string_to_array(clean, ' '))
+                     AND t.status = 'confirmed' AND t.type <> 'person')
+                  <> cardinality(string_to_array(clean, ' '))) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(""",
+        1,
+    )
+    + f"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- Two names the DM said are not the same: `a_id` sorts before `b_id`, so a pair is one row.
+    -- Gone with either name (and its campaign); isolated per server; not in backups.
+    CREATE TABLE name_not_same (
+        {_memory_scope()}
+        a_id        TEXT NOT NULL,
+        b_id        TEXT NOT NULL,
+        decided_by  BIGINT NOT NULL CHECK (decided_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_id, b_id),
+        CHECK (a_id < b_id),
+        {_entity_link("a_id")},
+        {_entity_link("b_id")}
+    );
+    CREATE INDEX name_not_same_b ON name_not_same (guild_id, campaign_id, b_id);
+    """
+    + _isolate("name_not_same")
+)
+_MENTIONS_OF = """'hidden', p.hidden,
+                    'mentions', (SELECT count(*) FROM memory_mentions m
+                                 WHERE m.guild_id = g AND m.campaign_id = c
+                                   AND m.entity_id = p.id),"""
+assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
+ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -10294,6 +10385,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
+    ("0180_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -10367,6 +10459,7 @@ ISOLATED_TABLES = (
     "recap_name_checks",
     "name_answers",
     "name_actions",
+    "name_not_same",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

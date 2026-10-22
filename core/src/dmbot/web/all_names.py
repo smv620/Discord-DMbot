@@ -117,7 +117,18 @@ async def read_page(
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-ACTIONS = ("spell", "kind", "add-other", "remove-other", "secret", "hide", "merge", "remove")
+ACTIONS = (
+    "spell",
+    "kind",
+    "add-other",
+    "remove-other",
+    "secret",
+    "hide",
+    "merge",
+    "merge-many",
+    "remove",
+)
+MERGE_MANY_MAX = 50  # names one merge-many takes (the same limit as the bot's and the door's)
 
 
 def _text(value: object) -> str:
@@ -164,6 +175,15 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         target = str(body.get("into") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("bad_target")
+    elif action == "merge-many":  # the other names' ids ride in the text, space apart
+        others = body.get("others")
+        if not isinstance(others, list) or not others or len(others) > MERGE_MANY_MAX:
+            raise RecapError("bad_target")
+        if not all(isinstance(o, str) and ID_PATTERN.match(o) for o in others):
+            raise RecapError("bad_target")
+        if len(set(others)) != len(others):
+            raise RecapError("bad_target")
+        text = " ".join(others)
     elif action == "remove":
         flag = body.get("confirm") is True
         if not flag:

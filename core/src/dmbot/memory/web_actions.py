@@ -29,7 +29,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.store import PERSON, MemoryStore
+from dmbot.memory.store import MERGE_MANY_MAX, PERSON, MemoryStore
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
@@ -252,6 +252,24 @@ async def _do(
         except MemoryRuleError:
             return _failed(BAD_TARGET)
         return Outcome(result_id=keep.id)
+    if a.action == "merge-many":  # the kept name is the row's entry; `text` holds the others
+        ids = list(dict.fromkeys(a.text.split()))
+        if not ids or entity_id in ids or len(ids) > MERGE_MANY_MAX:
+            return _failed(BAD_TARGET)
+        waiting: list[str] = []
+        for other_id in ids:
+            other = await memory.entity(guild_id, cid, other_id)
+            if other is not None and other.merged_into == entity_id:
+                continue  # a retried job: this one went in the first time
+            if other is None or other.status != CONFIRMED or other.type == PERSON:
+                return _failed(NOT_FOUND)
+            waiting.append(other_id)
+        if waiting:
+            try:
+                await memory.merge_many(guild_id, cid, entity_id, waiting, source=DM)
+            except MemoryRuleError:
+                return _failed(BAD_TARGET)
+        return Outcome(result_id=entity_id)
     if a.action == "remove":
         if not a.flag:
             return _failed(BAD_TARGET)  # (the door asks for the confirmation; so does this)
