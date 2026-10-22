@@ -1517,7 +1517,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
         import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
-        self.add_dynamic_items(BackstoryButton)  # 📜 Upload backstory, from the Main Menu (#2380)
+        self.add_dynamic_items(
+            BackstoryButton
+        )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them

@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "One way in for your campaign's words",
+    what: "📜 Upload backstory is now 📜 Upload campaign lore. Paste, upload or link your notes in 📥 Add many or there: a list written like the template is added at once, and anything else is read for names and the connections your text states, each with its line. You check each one before anything is added.",
+    reason: "In review (#2447); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "New names wait until they are said",
     what: "A name you add by hand, add from a list or read from your backstory, and a connection from your backstory, stays hidden from your players until you press 👁️ Show to players. On the website, your full view shows them dimmed.",
     reason: "In review (slice 2 of #2404); held until dev1 deploys it. Saying a name at the table will show it automatically in the next step.",

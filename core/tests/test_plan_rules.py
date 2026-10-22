@@ -526,19 +526,34 @@ class Buttons(base.UsageTest):
 
     # -- the AI ---------------------------------------------------------------------------
 
-    async def test_find_names_is_refused_to_an_ended_plan_and_nothing_is_confirmed(self) -> None:
-        offer = name_lists.AIOffer(
-            self.a.id, name_lists.Upload("Some names", "list.txt", True), 0, False
+    def lore_bot(self, *, enforce: bool = True) -> DMBot:
+        """A bot that could read campaign lore: the AI and the memory are there."""
+        from dmbot.memory.store import MemoryStore
+
+        bot = self.make_bot(enforce=enforce)
+        bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        bot.memory = MemoryStore(self.db)
+        return bot
+
+    def offer(self) -> Any:
+        from dmbot.ui import name_background
+
+        return name_background.BackgroundOffer(
+            self.a.id, name_lists.Upload("Some lore", "list.txt", True)
         )
-        it = self.it(self.bot)
+
+    async def test_find_names_is_refused_to_an_ended_plan_and_nothing_is_confirmed(self) -> None:
+        bot = self.lore_bot()
+        offer = self.offer()
+        it = self.it(bot)
         reads_before = dict(name_lists._ai_reads)
         with patch.object(self.campaigns, "record_confirmation", new=AsyncMock()) as confirm:
             await offer._read(it)
         self.assertIn("Your plan has ended", self.said(it))
         self.assertTrue(it.response.deferred)  # Discord was answered before the check
         confirm.assert_not_awaited()  # no right-to-use record for something that never ran
-        self.bot.ai.complete.assert_not_awaited()  # type: ignore[union-attr]
-        self.assertFalse(offer.is_finished())  # the menu stays, so the lines that fit can go in
+        bot.background_ai.complete.assert_not_awaited()  # type: ignore[union-attr]
+        self.assertFalse(offer.is_finished())  # the menu stays
         self.assertEqual(
             name_lists._ai_reads, reads_before
         )  # a refusal doesn't use up the day's reads
@@ -546,37 +561,34 @@ class Buttons(base.UsageTest):
     async def test_a_player_pressing_find_names_never_hears_about_the_plan(self) -> None:
         # The access check comes first: someone who may not manage names gets that answer,
         # not a message about the owner's plan.
-        offer = name_lists.AIOffer(
-            self.a.id, name_lists.Upload("Some names", "list.txt", True), 0, False
-        )
-        it = self.it(self.bot, base.OTHER)
+        offer = self.offer()
+        it = self.it(self.lore_bot(), base.OTHER)
         await offer._read(it)
         self.assertEqual(self.said(it), logic.NO_CAMPAIGN_ACCESS)
 
+    async def read_with(self, bot: DMBot) -> Any:
+        from dmbot.ui import name_background
+
+        it = self.it(bot)
+        with (
+            patch.object(
+                name_background,
+                "read_piece",
+                new=AsyncMock(return_value=name_background.Piece([], [], False)),
+            ),
+            patch.object(name_background, "store", new=AsyncMock(return_value={})),
+            patch.object(name_background, "queue_links", new=AsyncMock(return_value=0)),
+            patch.object(name_background, "summary", new=AsyncMock()) as shown,
+        ):
+            await self.offer()._read(it)
+        return shown
+
     async def test_find_names_is_not_refused_to_try_it(self) -> None:
         await self.paid(plan="try-it")
-        offer = name_lists.AIOffer(
-            self.a.id, name_lists.Upload("Some names", "list.txt", True), 0, False
-        )
-        it = self.it(self.bot)
-        with (
-            patch.object(name_lists, "ai_names_list", new=AsyncMock(return_value=("Auril", False))),
-            patch.object(name_lists, "show_ai_list", new=AsyncMock()) as shown,
-        ):
-            await offer._read(it)
-        shown.assert_awaited_once()
+        (await self.read_with(self.lore_bot())).assert_awaited_once()
 
     async def test_enforcement_off_reads_for_anyone_as_before(self) -> None:
-        offer = name_lists.AIOffer(
-            self.a.id, name_lists.Upload("Some names", "list.txt", True), 0, False
-        )
-        it = self.it(self.make_bot(enforce=False))
-        with (
-            patch.object(name_lists, "ai_names_list", new=AsyncMock(return_value=("Auril", False))),
-            patch.object(name_lists, "show_ai_list", new=AsyncMock()) as shown,
-        ):
-            await offer._read(it)
-        shown.assert_awaited_once()
+        (await self.read_with(self.lore_bot(enforce=False))).assert_awaited_once()
 
 
 if __name__ == "__main__":

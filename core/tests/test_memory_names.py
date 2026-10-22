@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import DMBot, Table
 from dmbot.campaigns import CampaignStore
@@ -1791,120 +1790,48 @@ class Lists(NamesTest):
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
         fake.complete.assert_not_called()
 
-    async def test_a_document_goes_to_the_ai_and_the_dm_sees_the_list_first(self) -> None:
-        from dmbot.ui import name_lists
+    async def test_a_document_goes_through_the_campaign_lore_read_and_only_for_a_dm(self) -> None:
+        from dmbot.ui import name_background, name_lists
 
-        reply = (
-            "Here you go:\nUlfgar | NPC | Ulf\nBryn Shander | place\nKesh | NPC | | the stranger"
-        )
-        fake: Any = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply, cut=False)))
-        self.bot.ai = fake
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.background_ai = fake
         self.fresh()
-        it = self.it(MANAGER)  # not one of the campaign's DMs: no secret names
         upload = name_lists.Upload(
             "Ulfgar, chief of the Frostwolves, lives in Bryn Shander.", "npcs.pdf", True
         )
+        it = self.it(MANAGER)  # not one of the campaign's DMs
+        await name_lists.take_list(it, self.campaign.id, upload)
+        self.assertEqual(it.response.sent[0][0], name_background.ONLY_DMS)
+        it = self.it()
         await name_lists.take_list(it, self.campaign.id, upload)
         text, kw = it.response.sent[0]
-        self.assertIn("goes to Anthropic", text)
-        self.assertIn("right to use", text)
-        offer = kw["view"]
-        store = self.bot.campaigns
-        self.assertEqual(await store.confirmations(GUILD, self.campaign.id), [])  # not yet
-        it = self.it(MANAGER)
-        it.edit_original_response = AsyncMock()
-        await offer._read(it)
-        # #252: who confirmed the right to use it, when, and what for, kept with the
-        # campaign; a fingerprint of the text, never the text or the file's name.
-        from dmbot.campaigns.models import fingerprint
-
-        (row,) = await store.confirmations(GUILD, self.campaign.id)
-        self.assertEqual(
-            (row["user"], row["purpose"], row["fingerprint"]),
-            (str(MANAGER), "names_list", fingerprint(upload.text)),
-        )
-        self.assertNotIn("npcs", str(row))
-        elsewhere = await store.create(GUILD, "Strahd", DM)
-        self.assertEqual(await store.confirmations(GUILD, elsewhere.id), [])  # this one only
-        system, sent = fake.complete.call_args.args
-        self.assertIn("<document>", sent)
-        self.assertIn("Leave out disguises", system)
-        preview = it.edit_original_response.call_args.kwargs
-        self.assertIn("found 2 names", preview["content"])  # the secret line was refused
-        self.assertIn("Nothing is added until you press", preview["content"])
-        self.assertNotIn("Ulfgar", await self.names())  # nothing saved yet
-        it = self.it(MANAGER)
-        await preview["view"]._add(it)
-        self.assertIn("Added 2 names", it.followup.send.call_args.args[0])
-        self.assertIn("Ulfgar", await self.names())
-
-    async def test_nothing_is_recorded_without_the_press(self) -> None:
-        from dmbot.ui import name_lists
-
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
-        self.fresh()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        for way_out in ("_cancel", "_as_is"):
-            with self.subTest(way_out=way_out):
-                it = self.it()
-                await name_lists.take_list(it, self.campaign.id, upload)
-                offer = it.response.sent[0][1]["view"]
-                it = self.it()
-                await getattr(offer, way_out)(it)
+        self.assertIn("connections your text states", text)
+        self.assertIn("you may use it", text)
+        self.assertIsInstance(kw["view"], name_background.BackgroundOffer)
         self.assertEqual(await self.bot.campaigns.confirmations(GUILD, self.campaign.id), [])
+        fake.complete.assert_not_called()  # only after the DM presses Find names
+        self.assertNotIn("Ulfgar", await self.names())
 
-    async def test_no_ai_reading_without_a_saved_confirmation(self) -> None:
-        from dmbot.ui import name_lists
+    async def test_a_list_with_prose_lines_adds_the_strict_ones_and_reads_the_rest(self) -> None:
+        from dmbot.ui import name_background, name_lists
 
-        fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
+        text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
         it = self.it()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("Added 1 name", it.followup.send.call_args_list[0].args[0])
+        self.assertIn("Ulfgar", await self.names())
+        offer = it.followup.send.call_args_list[-1]
+        self.assertIsInstance(offer.kwargs["view"], name_background.BackgroundOffer)
+        self.assertEqual(
+            offer.kwargs["view"].upload.text,
+            "Bryn Shander | place | Bryn | x | notes about the town",
+        )
+        self.bot.background_ai = None  # no AI: what fits is added, and the prose is said to wait
         it = self.it()
-        it.edit_original_response = AsyncMock()
-        with (
-            patch.object(
-                self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=OSError("db"))
-            ),
-            self.assertLogs("dmbot.ui.name_lists", "INFO") as logs,
-        ):
-            await offer._read(it)
-        fake.complete.assert_not_called()  # the IP rule: no record, no reading
-        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
-        self.assertFalse(any("confirmed" in line for line in logs.output))  # log agrees
-        # The campaign was deleted meanwhile: its own words, and still no reading.
-        from dmbot.campaigns.models import CampaignError
-
-        it = self.it()
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
-        it = self.it()
-        it.edit_original_response = AsyncMock()
-        gone = CampaignError("That campaign doesn't exist in this server.")
-        with patch.object(self.bot.campaigns, "record_confirmation", AsyncMock(side_effect=gone)):
-            await offer._read(it)
-        fake.complete.assert_not_called()
-        self.assertEqual(it.edit_original_response.call_args.kwargs["content"], str(gone))
-
-    async def test_ai_problems_say_nothing_was_added(self) -> None:
-        from dmbot.ai import BUSY, AIError
-        from dmbot.ui import name_lists
-
-        fake: Any = SimpleNamespace(complete=AsyncMock(side_effect=AIError(BUSY)))
-        self.bot.ai = fake
-        self.fresh()
-        it = self.it()
-        upload = name_lists.Upload("Ulfgar lives here.", "npcs.pdf", True)
-        await name_lists.take_list(it, self.campaign.id, upload)
-        offer = it.response.sent[0][1]["view"]
-        it = self.it()
-        it.edit_original_response = AsyncMock()
-        await offer._read(it)
-        self.assertIn("Nothing was added", it.edit_original_response.call_args.kwargs["content"])
-        self.assertEqual(name_lists._ai_busy, set())  # free for the next one
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
+        self.assertIn("can't read documents or links here", it.followup.send.call_args.args[0])
 
     async def test_an_empty_list_or_a_managers_secret_line_never_goes_to_the_ai(self) -> None:
         from dmbot.ui import name_lists
@@ -1920,24 +1847,6 @@ class Lists(NamesTest):
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "x"))
         self.assertIn("Added 1 name", it.followup.send.call_args.args[0])
         fake.complete.assert_not_called()
-
-    async def test_a_list_with_errors_goes_to_the_ai_with_the_option_to_add_what_fits(self) -> None:
-        from dmbot.ui import name_lists
-
-        fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
-        self.fresh()
-        it = self.it()
-        text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
-        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
-        message, kw = it.response.sent[0]
-        self.assertIn("1 line in your list doesn't fit", message)
-        labels = [getattr(c, "label", "") for c in kw["view"].children]
-        self.assertIn("Add the 1 that fit", labels)
-        self.bot.ai = None
-        it = self.it()  # no AI switched on: what fits is added, the rest explained
-        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
-        self.assertIn("1 line wasn't added", it.followup.send.call_args.args[0])
 
     async def test_a_manager_never_learns_of_or_adds_secret_names(self) -> None:
         from dmbot.ui import name_lists
@@ -2405,7 +2314,7 @@ class Lists(NamesTest):
                 "🔗 Paste a link",
                 "📎 Upload a file",
                 "📄 Get the template",
-                "📜 From my story",
+                "📜 Upload campaign lore",
             ],
         )
         it = self.it()
@@ -2418,10 +2327,10 @@ class Lists(NamesTest):
 
     async def test_a_link_pasted_as_a_list_is_read_and_offered_to_the_ai(self) -> None:
         from dmbot.fetch import Fetched
-        from dmbot.ui import name_lists
+        from dmbot.ui import name_background, name_lists
 
         fake: Any = SimpleNamespace(complete=AsyncMock())
-        self.bot.ai = fake
+        self.bot.background_ai = fake
         self.fresh()
         before = await self.names()
         link = "https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt/edit?usp=drivesdk"
@@ -2434,8 +2343,10 @@ class Lists(NamesTest):
         fetched.assert_awaited_once_with(link)
         message = it.followup.send.call_args.args[0]
         self.assertIn("Find the names in the linked page or file", message)
-        self.assertIn("right to use", message)
-        self.assertIsInstance(it.followup.send.call_args.kwargs["view"], name_lists.AIOffer)
+        self.assertIn("you may use it", message)
+        self.assertIsInstance(
+            it.followup.send.call_args.kwargs["view"], name_background.BackgroundOffer
+        )
         self.assertEqual(await self.names(), before)  # nothing added: never one long name
         fake.complete.assert_not_called()  # only after the DM presses Find names
 
@@ -2443,7 +2354,7 @@ class Lists(NamesTest):
         from dmbot import fetch
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         before = await self.names()
         form = name_lists.LinkForm(self.campaign.id)
@@ -2458,7 +2369,7 @@ class Lists(NamesTest):
     async def test_a_link_without_the_ai_is_refused_before_fetching(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = None
+        self.bot.background_ai = None
         self.fresh()
         before = await self.names()
         it = self.it()
@@ -2471,7 +2382,7 @@ class Lists(NamesTest):
     async def test_one_link_at_a_time_per_server(self) -> None:
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         name_lists._link_busy.add(GUILD)
         self.addCleanup(name_lists._link_busy.discard, GUILD)
@@ -2498,7 +2409,7 @@ class Lists(NamesTest):
         from dmbot.fetch import Fetched
         from dmbot.ui import name_lists
 
-        self.bot.ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
         it = self.it()
         page = Fetched(b"<html><script>x</script><body><p>Auril the Frostmaiden</p>", "link.html")

@@ -64,6 +64,16 @@ def reply(links: list[dict[str, str]] = LINKS) -> str:
 
 
 class TheChecks(unittest.TestCase):
+    def test_a_connection_whose_quote_is_not_in_the_text_is_dropped_never_invented(self) -> None:
+        """#2447: whatever the AI says, code keeps a connection only when its quote is in the
+        text and holds both names."""
+        invented = [
+            link("Brannoch", "enemy", "Mirelle", "Brannoch hates Mirelle with all his heart"),
+            link("Brannoch", "owns", "Oakmere", "Brannoch loves Oakmere and Mirelle"),
+        ]
+        self.assertNotIn("hates Mirelle with all his heart", TEXT)
+        self.assertEqual(bg.read_connections(reply(invented), TEXT), [])
+
     def test_only_connections_the_text_states_are_read(self) -> None:
         got = bg.read_connections(reply(), TEXT)
         self.assertEqual([(c.a, c.b) for c in got],

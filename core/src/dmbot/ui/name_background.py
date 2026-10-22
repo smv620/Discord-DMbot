@@ -91,7 +91,7 @@ def rights_text() -> str:
 
 
 async def open_background(interaction: discord.Interaction, campaign_id: str) -> None:
-    """📜 Upload backstory (the Main Menu's button, and 📝 Names > From my story): the menu to
+    """📜 Upload campaign lore (the Main Menu's button, and 📝 Names > Add many): the menu to
     paste, upload or link it. For the campaign's DMs, checked here on every press."""
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
@@ -101,7 +101,7 @@ async def open_background(interaction: discord.Interaction, campaign_id: str) ->
         return
     await _send(
         interaction,
-        "📜 **Upload backstory.** Paste it, upload a file, or paste a link. DMbot suggests the "
+        "📜 **Upload campaign lore.** Paste it, upload a file, or paste a link. DMbot suggests the "
         "names in it and how they connect; you keep what's right.\n"
         f"{rights_text()}",
         BackgroundMenu(campaign_id),
@@ -228,8 +228,9 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         interaction,
         f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
         "allowance. Nothing is added until you say yes.\n"
-        "DMbot's AI reads it and suggests names (people, places, groups, gods…). You check each "
-        "one in 📝 Check new names.\n"
+        "DMbot's AI reads it and suggests names (people, places, groups, gods…) and the "
+        "connections your text states, each with its line from the text. You check each one: "
+        "the names in 📝 Check new names, then the connections.\n"
         f"{rights_text()}",
         BackgroundOffer(campaign.id, upload),
     )

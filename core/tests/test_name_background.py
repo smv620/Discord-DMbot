@@ -567,7 +567,7 @@ class ThePath(NamesTest):
     async def test_the_add_many_menu_has_the_new_button_for_dms_only(self) -> None:
         menu = AddMany(self.campaign.id)
         labels = [getattr(b, "label", "") for b in menu.children]
-        self.assertIn("📜 From my story", labels)
+        self.assertIn("📜 Upload campaign lore", labels)
         it = self.it(MANAGER)
         await menu._background(it)
         self.assertIn("Only a DM", it.response.sent[0][0])
