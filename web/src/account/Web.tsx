@@ -135,8 +135,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       await api.webPeek(ref);
     } catch (error) {
       if (error instanceof ApiError && error.kind === "signed-out") return setView("signed-out");
-      setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
-      setNews({ ok: false, text: words.errors["peek-off"]!, n: ++sayings.current });
+      // Only the API saying the DM turned peeking off may lock the switch; a network or server
+      // failure says so in its own words and leaves the switch usable to try again.
+      if (error instanceof ApiError && error.kind === "peek-off") {
+        setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
+      }
+      setNews({ ok: false, text: refusal(error) ?? words.errorFallback, n: ++sayings.current });
       return;
     }
     chooseView("full");

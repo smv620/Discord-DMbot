@@ -200,6 +200,20 @@ describe("a player's peek", () => {
     expect(notRevealed()).toHaveLength(0);
   });
 
+  it("a failed peek that isn't the DM's switch leaves the switch usable and says why", async () => {
+    const api = mockApi("table");
+    api.webPeek = async () => {
+      throw new ApiError("network");
+    };
+    await open(player, api);
+    fireEvent.click(sw());
+    fireEvent.click(await screen.findByRole("button", { name: w.peekYes }));
+    await screen.findByText(w.errors.network!);
+    expect(screen.queryByText(w.errors["peek-off"]!)).toBeNull(); // not "turned off by the DM"
+    expect(sw().disabled).toBe(false);
+    expect(screen.queryByText(w.peekOffNote)).toBeNull();
+  });
+
   it("falls back too when the peek itself is refused", async () => {
     const api = mockApi("table");
     api.webPeek = async () => {
