@@ -49,12 +49,14 @@ NOTHING_LEFT = "✅ Nothing left to check. DMbot looks again after your next ses
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a heads-up without a choice
 
 
-def waiting_text(count: int) -> str:
-    """For the DM screen after a session: how many, never what."""
+def waiting_text(count: int, pinned: int = 0) -> str:
+    """For the DM screen after a session: how many, never what. `pinned`: how many of them go
+    against something the DM pinned as 100% truth (#2447), said as a number only."""
     what = "heads-up" if count == 1 else "heads-ups"
+    off = f" 📌 {pinned} of them go against something you pinned." if pinned else ""
     return (
         f"⚠️ **{count} {what} from this session.** Something said at the table may clash with "
-        "your story. Nothing changes until you decide. Only you can see the list."
+        f"your story.{off} Nothing changes until you decide. Only you can see the list."
     )
 
 
@@ -88,6 +90,8 @@ def line_text(conflict: Conflict, numbers: Mapping[int, int]) -> str:
         ended = "was destroyed" if conflict.ended_condition == DESTROYED else "died"
         return f"⚠️ **{level}:** {name} {ended}{when}{quote}. {now}"
     before = _md(conflict.earlier_words) or "earlier in your story"
+    if conflict.pinned:  # the DM's own 100% truth: said plainly, as a question and not a ruling
+        return f"📌 **Off the rails? {name}.** You pinned: {before}{quote}. {now}"
     return f"⚠️ **{level}: {name}.** Before{when}: {before}{quote}. {now}"
 
 

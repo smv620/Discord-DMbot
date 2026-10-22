@@ -143,6 +143,44 @@ class Continuity(ConfirmedMemoryTest):
         quiet = Levels(possible=0.95, probable=0.95, likely=0.95, min_facts=1, min_sessions=1)
         self.assertEqual((await self.check(levels=quiet)).conflicts, ())
 
+    # ---- the DM's 📌 100% truth (#2447) -----------------------------------------------------
+
+    async def test_a_claim_against_a_pinned_truth_is_off_the_rails_even_before_the_critical_mass(
+        self,
+    ) -> None:
+        kept = await self.relate(self.bram, "carries", self.bow, status="confirmed")
+        await self.memory.pin(GUILD_A, self.c, kept.value[0].id, True, source="dm")
+        await self.claim(said("Kesh", "carries", "Heartseeker"))
+        report = await self.check(levels=Levels(min_facts=50, min_sessions=3))
+        self.assertFalse(report.ready)
+        (conflict,) = report.conflicts
+        self.assertTrue(conflict.pinned)
+        text = ui.line_text(conflict, {})
+        self.assertIn("Off the rails?", text)
+        self.assertIn("You pinned: Bram carries Heartseeker", text)
+        self.assertIn("1 of them go against something you pinned", ui.waiting_text(1, 1))
+        self.assertNotIn("pinned", ui.waiting_text(2))
+
+    async def test_nothing_pinned_below_the_critical_mass_says_nothing(self) -> None:
+        await self.relate(self.bram, "carries", self.bow, status="confirmed")
+        await self.claim(said("Kesh", "carries", "Heartseeker"))
+        report = await self.check(levels=Levels(min_facts=50, min_sessions=3))
+        self.assertEqual(report.conflicts, ())
+
+    async def test_a_pinned_secret_truth_is_still_checked_and_a_pinned_one_comes_first(
+        self,
+    ) -> None:
+        kept = await self.relate(self.bram, "carries", self.bow, status="confirmed", secret=True)
+        await self.memory.pin(GUILD_A, self.c, kept.value[0].id, True, source="dm")
+        await self.relate(
+            self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER
+        )
+        await self.claim(
+            said("Ulfgar", "enemy of", "Cerric"), said("Kesh", "carries", "Heartseeker")
+        )
+        first, second = (await self.check()).conflicts
+        self.assertEqual((first.pinned, second.pinned), (True, False))
+
     async def test_a_secret_fact_is_not_pointed_at(self) -> None:
         await self.relate(
             self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER

@@ -9348,7 +9348,9 @@ class DMBot(commands.AutoShardedBot):
             if report.conflicts:
                 await self.post(
                     table.screen_channel_id,
-                    continuity_waiting_text(len(report.conflicts)),
+                    continuity_waiting_text(
+                        len(report.conflicts), sum(1 for c in report.conflicts if c.pinned)
+                    ),
                     view=continuity_view(cid),
                 )
 
