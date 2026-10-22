@@ -9982,11 +9982,12 @@ SHARED_RECAP_SESSION = """
 
 SHARE_UNPOSTED = """
     -- A recap's link for one the DM approved and has not posted (#2419: "Approve but don't post",
-    -- then share it their own way). A link is still only made when the DM asks for it (the door's
-    -- "on" and "new"), never by approving. It works while the recap is being posted or posted, or
-    -- while it is a draft whose text is still exactly the text the DM approved: the public read
-    -- checks that itself, so an edit after sharing hides the recap until it is approved again,
-    -- and an unapproved draft never answers. Both doors are otherwise as they were.
+    -- then share it their own way). A link is still only made when the DM asks for it (the
+    -- door's "on" and "new"), never by approving. It works while the recap is being posted or
+    -- posted (the DM asked for the post, and the link would otherwise go dead for the minute it
+    -- takes), or while it is a draft whose text is still exactly the text the DM approved: the
+    -- public read checks that itself, so an edit after sharing hides the recap until it is
+    -- approved again, and an unapproved draft never answers. Both doors are otherwise as before.
     CREATE OR REPLACE FUNCTION dmbot_recap_share(g BIGINT, c TEXT, at_ BIGINT, act TEXT, tok TEXT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
