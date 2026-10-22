@@ -148,11 +148,28 @@ class TheCard(WithTheSwitch):
             str(getattr(i.item if hasattr(i, "item") else i, "label", "")) for i in view.children
         ]
 
-    def test_the_button_is_on_the_dms_card_only_where_importing_is_on(self) -> None:
-        self.assertIn(ib.LABEL, self.labels(settings_view(campaign(), None, DM)))
-        self.assertNotIn(ib.LABEL, self.labels(settings_view(campaign(), None, PLAYER)))
+    def link_buttons(self, view: discord.ui.View) -> list[discord.ui.Button[Any]]:
+        return [
+            c for c in view.children if isinstance(c, discord.ui.Button) and c.label == ib.LABEL
+        ]
+
+    def test_the_card_holds_a_link_button_to_the_page_for_a_dm_only_where_importing_is_on(
+        self,
+    ) -> None:
+        (button,) = self.link_buttons(settings_view(campaign(), None, DM, SITE))
+        self.assertEqual(button.url, f"{SITE}/account/import/{GUILD}.{CAMPAIGN}")
+        self.assertEqual(button.style, discord.ButtonStyle.link)
+        self.assertIsNone(button.custom_id)  # a link runs no code: nothing to press
+        self.assertEqual(self.link_buttons(settings_view(campaign(), None, PLAYER, SITE)), [])
         ib.use_switch(lambda guild_id: False)
-        self.assertNotIn(ib.LABEL, self.labels(settings_view(campaign(), None, DM)))
+        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM, SITE)), [])
+
+    def test_without_a_website_address_the_card_has_no_import_button(self) -> None:
+        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM)), [])
+        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM, "http://x.y")), [])
+
+    def test_the_old_button_is_still_registered_so_an_old_card_answers(self) -> None:
+        self.assertTrue(issubclass(ib.ImportButton, discord.ui.DynamicItem))
 
     def test_its_id_matches_its_template_and_fits_a_phone(self) -> None:
         item = ib.ImportButton(CAMPAIGN)

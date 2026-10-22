@@ -252,14 +252,19 @@ class Criticising(WorkerHarness):
                 else real(*a, **k)
             )
 
-        with patch.object(rd, "check_prose", ending_fails):
+        with (
+            patch.object(rd, "check_prose", ending_fails),
+            self.assertLogs("dmbot.recaps.pipeline", "INFO") as logged,
+        ):
             job = await self.settle(await self.go(), times=3)
         self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
+        # (the reason shown is only CHECK_WAIT: the log is where the failed rule is named)
+        self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
         fast = self.fast_for(WITH_MOTIVE)
-        careful = fx.Canned(NO_NOTES, *(["not json"] * 60))
+        careful = fx.Canned(NO_NOTES, *(["not json"] * 90))
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
         real = rd.check_prose
 
@@ -274,9 +279,13 @@ class Criticising(WorkerHarness):
         self.worker._unchecked = told
         with patch.object(rd, "check_prose", ending_fails):
             job = await self.go()
-            for _ in range(40):  # days of waiting: 15 minutes, an hour, 4 hours, then 12
+            began, waits = self.clock.now, 0
+            for _ in range(60):  # days of waiting: 15 minutes, an hour, 4 hours, then 12
                 self.clock.now = max(self.clock.now, job.next_at) + 1
                 job = await self.worker.run(1, self.one.id, 100) or job
+                waits += 1
+        self.assertGreater(self.clock.now - began, 3 * 24 * 3600)  # past the days it once gave up
+        self.assertGreaterEqual(waits, 20)  # (a give-up after 20 waits would have failed it)
         self.assertNotEqual(job.state, "failed", job.last_error)  # a waiting recap never fails
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
         self.assertTrue(cr.loop_from_json(job.critics).told)  # and the DM was told, once
@@ -358,32 +367,45 @@ class Criticising(WorkerHarness):
         )  # fmt: skip
         self.assertEqual((job.calls, job.spent), (made, made))  # the second PlotBot call too
 
-    async def test_with_the_reserve_used_up_a_cut_answer_is_not_asked_again(self) -> None:
+    async def cut_answer_with_the_ceiling(self, room_left: int) -> tuple[list[Any], Any, Any]:
+        """A cut PlotBot answer when the job's ceiling leaves `room_left` calls above the reserve
+        once that first call is made: 0 is exactly at the reserve. Returns (careful's token
+        list, the annotations, the job)."""
         fast = self.fast_for()
         cut = Reply('{"changes": [', True, 10, 10, "m")
         careful = fx.Canned(NO_NOTES, cut, AGREE)
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
         seen = self.spy_on_annotations()
-        asked = {"plot": False}
+        ceiling_after: dict[str, int] = {}
         real_call = pl.RecapWorker._call
 
-        async def call(worker: Any, *a: Any, **k: Any) -> Any:
-            got = await real_call(worker, *a, **k)
-            if k.get("stage") == "plotbot":
-                asked["plot"] = True  # from now on the job sits at its reserve
+        async def call(worker: Any, gid: int, cid: str, job: Job, *a: Any, **k: Any) -> Any:
+            got = await real_call(worker, gid, cid, job, *a, **k)
+            if k.get("stage") == "plotbot" and not ceiling_after:
+                now = await worker._store.get(gid, cid, job.session_at)
+                ceiling_after["at"] = now.calls + pl.CRITIC_RESERVE + room_left
             return got
 
         def ceiling(job: Job) -> int:
-            return 0 if asked["plot"] else 1000
+            return ceiling_after.get("at", 1000)
 
         with (
             patch.object(pl.RecapWorker, "_call", call),
             patch.object(pl.RecapWorker, "_ceiling", staticmethod(ceiling)),
         ):
             job = await self.go()
-        self.assertEqual(len(careful.tokens), 2)  # the notes and one PlotBot call: no second
+        return careful.tokens, seen, job
+
+    async def test_exactly_at_the_reserve_a_cut_answer_is_not_asked_again(self) -> None:
+        tokens, seen, job = await self.cut_answer_with_the_ceiling(0)
+        self.assertEqual(len(tokens), 2)  # the notes and one PlotBot call: no second
         self.assertEqual(self.plot_checks(seen)[0], ["cut off"])
         self.assertNotEqual(job.last_error, pl.CAP)
+
+    async def test_one_call_above_the_reserve_a_cut_answer_is_asked_again(self) -> None:
+        tokens, _seen, _job = await self.cut_answer_with_the_ceiling(1)
+        self.assertEqual(len(tokens), 3)
+        self.assertEqual(tokens[2], tokens[1] * 2)
 
     # ---- how the loop stops (#2365) ------------------------------------------------------------
 
