@@ -3,6 +3,8 @@
  * at /account/recaps/<id>. Plain words; every message says what to do next. Nothing here
  * promises more than the API does: Post only asks DMbot, which checks once more and sends it.
  */
+import { recapCard } from "./account-cards";
+
 import type { ApiErrorKind, CueProblem, Recap, RecapMonth } from "../account/api";
 import { shareWords } from "./recap-share";
 import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "./recap-words";
@@ -55,7 +57,7 @@ export const text = {
   // While recaps are off (RECAPS_LIVE false) the page promises nothing: no email, no recap to come.
   emptyOff: "No recaps yet.",
   back: "All your recaps",
-  linkToList: "Read your session recaps",
+  linkToList: recapCard.linkToList,
   account: "Back to My Account",
   open: "Open",
   signedOut: "Sign in to read your recaps.",
@@ -162,6 +164,52 @@ export function sessionDay(sessionAt: number, locale?: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/** How long a session ran, in words: "45 min" under an hour, else "2 h 35 min" ("2 h" on the hour).
+ * Empty when there is no length to say (#2418). */
+export function sessionLength(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return "";
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/** The day a session was played, with its weekday, in the reader's own time zone: "Tuesday 21 October 2026". */
+export function playedDay(sessionAt: number, locale?: string): string {
+  return new Date(sessionAt * 1000).toLocaleDateString(locale, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/** The line that says which session a recap is (#2418): "The Brynwater Crossing · Session 4 · Played
+ * Tuesday 21 October 2026 · 2 h 35 min". A part that is missing is left out, never a "Session ?".
+ * `extra` goes after the campaign (the list adds the server's name). */
+export function sessionLine(
+  recap: {
+    campaign?: string | null | undefined;
+    sessionAt?: number | null | undefined;
+    sessionNumber?: number | null | undefined;
+    sessionSeconds?: number | null | undefined;
+  },
+  extra: (string | null | undefined)[] = [],
+  locale?: string,
+): string {
+  const length = sessionLength(recap.sessionSeconds);
+  return [
+    recap.campaign,
+    ...extra,
+    typeof recap.sessionNumber === "number" && recap.sessionNumber > 0 ? `Session ${recap.sessionNumber}` : "",
+    typeof recap.sessionAt === "number" ? `Played ${playedDay(recap.sessionAt, locale)}` : "",
+    length,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
