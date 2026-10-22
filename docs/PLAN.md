@@ -4795,3 +4795,11 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   #227)
 
 *Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.
+
+### Recap output room and Try again (#2341, 2026-10-22)
+The beat-sheet call's output room is sized for a full window of beats (`beats.room`) and doubles on the
+retry, so an answer cut off at the first limit is never asked for again at the same one. A recap that
+fails on our side (a cut-off answer, a check, the service) gives back the DM's Try again; one that fails
+for no speakers, funds or stopped recording does not. The failing check's fixed name is in `last_error`
+(`(check: length)`) and the log. dev1 starts a session over with
+`python -m dmbot.devtools.recap_requeue GUILD CAMPAIGN SESSION_AT`.
