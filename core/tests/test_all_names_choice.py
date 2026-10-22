@@ -111,7 +111,7 @@ class TheMenus(NamesTest):
         it = self.it()
         await names_ui.dmbot_names.callback(it)  # type: ignore[call-arg]
         view = it.response.sent[0][1]["view"]
-        view.open = SimpleNamespace(values=[all_names.VALUE])  # type: ignore[assignment]
+        view.open = SimpleNamespace(values=[all_names.VALUE])
         press = self.it()
         press.client = SimpleNamespace(settings=SimpleNamespace(site_url="https://x.example.com"))
         await view._open(press)
@@ -121,8 +121,10 @@ class TheMenus(NamesTest):
     async def test_browse_by_kind_has_the_choice_when_the_kind_runs_to_more_pages(self) -> None:
         await self.add(5)
         few = name_lists.Browse(self.campaign.id, await self.lookup(), "npc")
+        assert few.open is not None
         self.assertNotIn(all_names.VALUE, [o.value for o in few.open.options])
         await self.add(40)  # more than one page
         many = name_lists.Browse(self.campaign.id, await self.lookup(), "npc")
+        assert many.open is not None
         self.assertEqual(many.open.options[-1].value, all_names.VALUE)
         self.assertLessEqual(len(many.open.options), 25)
