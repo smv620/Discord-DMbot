@@ -14,7 +14,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -1135,7 +1135,9 @@ class SuggestionReview(_Menu):
             campaign.id,
             refs,
             self.spellings,
-            await interaction.client.consent.consenting(campaign.guild_id),  # who agrees now
+            await cast(Any, interaction.client).consent.consenting(
+                campaign.guild_id
+            ),  # who agrees now
             site if isinstance(site, str) else "",
         )
 
@@ -1155,7 +1157,7 @@ class SuggestionReview(_Menu):
             campaign.guild_id,
             self.places.more,
             self.spellings,
-            await interaction.client.consent.consenting(campaign.guild_id),
+            await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
         )
         await interaction.followup.send(text, ephemeral=True)
 
