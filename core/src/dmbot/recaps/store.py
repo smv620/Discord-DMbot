@@ -189,8 +189,10 @@ def _job(r: dict[str, Any]) -> Job:
 # The progress clock stops when the narration stops, whatever happened to it: the right-hand sides
 # see the row as it was, so the step is read before it is cleared (#2435). A post's own step stays.
 _AUDIO_CLOCK_OFF = (
-    "posting_since = CASE WHEN posting_step = 'audio' THEN NULL ELSE posting_since END,"
-    " posting_step = CASE WHEN posting_step = 'audio' THEN NULL ELSE posting_step END"
+    "posting_since = CASE WHEN posting_step = 'audio'"
+    " THEN NULLIF(posting_since, posting_since) ELSE posting_since END,"
+    " posting_step = CASE WHEN posting_step = 'audio'"
+    " THEN NULLIF(posting_step, posting_step) ELSE posting_step END"
 )
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
