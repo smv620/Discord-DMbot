@@ -221,13 +221,11 @@ class Cards(base.NamesTest):
         page = await self.page()
         words = {o.value: o.label for o in page.words.options}
         self.assertNotIn("knows", words)  # (it already says that)
-        self.assertEqual(words["enemy_of"], "Belleros is an enemy of Kesh")
+        self.assertEqual(words["enemy_of"], "is an enemy of")
         page.words._values = ["enemy_of"]
         it = self.it()
         await page.words.callback(it)
-        self.assertIn(
-            "Changed. It now reads: Belleros is an enemy of Kesh.", it.response.edited[0][0]
-        )
+        self.assertIn("Changed to: Belleros is an enemy of Kesh.", it.response.edited[0][0])
         (now,) = await self.relations()
         self.assertEqual((now.predicate, now.secret), ("enemy_of", True))
         self.assertNotEqual(now.id, old.id)
@@ -335,3 +333,26 @@ class Cards(base.NamesTest):
         (label,) = [o.label for o in view.edit.options]
         self.assertLessEqual(len(label), 100)
         self.assertIsInstance(view.edit, discord.ui.Select)
+
+    async def test_an_oversized_card_still_ends_with_the_link(self) -> None:
+        await self.know("Kesh")
+        names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        rel = await self.relations()
+        text = name_card.card_text(names, self.bell.id, rel, secrets=True, limit=130, more_url=SITE)
+        assert text is not None
+        self.assertLessEqual(len(text), 130)
+        self.assertIn("**Connections:**", text)
+        self.assertTrue(text.endswith(f"All of them: <{SITE}>") or "Kesh" in text)
+
+    async def test_new_words_that_already_exist_never_make_a_secret_public(self) -> None:
+        kesh = await self.know("Kesh", secret=True)
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bell.id, "enemy_of", kesh.id,
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        self.fresh()
+        secret = next(r for r in await self.relations() if r.predicate == "knows")
+        page = await self.page_of_relation(secret.id)
+        await page._new_words(self.it(), "enemy_of", "")
+        mine = await self.relations()
+        self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", True)])

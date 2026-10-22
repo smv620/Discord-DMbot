@@ -301,7 +301,10 @@ def _with_connections(head: str, rows: list[Row], limit: int, url: str) -> str:
     """`head`, then "Connections:" and one line each, as many as fit one message; the rest are
     "and N more" with the website's page for them. Never cuts inside a line (#2323)."""
     lines = [f"• {connection_line(row)}" for row in rows]
-    top = f"{head}\n**Connections:**"
+    # A head that leaves no room for the "and N more" line is cut instead: that line is the only
+    # way to the rest, so it is never the part that gets cut off.
+    room = limit - len("\n**Connections:**\n") - len(_more_connections(len(lines), url))
+    top = f"{cut(head, max(room, 0))}\n**Connections:**"
     used = len(top)
     take = 0
     for n, line in enumerate(lines, 1):  # the most lines whose message, with its tail, fits
@@ -1032,7 +1035,7 @@ class NameCard(_Menu):
             secrets,
         )
         self.stop()
-        back = " Or change one that is there with Edit a connection." if rows else ""
+        back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""
         await _replace(
             interaction,
             f"**How is {_md(name)} connected?** Pick how, then the other name.{back}"

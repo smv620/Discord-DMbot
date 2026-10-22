@@ -45,11 +45,10 @@ from dmbot.ui.name_card import (
 from dmbot.ui.names import _campaign_for, _memory, changed, sees_secrets
 
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
-ALL_LABEL = "🌐 All connections on the website…"
+ALL_LABEL = "🌐 See all on the website"
 WEBSITE_BUTTON = "Open all connections"
 WEBSITE_LINE = (
-    "Every connection is on the website, where you can see how the names link up. Tap the button "
-    "to open it. You may need to sign in."
+    "Every connection is on the website. Tap the button to open it. You may need to sign in."
 )
 GONE_LINK = "That connection isn't there any more. Open the name card again to see the list."
 UNDO_NOTE = "Wrong? Press **Undo** within 10 minutes."
@@ -153,7 +152,12 @@ async def show_one(
         interaction,
         f"**{_said(found)}**"
         + (" 🤫" if found.relation.secret else "")
-        + "\nWhat would you like to do?",
+        + "\n"
+        + (
+            "Change the words, hide it, or remove it."
+            if found.secrets
+            else "Change the words or remove it."
+        ),
         view,
     )
 
@@ -176,9 +180,7 @@ class OneConnection(_Menu):
                 placeholder="Change the words…",
                 options=[
                     discord.SelectOption(
-                        label=logic.shorten(
-                            f"{subject.name} {words} {other.name}", logic.OPTION_LABEL_MAX
-                        ),
+                        label=logic.shorten(words, logic.OPTION_LABEL_MAX),
                         value=predicate,
                     )
                     for predicate, words in CONNECTION_WORDS.items()
@@ -243,7 +245,8 @@ class OneConnection(_Menu):
         self.stop()
         await show_card(
             interaction, c.id, self.entity_id, replace=True,
-            note=f"Changed. It now reads: {_md(self._now_reads(found, predicate, detail))}.",
+            note=f"Changed to: {_md(self._now_reads(found, predicate, detail))}. "
+            "Not right? Edit it again.",
         )  # fmt: skip
 
     @staticmethod
@@ -278,9 +281,9 @@ class OneConnection(_Menu):
             await _tell(interaction, f"Couldn't change that. {exc}")
             return
         note = (
-            f"🤫 Hidden from players: {_said(found)}."
+            f"🤫 Hidden from players: {_said(found)}. Not right? Edit it again."
             if target
-            else f"👁 Players can see it now: {_said(found)}."
+            else f"👁 Players can see it now: {_said(found)}. Not right? Edit it again."
         )
         await self._changed(interaction, found, note)
 
@@ -292,7 +295,7 @@ class OneConnection(_Menu):
         self.stop()
         await _replace(
             interaction,
-            f"Remove **{_said(found)}**? You can undo it for 10 minutes.",
+            f"Remove **{_said(found)}**?",
             ConfirmRemove(self.campaign_id, self.entity_id, self.relation_id),
         )
 
@@ -359,7 +362,7 @@ class OtherWords(discord.ui.Modal, title="Other words"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         text = " ".join(str(self.words.value).split())
         if not text or not text.isprintable():
-            await _tell(interaction, "Type the words that join the two names.")
+            await _tell(interaction, "Type the words that join the two names, like “sworn to”.")
             return
         predicate, detail = predicate_for(text)
         await self.page._new_words(interaction, predicate, detail)
