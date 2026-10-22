@@ -1199,6 +1199,14 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
+        self.background_read_ai = (
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ], Feature.NAMES_BACKGROUND_READ
+            )
+            if self.ai_client
+            else None
+        )
         # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
         self.plan_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)
