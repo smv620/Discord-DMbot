@@ -6,6 +6,7 @@ names throughout."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen.peek_notices import PeekNotices, notice
@@ -77,6 +78,23 @@ class TheDm(Views):
         )
         self.assertGreaterEqual(full["names"], players["names"])
 
+    async def test_a_secret_name_is_left_out_of_the_players_counts_and_the_cap(self) -> None:
+        hidden = await self.add("Lord Veil", "npc")
+        await self.alias(hidden, "Lord Veil", secret=True)  # the real name is the secret
+        await self.link("knows", self.mira, hidden, "veil")
+        full = await relationships.read_size(
+            self.web, self.session, self.cref, center=self.mira, hops=1, view="full"
+        )
+        players = await relationships.read_size(
+            self.web, self.session, self.cref, center=self.mira, hops=1, view="players"
+        )
+        self.assertLess(players["names"], full["names"])  # strictly: the secret name is not counted
+        with patch.object(relationships, "MAX_NODES", players["names"]):
+            cut_full = await self.graph(center=self.mira, hops=1, view="full")
+            whole_players = await self.graph(center=self.mira, hops=1, view="players")
+        self.assertTrue(cut_full["truncated"])  # the DM's set is bigger than the cap
+        self.assertFalse(whole_players["truncated"])  # the players' own set just fits
+
     async def test_a_view_that_is_neither_is_refused(self) -> None:
         self.assertEqual(await self.refused_with(self.session, view="everything"), "bad_view")
 
@@ -125,6 +143,14 @@ class ThePlayer(Views):
         await self.graph(view="full")
         await self.graph(view="players")
         self.assertEqual(await PeekNotices(self.db).take(self.g), [])
+
+    async def test_the_size_of_a_peek_is_refused_under_a_private_screen_too(self) -> None:
+        await self.setScreen("private")
+        with self.assertRaises(RecapError) as caught:
+            await relationships.read_size(
+                self.web, self.player, self.cref, center=self.mira, hops=1, view="full"
+            )
+        self.assertEqual(caught.exception.code, "peek_off")
 
     async def test_asking_for_the_players_view_always_works(self) -> None:
         await self.setScreen("private")
@@ -182,6 +208,19 @@ class ThePeekNotice(Views):
         with self.assertRaises(RecapError):
             await self.peek(outsider)
         self.assertEqual(await PeekNotices(self.db).take(self.g), [])
+
+    async def test_a_peek_in_one_campaign_is_no_notice_in_another_of_the_same_server(self) -> None:
+        await self.peek(self.player)
+        taken = await PeekNotices(self.db).take(self.g)
+        self.assertEqual([p.campaign_id for p in taken], [self.one.id])
+        self.assertNotIn(self.two.id, {p.campaign_id for p in taken})
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM web_peeks WHERE campaign_id = %s", (self.two.id,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
 
     async def test_a_notice_belongs_to_one_server_and_goes_with_its_campaign(self) -> None:
         await self.peek(self.player)
