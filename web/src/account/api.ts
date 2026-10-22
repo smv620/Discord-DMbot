@@ -1139,9 +1139,16 @@ export function httpApi(
       } catch {
         // No JSON body: a plain server error.
       }
+      // A 404 whose code isn't a known one is a route or page the server doesn't have (an older API:
+      // FastAPI's own answer is {"detail":"Not Found"}; or the proxy's page): that is "not found", not
+      // an outage. A 404 with a known code keeps what the code says (errorKinds is read first).
       const kind =
         errorKinds[code] ??
-        (response.status === 403 ? "not-allowed" : "server");
+        (response.status === 403
+          ? "not-allowed"
+          : response.status === 404
+            ? "not-found"
+            : "server");
       // Cue problems are the page's answer, unless the recap can't be changed at all: then the
       // reload that goes with "not-allowed" and "not-editable" matters more.
       if (
