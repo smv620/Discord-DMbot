@@ -81,6 +81,12 @@ class TheShape(Web):
     async def test_an_edge_is_labelled_by_the_latest_known_connection(self) -> None:
         await self.link("enemy_of", self.mira, self.keep, "old-feud")  # a second, later one
         await self.link("owns", self.mira, self.keep, "secret-owner", secret=True)  # newest, secret
+        for n, tag in enumerate(("mira-keep", "old-feud", "secret-owner")):  # (apart in time)
+            await self.sql(
+                "UPDATE memory_relations SET created_at = %s WHERE id = %s",
+                1_700_000_000 + n,
+                self.links[tag],
+            )
         got = await self.graph(center=self.mira, hops=1)
         edge = next(e for e in got["edges"] if {e["a"], e["b"]} == {self.mira, self.keep})
         self.assertEqual(edge["label"], "is an enemy of")  # latest known; never the secret one
