@@ -106,7 +106,8 @@ For each claim say how it was said:
 Answer with JSON only, in this shape:
 {"claims": [{"subject": "...", "relationship": "...", "object": "...", "details": "...",
 "lines": [1], "how": "dm_said"}]}
-Use short names for subject and object, as said in the transcript. "lines" are the line
+Use short names for subject and object, as said in the transcript, and never a pronoun (I, we,
+he, she, they) unless the line says it is someone's name. "lines" are the line
 numbers the claim comes from. Answer {"claims": []} if there are none."""
 
 

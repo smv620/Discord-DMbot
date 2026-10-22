@@ -59,6 +59,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.names import not_names
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -547,6 +548,8 @@ class ClaimStore:
                         unknown = []  # never made into an entry again
                     elif any(name_key(n) in skip for n in unknown):
                         unknown = []  # a person at the table: not a story name
+                    elif any(not_names.is_not_name(n) for n in unknown):
+                        unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                 work.append((claim, reason, unknown))
             # Claims kept from an earlier session for a name that was past its limit come first:
             # their names are proposed before this session's own (#1367).
@@ -563,7 +566,7 @@ class ClaimStore:
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": NAME_REJECTED_REASON}
                     )
-                elif any(name_key(n) in skip for n in unknown):
+                elif any(name_key(n) in skip or not_names.is_not_name(n) for n in unknown):
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": UNKNOWN_NAME_REASON}
                     )

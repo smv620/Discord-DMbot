@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
+from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.text import (
@@ -787,11 +788,13 @@ def kept_names(
     narration = narration_of(text)
     lists = _known(beats, allowed_names, previous, setting)
     heard = set(words(transcript))
+    cued = not_names.cued_in(transcript)  # a pronoun is offered only where a line names it (#2358)
     single = sorted(
         {
             n
             for n in proper_nouns(narration, sentence_starts=True)
-            if not _all_known(n, lists)
+            if not_names.allowed(n, cued)
+            and not _all_known(n, lists)
             and _all_known(n, heard)
             and not _ordinary_opener(n, narration, transcript)
             and not names_a_secret(n, secret_names, allowed_names)

@@ -18,6 +18,8 @@ import re
 from collections import deque
 from dataclasses import dataclass
 
+from dmbot.names import not_names
+
 ASK_WINDOW_S = 20.0  # an answer this soon after an ask belongs to it
 UNPROMPTED_WINDOW_S = 10.0  # a spelling said right after a capitalised word, with no ask
 MIN_LETTERS = 3  # fewer is not a spelling
@@ -227,8 +229,8 @@ def _word_of(run: list[_Tok]) -> tuple[str, int, int, int] | None:
     ):
         return None  # "I I I", "a a a": stuttering, unless "double" or "triple" was said
     word = "".join(letters)
-    if word.lower() in NOT_NAMES:
-        return None  # "N.P.C.", "T.P.K.": table talk, not a name
+    if word.lower() in NOT_NAMES or not_names.is_not_name(word):
+        return None  # "N.P.C.", "T.P.K.": table talk; "W-E": a pronoun, not a name (#2358)
     # Title case, but keep a capital the speaker asked for ("capital b" inside a word).
     word = word[0].upper() + word[1:] if word[0].islower() else word
     return word, first.start, last.end, strong

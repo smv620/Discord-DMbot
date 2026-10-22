@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import is_dm_word
+from dmbot.names import not_names
 
 ANSWER_WITHIN_MS = 10_000
 MIN_ANSWERS = 2  # a name answered by the same person this many times in a session
@@ -109,7 +110,9 @@ def called_names(text: str) -> list[str]:
     return [
         name
         for name in addressed(text)
-        if name_key(name) not in _NOT_NAMES and not is_dm_word(name)
+        if name_key(name) not in _NOT_NAMES
+        and not is_dm_word(name)
+        and not_names.keep(name, text)  # never a pronoun, unless the line says it is a name (#2358)
     ]
 
 
@@ -204,7 +207,7 @@ class NameThenAnswer:
                 # way they were called, and never for themselves.
                 if who is not None and who != speaker and who in self._dm_spoke:
                     self._dm_called[who] += 1
-            elif name_key(word) not in _NOT_NAMES:
+            elif name_key(word) not in _NOT_NAMES and not_names.keep(word, text):
                 names.append(word)
         if names:
             self._previous = (speaker, at_ms, names)
