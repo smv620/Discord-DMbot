@@ -3132,6 +3132,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     # Who plays which character in a campaign, for the transcript's labels (#1512).
     ("dmbot_web_transcript_characters", "dmbot_web_transcript_characters(BIGINT, TEXT)"),
+    ("dmbot_web_transcript_speakers", "dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
@@ -9726,6 +9727,50 @@ NAME_ACTIONS = (
 """
 )
 
+TRANSCRIPT_SPEAKER_NAMES = """
+    -- Each speaker's Discord display name as it was at the session (#2337), so the website's
+    -- transcripts can show names instead of "Speaker 1". A JSON object of Discord user id (text)
+    -- to the name; "" means DMbot looked and could not find them (they left the server), so it
+    -- does not look again. Kept on the session row: isolated with it, deleted with it and with the
+    -- campaign. Added with an empty default, so no existing row changes.
+    ALTER TABLE transcript_sessions ADD COLUMN speaker_names JSONB NOT NULL DEFAULT '{}';
+
+    -- dmbot_web_transcript_speakers: the session's stored names and which of its speakers are DMs
+    -- of the campaign (only people who appear in its lines, so a DM who never spoke is not named
+    -- here). Any member of the server may ask, as for the transcript's lines; NULL when the caller
+    -- is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_speakers(g BIGINT, c TEXT, sid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'names', (SELECT t.speaker_names FROM transcript_sessions t
+                      WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid),
+            'dms', COALESCE((
+                SELECT jsonb_agg(d.user_id::TEXT ORDER BY d.user_id)
+                FROM campaign_dms d
+                WHERE d.guild_id = g AND d.campaign_id = c
+                  AND d.user_id IN (SELECT l.user_id FROM transcript_lines l
+                                    WHERE l.guild_id = g AND l.session_id = sid)),
+                '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -9921,6 +9966,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

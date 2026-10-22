@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -452,6 +452,73 @@ class BotTests(DatabaseTest):
         await save
         self.assertEqual(await self.saved(table), [(PLAYER, "keep me")])
 
+    async def kept(self, table: Table) -> dict[int, str]:
+        assert table.transcript_session_id is not None
+        session = await self.store.session(GUILD, table.transcript_session_id)
+        assert session is not None
+        return dict(session.speaker_names)
+
+    async def test_the_speakers_names_are_kept_with_the_session_once(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        table = self.table()
+        self.said(table, PLAYER, "I attack.")
+        self.said(table, DM, "Roll.", 2)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
+        self.guild.get_member = lambda uid: SimpleNamespace(display_name="Renamed")
+        self.said(table, PLAYER, "again", 3)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})  # not looked up again
+
+    async def test_someone_who_stopped_while_saving_is_not_named(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        table = self.table()
+        self.said(table, PLAYER, "keep me")
+        self.said(table, DM, "drop me", 2)
+        real = self.store.add_lines
+        saving, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(*args: Any) -> list[int]:
+            saving.set()
+            await release.wait()
+            return await real(*args)
+
+        self.store.add_lines = slow  # type: ignore[method-assign,assignment]
+        save = asyncio.create_task(self.bot.save_transcript(table))
+        await saving.wait()
+        await self.consent.revoke(GUILD, DM)
+        release.set()
+        await save
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+
+    async def test_a_server_not_there_to_ask_keeps_nothing_and_is_tried_again(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign,assignment]
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {})
+        self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
+        self.said(table, PLAYER, "again", 2)
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+
+    async def test_the_start_up_fill_in_names_older_sessions_and_marks_those_gone(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.said(table, STRANGER, "left the server", 2)
+        await self.consent.grant(GUILD, STRANGER)
+        self.bot.get_guild = lambda gid: None  # type: ignore[method-assign,assignment]
+        await self.bot.save_transcript(table)  # saved, but with no name kept
+        self.bot.get_guild = lambda gid: self.guild  # type: ignore[method-assign]
+        with patch.object(DMBot, "guilds", new=[self.guild]), patch("asyncio.sleep", AsyncMock()):
+            await self.bot._name_old_speakers()
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", STRANGER: ""})
+        self.assertEqual(await self.store.unnamed(GUILD), [])  # one-off: nothing left to do
+
     async def test_a_failed_start_loses_nothing_and_warns_the_dm_once(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         table = self.table()
@@ -679,6 +746,25 @@ class BotTests(DatabaseTest):
         await button.callback(it)
         return it
 
+    async def test_the_download_marks_the_dm_and_keeps_the_name_of_someone_who_left(self) -> None:
+        sid = await self.finished_session()
+        await self.store.add_lines(
+            GUILD, sid, [Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")]
+        )
+        async with self.store.db.guild(GUILD) as conn:  # the name kept when Mia was still here
+            await conn.execute(
+                "UPDATE transcript_sessions SET speaker_names = %s::jsonb WHERE id = %s",
+                (f'{{"{PLAYER}": "Mia then"}}', sid),
+            )
+        self.guild.get_member = lambda uid: (  # Mia has left the server; Sam is still there
+            SimpleNamespace(display_name="Sam") if uid == DM else None
+        )
+        result = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (export.AS_HEARD,))
+        assert not isinstance(result, str)
+        text = result[0].fp.read().decode()
+        self.assertIn("(Sam, DM): Roll for it.", text)  # today's name, and the mark
+        self.assertIn("(Mia then): We ride at dawn.", text)  # the kept name, not "Someone"
+
     async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
         self,
     ) -> None:
@@ -710,7 +796,7 @@ class BotTests(DatabaseTest):
         assert not isinstance(result, str)
         heard, cleaned = (f.fp.read().decode() for f in result)
         self.assertIn(
-            "(Sam) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
+            "(Sam, DM) [DM Sidebar id=a1b2c3 via=voice-memo stt=deepgram/nova-3]: "
             "find if flanking is optional",
             heard,
         )

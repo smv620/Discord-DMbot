@@ -3,7 +3,7 @@ Discord, no database."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
 ENTITY_MAX = 120  # the database refuses a longer entity, which would stick a whole batch
@@ -22,6 +22,9 @@ class TranscriptSession:
     number: int = 0  # Session 1, 2, … in its campaign (only sessions with lines count)
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
     deleted_at: int | None = None  # the retention job deleted its transcript (#1533)
+    # Each speaker's Discord display name as it was at the session (#2337); "" when DMbot looked
+    # and could not find them. Only people who spoke in it.
+    speaker_names: Mapping[int, str] = field(default_factory=dict)
 
 
 def line_ref(session_id: str, started_ms: int, user_id: int) -> str:

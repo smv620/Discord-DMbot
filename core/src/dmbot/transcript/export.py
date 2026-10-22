@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import (
     QUESTION_KINDS,
@@ -54,10 +54,11 @@ TYPED_NOTE = (
     "version."
 )
 HOW_TO_READ = (
-    "Each line: [time since start] (person) {their character}: what they said. "
-    "{narrating} means the DM is describing the scene; an NPC's name in braces means the DM "
-    "is speaking as that character. {table_talk} is talk about the rules or running the "
-    "game; {non-game_content} is chat that isn't about the game (these are not characters). "
+    "Each line: [time since start] (person) {their character}: what they said. A person marked "
+    "DM is the Dungeon Master. {narrating} means the DM is describing the scene; an NPC's name "
+    "in braces means the DM is speaking as that character. {table_talk} is out-of-character talk "
+    'about the rules or running the game, like "roll initiative" or "what\'s my AC?"; '
+    "{non-game_content} is chat that isn't about the game (these two are not characters). "
     "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
     "as-heard file keeps every word."
 )
@@ -74,6 +75,23 @@ def clean_name(raw: str | None) -> str:
     name = " ".join((raw or "").split())  # line breaks and tabs become spaces
     name = "".join(c for c in name if unicodedata.category(c) not in ("Cf", "Cc"))
     return name.strip()[:NAME_MAX] or UNKNOWN_SPEAKER
+
+
+_CALLS_THEMSELVES_DM = re.compile(r",\s*DM\s*$", re.IGNORECASE)
+_TWIN = re.compile(r"(.*\S) \((\d{1,3})\)(, DM)?")
+
+
+def distinct_names(names: Mapping[int, str]) -> dict[int, str]:
+    """Two people with the same display name tell apart: the second (in the order given) gets
+    " (2)", the third " (3)" (#2337). Compared as the file shows them, ignoring case."""
+    seen: dict[str, int] = {}
+    out: dict[int, str] = {}
+    for user_id, raw in names.items():
+        name = clean_name(raw)
+        key = name.casefold()
+        seen[key] = seen.get(key, 0) + 1
+        out[user_id] = name if seen[key] == 1 else f"{name} ({seen[key]})"
+    return out
 
 
 def clock(seconds: float) -> str:
@@ -192,7 +210,11 @@ def label(
 
 
 def _plain(name: str) -> str:
-    """No brackets of any kind, so a name can't make a line look like someone else's."""
+    """No brackets of any kind, so a name can't make a line look like someone else's. The one
+    thing kept is the " (2)" that tells two people with one name apart (`distinct_names`)."""
+    found = _TWIN.fullmatch(name)
+    if found:
+        return f"{_plain(found.group(1))} ({found.group(2)}){found.group(3) or ''}"
     return " ".join(name.translate(_BRACKETS).split()) or UNKNOWN_SPEAKER
 
 
@@ -203,17 +225,27 @@ def render(
     names: Mapping[int, str],
     *,
     characters: Mapping[int, str] | None = None,
+    dms: Collection[int] = (),
     running: bool = False,
     version: str = AS_HEARD,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
-    'Someone'); `characters`: speaker ID → the character they play. `running`: DMbot
+    'Someone'); `characters`: speaker ID → the character they play; `dms`: the speakers who are
+    DMs of the campaign, shown as "(Name, DM)" (#2337). `running`: DMbot
     is still recording this session. `version`: CLEANED or AS_HEARD. The DM sidebar lines
     (#935) are in the as-heard version, for everyone who may read it, and never in the
     cleaned one (owner, #933)."""
     _check(version)
     start_ms = session.started_at * 1000
     playing = characters or {}
+
+    def person(user_id: int) -> str:
+        name = clean_name(names.get(user_id))
+        if user_id in dms:
+            return f"{name}, DM"
+        # Only a DM is marked: nobody can make themselves look like one by choosing a name.
+        return _CALLS_THEMSELVES_DM.sub(" DM", name)
+
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
     timed: list[tuple[int, str]] = []  # (when it started, the line)
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
@@ -241,7 +273,7 @@ def render(
         if item.speaker not in shown:
             character = playing.get(item.speaker)
             shown[item.speaker] = (
-                clean_name(names.get(item.speaker)),
+                person(item.speaker),
                 clean_name(character) if character else None,
             )
         when = clock((item.started_ms - start_ms) / 1000)
@@ -255,11 +287,7 @@ def render(
         else:
             timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
     for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
-        asker = (
-            DMBOT_NAME
-            if line.sidebar not in QUESTION_KINDS
-            else clean_name(names.get(line.user_id))
-        )
+        asker = DMBOT_NAME if line.sidebar not in QUESTION_KINDS else person(line.user_id)
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
@@ -269,7 +297,7 @@ def render(
         said = " ".join(line.heard.split())
         who = label(
             when,
-            clean_name(names.get(line.user_id)),
+            person(line.user_id),
             clean_name(playing[line.user_id]) if line.user_id in playing else None,
         )
         timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))

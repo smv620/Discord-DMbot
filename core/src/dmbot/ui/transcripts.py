@@ -190,7 +190,12 @@ async def make_file(
         if table is not None:
             await bot.save_transcript(table)
     lines = await store.lines(guild_id, session.id)
-    names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
+    spoke = sorted({line.user_id for line in lines})
+    live = await display_names(guild, tuple(spoke))
+    # A person DMbot can no longer find (they left the server) keeps the name kept at the session.
+    names = export.distinct_names(
+        {u: live.get(u) or session.speaker_names.get(u) or "" for u in spoke}
+    )
     running_table = bot.tables.get(guild_id)
     dms = set(campaign.dm_user_ids)
     if running_table is not None and running_table.campaign_id == campaign.id:
@@ -201,7 +206,7 @@ async def make_file(
     for version in versions:
         # Off the event loop: a long session's file takes a fifth of a second to build.
         data = await asyncio.to_thread(
-            _build, campaign.name, session, lines, names, playing, running, version
+            _build, campaign.name, session, lines, names, playing, running, version, dms
         )
         total += len(data)
         if total > FILE_LIMIT:  # one message: both files together
@@ -219,6 +224,7 @@ def _build(
     playing: dict[int, str],
     running: bool,
     version: str,
+    dms: Collection[int] = (),
 ) -> bytes:
     text = export.render(
         campaign_name,
@@ -226,6 +232,7 @@ def _build(
         lines,
         names,
         characters=playing,
+        dms=dms,
         running=running,
         version=version,
     )

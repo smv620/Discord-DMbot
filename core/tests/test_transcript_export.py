@@ -50,6 +50,40 @@ class Render(unittest.TestCase):
             body.splitlines(), ["[0:00:05] (Mia): I cast Shield.", "[0:42:10] (Dee): Run!"]
         )
 
+    def test_a_dm_is_marked_and_nobody_else_can_look_like_one(self) -> None:
+        # #2337: "(Name, DM)" for a DM of the campaign, on speech, typed chat and sidebar lines.
+        lines = [
+            line(5, MIA, "I cast Shield."),
+            line(6, DEE, "Roll for it."),
+            dataclasses.replace(
+                line(7, DEE, "is it optional"), sidebar=SIDEBAR_QUESTION, lineage=Lineage(ref="x")
+            ),
+        ]
+        text = export.render(
+            "X", session(), lines, {MIA: "Mia, DM", DEE: "Dee"}, dms={DEE}, version=export.AS_HEARD
+        )
+        self.assertIn("(Mia DM): I cast Shield.", text)  # a player's own ", DM" does not pass
+        self.assertIn("(Dee, DM): Roll for it.", text)
+        self.assertIn("(Dee, DM) [DM Sidebar", text)
+
+    def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
+        names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})
+        self.assertEqual(names, {MIA: "Sam", DEE: "sam (2)", 3: "Sam (3)", 4: "Ann"})
+        text = export.render(
+            "X", session(), [line(5, DEE, "hi")], names, dms={DEE}, version=export.AS_HEARD
+        )
+        self.assertIn("(sam (2), DM): hi", text)
+
+    def test_the_how_to_read_line_explains_the_tags_in_plain_words(self) -> None:
+        for words in (
+            "{narrating} means the DM is describing the scene",
+            "{table_talk} is out-of-character talk about the rules or running the game",
+            '"roll initiative"',
+            "{non-game_content} is chat that isn't about the game",
+            "A person marked DM is the Dungeon Master",
+        ):
+            self.assertIn(words, export.HOW_TO_READ)
+
     def test_a_line_said_as_someone_shows_that_instead_of_the_character(self) -> None:
         # #53: the DM narrating or voicing an NPC; a topic tag still wins; brackets are stripped.
         lines = [
