@@ -6432,7 +6432,7 @@ class DMBot(commands.AutoShardedBot):
             entry.key
             for entry in lookup.names
             if entry.secret
-            or getattr(lookup.entities.get(entry.entity_id), "audience_limited", False)
+            or getattr(lookup.entities.get(entry.entity_id), "unseen_by_players", False)
         }
         agreed = [
             t for _, who, t in table.recent.spoken if self.consent.has_consent(table.guild_id, who)

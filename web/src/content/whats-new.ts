@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-22",
+    title: "Keep a name from the players until they learn it",
+    what: "When you add a name, 🙈 Players don't know yet keeps it to yourself: not in the NPC list, answers or recaps. On its card, 👁 Players know them now shows it to everyone when the players find out.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-21",
     title: "See where your house rules came from",
     what: "On the house rules list, 📂 Sources shows where your rules came from: the linked file, each file you uploaded, rules added in Discord, and the set you follow. Pick one to download just its rules as a text file.",

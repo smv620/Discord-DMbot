@@ -1326,7 +1326,8 @@ so the docs always show names the way Discord does. For the campaign
   the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
   DM confirmed that are true now. Because players can peek here and the list sits in view all
   session, it is built by `RecallService.roster`, which applies the **players** audience's rules
-  and not a second copy: never a secret name or a name only misheard, a limited clue or anything
+  and not a second copy: never a secret name or a name only misheard, an entry the DM marked
+  "Players don't know yet" (#2321, Supervisor-approved wording below), a limited clue or anything
   that points to one, a story thread, a deed or standing, the DM's note (so there is **no
   description line**: the only description an entry has is the DM's note), a condition such as
   dead or missing (the table may not know yet), or anything from the adventure plan. Groups
@@ -4789,3 +4790,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   #227)
 
 *Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.
+
+### Players don't know this one yet (#2321, 2026-10-22)
+Any entry (person, group, place, thing) can be kept from the players until the DM says they
+know it: the 🙈 switch on the kind step of Add a name, and 🙈 Hide from players / 👁 Players know
+them now on the name card (DM only). It is the clue's `audience_limited` treatment without an
+audience to track: `memory_entities.hidden_from_players`, read everywhere as
+`Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
+recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
+DM sets it. The relationship-level secret is separate and already exists (a secret connection).

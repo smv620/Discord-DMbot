@@ -546,7 +546,9 @@ class RecallService:
         # neither the clue nor, because a fact needs both ends, anyone's `knows` to it.
         # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
         hide_clue = (
-            " AND NOT audience_limited AND NOT type = ANY(%s)" if audience == PLAYERS else ""
+            " AND NOT audience_limited AND NOT hidden_from_players AND NOT type = ANY(%s)"
+            if audience == PLAYERS
+            else ""
         )
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, role FROM memory_entities"

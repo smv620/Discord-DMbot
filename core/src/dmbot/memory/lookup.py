@@ -122,7 +122,7 @@ class CampaignLookup:
                 a.kind,
                 # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
                 # must never write it into the shared transcript, and it is the DM's alone.
-                a.secret or entities[a.entity_id].audience_limited,
+                a.secret or entities[a.entity_id].unseen_by_players,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
                 False,
@@ -193,7 +193,7 @@ class CampaignLookup:
         """What the campaign's DMs alone may see: the clues only some people know (#1649) and
         the story threads (#1662) and deeds (#1732), which are the DM's plot notes."""
         return frozenset(
-            e.id for e in self.entities.values() if e.audience_limited or e.type in DM_ONLY_TYPES
+            e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
         )
 
     def for_viewer(self, secrets: bool) -> CampaignLookup:
