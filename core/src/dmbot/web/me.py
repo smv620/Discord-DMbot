@@ -59,7 +59,9 @@ def _facts_of(fact: dict[str, Any] | None) -> dict[str, Any]:
         out["sessions"] = int(fact["sessions"])
     seconds = int(fact.get("secondsPlayed") or 0)
     if seconds > 0:
-        out["hoursPlayed"] = round(seconds / 3600, 1)
+        # Two decimals, so a short test session is not rounded away to nothing; the page says
+        # "Under 1 hour played" for it and rounds the rest.
+        out["hoursPlayed"] = round(seconds / 3600, 2)
     if fact.get("players"):
         out["players"] = int(fact["players"])
     if fact.get("npcs"):
@@ -205,6 +207,7 @@ async def build_me(
                         "name": fact["name"],
                         "serverName": guild.name,
                         "lastPlayedAt": _iso_time(fact["lastPlayedAt"]),
+                        # (a paused state arrives with #437 part 2; the door does not carry it yet)
                         "status": "active",
                         "role": "player",
                         "importsOn": False,

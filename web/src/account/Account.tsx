@@ -1050,7 +1050,7 @@ function CampaignsSection({ me }: { me: Me }) {
           {open ? text.showFewer : text.showOlder(older.length)}
         </button>
       )}
-      {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapCard.linkToList}</a>}
+      {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
     </section>
   );
 }

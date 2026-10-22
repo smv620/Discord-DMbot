@@ -110,7 +110,7 @@ const campaigns: Campaign[] = [
   // A campaign the person plays in (#2460): a card with no DM tools.
   {
     id: "cmp-lantern",
-    ref: "100.cmp4.cp-player",
+    ref: "100.cmp4",
     name: "The Lantern Road",
     serverName: "Thursday Table",
     lastPlayedAt: "2026-09-18T18:00:00Z",

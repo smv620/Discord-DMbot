@@ -112,3 +112,18 @@ describe("the sections of My Account", () => {
       expect(order.some((t) => t === gone)).toBe(false);
   });
 });
+
+describe("a person who only plays", () => {
+  it("gets no recaps link, which is a DM's list", async () => {
+    const api = mockApi("table");
+    const real = api.me.bind(api);
+    api.me = async () => {
+      const got = await real();
+      if (got === null) return got;
+      return { ...got, campaigns: got.campaigns.filter((c) => c.role === "player") };
+    };
+    show(api);
+    await card("The Lantern Road");
+    expect(screen.queryByRole("link", { name: "Read your session recaps" })).toBeNull();
+  });
+});

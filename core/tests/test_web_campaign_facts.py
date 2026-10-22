@@ -13,7 +13,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.web import me
 from dmbot.web.sessions import Session
 from tests.test_recap_web import BOB, Base, callers
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import ALICE, THURSDAY
 
 NOW = 2_000_000_000
 
@@ -97,6 +97,43 @@ class TheFacts(Base):
         self.assertFalse(theirs["dm"])
         self.assertEqual(theirs["npcs"], 2)  # not the hidden one
 
+    async def test_a_secret_named_or_audience_limited_npc_is_not_counted_for_a_player(self) -> None:
+        keeper = await self.add("The Keeper", "npc")
+        await self.memory.add_alias(
+            self.g, self.c, keeper, "The Keeper", kind="short", source=DM_SOURCE,
+            status="confirmed", secret=True,
+        )  # fmt: skip
+        limited = await self.add("Veiled", "npc")
+        await self.sql("UPDATE memory_entities SET audience_limited = true WHERE id = %s", limited)
+        mira = await self.add("Mira", "player_character")
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", BOB.id, mira)
+        bob = await self.signed(BOB)
+        self.assertEqual((await self.facts(bob))[self.c]["npcs"], 0)
+        self.assertEqual((await self.facts())[self.c]["npcs"], 2)  # the DM counts both
+
+    async def test_a_server_that_is_not_in_the_session_list_gets_nothing(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g + 1),))
+            cur = await conn.execute("SELECT dmbot_web_campaign_facts(%s) AS f", (self.g + 1,))
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(row["f"])
+
+    async def test_a_dm_who_also_plays_gets_one_row(self) -> None:
+        mira = await self.add("Mira", "player_character")
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", ALICE.id, mira)
+        got = await self.facts()
+        self.assertEqual(list(got), [self.c])
+
+    async def test_the_12_hour_edge_of_live(self) -> None:
+        import time
+
+        now = int(time.time())
+        await self.session_row(now - 43_200 - 60, None)  # just past 12 hours
+        self.assertFalse((await self.facts())[self.c]["live"])
+        await self.session_row(now - 43_200 + 600, None)  # just inside
+        self.assertTrue((await self.facts())[self.c]["live"])
+
     async def signed(self, user: Any) -> Session:
         from dmbot.web import sessions
 
@@ -127,6 +164,9 @@ class TheCardFacts(unittest.TestCase):
             {"live": True, "sessions": 4, "hoursPlayed": 2.5, "players": 3, "npcs": 12},
         )
         self.assertTrue(got["startedAt"].endswith("Z"))
+
+    def test_a_short_session_still_has_its_hours(self) -> None:
+        self.assertEqual(me._facts_of({"secondsPlayed": 300})["hoursPlayed"], 0.08)
 
     def test_no_facts_means_none(self) -> None:
         self.assertEqual(me._facts_of(None), {})
