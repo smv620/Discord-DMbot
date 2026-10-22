@@ -19,8 +19,9 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
-from dmbot.rules import house_file
+from dmbot.rules import house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
 
 log = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ LINK_LABEL = "🔗 Connect a file"
 CHANGE_LABEL = "🔗 Use another file"
 CHECK_LABEL = "🔄 Compare now"
 UNLINK_LABEL = "Stop using this file"
-UPLOAD_LABEL = "📎 Upload a file (one time)"
+UPLOAD_LABEL = "📎 Upload a file once"
 ONLY_DMS = "Only this campaign's DMs can set up the house-rules file. Ask your DM."
 PICK_FIRST = (
     "Which campaign is this file for? Open `/dmbot houserules`, pick the campaign, then press "
@@ -95,11 +96,12 @@ PICK_FIRST = (
 GONE = "That campaign isn't here any more. Use `/dmbot houserules` to start again."
 NOT_READY = "The house-rules file isn't available right now. Please try again in a moment."
 NOT_LINKED = (
-    "📄 **House-rules file**\nNo file is connected yet. Keep your house rules in a Google Doc "
-    "(or a Dropbox or OneDrive text file) and DMbot compares it with its own list at the "
-    "start of every session.\nBefore you paste its web address, set sharing to “Anyone with "
-    "the link can view”. Or upload a file for one comparison (it isn't kept).\n"
-    "Nothing changes unless you press a button."
+    "📄 **House-rules file**\nKeep your house rules in a PDF, Word, Excel or text file, a Google "
+    "Doc or a web page. DMbot reads it at the start of each session and shows you what's new.\n"
+    "**Connect a file** keeps it up to date. For a Google Doc or web page, set sharing to "
+    "“Anyone with the link can view” first.\n**Upload a file** reads it once and doesn't keep "
+    "it.\nNothing is saved until you press a button.\n"
+    "Your own house rules only. For a published book, use Share a rulebook."
 )
 
 
@@ -162,6 +164,7 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
     await _send(interaction, text, FileMenu(current, linked=link is not None))
 
 
+MAX_UPLOAD_BYTES = MAX_DOCUMENT_BYTES  # 10 MB, as for a names file
 COOLDOWN_S = 30.0  # between two comparisons of one campaign's file asked for by hand
 _busy: set[tuple[int, str]] = set()  # campaigns being compared right now
 _last: dict[tuple[int, str], float] = {}  # when each was last compared by hand
@@ -229,15 +232,16 @@ async def link_file(interaction: discord.Interaction, campaign: Campaign, link: 
     await _tell(
         interaction,
         f"✅ Connected: **{discord.utils.escape_markdown(saved.site)}**. DMbot will compare it "
-        "with your house rules every time you start a session. Comparing it now…",
+        "with your house rules every time you start a session. Reading it now, this can take "
+        "a minute…",
     )
     await check_now(interaction, current)
 
 
 class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
     link: discord.ui.TextInput[LinkForm] = discord.ui.TextInput(
-        label="Web address of your rules file",  # 45 characters at most
-        placeholder="In Google Docs: Share, then “Anyone with the link”, then Copy link.",
+        label="Link to your rules (Doc, PDF, web page)",  # 45 characters at most
+        placeholder="Paste the link. Sharing must be “Anyone with the link”.",
         max_length=2000,
     )
 
@@ -249,9 +253,9 @@ class LinkForm(discord.ui.Modal, title="Connect your house-rules file"):
         await link_file(interaction, self.campaign, self.link.value)
 
 
-class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
+class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
     file: discord.ui.Label[UploadForm] = discord.ui.Label(
-        text="Your house-rules file (a .txt file)",  # 45 characters at most
+        text="Your rules (PDF, Word, Excel, text)",  # 45 characters at most
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -271,7 +275,7 @@ class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
             await _tell(interaction, f"No file was added. Press {UPLOAD_LABEL} and pick one.")
             return
         attachment = upload.values[0]
-        if attachment.size > house_sync.READ_MAX_BYTES:
+        if attachment.size > MAX_UPLOAD_BYTES:
             await _tell(interaction, house_sync.TOO_BIG)
             return
         wait = _take(current)
@@ -285,10 +289,15 @@ class UploadForm(discord.ui.Modal, title="Compare a house-rules file"):
             await _tell(interaction, "DMbot couldn't download that file. Try again.")
             return
         try:
+            try:
+                text = await house_reader.read_file(attachment.filename, data)
+            except DocumentError as exc:  # a scanned PDF, an empty or damaged file: said plainly
+                await _tell(interaction, str(exc))
+                return
             words = await house_sync.compare_text(
                 _bot(interaction),
                 current,
-                data.decode("utf-8", errors="replace"),
+                text,
                 _private_send(interaction),
                 from_link=False,
                 file_name=attachment.filename,
