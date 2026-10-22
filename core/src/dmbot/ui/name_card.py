@@ -47,7 +47,7 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import logic
+from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -2569,7 +2569,10 @@ async def show_matches(interaction: discord.Interaction, campaign_id: str, typed
     if len(matches) == 1:
         await show_card(interaction, campaign.id, matches[0].entity_id)
         return
-    options = [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches]
+    options = all_names.with_choice(
+        [discord.SelectOption(label=_label(names, m), value=m.entity_id) for m in matches],
+        left_out=len(matches) >= MAX_RESULTS,  # only the closest ones are listed
+    )
     view = Matches(campaign.id, typed, options)
     if not matches:
         text = f"No name like **{_md(typed)}**."
@@ -2606,6 +2609,9 @@ class Matches(_Menu):
         )
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        if all_names.chosen(self.pick.values):
+            await all_names.reply(interaction, self.campaign_id)  # the menu stays for more
+            return
         self.stop()
         await show_card(interaction, self.campaign_id, self.pick.values[0], replace=True)
 

@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-22",
+    title: "All your names on the website",
+    what: "When a name list in Discord is too long to show everything, its last choice is now \"All names on the website\". It gives you a private button that opens the whole list.",
+    reason: "In review (#2294); held until dev1 deploys it and the website's Names page is live (#2295, WebDev).",
+  },
+  {
     date: "2026-10-21",
     title: "Pick the other name from a list",
     what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
