@@ -1302,6 +1302,27 @@ class TheAddressDoor(Base):
         await self.campaigns.add_dm(THURSDAY.id, self.one.id, carol.id)
         self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
 
+    async def test_a_co_dm_of_a_campaign_with_only_a_held_recap_gets_their_address(self) -> None:
+        carol = DiscordUser(id=3003, name="Carol", email="carol@example.com")
+        await sessions.sign_in(self.web, carol, [THURSDAY], now=NOW, days=30)
+        held = await self.campaigns.create(THURSDAY.id, "Held", ALICE.id)
+        await self.campaigns.add_dm(THURSDAY.id, held.id, carol.id)
+        self.assertIsNone(await self.store.address(THURSDAY.id, carol.id))  # nothing waiting yet
+        await HoldStore(self.db).hold(
+            THURSDAY.id, held.id, 300, session_id="s1", dm_user_id=ALICE.id, channel_id=5,
+            asked=True, names_open=2,
+        )  # fmt: skip
+        self.assertEqual(await self.store.address(THURSDAY.id, carol.id), carol.email)
+
+    async def test_a_former_dm_gets_nothing_even_if_the_job_was_made_for_them(self) -> None:
+        self.assertEqual(await self.store.address(THURSDAY.id, ALICE.id), ALICE.email)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "DELETE FROM campaign_dms WHERE campaign_id = %s AND user_id = %s",
+                (self.one.id, ALICE.id),
+            )
+        self.assertIsNone(await self.store.address(THURSDAY.id, ALICE.id))
+
     async def test_someone_who_is_not_a_dm_there_still_gets_none(self) -> None:
         dave = DiscordUser(id=4004, name="Dave", email="dave@example.com")
         await sessions.sign_in(self.web, dave, [THURSDAY], now=NOW, days=30)

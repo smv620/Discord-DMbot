@@ -9728,10 +9728,12 @@ NAME_ACTIONS = (
 
 RECAP_ADDRESS_CO_DM = """
     -- A co-DM with no recap job of their own gets the recap email too (#2360): the address is
-    -- answered for any DM of a campaign that has a recap job in this server, not only for the DM
-    -- the job was made for. Still one person's own address, still only while the recap worker's
-    -- door is open, and never for someone who is not a DM of that campaign. The rows read are
-    -- this server's (forced row-level security), so no other server's DMs are seen.
+    -- answered for any CURRENT DM of a campaign that has a recap job or a held recap (a recap
+    -- waiting for name answers, whose waiting email also goes to the DMs) in this server. Being the
+    -- DM a job was made for is no longer enough: someone who has since stopped being a DM of the
+    -- campaign gets nothing. Still one person's own address, still only while the recap worker's
+    -- door is open. The rows read are this server's (forced row-level security), so no other
+    -- server's DMs are seen.
     CREATE OR REPLACE FUNCTION dmbot_recap_address(who BIGINT) RETURNS TEXT
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
@@ -9743,12 +9745,12 @@ RECAP_ADDRESS_CO_DM = """
             RETURN NULL;
         END IF;
         IF NOT EXISTS (
-            SELECT 1 FROM recap_jobs j
-            WHERE j.dm_user_id = who
-               OR EXISTS (
-                   SELECT 1 FROM campaign_dms d
-                   WHERE d.guild_id = j.guild_id AND d.campaign_id = j.campaign_id
-                     AND d.user_id = who)
+            SELECT 1 FROM campaign_dms d
+            WHERE d.user_id = who
+              AND (EXISTS (SELECT 1 FROM recap_jobs j
+                           WHERE j.guild_id = d.guild_id AND j.campaign_id = d.campaign_id)
+                   OR EXISTS (SELECT 1 FROM recap_holds h
+                              WHERE h.guild_id = d.guild_id AND h.campaign_id = d.campaign_id))
         ) THEN
             RETURN NULL;
         END IF;
