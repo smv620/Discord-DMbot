@@ -91,6 +91,12 @@ def _fit(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def _quoted(text: str, limit: int) -> str:
+    """A rule's words for the prompt: cut first, then escaped, so a rule's own `*` or `_` does
+    not turn the prompt into bold or italics and an escape is never cut in half (#2314)."""
+    return discord.utils.escape_markdown(_fit(text, limit))
+
+
 class DisagreeView(_Menu):
     """Both rules, and the DM's choice. `save` stores the new rule (and returns it); `replace`
     puts the new words in an own rule of the campaign (None: not offered); `done` shows the
@@ -129,8 +135,8 @@ class DisagreeView(_Menu):
         count = f" (clash {self.at + 1} of {len(self.others)})" if len(self.others) > 1 else ""
         return (
             f"⚠️ **Your new rule may clash with {name_of(o)}{count}. Which one wins?**\n"
-            f"**New:** {_fit(self.words, WORDS_MAX)}\n"
-            f"**{name_of(o).capitalize()}:** {_fit(o.words, WORDS_MAX)}\n"
+            f"**New:** {_quoted(self.words, WORDS_MAX)}\n"
+            f"**{name_of(o).capitalize()}:** {_quoted(o.words, WORDS_MAX)}\n"
             "Both rules stay unless you replace the old one. You decide; DMbot never picks."
         )
 
