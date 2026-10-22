@@ -3903,6 +3903,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
   estimates them from the words spoken, and `recap_run --hours` sets them.
+  **Shorter recaps** (owner, 2026-10-22, after Test L): the target is now **75 words for every hour
+  played, plus 75**, rounded to the nearest 10, **at most 450** (1 hour 150, 3 hours 300, 5 hours or
+  more 450; under three minutes read aloud). This replaces the 100/100/700 rule above; the 50% under
+  and 20% (35% on the last try) over margins stay. Why: a recap is read or played at the start of
+  the next game, which must stay quick, and a shorter recap costs less to voice, gives the checks
+  less to read and leaves less room for an answer to be cut off.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
