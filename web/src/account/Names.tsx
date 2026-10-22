@@ -73,6 +73,9 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       if (mine !== latest.current) return pageNow.current;
       setData(read);
       setView("ok");
+      // An editor stays open only for a row still on the page: a search, filter or page change that
+      // drops it must not bring it back, with old words in it, when the row returns (#2299).
+      setEditing((open) => (open !== null && read.names.some((n) => n.id === open) ? open : null));
       pageNow.current = read.page;
       setPageNotice(null);
       return read.page;
@@ -121,6 +124,8 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         // The name is gone (someone else removed it): the list is read again and says so.
         setEditing(null);
         setNews({ ok: false, text: said, n: ++sayings.current });
+        // The editor is gone: the keyboard goes to the news, as after a remove or a merge.
+        setTimeout(() => newsBox.current?.focus(), 0);
         await load(pageNow.current, true);
         return null;
       }
@@ -346,11 +351,35 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
   const [other, setOther] = useState("");
   const [mergeQ, setMergeQ] = useState("");
   const [mergeFound, setMergeFound] = useState<NameRow[] | null>(null);
+  // The search itself failed (not "nothing matches"), or has more matches than the first page.
+  const [mergeProblem, setMergeProblem] = useState(false);
+  const [mergeMore, setMergeMore] = useState(false);
   const [mergeInto, setMergeInto] = useState<NameRow | null>(null);
   const [ask, setAsk] = useState<"merge" | "remove" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const seq = useRef(0);
+  // The two questions replace the buttons that opened them, so focus is moved by hand: onto the
+  // question's first button when it opens, and back onto the opener on "No" (#2299).
+  const mergeOpener = useRef<HTMLButtonElement>(null);
+  const removeOpener = useRef<HTMLButtonElement>(null);
+  const mergeYes = useRef<HTMLButtonElement>(null);
+  const removeYes = useRef<HTMLButtonElement>(null);
+  const lastAsk = useRef<"merge" | "remove" | null>(null);
+  // Set by "No" only: typing in the search also closes a question, and must keep the cursor there.
+  const giveBack = useRef(false);
+  useEffect(() => {
+    if (ask === "merge") mergeYes.current?.focus();
+    else if (ask === "remove") removeYes.current?.focus();
+    else if (giveBack.current && lastAsk.current === "merge") mergeOpener.current?.focus();
+    else if (giveBack.current && lastAsk.current === "remove") removeOpener.current?.focus();
+    giveBack.current = false;
+    lastAsk.current = ask;
+  }, [ask]);
+  const decline = (): void => {
+    giveBack.current = true;
+    setAsk(null);
+  };
 
   // The box follows the name when a save changes it.
   useEffect(() => setSpelling(row.name), [row.name]);
@@ -359,6 +388,8 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
   // Finding the name to merge into: the same list, searched; this name itself is left out.
   useEffect(() => {
     const mine = ++seq.current;
+    setMergeProblem(false);
+    setMergeMore(false);
     if (mergeQ.trim() === "" || !api.allNames) {
       setMergeFound(null);
       return;
@@ -367,9 +398,15 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
       api
         .allNames?.(refId, { q: mergeQ, kind: "", sort: "name", page: 1 })
         .then((read) => {
-          if (mine === seq.current) setMergeFound(read.names.filter((n) => n.id !== row.id));
+          if (mine !== seq.current) return;
+          setMergeFound(read.names.filter((n) => n.id !== row.id));
+          setMergeMore(read.pages > 1);
         })
-        .catch(() => mine === seq.current && setMergeFound([]));
+        .catch(() => {
+          if (mine !== seq.current) return;
+          setMergeFound(null);
+          setMergeProblem(true);
+        });
     }, SEARCH_MS);
     return () => {
       clearTimeout(timer);
@@ -498,6 +535,14 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
             }}
           />
         </label>
+        {mergeProblem && (
+          <p class="small warn" role="alert">
+            {words.mergeSearchDown}
+          </p>
+        )}
+        {mergeMore && (
+          <p class="small muted">{words.mergeMore}</p>
+        )}
         {mergeFound !== null &&
           (mergeFound.length === 0 ? (
             <p class="small muted" role="status">
@@ -528,6 +573,7 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           <div class="row" role="group" aria-label={words.mergeAsk(row.name, mergeInto.name)}>
             <p>{words.mergeAsk(row.name, mergeInto.name)}</p>
             <button
+              ref={mergeYes}
               type="button"
               class="button"
               disabled={working}
@@ -535,12 +581,12 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
             >
               {words.mergeYes}
             </button>
-            <button type="button" class="button secondary" onClick={() => setAsk(null)}>
+            <button type="button" class="button secondary" onClick={decline}>
               {words.mergeKeep}
             </button>
           </div>
         ) : (
-          <button type="button" class="button secondary" disabled={working || !mergeInto} onClick={() => setAsk("merge")}>
+          <button ref={mergeOpener} type="button" class="button secondary" disabled={working || !mergeInto} onClick={() => setAsk("merge")}>
             {words.mergeButton}
           </button>
         )}
@@ -552,6 +598,7 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           <div class="row" role="group" aria-label={words.removeAsk(row.name)}>
             <p>{words.removeAsk(row.name)}</p>
             <button
+              ref={removeYes}
               type="button"
               class="button"
               disabled={working}
@@ -559,12 +606,12 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
             >
               {words.removeYes}
             </button>
-            <button type="button" class="button secondary" onClick={() => setAsk(null)}>
+            <button type="button" class="button secondary" onClick={decline}>
               {words.keep}
             </button>
           </div>
         ) : (
-          <button type="button" class="button secondary" disabled={working} onClick={() => setAsk("remove")}>
+          <button ref={removeOpener} type="button" class="button secondary" disabled={working} onClick={() => setAsk("remove")}>
             {words.removeButton}
           </button>
         )}

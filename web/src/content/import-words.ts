@@ -94,7 +94,7 @@ export const importPage = {
   removeFile: (name: string): string => `Remove ${name}`,
   removeAll: "Remove all",
   removedAll: "Cleared. No files or links are chosen.",
-  alreadyChosen: "Already on the list, so it wasn't added again.",
+  alreadyChosen: "Already on the list, so not added twice.",
   addedFiles: (n: number, total: number): string =>
     `Added ${n} ${n === 1 ? "file" : "files"}. ${total} chosen in all.`,
   removeLink: (n: number): string => `Remove Google Doc ${n}`,
