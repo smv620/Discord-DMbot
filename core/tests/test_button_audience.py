@@ -132,6 +132,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.RemoveNoButton",
             "dm_screen.adventure_card.RemoveYesButton",
             "dm_screen.adventure_card.SeeButton",
+            "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
@@ -243,6 +244,8 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     "ui.sheets.OpenCardButton": ["dmbot.ui.name_card:show_card"],
     # The names home asks `logic.can_run` (the campaign's DMs and server managers) when it opens.
     "dm_screen.names_button.NamesButton": ["dmbot.ui.names:_campaign_for"],
+    # The menu it opens asks for the campaign's DMs on every open and on every press inside it.
+    "dm_screen.backstory_button.BackstoryButton": ["dmbot.ui.name_background:open_background"],
 }
 
 # Direct callbacks where the first reply may come before the check, each with why. A reply with a

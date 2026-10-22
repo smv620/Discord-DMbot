@@ -200,11 +200,22 @@ export interface SupportTicket {
   turnstile: string;
 }
 
-/** Which address a recap's email goes to. `payment` is the email on the payment account, `signin` the
- * one the DM signed in with, `none` no address at all. `on` is the DM's own email choice. */
+/** Whose address an email goes to: `payment` is the email on the payment account, `signin` the one the
+ * person signed in with, `none` no address at all (#2334, #2349). */
+export type EmailSource = "payment" | "signin" | "none";
+
+/** The address DMbot emails this person at (#2349). `pending` is a new address that has been sent a
+ * confirmation link and has not been confirmed yet. */
+export interface MyEmail {
+  address: string | null;
+  source: EmailSource;
+  pending: string | null;
+}
+
+/** Which address a recap's email goes to, and whether the DM's own email choice is on. */
 export interface RecapEmail {
   address: string | null;
-  source: "payment" | "signin" | "none";
+  source: EmailSource;
   on: boolean;
 }
 
@@ -760,6 +771,10 @@ export interface NameRow {
   others: string[];
   /** Only the campaign's DMs see a secret name. */
   secret: boolean;
+  /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
+  hidden?: boolean;
+  /** For a DM: which of `others` are secret names. */
+  secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
   npcId: string | null;
 }
@@ -799,9 +814,22 @@ export type NameChange =
   | { action: "kind"; kind: string }
   | { action: "add-other"; other: string }
   | { action: "remove-other"; other: string }
-  | { action: "secret"; secret: boolean }
+  // "Players don't know this one yet" on the whole entry; `secret` is one other name (#2294).
+  | { action: "hide"; hidden: boolean }
+  | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
   | { action: "remove"; confirm: true };
+
+/** What the bot says about a queued name change (#2294). */
+interface NameAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  row: NameRow | null;
+  removed?: boolean;
+  /** A store-side refusal, such as "exists" or "not_found". */
+  error?: string | null;
+}
+const NAME_POLL_MS = 1000;
+const NAME_POLLS = 60;
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -841,6 +869,8 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
+  | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
@@ -876,6 +906,8 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "in-use" // another account already uses that address (#2349)
+  | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
   | "name-exists" // another name already goes by that (#2295)
@@ -944,6 +976,17 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
+   * Missing from an API older than that. */
+  myEmail?(): Promise<MyEmail>;
+  /** Ask to change it: a confirmation link goes to the new address and nothing changes until it is
+   * opened. Not for a payment email, which is changed with the payment company. */
+  changeEmail?(address: string): Promise<{ pending: string | null }>;
+  /** Open the emailed link's code (`#email-confirm=...`): changes the email, but only for the same
+   * signed-in account that asked. A wrong, used or ended code is `bad-link`. */
+  confirmEmail?(token: string): Promise<void>;
+  /** Stop a change that is waiting for its link, so a typo can be cancelled. */
+  cancelEmailChange?(): Promise<void>;
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
@@ -1158,6 +1201,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  bad_email: "bad-email",
+  in_use: "in-use",
+  bad_target: "bad-target",
   not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
@@ -1313,6 +1359,14 @@ export function httpApi(
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
+    },
+    myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
+    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string | null },
+    confirmEmail: async (token) => {
+      await call("POST", "/me/email/confirm", { token });
+    },
+    cancelEmailChange: async () => {
+      await call("DELETE", "/me/email/pending");
     },
     sendSupport: async (ticket) => {
       const answer = (await call("POST", "/support", ticket)) as {
@@ -1607,12 +1661,36 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
-    changeName: async (ref, id, change) =>
-      (await call(
-        "POST",
-        `/me/campaigns/${encodeURIComponent(ref)}/all-names/${encodeURIComponent(id)}`,
-        change,
-      )) as NameChanged,
+    // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
+    // answer by asking about once a second, up to a minute (#2294).
+    changeName: async (ref, id, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, change)) as {
+        answer: string;
+      };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        // Once queued, the bot may still apply the change, so a failed look (a blip, a 5xx, a 404 on
+        // the answer) is not an answer: keep asking until the minute is up. Only "signed out" stops.
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call(
+            "GET",
+            `${base}/answers/${encodeURIComponent(queued.answer)}`,
+          )) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return got.removed || !got.row ? { removed: true } : got.row;
+        if (got?.state === "failed") {
+          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      // The bot may still apply it later: the page says so and reads the list again, never "nothing
+      // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
+    },
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);

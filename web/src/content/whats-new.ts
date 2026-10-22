@@ -237,9 +237,27 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "Transcripts show real names",
+    what: "On the website, a transcript now shows each person's Discord name and marks the game master as DM, instead of Speaker 1 and Speaker 2. Older sessions are filled in where DMbot can still find the person.",
+    reason: "In review (#2337); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Bring your house rules in any file",
+    what: "Upload your house rules as a PDF, Word, Excel, CSV or text file, or link a Google Doc, Google Sheet or web page, and DMbot reads them and shows what it found. It keeps only rules it can point to in your file. Nothing is saved until you press a button, and you can download what it found.",
+    reason: "In review (#2377); held until dev1 deploys it and has read a real file.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Upload your campaign's backstory from the main menu",
+    what: "Upload your campaign's backstory from the main menu: DMbot suggests its names and how they're connected, and you keep what's right.",
+    reason: "In review (#2380); held until dev1 deploys it.",
   },
   {
     date: "2026-10-22",
@@ -744,6 +762,12 @@ export const held: Held[] = [
     title: "See how your names are connected",
     what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
     reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Change the email DMbot uses",
+    what: "On your account page, see the email DMbot uses for recap emails and change it. DMbot sends a link to the new address and changes nothing until you open it. If it is the email on your payment account, you change it in Stripe instead.",
+    reason: "Waits for the email routes (#2349) to be merged and deployed. When they are live, move this up.",
   },
 ];
 

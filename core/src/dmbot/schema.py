@@ -3193,6 +3193,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     # Who plays which character in a campaign, for the transcript's labels (#1512).
     ("dmbot_web_transcript_characters", "dmbot_web_transcript_characters(BIGINT, TEXT)"),
+    ("dmbot_web_transcript_speakers", "dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
@@ -8819,6 +8820,28 @@ NAMES_LATER = f"""
     );
     """ + _isolate("name_later")
 
+BACKSTORY_LINKS = f"""
+    -- The connections a backstory reading found between names (#2380; docs/PLAN.md, "Names at
+    -- scale"), waiting for the DM to keep or refuse each. The same lifetime as the backstory's
+    -- name suggestions: until the DM answers, the campaign is deleted, or an end is refused. Two
+    -- entries, the relationship's key, a short quote of the DM's own text as evidence (never the
+    -- text) and whether the text wrote it with a secret spelling. Deleted with either entry and
+    -- with the campaign, left out of backups (a wait, not content), isolated per server.
+    CREATE TABLE backstory_links (
+        {_memory_scope()}
+        subject_id TEXT NOT NULL,
+        predicate  TEXT NOT NULL CHECK (char_length(predicate) BETWEEN 1 AND 80),
+        object_id  TEXT NOT NULL,
+        quote      TEXT NOT NULL CHECK (char_length(quote) <= 400),
+        secret     BOOLEAN NOT NULL DEFAULT false,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, subject_id, predicate, object_id),
+        CHECK (subject_id <> object_id),
+        {_entity_link("subject_id")},
+        {_entity_link("object_id")}
+    );
+    """ + _isolate("backstory_links")
+
 NAME_ANSWERS = (
     f"""
     -- The names a recap kept that DMbot did not know (#2027) and that the DM is asked to check, now
@@ -9668,6 +9691,14 @@ NAME_GATE = (
 )
 
 
+HOUSE_FILE_READ = """
+    -- The linked house-rules file read by the AI (#2377): a hash of the file's text as it was
+    -- when last read (spacing and case ignored), so the AI is asked again only when the file
+    -- changes. Never the text. A new link forgets it. Added with no default, so no row changes.
+    ALTER TABLE house_rules_file ADD COLUMN read_fingerprint TEXT
+        CHECK (read_fingerprint IS NULL OR read_fingerprint ~ '^[0-9a-f]{64}$');
+"""
+
 NAME_ACTIONS = (
     f"""
     -- What a DM did on the website's All names page (#2294), waiting for the bot. The website has
@@ -9817,6 +9848,97 @@ NAME_ACTIONS = (
     REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
 """
 )
+
+TRANSCRIPT_SPEAKER_NAMES = """
+    -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
+    -- session when the start-up fill-in found them. The website's transcripts show these instead
+    -- of "Speaker 1". A JSON object of Discord user id (text) to the name; "" means they were not
+    -- in the server (not found), so DMbot does not look again. Kept on the session row: isolated
+    -- with it, deleted with it and with the campaign. Added with an empty default, so no existing
+    -- row changes.
+    ALTER TABLE transcript_sessions ADD COLUMN speaker_names JSONB NOT NULL DEFAULT '{}';
+
+    -- dmbot_web_transcript_speakers: the session's stored names and which of its speakers are DMs
+    -- of the campaign (only people who appear in its lines, so a DM who never spoke is not named
+    -- here). Any member of the server may ask, as for the transcript's lines; NULL when the caller
+    -- is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_speakers(g BIGINT, c TEXT, sid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'names', (SELECT t.speaker_names FROM transcript_sessions t
+                      WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid),
+            'dms', COALESCE((
+                SELECT jsonb_agg(d.user_id::TEXT ORDER BY d.user_id)
+                FROM campaign_dms d
+                WHERE d.guild_id = g AND d.campaign_id = c
+                  AND d.user_id IN (SELECT l.user_id FROM transcript_lines l
+                                    WHERE l.guild_id = g AND l.session_id = sid)),
+                '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+RECAP_ADDRESS_CO_DM = """
+    -- A co-DM with no recap job of their own gets the recap email too (#2360): the address is
+    -- answered for any CURRENT DM of a campaign that has a recap job or a held recap (a recap
+    -- waiting for name answers, whose waiting email also goes to the DMs) in this server. Being the
+    -- DM a job was made for is no longer enough: someone who has since stopped being a DM of the
+    -- campaign gets nothing. Still one person's own address, still only while the recap worker's
+    -- door is open. The rows read are this server's (forced row-level security), so no other
+    -- server's DMs are seen.
+    CREATE OR REPLACE FUNCTION dmbot_recap_address(who BIGINT) RETURNS TEXT
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found TEXT;
+        before TEXT := COALESCE(current_setting('dmbot.recap_mail_lookup', true), '');
+    BEGIN
+        IF dmbot_recap_mail() IS DISTINCT FROM 'mail' THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM campaign_dms d
+            WHERE d.user_id = who
+              AND (EXISTS (SELECT 1 FROM recap_jobs j
+                           WHERE j.guild_id = d.guild_id AND j.campaign_id = d.campaign_id)
+                   OR EXISTS (SELECT 1 FROM recap_holds h
+                              WHERE h.guild_id = d.guild_id AND h.campaign_id = d.campaign_id))
+        ) THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_mail_lookup', 'on', true);
+        SELECT COALESCE(payment_email, email) INTO found FROM web_users WHERE user_id = who;
+        PERFORM set_config('dmbot.recap_mail_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_address(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
+"""
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
@@ -10014,7 +10136,11 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
+    ("0172_house_file_read", HOUSE_FILE_READ),  # the AI's last read of a linked file (#2377)
+    ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
+    ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
+    ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -10053,6 +10179,7 @@ ISOLATED_TABLES = (
     "recap_dictionaries",
     "recap_holds",
     "name_later",
+    "backstory_links",
     "memory_rule_links",
     "fightbot_players",
     "rule_sets",
