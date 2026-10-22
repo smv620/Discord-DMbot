@@ -1795,7 +1795,9 @@ names panel nor the speech-to-text hints can be a fixed list.
       revealed (no change for players today).
     - **When it changes, by itself:** an unrevealed name becomes revealed when its name or one of its other
       names is said or typed (the whole-name matcher that guards secrets). An unrevealed connection becomes
-      revealed when both its names are revealed and the session states it. The DM can also press **👁️ Reveal
+      revealed when both its names are revealed and the session states it; that step comes with the knowledge
+      map review (#2410). Until then the after-session report points the DM to connections whose names are both
+      revealed (Supervisor, 2026-10-22, #2451). The DM can also press **👁️ Reveal
       to players** on a card or in the graph.
     - **🤫 Secrets said out loud are revealed too, and the DM can recant** (owner, 2026-10-22, replacing "🤫 is
       stronger"): after the session, the **knowledge map review** lists "Secrets exposed" with **↩️ Recant**
