@@ -3884,6 +3884,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   and 20% (35% on the last try) over margins stay. Why: a recap is read or played at the start of
   the next game, which must stay quick, and a shorter recap costs less to voice, gives the checks
   less to read and leaves less room for an answer to be cut off.
+  **A draft of the wrong length is steered, not just retried** (owner, 2026-10-22, after Test L's
+  rerun failed its checks). When a draft fails only because of its length, the next try tells the writer
+  which way and by how much: "Your draft is 92 words; it must be 110 to 132. Make it longer by about 25
+  words" (or shorter). The next draft must move the right way and land in the range. If it moves the
+  wrong way, does not move, or overshoots past the other end of the range, the job stops there and
+  fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
+  same applies to the section count when the fix-up changes the sections: the length is checked again
+  after it, and steered once if it left the range.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
