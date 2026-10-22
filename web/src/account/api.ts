@@ -843,6 +843,7 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "in-use" // another account already uses that address (#2349)
   | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
@@ -918,6 +919,11 @@ export interface AccountApi {
   /** Ask to change it: a confirmation link goes to the new address and nothing changes until it is
    * opened. Not for a payment email, which is changed with the payment company. */
   changeEmail?(address: string): Promise<{ pending: string }>;
+  /** Open the emailed link's code (`#email-confirm=...`): changes the email, but only for the same
+   * signed-in account that asked. A wrong, used or ended code is `bad-link`. */
+  confirmEmail?(token: string): Promise<void>;
+  /** Stop a change that is waiting for its link, so a typo can be cancelled. */
+  cancelEmailChange?(): Promise<void>;
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
@@ -1125,6 +1131,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_subscribed: "already-subscribed",
   not_found: "not-found",
   bad_email: "bad-email",
+  in_use: "in-use",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
   exists: "name-exists",
@@ -1174,7 +1181,7 @@ export function httpApi(
   const root = base.replace(/\/+$/, "");
 
   async function call(
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: unknown,
     asFile = false,
@@ -1282,6 +1289,12 @@ export function httpApi(
     },
     myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
     changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string },
+    confirmEmail: async (token) => {
+      await call("POST", "/me/email/confirm", { token });
+    },
+    cancelEmailChange: async () => {
+      await call("DELETE", "/me/email/pending");
+    },
     sendSupport: async (ticket) => {
       const answer = (await call("POST", "/support", ticket)) as {
         reply?: unknown;

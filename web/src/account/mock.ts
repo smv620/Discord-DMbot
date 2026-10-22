@@ -1192,12 +1192,28 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return { ...myEmail };
     },
+    // The pretend link's code is "good-code": it confirms the waiting change, anything else is a bad link.
+    async confirmEmail(token) {
+      calls.push("confirmEmail");
+      await reachable();
+      signedIn();
+      if (token !== "good-code" || !myEmail.pending) throw new ApiError("bad-link");
+      myEmail.address = myEmail.pending;
+      myEmail.pending = null;
+    },
+    async cancelEmailChange() {
+      calls.push("cancelEmailChange");
+      await reachable();
+      signedIn();
+      myEmail.pending = null;
+    },
     async changeEmail(address) {
       calls.push(`changeEmail:${address}`);
       await reachable();
       signedIn();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address.trim())) throw new ApiError("bad-email");
       if (myEmail.source === "payment") throw new ApiError("not-allowed");
+      if (address.trim().toLowerCase() === "taken@example.com") throw new ApiError("in-use");
       myEmail.pending = address.trim();
       return { pending: myEmail.pending };
     },

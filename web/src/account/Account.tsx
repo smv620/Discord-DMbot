@@ -54,6 +54,12 @@ interface Props {
   siteKey?: string;
 }
 
+/** The code in `#email-confirm=...` (a change of the email DMbot uses, #2349), or null. */
+function emailConfirmToken(hash: string): string | null {
+  const found = /^#email-confirm=([\w-]{1,200})$/.exec(hash);
+  return found ? (found[1] ?? null) : null;
+}
+
 /** The code in `#email-link=...`, or null. */
 function emailLinkToken(hash: string): string | null {
   const found = /^#email-link=([\w-]{1,200})$/.exec(hash);
@@ -207,6 +213,12 @@ export default function Account({
         setState({ kind: "signed-out", notice: linkNotice });
         return;
       }
+      // A change-of-email link only works for the account that asked, and its code stays in the
+      // address while the person signs in, so say so instead of showing a plain sign-in page.
+      if (!me && emailConfirmToken(hash)) {
+        setState({ kind: "signed-out", notice: text.emailConfirmSignIn });
+        return;
+      }
       const params = new URLSearchParams(search);
       if (me && params.get("install") === "sign_in_again") {
         setState({ kind: "signed-out", notice: text.signInAgain });
@@ -293,6 +305,7 @@ export default function Account({
       body = (
         <SignedIn
           installResult={installResult(search)}
+          hash={hash}
           me={state.me}
           onDeleted={() => setState({ kind: "deleted" })}
           onSignedOutByChoice={() => setState({ kind: "signed-out", notice: null })}
@@ -420,11 +433,14 @@ function forgetInstallResult(): void {
 
 function SignedIn({
   me,
+  hash,
   installResult: installMessage,
   onDeleted,
   onSignedOutByChoice,
 }: {
   me: Me;
+  /** The page's `#...`, for the change-of-email link (#2349). */
+  hash: string;
   installResult: string | null;
   onDeleted: () => void;
   onSignedOutByChoice: () => void;
@@ -489,7 +505,7 @@ function SignedIn({
       )}
       <PlanSection me={me} />
       {me.dmbotId !== undefined && <IdSection me={me} />}
-      {api.myEmail && <EmailSection />}
+      {api.myEmail && <EmailSection hash={hash} />}
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
       <CampaignsSection me={me} />
@@ -1373,9 +1389,11 @@ function SupportOrQuestions({ me }: { me: Me }) {
 
 /** The email DMbot uses, for recap emails (#2349). A payment email is changed with the payment company
  * (its page is asked for only on a press); any other is changed here, but only after a link sent to
- * the new address is opened, so a typo or a stranger's address never takes over. Only their own
- * address is ever shown. */
-function EmailSection() {
+ * the new address is opened. The link works only in the same signed-in account that asked (the API
+ * checks it; signed out, the page asks for a sign-in first), so a typo or a stranger's address never
+ * takes over. Its code is in the address bar's `#...`, is used once and is taken out of the bar at once.
+ * Only the person's own address is ever shown. */
+function EmailSection({ hash }: { hash: string }) {
   const { api, go } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [mine, setMine] = useState<MyEmail | null>(null);
@@ -1387,16 +1405,50 @@ function EmailSection() {
   const [portalOff, setPortalOff] = useState(false);
   const box = useRef<HTMLInputElement>(null);
 
-  const read = useCallback(async () => {
+  const read = useCallback(async (): Promise<MyEmail | null> => {
     try {
-      setMine((await api.myEmail?.()) ?? null);
+      const now = (await api.myEmail?.()) ?? null;
+      setMine(now);
       setLoadFailed(false);
+      return now;
     } catch (error) {
+      // An API that doesn't have the route yet (the site deploys on its own): no section, no alarm.
+      if (error instanceof ApiError && error.kind === "not-found") {
+        setMine(null);
+        setLoadFailed(false);
+        return null;
+      }
       // A 401 already ends the session for the whole page (SIGNED_OUT_EVENT); this only says it did not load.
       setLoadFailed(true);
+      return null;
     }
   }, [api]);
-  useEffect(() => void read(), [read]);
+  // The emailed link, opened once: the code leaves the address bar before it is sent.
+  const confirmed = useRef(false);
+  const [result, setResult] = useState<string | null>(null);
+  useEffect(() => {
+    const token = emailConfirmToken(hash);
+    if (token && api.confirmEmail && !confirmed.current) {
+      confirmed.current = true;
+      forgetEmailLink();
+      void (async () => {
+        let worked = false;
+        await run(
+          async () => {
+            await api.confirmEmail?.(token);
+            worked = true;
+          },
+          (error) => (error.kind === "bad-link" ? text.emailConfirmBad : null),
+        );
+        const now = await read();
+        if (worked) setResult(now?.address ? text.emailConfirmed(now.address) : null);
+      })();
+      return;
+    }
+    void read();
+    // `run` is stable per section; only the page and its address start this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read, hash]);
 
   if (loadFailed && !mine)
     return (
@@ -1448,6 +1500,29 @@ function EmailSection() {
       {mine.pending && (
         <p class="small" role="status">
           {text.emailPending(mine.pending, mine.address)}
+        </p>
+      )}
+      {mine.pending && !editing && api.cancelEmailChange && (
+        <div class="row">
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            onClick={() =>
+              void run(async () => {
+                await api.cancelEmailChange?.();
+                setSent(false);
+                setResult(text.emailCancelled);
+                await read();
+              })
+            }
+          >
+            {text.emailCancel}
+          </ActionButton>
+        </div>
+      )}
+      {result && (
+        <p class="ok" role="status">
+          {result}
         </p>
       )}
       {sent && !mine.pending && !editing && (
