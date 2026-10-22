@@ -30,6 +30,7 @@ from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
+    BELIEFS,
     CHANGED_SINCE,
     CORRECTIONS,
     DEPENDENTS,
@@ -3720,10 +3721,12 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name <> %s",
                 (*w.ids, batch, RELATIONS.name),
             )
-            # (new words can raise a check's flag in the same change: it goes back with them)
+            # (new words can raise a check's flag in the same change: it goes back with them, and
+            # so do the beliefs written for the connections it added or ended, #2409)
             others = await cur.fetchall()
             if not rows or any(
-                o["table_name"] != FLAGS.name or o["op"] != "insert" for o in others
+                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                for o in others
             ):
                 raise TooLateToUndo(self._too_late())
             ended = [
