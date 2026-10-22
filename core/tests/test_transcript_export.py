@@ -80,6 +80,9 @@ class Render(unittest.TestCase):
             3: "Bob, \u1d05\u1d0d",  # small-capital letters
             4: "Bob, DM_",
             5: "Bob \u3001DM",
+            6: "Bob\u02cf DM",  # a modifier letter
+            7: "Bob\u0375 DM",  # the Greek numeral sign
+            8: "Bob\u00b8 DM",  # a cedilla (which folds to a combining one)
         }
         lines = [line(i, user, "hi") for i, user in enumerate(names)]
         text = export.render("X", session(), lines, names, version=export.AS_HEARD)
@@ -87,6 +90,8 @@ class Render(unittest.TestCase):
         self.assertNotIn(", DM", body)
         self.assertNotIn("\uff0c", body)
         self.assertNotIn("\u201a", body)
+        for gone in ("\u02cf", "\u0375", "\u00b8", "\u0327"):
+            self.assertNotIn(gone, body)
         for user, who in ((MIA, "Bob DM"), (DEE, "Bob DM")):  # (a real DM is the only mark)
             real = export.render("X", session(), [line(1, user, "hi")], names, dms={user})
             self.assertIn(f"({who}, DM)", real)
@@ -99,6 +104,15 @@ class Render(unittest.TestCase):
         self.assertIn("(Sam 2): hi", text)  # brackets in a chosen name are gone, not kept
         raw = export.render("X", session(), [line(1, 1, "hi")], {1: "Alice (2)"})
         self.assertIn("(Alice 2): hi", raw)  # a name that was not made by distinct_names
+
+    def test_a_bracket_of_any_script_cannot_stand_in_for_the_duplicate_mark(self) -> None:
+        looks = ["Sam \u27ee2\u27ef", "Sam\u2768 2\u2769", "Sam \u27e82\u27e9", "Sam \u30102\u3011"]
+        names = export.distinct_names({1: "Sam", **{n + 2: raw for n, raw in enumerate(looks)}})
+        for label in names.values():
+            self.assertNotRegex(label, r"[\u27ee\u27ef\u2768\u2769\u27e8\u27e9\u3010\u3011]")
+        # five people, five different labels, and only the real mark is a bracket
+        self.assertEqual(len({v.casefold() for v in names.values()}), 5)
+        self.assertEqual(sum("(" in v for v in names.values()), 3)  # "Sam 2 (2)" .. "Sam 2 (4)"
 
     def test_the_order_of_first_speaking_is_one_rule_for_every_version(self) -> None:
         lines = [

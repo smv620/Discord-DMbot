@@ -83,8 +83,19 @@ class Label(str):
 
 def _is_comma(char: str) -> bool:
     # every comma there is (full-width, small, Arabic…) and the look-alikes that read as one: the
-    # low quotation marks U+201A and U+201E, and the ideographic comma U+3001
-    return "COMMA" in unicodedata.name(char, "") or char in "\u201a\u201e\u3001"
+    # low quotation marks U+201A and U+201E, the ideographic comma U+3001, the low accent U+02CF,
+    # the Greek numeral sign U+0375 and the cedilla (U+00B8, which folds to a combining U+0327)
+    return (
+        "COMMA" in unicodedata.name(char, "")
+        or char in "\u201a\u201e\u3001\u02cf\u0375\u00b8\u0327"
+    )
+
+
+def _is_bracket(char: str) -> bool:
+    # every opening and closing bracket of any script (Unicode Ps and Pe), not only ()[]{}: the
+    # medium and flattened ornament parentheses and the angle brackets read as the "(2)" that tells
+    # two people with one name apart
+    return unicodedata.category(char) in ("Ps", "Pe")
 
 
 def person_name(raw: str | None) -> str:
@@ -93,7 +104,7 @@ def person_name(raw: str | None) -> str:
     one name apart) and no comma of any look (so only the DM path ever writes ", DM"). Compatible
     forms are folded first, so a full-width look-alike goes the same way."""
     name = unicodedata.normalize("NFKC", clean_name(raw))
-    name = "".join(" " if _is_comma(c) else c for c in name).translate(_BRACKETS)
+    name = "".join(" " if _is_comma(c) else c for c in name if not _is_bracket(c))
     return " ".join(name.split()) or UNKNOWN_SPEAKER
 
 
