@@ -33,7 +33,7 @@ KIND_LABELS: dict[str, str] = {
     "character": "Characters",
     "creature": "Creatures",
     "clue": "Clues",
-    "people": "Peoples",
+    "people": "Folk and peoples",  # (not "People": that is the NPCs)
     "thread": "Story threads",
     "quest": "Quests",
     "mystery": "Mysteries",

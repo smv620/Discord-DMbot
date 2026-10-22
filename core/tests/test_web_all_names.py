@@ -6,7 +6,10 @@ Invented names throughout."""
 from __future__ import annotations
 
 import time
+import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 
@@ -402,7 +405,7 @@ class TheRoute(Listing):
         past = await self.client.get(url, params={"page": 4})
         self.assertEqual((past.status_code, past.json()), (400, {"error": "bad_page"}))
         self.assertEqual((await self.client.get(url, params={"sort": "x"})).status_code, 400)
-        for bad in ("abc", "1.5", "", "0", "-2", "99999999999999999999"):
+        for bad in ("abc", "1.5", "", "0", "-2", "99999999999999999999", "²", "--1", "9" * 5000):
             got = await self.client.get(url, params={"page": bad})
             self.assertEqual((got.status_code, got.json()), (400, {"error": "bad_page"}), bad)
         other = await self.client.get(f"/me/campaigns/{self.g}.{'0' * 32}/all-names")
@@ -412,3 +415,57 @@ class TheRoute(Listing):
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get(url)).status_code, 401)
+
+
+class TheRestore(unittest.IsolatedAsyncioTestCase):
+    """A big restore refreshes the planner's statistics, a failed one does not (#2376)."""
+
+    def bot(self, *, fails: bool = False) -> Any:
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        @asynccontextmanager
+        async def lock() -> Any:
+            yield
+
+        campaign = SimpleNamespace(id="c1", name="Frostmaiden")
+        store = SimpleNamespace(
+            get=AsyncMock(return_value=None),
+            import_backup=AsyncMock(
+                side_effect=RuntimeError("bad copy") if fails else None, return_value=campaign
+            ),
+        )
+        return SimpleNamespace(
+            campaigns=store,
+            memory=SimpleNamespace(analyze=AsyncMock()),
+            restore_gate=AsyncMock(return_value=None),
+            session_lock=lambda guild_id: lock(),
+            is_campaign_playing=AsyncMock(return_value=False),
+            _rules_archive_changed=MagicMock(),
+        )
+
+    def interaction(self, bot: Any) -> Any:
+        from unittest.mock import MagicMock
+
+        it = MagicMock()
+        it.client = bot
+        it.guild = SimpleNamespace(id=7)
+        it.user = SimpleNamespace(id=9)
+        it.response.is_done = MagicMock(return_value=False)
+        it.response.edit_message = AsyncMock()
+        it.edit_original_response = AsyncMock()
+        return it
+
+    async def test_a_successful_restore_refreshes_the_statistics_once(self) -> None:
+        from dmbot.ui.dmbot_commands import RestoreChoice
+
+        bot = self.bot()
+        await RestoreChoice({}, "Frostmaiden", []).restore(self.interaction(bot), None)
+        bot.memory.analyze.assert_awaited_once_with(7)
+
+    async def test_a_failed_restore_does_not(self) -> None:
+        from dmbot.ui.dmbot_commands import RestoreChoice
+
+        bot = self.bot(fails=True)
+        await RestoreChoice({}, "Frostmaiden", []).restore(self.interaction(bot), None)
+        bot.memory.analyze.assert_not_awaited()

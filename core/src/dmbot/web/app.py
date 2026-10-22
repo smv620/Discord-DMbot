@@ -18,6 +18,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
@@ -948,7 +949,9 @@ def create_app(
         FastAPI's own 422 (#2376)."""
         session, _token = signed
         try:
-            number = int(page) if page.strip().lstrip("-").isdigit() else 0  # (0 is refused)
+            # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
+            # pages, and must not reach int() (which would raise a 500).
+            number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
             return await all_names.read_page(
                 db, session, ref, q=q, kind=kind, sort=sort, page=number
             )
