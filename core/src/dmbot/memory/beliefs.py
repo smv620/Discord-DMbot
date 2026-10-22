@@ -27,6 +27,7 @@ from dmbot.memory.models import (
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
     KNOWN,
+    MAGICALLY_VERIFIED,
     PARTY,
     REVEALED_FACT,
     SECRET_PLOT,
@@ -45,7 +46,7 @@ def belief_of(row: dict[str, Any]) -> Belief:
     return Belief(
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
-        row["recorded_at"],
+        row["recorded_at"], bool(row.get("pinned", False)),
     )  # fmt: skip
 
 
@@ -93,8 +94,10 @@ async def _add(
     status: str,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
+    pinned: bool | None = None,
 ) -> dict[str, Any]:
-    """The checked insert behind `believe_in` and `follow`."""
+    """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
+    keeps what the pair's last belief said, so a new belief never silently unpins."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
     if status not in BELIEF_STATUSES:
@@ -121,8 +124,44 @@ async def _add(
             "evidence_ids": list(evidence),
             "seq": seq,
             "recorded_at": w.now,
+            "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
         },
     )
+
+
+async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
+    """The DM's 📌 on a connection (#2447): The truth believes it at 1.0, held as the DM's word.
+    A new belief row, so the change log has it and Undo takes it back. Only the DM, and only a
+    confirmed connection. Unpinning clears the flag and leaves the belief as it is."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    relation = await w.get(RELATIONS, relation_id)
+    if relation is None or relation["status"] != CONFIRMED:
+        raise MemoryRuleError(NOT_THERE)
+    ids = await perspective_ids(w)
+    last = await _newest(w, [relation_id])
+    truth = last.get((relation_id, ids[TRUTH]))
+    held = bool(relation["secret"] or relation["unrevealed"])
+    if truth is None:
+        status, session_at, evidence = (SECRET_PLOT if held else REVEALED_FACT), None, []
+    else:
+        status, session_at, evidence = truth["status"], truth["session_at"], truth["evidence_ids"]
+    if pinned:
+        if truth is not None and bool(truth["pinned"]):
+            return belief_of(truth)  # already pinned: nothing to write
+        if status not in (SECRET_PLOT, REVEALED_FACT, MAGICALLY_VERIFIED):
+            status = SECRET_PLOT if held else REVEALED_FACT  # a doubt or a lie is not 100% truth
+        row = await _add(
+            w, ids[TRUTH], relation_id, KNOWN, status, evidence, session_at, pinned=True
+        )
+    else:
+        if truth is None or not bool(truth["pinned"]):
+            raise MemoryRuleError("That connection isn't pinned.")
+        row = await _add(
+            w, ids[TRUTH], relation_id, float(truth["confidence"]), status, evidence,
+            session_at, pinned=False,
+        )  # fmt: skip
+    return belief_of(row)
 
 
 async def believe_in(
@@ -276,7 +315,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
             continue  # (the flag decides what the players know; see `follow`)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
-            list(belief["evidence_ids"]), belief["session_at"],
+            list(belief["evidence_ids"]), belief["session_at"], pinned=bool(belief["pinned"]),
         )  # fmt: skip
 
 

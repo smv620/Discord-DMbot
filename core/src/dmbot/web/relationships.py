@@ -59,6 +59,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 "words": link_words(str(row["predicate"]), str(row["detail"] or "")),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
+                "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
                 "direction": direction,
                 "at": int(row["at"]),
             }
@@ -79,6 +80,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "words": x["words"],
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
+                        "pinned": x["pinned"] if can_edit else False,
                         "direction": x["direction"],
                     }
                     for x in links

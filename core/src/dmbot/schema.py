@@ -10666,6 +10666,35 @@ RECAP_HELD_NAMES = r"""
     REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
+# The DM's 📌 100% truth (#2447): a flag on The truth's belief in a connection (a new belief row
+# each time it is set or cleared, so the change log and Undo work as for any belief), and the flag
+# a connection waiting from a campaign-lore upload carries until the DM keeps it. Both columns have
+# defaults, so no row changes. The relationship web's door tells a DM, and only a DM seeing
+# everything, which connections are pinned.
+_PINNED_LINK = (
+    "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,\n"
+    "                    'revealed', " + _PARTY_KNOWS_R + ")"
+)
+_door_pinned = UNREVEALED_CONNECTIONS[
+    UNREVEALED_CONNECTIONS.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_pinned.count(_PINNED_LINK) == 1
+PINNED_TRUTH = """
+    ALTER TABLE memory_beliefs ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE backstory_links ADD COLUMN truth BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_pinned.replace(
+    _PINNED_LINK,
+    _PINNED_LINK[:-1]
+    + ",\n                    'pinned', sees_all AND EXISTS (SELECT 1 FROM memory_beliefs tb"
+    " JOIN memory_perspectives tp ON tp.guild_id = tb.guild_id"
+    " AND tp.campaign_id = tb.campaign_id AND tp.id = tb.perspective_id"
+    " WHERE tp.kind = 'truth' AND tb.guild_id = r.guild_id AND tb.campaign_id = r.campaign_id"
+    " AND tb.relation_id = r.id AND tb.pinned AND tb.seq = (SELECT max(x.seq)"
+    " FROM memory_beliefs x WHERE x.guild_id = tb.guild_id AND x.campaign_id = tb.campaign_id"
+    " AND x.perspective_id = tb.perspective_id AND x.relation_id = tb.relation_id)))",
+    1,
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10875,6 +10904,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
