@@ -45,6 +45,15 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, path]);
 
+  // The campaign's name is the page's heading and title, so a screen reader and the browser's tab say
+  // which campaign this is (the page's own heading reads "Campaign" until it is known).
+  useEffect(() => {
+    if (!page) return;
+    const h1 = document.querySelector(".account h1");
+    if (h1) h1.textContent = page.name;
+    document.title = `${page.name} · DMbot`;
+  }, [page]);
+
   const back = (
     <p>
       <a href="/account#campaigns">{words.backToCampaigns}</a>
@@ -87,21 +96,20 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   const e = encodeURIComponent(ref);
   const dm: [string, string, string][] = [];
   if (RECAPS_LIVE) dm.push([`/account/recaps?campaign=${e}`, words.recaps, words.recapsNote]);
-  dm.push([`/account/house-rules/${e}`, words.houseRules, words.houseRulesNote]);
-  dm.push([`/account/homebrew/${e}`, words.homebrew, words.homebrewNote]);
   dm.push([`/account/names/${e}`, words.names, words.namesNote]);
   if (IMPORT_LIVE || page.importsOn) dm.push([`/account/import/${e}`, words.importSessions, words.importNote]);
+  // House rules and homebrew are read by anyone in the server (only changing them is the DM's, in
+  // Discord), so they are for the whole table.
   const table: [string, string, string][] = [
+    [`/account/house-rules/${e}`, words.houseRules, words.houseRulesNote],
+    [`/account/homebrew/${e}`, words.homebrew, words.homebrewNote],
     [`/account/transcripts/${e}`, words.transcripts, words.transcriptsNote],
     [`/account/web/${e}`, words.story, words.storyNote],
   ];
   return (
     <div class="stack campaign-page">
       {back}
-      <section class="stack" aria-labelledby="campaign-name">
-        <h2 id="campaign-name">{page.name}</h2>
-        <p class="muted">{words.lead(page.serverName)}</p>
-      </section>
+      <p class="muted">{words.lead(page.serverName)}</p>
       {isDm && <LinkList heading={words.dmHeading} id="campaign-dm" links={dm} />}
       <LinkList heading={words.tableHeading} id="campaign-table" links={table} />
     </div>

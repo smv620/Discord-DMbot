@@ -5,14 +5,24 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/content/import-words", async (original) => ({
+  ...(await original<typeof import("../src/content/import-words")>()),
+  IMPORT_LIVE: true,
+}));
+
 import Account from "../src/account/Account";
 import { ApiError, httpApi } from "../src/account/api";
 import CampaignPageView, { campaignRefFromPath } from "../src/account/CampaignPage";
 import { campaignHref } from "../src/account/campaignLinks";
 import { mockApi } from "../src/account/mock";
+import Homebrew from "../src/account/Homebrew";
+import HouseRules from "../src/account/HouseRules";
+import Import from "../src/account/Import";
 import Names from "../src/account/Names";
 import Npc from "../src/account/Npc";
 import Recaps, { campaignFromSearch } from "../src/account/Recaps";
+import Transcripts from "../src/account/Transcripts";
+import Web from "../src/account/Web";
 import { campaignPage as w } from "../src/content/campaign-page";
 
 afterEach(cleanup);
@@ -32,16 +42,24 @@ describe("the address", () => {
 
 describe("the page", () => {
   it("gives a DM the DM's tools and the table's pages, each opened on this campaign", async () => {
-    render(<CampaignPageView api={mockApi("table")} path={DM} />);
-    await screen.findByRole("heading", { name: "The Brynwater Crossing" });
+    render(
+      <div class="account">
+        <h1>Campaign</h1>
+        <CampaignPageView api={mockApi("table")} path={DM} />
+      </div>,
+    );
+    await screen.findByRole("heading", { name: w.dmHeading });
+    // The campaign's name is the page's heading and title, so the name is what a screen reader hears.
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("The Brynwater Crossing"));
+    expect(document.title).toBe("The Brynwater Crossing · DMbot");
     expect(screen.getByRole("link", { name: w.backToCampaigns }).getAttribute("href")).toBe("/account#campaigns");
     expect(hrefs()).toEqual(
       expect.arrayContaining([
         "/account/recaps?campaign=100.cmp1",
-        "/account/house-rules/100.cmp1",
-        "/account/homebrew/100.cmp1",
         "/account/names/100.cmp1",
         "/account/import/100.cmp1", // an import-enabled test server
+        "/account/house-rules/100.cmp1", // read by the whole table
+        "/account/homebrew/100.cmp1",
         "/account/transcripts/100.cmp1",
         "/account/web/100.cmp1",
       ]),
@@ -68,8 +86,15 @@ describe("the page", () => {
     await screen.findByRole("heading", { name: w.tableHeading });
     expect(screen.queryByRole("heading", { name: w.dmHeading })).toBeNull();
     const all = hrefs();
-    expect(all).toEqual(expect.arrayContaining(["/account/transcripts/100.cmp1.cp-player", "/account/web/100.cmp1.cp-player"]));
-    for (const dmPage of ["recaps", "house-rules", "homebrew", "names", "import"]) {
+    expect(all).toEqual(
+      expect.arrayContaining([
+        "/account/house-rules/100.cmp1.cp-player",
+        "/account/homebrew/100.cmp1.cp-player",
+        "/account/transcripts/100.cmp1.cp-player",
+        "/account/web/100.cmp1.cp-player",
+      ]),
+    );
+    for (const dmPage of ["recaps", "names", "import"]) {
       expect(all.some((h) => h?.startsWith(`/account/${dmPage}`))).toBe(false);
     }
   });
@@ -165,6 +190,42 @@ describe("the recap list", () => {
     render(<Recaps api={mockApi("table")} path="/account/recaps" />);
     await waitFor(() => expect(screen.getAllByRole("link", { name: /Open|open/ }).length).toBeGreaterThan(1));
     expect(screen.queryByText(w.onlyThisCampaign, { exact: false })).toBeNull();
+  });
+});
+
+describe("the way back on every per-campaign page", () => {
+  const back = (name?: string) => screen.findByRole("link", { name: name ? w.backTo(name) : w.backToThis });
+  const REFC = "200000000000000001.cmp1";
+  const campaign = `/account/campaigns/${REFC}`;
+
+  it("is on the house rules, named", async () => {
+    render(<HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />);
+    const link = await screen.findAllByRole("link", { name: /^← / });
+    expect(link[0]!.getAttribute("href")).toBe(campaign);
+  });
+
+  it("is on the homebrew, named", async () => {
+    render(<Homebrew api={mockApi("table")} path={`/account/homebrew/${REFC}`} />);
+    const link = await screen.findAllByRole("link", { name: /^← / });
+    expect(link[0]!.getAttribute("href")).toBe(campaign);
+  });
+
+  it("is on a campaign's transcript list and on a single transcript", async () => {
+    render(<Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />);
+    expect((await screen.findAllByRole("link", { name: /^← / }))[0]!.getAttribute("href")).toBe(campaign);
+    cleanup();
+    render(<Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />);
+    expect((await back()).getAttribute("href")).toBe(campaign);
+  });
+
+  it("is on the story map", async () => {
+    render(<Web api={mockApi("table")} path="/account/web/100.cmp1" />);
+    expect((await back()).getAttribute("href")).toBe("/account/campaigns/100.cmp1");
+  });
+
+  it("is on the import page", async () => {
+    render(<Import api={mockApi("table")} path="/account/import/100.cmp1" />);
+    expect((await back()).getAttribute("href")).toBe("/account/campaigns/100.cmp1");
   });
 });
 

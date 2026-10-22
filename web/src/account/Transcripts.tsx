@@ -228,6 +228,7 @@ function Reader({
           {text.allSessions}
         </a>
       </p>
+      <BackToCampaign campaignRef={campaignRef} />
       <h2>{text.sessionTitle(number)}</h2>
       {load.kind === "ready" && load.value.transcriptsDeletedAt ? (
         <p class="panel" role="status">
