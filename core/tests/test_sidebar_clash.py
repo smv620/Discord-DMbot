@@ -174,6 +174,23 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         record.assert_awaited_once()  # a second press changes nothing
         retry.assert_awaited_once()
 
+    async def test_a_retry_that_fails_says_so_instead_of_staying_on_asking_again(self) -> None:
+        view, _record, retry = self.view()
+        retry.side_effect = RuntimeError("boom")
+        it = self.press(DM)
+        it.edit_original_response = AsyncMock()
+        await view.children[0].callback(it)  # type: ignore[attr-defined]
+        self.assertIn("couldn't answer", it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_unanswered_buttons_are_taken_away_when_they_time_out(self) -> None:
+        view, record, _retry = self.view()
+        view._message = view.message = MagicMock()  # type: ignore[assignment]
+        view.message.edit = AsyncMock()  # type: ignore[union-attr]
+        await view.on_timeout()
+        self.assertIn("neither rule was used", view.message.edit.await_args.kwargs["content"])  # type: ignore[union-attr]
+        self.assertIsNone(view.message.edit.await_args.kwargs["view"])  # type: ignore[union-attr]
+        record.assert_not_awaited()
+
     async def test_a_choice_that_could_not_be_saved_does_not_ask_again(self) -> None:
         view, record, retry = self.view()
         record.return_value = False

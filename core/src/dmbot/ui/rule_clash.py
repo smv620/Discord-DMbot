@@ -7,6 +7,7 @@ campaign's DMs can press. DMbot never picks: until a DM does, neither rule is us
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Collection
 from typing import Any
@@ -19,8 +20,10 @@ from dmbot.sidebar.rule_clash import ONLY_DM, Side
 log = logging.getLogger(__name__)
 
 TIMEOUT_S = 15 * 60  # the question is a live table's; later, the DM asks again
-NOTED = "Noted: {label} applies. Asking again…"
-NOT_SAVED = "I couldn't save that choice. Ask the question again to choose."
+NOTED = "Noted: {label} applies from now on. Asking again…"
+TIMED_OUT = "No choice made, so neither rule was used. Ask again to choose."
+RETRY_FAILED = "Choice saved, but I couldn't answer. Ask the question again."
+NOT_SAVED = "Couldn't save your choice, so neither rule was used. Ask again to choose."
 Record = Callable[[RuleRef, RuleRef, int], Awaitable[bool]]
 Retry = Callable[[], Awaitable[None]]
 
@@ -45,6 +48,13 @@ class ClashView(discord.ui.View):
         self.add_item(_Pick(self, first, second))
         self.add_item(_Pick(self, second, first))
 
+    async def on_timeout(self) -> None:
+        """Buttons that do nothing any more are taken away, so none looks live and fails."""
+        message = self.message
+        if message is not None and not self._answered:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=TIMED_OUT, view=None)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id in self._dm_ids:  # on every press
             return True
@@ -66,4 +76,9 @@ class ClashView(discord.ui.View):
             await interaction.response.edit_message(content=NOT_SAVED, view=None)
             return
         await interaction.response.edit_message(content=NOTED.format(label=winner.label), view=None)
-        await self._retry()
+        try:
+            await self._retry()
+        except Exception:
+            log.exception("The sidebar couldn't answer again after a rule choice")
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(content=RETRY_FAILED, view=None)

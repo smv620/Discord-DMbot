@@ -54,7 +54,7 @@ class Side:
 
 
 def _side(rule: HouseRule) -> Side:
-    words = rule.rule + (f" (instead of: {rule.supersedes})" if rule.supersedes else "")
+    words = rule.rule + (f" (replaces: {rule.supersedes})" if rule.supersedes else "")
     words = " ".join(words.split())
     if len(words) > WORDS_MAX:
         words = words[: WORDS_MAX - 1].rstrip() + "…"
@@ -90,11 +90,14 @@ answer from either. Put the labels of those two rules (like "House rule 3, Share
 one more line, CONFLICT:, and leave ANSWER as the single word "clash". Otherwise write \
 CONFLICT: none."""
 
-ASK = "⚖️ **Which one applies?** Two of your house rules say different things about this."
-ONLY_DM = "Only a DM of this campaign can choose."
+ASK = (
+    "⚖️ **Which one applies?** Your house rules disagree about this. "
+    "Your choice is remembered for these two rules."
+)
+ONLY_DM = "Only this campaign's DM can choose."
 NOTE = (
-    "A table question needed {a} and {b}, which disagree. Ask it yourself, and choose which "
-    "one applies."
+    "A player's question needed {a} and {b}, which disagree, so I told the table it's one for "
+    "you. Ask it yourself to choose which one applies."
 )
 
 
