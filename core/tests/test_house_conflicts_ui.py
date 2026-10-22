@@ -156,13 +156,60 @@ class Disagreeing(UITest):
         await asyncio.gather(button.callback(self.it()), button.callback(self.it()))
         self.assertEqual([c[0] for c in self.store.calls], ["edit"])
 
-    async def test_an_unanswered_question_says_so_when_it_times_out(self) -> None:
+    async def test_a_timeout_edits_the_question_not_the_message_the_flow_began_on(self) -> None:
         _, it = await self.add()
         _, view = self.question(it)
-        self.assertIsNotNone(view.origin)  # the question's own message, to be edited on timeout
+        # the question is a follow-up message (the press was answered with a deferred update, so
+        # the interaction's own message is the rules list, which must keep its buttons)
+        self.assertIs(view.question, it.followup.send.return_value)
+        view.question = SimpleNamespace(edit=AsyncMock())
         await view.on_timeout()
-        view.origin.edit_original_response.assert_awaited()
+        view.question.edit.assert_awaited_once()
+        self.assertIn("timed out", view.question.edit.await_args.kwargs["content"])
+        self.assertIsNone(view.question.edit.await_args.kwargs["view"])
+        it.edit_original_response.assert_not_awaited()
         self.assertEqual([c[0] for c in self.store.calls], [])
+
+    def slow(self, seconds: float = 0.05) -> None:
+        """Replace takes a moment, as a real database write does."""
+        real = self.store.edit
+
+        async def edit(*args: Any, **kwargs: Any) -> Any:
+            await asyncio.sleep(seconds)
+            return await real(*args, **kwargs)
+
+        self.store.edit = edit  # type: ignore[method-assign]
+
+    async def test_two_slow_replace_presses_edit_once(self) -> None:
+        self.slow()
+        _, it = await self.add()
+        _, view = self.question(it)
+        button = self.press(view, "Replace rule 2")
+        await asyncio.gather(button.callback(self.it()), button.callback(self.it()))
+        self.assertEqual([c[0] for c in self.store.calls], ["edit"])
+
+    async def test_cancel_during_a_slow_replace_does_not_say_nothing_was_saved(self) -> None:
+        self.slow()
+        _, it = await self.add()
+        _, view = self.question(it)
+        cancel = self.it()
+        await asyncio.gather(
+            self.press(view, "Replace rule 2").callback(self.it()),
+            self.press(view, "Cancel").callback(cancel),
+        )
+        self.assertEqual([c[0] for c in self.store.calls], ["edit"])  # the replace happened
+        said = str(cancel.edit_original_response.await_args_list) + str(cancel.response.sent)
+        self.assertNotIn("Cancelled", said + str(cancel.followup.send.await_args_list))
+
+    async def test_cancel_first_then_a_slow_replace_saves_nothing(self) -> None:
+        self.slow()
+        _, it = await self.add()
+        _, view = self.question(it)
+        await asyncio.gather(
+            self.press(view, "Cancel").callback(self.it()),
+            self.press(view, "Replace rule 2").callback(self.it()),
+        )
+        self.assertEqual([c[0] for c in self.store.calls], [])  # the question was answered once
 
     async def test_a_rule_that_agrees_is_just_saved(self) -> None:
         self.bot.rule_conflict_ai = says()

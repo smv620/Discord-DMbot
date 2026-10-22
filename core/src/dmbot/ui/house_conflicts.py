@@ -21,11 +21,12 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import conflicts
 from dmbot.rules.conflicts import Checked, Existing
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.wins import RuleRef
-from dmbot.ui.dmbot_commands import _Button, _Menu, _tell
+from dmbot.ui.dmbot_commands import TIMED_OUT, _Button, _Menu, _tell
 
 if TYPE_CHECKING:
     from dmbot.rules.wins import WinsStore
@@ -122,6 +123,7 @@ class DisagreeView(_Menu):
         self._save, self._saved_note, self._replace = save, saved_note, replace
         self._done, self._cancelled = done, cancelled
         self.at = 0
+        self.question: Any = None  # the follow-up message that holds the question, if any
         self._busy = asyncio.Lock()  # two presses at once must not save the rule twice
         self.remembered = True
         self.saved: HouseRule | None = None
@@ -190,6 +192,10 @@ class DisagreeView(_Menu):
     async def on_timeout(self) -> None:
         if self.saved is None and self._cancelled is not None:
             self._cancelled()
+        if self.question is not None:  # say so on the question itself, nothing else
+            with contextlib.suppress(discord.HTTPException):
+                await self.question.edit(content=TIMED_OUT, view=None)
+            return
         await super().on_timeout()
 
     @property
@@ -271,6 +277,12 @@ class DisagreeView(_Menu):
         )
 
     async def _on_cancel(self, interaction: discord.Interaction) -> None:
+        async with self._busy:  # not while a save or a replace is in progress
+            await self._on_cancel_once(interaction)
+
+    async def _on_cancel_once(self, interaction: discord.Interaction) -> None:
+        if self.stopped:
+            return  # already answered: a Cancel that waited behind a Replace
         if self.saved is None:
             if self._cancelled is not None:
                 self._cancelled()
@@ -312,5 +324,15 @@ async def ask(
         cancelled=cancelled,
     )
     with contextlib.suppress(discord.HTTPException):
-        await _tell(interaction, view.prompt(), view=view)
-    view.origin = interaction  # an unanswered question says so when it times out (#2314)
+        if interaction.response.is_done():
+            # The press was answered with a deferred update already, so `origin` is the message
+            # the flow began on (the rules list, the DM-screen offer): the question is a new
+            # message, kept so that a timeout edits it and not that one (#2314).
+            view.question = await interaction.followup.send(
+                view.prompt(), view=view, ephemeral=True, allowed_mentions=NO_PINGS, wait=True
+            )
+        else:
+            await interaction.response.send_message(
+                view.prompt(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+            view.origin = interaction  # (the question is the interaction's own reply)
