@@ -112,8 +112,8 @@ NOTHING_CHANGED = (
 CARD_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 SHOWN = 3  # per section, then "… and N more"
 # A state, not an action: it is a setting that stays until pressed again.
-SECRET_OFF = "🤫 New one public"
-SECRET_ON = "🤫 New one secret"
+SECRET_OFF = "🤫 Next one is public"
+SECRET_ON = "🤫 Next one is secret"
 SECRET_FORCED = "You found it by a secret name, so this one is secret too."
 SECRET_DENIED_PRESS = "Only the campaign's DM can keep a connection secret."
 SECRET_DENIED_SAVE = (

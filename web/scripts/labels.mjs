@@ -116,8 +116,8 @@ export const hiddenBotLabels = [
   { label: "Off", file: "dm_screen/story_mode.py" },
   { label: "Watch the story", file: "dm_screen/story_mode.py" },
   { label: "Helped them", file: "memory/standing.py" },
-  { label: "New one public", file: "ui/name_card.py" },
-  { label: "New one secret", file: "ui/name_card.py" },
+  { label: "Next one is public", file: "ui/name_card.py" },
+  { label: "Next one is secret", file: "ui/name_card.py" },
   { label: "Due soon", file: "memory/threads.py" },
   { label: "Post to the table", file: "ui/recap_dm.py" },
 ];

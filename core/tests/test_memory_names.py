@@ -1056,6 +1056,24 @@ class NameCards(NamesTest):
             order = [o.value for o in options]
             self.assertEqual(order[0], first, who)  # (Corin sorts before Vessa, A to Z)
 
+    async def test_secret_connections_stay_out_of_every_viewer_but_a_dm(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.ui import name_card
+
+        _, vessa = await self.two_names()
+        await name_card.connect(
+            self.it(), self.campaign.id, self.bell.id, "kin_of", vessa.id, secret=True
+        )
+        full = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        self.assertTrue(full.secret_neighbours)  # the DM's view has the secret link
+        self.assertEqual(full.for_viewer(True).secret_neighbours, full.secret_neighbours)
+        # Nothing here is DM-only, so this is the early-return path that must still blank it.
+        self.assertFalse(full.hidden)
+        self.assertEqual(full.for_viewer(False).secret_neighbours, {})
+        self.assertNotIn(
+            vessa.id, full.for_viewer(False).confirmed_neighbours.get(self.bell.id, ())
+        )
+
     async def test_the_dropdown_pages_at_25_names(self) -> None:
         from dmbot.ui import name_dropdown
 
