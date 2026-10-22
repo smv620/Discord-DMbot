@@ -259,6 +259,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import Tally
+from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
@@ -355,7 +356,7 @@ from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Re
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
-from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer
+from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer, TranscriptSession, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -454,10 +455,12 @@ from dmbot.ui.transcripts import (
     download_view,
     ended_no_download_text,
     ended_text,
+    lookup_members,
     transcript_command,
 )
 from dmbot.web import accounts
 
+MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
 
@@ -811,6 +814,9 @@ class Table:
     after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
     transcript_session_id: str | None = None  # set at the first save
     unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
+    # Speakers whose display names are kept with this session's transcript (#2337), so a name is
+    # looked up once for each person, not on every save.
+    named_speakers: set[int] = field(default_factory=set)
     transcript_warned: bool = False  # told the DM saving isn't working
     listening_message: discord.Message | None = None  # carries the Stop button (#108)
     # Is anyone here? (#2034) The watch for the automatic stop, and the warning's message. A
@@ -1294,6 +1300,11 @@ class DMBot(commands.AutoShardedBot):
         )
         self.rule_conflict_ai = (  # a saved house rule that disagrees with another (#2284)
             self.ai_client.tier(FEATURE_TIERS[Feature.RULE_CONFLICTS], Feature.RULE_CONFLICTS)
+            if self.ai_client
+            else None
+        )
+        self.house_file_ai = (  # house rules found in any file or link (#2377)
+            self.ai_client.tier(FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES)
             if self.ai_client
             else None
         )
@@ -3740,6 +3751,9 @@ class DMBot(commands.AutoShardedBot):
             asyncio.create_task(self._rebuild_rules_archives(), name="rules-archives")
         )
         self._background.append(asyncio.create_task(self._rebuild_npcs(), name="npcs-channels"))
+        self._background.append(
+            asyncio.create_task(self._name_old_speakers(), name="speaker-names")
+        )
 
     async def _note_present(self, first: bool) -> None:
         """Write a row for every server the bot is in; at start-up also mark the ones it was
@@ -9690,12 +9704,35 @@ class DMBot(commands.AutoShardedBot):
             log.info("Say it this way: %d offered", kept)
 
     async def _propose_new_names(
-        self, gid: int, cid: str, lines: Sequence[str], users: Collection[int]
+        self,
+        gid: int,
+        cid: str,
+        lines: Sequence[str],
+        users: Collection[int],
+        session_id: str | None = None,
+        *,
+        agreed: Collection[int] | None = None,
+        game_only: bool = False,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
-        names are not story names. Returns the names proposed; nothing is confirmed."""
+        names are not story names. `session_id`: the stored transcript the lines came from, so
+        each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
+        confirmed."""
         assert self.memory is not None
+        heard_in: list[Line] = []
+        if session_id is not None and self.transcripts is not None:
+            try:
+                # only the lines the scan itself read: people who still agree and, for an imported
+                # session, game talk (a place must never quote what the scan left out)
+                heard_in = [
+                    x
+                    for x in await self.transcripts.lines(gid, session_id)
+                    if (agreed is None or x.user_id in agreed)
+                    and (not game_only or x.topic == GAME)
+                ]
+            except Exception:  # the places are a nicety: the suggestion is still made
+                log.exception("Couldn't read the session to find where names were said")
         # People at the table aren't story names: skip their whole display names and
         # each word of them ("Mia Stone" → "Mia", "Stone").
         skip = set(await self.memory.known_keys(gid, cid))
@@ -9723,6 +9760,11 @@ class DMBot(commands.AutoShardedBot):
                 log.info("Skipped a suggested name: %s", exc)
                 continue
             added.append(suggestion.name)
+            if heard_in and session_id is not None:
+                await self._keep_places(
+                    gid, cid, session_id, written.value.id, heard_in,
+                    [suggestion.name, *suggestion.also],
+                )  # fmt: skip
             for other in suggestion.also:  # suggested with it, confirmed with it
                 part = name_key(other) in name_key(suggestion.name)
                 try:
@@ -9737,6 +9779,40 @@ class DMBot(commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _keep_places(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str,
+        entity_id: str,
+        lines: Sequence[Line],
+        spellings: Sequence[str],
+    ) -> None:
+        """Keep where a suggested name was said, spread across the session: pointers only (the
+        line's reference and the place in it), never the words (#2329). Never raises."""
+        assert self.memory is not None
+        try:
+            session = await self._session_of(gid, session_id)
+            session_at = session.started_at if session is not None else None
+            for spot in spread(find_spots(lines, spellings)):
+                await self.memory.add_mention(
+                    gid,
+                    cid,
+                    entity_id,
+                    line_ref=line_ref(session_id, spot.line.started_ms, spot.line.user_id),
+                    span=(spot.start, spot.end),
+                    confidence=1.0,
+                    method="exact",
+                    source="scan",
+                    session_started_at=session_at,
+                )
+        except Exception:
+            log.exception("Couldn't keep where a suggested name was said")
+
+    async def _session_of(self, gid: int, session_id: str) -> TranscriptSession | None:
+        assert self.transcripts is not None
+        return await self.transcripts.session(gid, session_id)
 
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
@@ -9754,7 +9830,11 @@ class DMBot(commands.AutoShardedBot):
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
-            added = await self._propose_new_names(gid, cid, lines, users)
+            if table.transcript_session_id is not None:
+                await self.save_transcript(table)  # so every line is stored to point at
+            added = await self._propose_new_names(
+                gid, cid, lines, users, table.transcript_session_id, agreed=agreed
+            )
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
@@ -10008,7 +10088,10 @@ class DMBot(commands.AutoShardedBot):
         if not lines:
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
-        added = await self._propose_new_names(gid, ready.campaign_id, [t for _, t in lines], users)
+        added = await self._propose_new_names(
+            gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
+            agreed=set(agreed), game_only=True,
+        )  # fmt: skip
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
         return added
 
@@ -10183,7 +10266,11 @@ class DMBot(commands.AutoShardedBot):
                         done = web_actions.Outcome(error=web_actions.FAILED)
                     try:
                         await store.finish(
-                            guild.id, action, error=done.error, result_id=done.result_id
+                            guild.id,
+                            action,
+                            error=done.error,
+                            result_id=done.result_id,
+                            result_other=done.result_other,
                         )
                     except Exception as exc:  # taken again later: apply() sees it already done
                         log.warning("A name action could not be marked: %s", type(exc).__name__)
@@ -11387,6 +11474,52 @@ class DMBot(commands.AutoShardedBot):
             stopped = [i for i, x in zip(ids, batch, strict=True) if x.user_id not in still]
             if stopped:
                 await self.transcripts.remove_lines(gid, session_id, stopped)
+            fresh = {x.user_id for x in batch if x.user_id in still}
+            fresh -= table.named_speakers
+            if fresh:
+                try:
+                    table.named_speakers |= await self._keep_speaker_names(gid, session_id, fresh)
+                except Exception:  # the names are a nicety: never hold up the lines
+                    log.exception("Couldn't keep the speakers' names")
+
+    async def _keep_speaker_names(self, gid: int, session_id: str, user_ids: set[int]) -> set[int]:
+        """Keep these people's display names, as they are now, with the session's transcript so the
+        website can show them (#2337). Returns the people settled: found, or not in the server
+        (kept as not found). Anyone Discord could not answer for just now, and everyone when the
+        server isn't there to ask, is left out, so they are tried again. Counts in the log, never
+        names."""
+        assert self.transcripts is not None
+        guild = self.get_guild(gid)
+        if guild is None:
+            return set()
+        settled: set[int] = set()
+        wanted = sorted(user_ids)
+        for start in range(0, len(wanted), MAX_SPEAKER_NAMES):
+            ids = tuple(wanted[start : start + MAX_SPEAKER_NAMES])
+            found, gone = await lookup_members(guild, ids)
+            names: dict[int, str | None] = {u: n for u, n in found.items()}
+            names.update({u: None for u in gone})
+            await self.transcripts.record_names(gid, session_id, names)
+            settled |= set(names)
+        log.info("Kept %d speaker name(s) of %d asked", len(settled), len(wanted))
+        return settled
+
+    async def _name_old_speakers(self) -> None:
+        """Once at start-up: keep the names of speakers in sessions saved before names were kept,
+        or cut short by a restart, where DMbot can still find them (#2337). The name is the one they
+        have now, and it includes people who stopped being recorded later but kept their past
+        lines (as the save path does). A person who left the server is kept as not found, so this
+        finds nothing the next time."""
+        for guild in list(self.guilds):
+            with log_context(guild_id=guild.id):
+                try:
+                    if self.transcripts is None:
+                        return
+                    for session_id, ids in await self.transcripts.unnamed(guild.id):
+                        await self._keep_speaker_names(guild.id, session_id, set(ids))
+                except Exception:
+                    log.exception("Couldn't keep the names of an older session's speakers")
+                await asyncio.sleep(1)  # a few servers a second, not all at once
 
     def _note_dropped(self, table: Table) -> None:
         if table.unsaved.dropped and not table.dropped_logged:

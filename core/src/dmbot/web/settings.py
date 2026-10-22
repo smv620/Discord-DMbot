@@ -116,6 +116,10 @@ class WebSettings:
     # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
     # again" is refused instead of promising it (#2183).
     recaps_on: bool = False
+    # Whether the bot can make narration at all: DMBOT_RECAPS is on and the bot has a voice (the
+    # same rule as `Settings.recap_audio_on`). The web container is never given the speech key, so
+    # compose passes only whether each is set ("1" or empty), never the key itself (#2419).
+    recap_audio_on: bool = False
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
@@ -290,6 +294,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     return WebSettings(
         database_url=get("DATABASE_URL"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        recap_audio_on=(
+            recaps_raw in ("1", "true", "on")
+            and get("RECAP_AUDIO_KEY_SET") == "1"
+            and get("RECAP_AUDIO_VOICE_SET") == "1"
+        ),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
