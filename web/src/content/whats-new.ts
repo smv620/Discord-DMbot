@@ -267,15 +267,6 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
-    title: "Every recap says which session it is",
-    what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
-    reason: "In review (#2418); held until dev1 deploys it.",
-  },
-  {
-    date: "2026-10-22",
-  },
-  {
-    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
