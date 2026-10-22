@@ -3209,6 +3209,11 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_all_names",
         "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)",
     ),
+    # The relationship web's data (#2323).
+    (
+        "dmbot_web_relationships",
+        "dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)",
+    ),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -9849,6 +9854,296 @@ NAME_ACTIONS = (
 """
 )
 
+WEB_RELATIONSHIPS = r"""
+    -- The relationship web on the website (#2323): the names within N steps of one name, and the
+    -- confirmed connections between them, for the page that draws them. Read only; the words for a
+    -- connection are made by the API from the predicates, never here.
+    --
+    -- Who sees what: a DM of the campaign gets everything confirmed, secret connections and
+    -- names included (flagged). Any other member of the server gets the players' view: no entry
+    -- the players don't know yet or that is limited to some of them, no thread-like kinds, no
+    -- name whose own spelling is secret, no secret connection. The same rule as the All names
+    -- page. NULL when the caller is not in the server or there is no such campaign;
+    -- {status: 'not_found'} for a centre the caller may not see.
+    --
+    -- `center_`: the name to centre on, or NULL for the most connected one. `hops`: 1 and up.
+    -- `cap`: the most names returned; past it `truncated` is true. `size_only`: just how many names
+    -- are within the steps (before the cap).
+    CREATE FUNCTION dmbot_web_relationships(
+        g BIGINT, c TEXT, center_ TEXT, hops INT, cap INT, size_only BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        vis TEXT[];
+        rel_ids TEXT[];
+        start_id TEXT := center_;
+        within TEXT[];
+        total INT;
+        kept TEXT[];
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = g AND id = c) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c
+                           AND d.user_id = dmbot_current_user());
+        vis := ARRAY(
+            WITH secret_own AS (
+                SELECT DISTINCT a.entity_id
+                FROM memory_aliases a
+                JOIN memory_entities en ON en.guild_id = a.guild_id
+                                       AND en.campaign_id = a.campaign_id AND en.id = a.entity_id
+                WHERE a.guild_id = g AND a.campaign_id = c AND a.secret AND a.status <> 'rejected'
+                  AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                    = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+            )
+            SELECT e.id FROM memory_entities e
+            WHERE e.guild_id = g AND e.campaign_id = c
+              AND e.status = 'confirmed' AND e.type <> 'person'
+              AND (is_dm OR (NOT e.audience_limited AND NOT e.hidden_from_players
+                             AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                                'promise', 'deed')
+                             AND e.id NOT IN (SELECT s.entity_id FROM secret_own s))));
+        -- The connections the caller may see, worked out once (every use below reads this list).
+        -- A member sees what the NPC pages show (memory/recall.py): no secret one, none that has
+        -- ended, none that came from the story plan. A DM sees all the confirmed ones.
+        rel_ids := ARRAY(
+            SELECT r.id FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
+              AND r.predicate <> 'led_to'
+              AND r.subject_id = ANY (vis) AND r.object_id = ANY (vis)
+              AND (is_dm OR (NOT r.secret AND r.to_session_at IS NULL
+                             AND r.source NOT IN ('plan', 'story_plan'))));
+        IF start_id IS NULL THEN
+            SELECT x.id INTO start_id FROM (
+                SELECT e.id, e.name,
+                       (SELECT count(*) FROM memory_relations r
+                        WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+                          AND (r.subject_id = e.id OR r.object_id = e.id)) AS degree
+                FROM memory_entities e
+                WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (vis)) x
+            ORDER BY x.degree DESC, lower(x.name), x.id LIMIT 1;
+        ELSIF NOT (start_id = ANY (vis)) THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF start_id IS NULL THEN
+            RETURN jsonb_build_object('status', 'ok', 'center', NULL, 'canEdit', is_dm,
+                                      'names', 0, 'nodes', '[]'::jsonb, 'edges', '[]'::jsonb,
+                                      'truncated', false);
+        END IF;
+        WITH RECURSIVE adj AS (
+            -- each connection both ways, so the walk joins on one column (no OR)
+            SELECT r.subject_id AS a, r.object_id AS b FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+            UNION ALL
+            SELECT r.object_id, r.subject_id FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+        ), walk(id, depth) AS (
+            SELECT start_id, 0
+            UNION
+            SELECT adj.b, w.depth + 1
+            FROM walk w JOIN adj ON adj.a = w.id
+            WHERE w.depth < hops
+        )
+        SELECT ARRAY(SELECT x.id FROM (SELECT w.id, min(w.depth) AS d FROM walk w GROUP BY w.id) x
+                     JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c AND e.id = x.id
+                     ORDER BY x.d, lower(e.name), x.id)
+        INTO within;
+        total := COALESCE(array_length(within, 1), 0);
+        IF size_only THEN
+            RETURN jsonb_build_object('status', 'ok', 'names', total);
+        END IF;
+        kept := within[1:GREATEST(cap, 1)];
+        RETURN jsonb_build_object(
+            'status', 'ok', 'center', start_id, 'canEdit', is_dm, 'names', total,
+            'truncated', total > GREATEST(cap, 1),
+            'nodes', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', e.id, 'name', e.name,
+                    'kind', CASE WHEN e.type = 'character' THEN
+                                CASE e.role WHEN 'player_character' THEN 'player_character'
+                                            WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                            ELSE 'character' END
+                            ELSE e.type END,
+                    'secret', CASE WHEN is_dm THEN EXISTS (
+                        SELECT 1 FROM memory_aliases a
+                        WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                          AND a.status <> 'rejected' AND a.secret
+                          AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                            = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')) END)
+                    ORDER BY array_position(kept, e.id))
+                FROM memory_entities e
+                WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (kept)), '[]'::jsonb),
+            'edges', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', r.id, 'a', r.subject_id, 'b', r.object_id, 'predicate', r.predicate,
+                    'detail', r.detail, 'secret', r.secret, 'at', r.created_at)
+                    ORDER BY r.created_at, r.id)
+                FROM memory_relations r
+                WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+                  AND r.subject_id = ANY (kept) AND r.object_id = ANY (kept)), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)
+        FROM PUBLIC;
+"""
+
+WEB_LINK_ACTIONS = r"""
+    -- Edits to the connections on the relationship web (#2323), through the same queue as the All
+    -- names page's actions: the website queues them, the bot applies them through the same
+    -- MemoryStore calls as Discord's name card (so the change log and Undo agree) and the page
+    -- polls. New actions: 'link-add' (`entity_id` and `target_id` are the two names, `text` the
+    -- words, `flag` secret), 'link-words' (`target_id` is the connection, `text` the new words),
+    -- 'link-secret' (`target_id`, `flag`) and 'link-remove' (`target_id`, `flag` the confirmation).
+    -- `result_other` is the other end of the pair the page shows afterwards (`result_id` is the
+    -- first), so it can draw the edge as it now stands. No row changes: a new column with a
+    -- constant default, and a wider list of actions.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+         'link-add', 'link-words', 'link-secret', 'link-remove'));
+    ALTER TABLE name_actions ADD COLUMN result_other TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(result_other) <= 32);
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(
+        g BIGINT, c TEXT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        clean TEXT := btrim(regexp_replace(COALESCE(txt, ''), '[[:space:]]+', ' ', 'g'));
+        subject TEXT := ent;
+        is_link BOOLEAN := act LIKE 'link-%';
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN
+               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+                'link-add', 'link-words', 'link-secret', 'link-remove')
+        THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF clean ~ '[[:cntrl:]]' OR char_length(clean) > 100
+           OR (act IN ('spell', 'add-other', 'remove-other', 'secret', 'link-add', 'link-words')
+               AND clean = '')
+           OR (act IN ('kind', 'hide', 'merge', 'remove', 'link-secret', 'link-remove')
+               AND clean <> '')
+           OR (act = 'kind' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
+           OR (act <> 'kind' AND COALESCE(kd, '') <> '')
+           OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
+           OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND COALESCE(tgt, '') <> '')
+           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)
+           OR (act = 'link-words' AND COALESCE(fl, false)) THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF act IN ('remove', 'link-remove') AND fl IS NOT TRUE THEN
+            RETURN jsonb_build_object('status', 'needs_confirm');
+        END IF;
+        IF is_link AND act <> 'link-add' THEN
+            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- confirmed names; the entry the action is filed under is its first name
+            SELECT r.subject_id INTO subject FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
+              AND r.predicate <> 'led_to'
+              AND EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = g
+                          AND x.campaign_id = c AND x.id = r.subject_id
+                          AND x.status = 'confirmed' AND x.type <> 'person')
+              AND EXISTS (SELECT 1 FROM memory_entities y WHERE y.guild_id = g
+                          AND y.campaign_id = c AND y.id = r.object_id
+                          AND y.status = 'confirmed' AND y.type <> 'person');
+            IF NOT FOUND THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF subject IS NULL OR NOT EXISTS (
+               SELECT 1 FROM memory_entities e
+               WHERE e.guild_id = g AND e.campaign_id = c AND e.id = subject
+                 AND e.status = 'confirmed' AND e.type <> 'person') THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF act IN ('merge', 'link-add') AND (tgt = subject OR NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person')) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('name_action:' || g::TEXT || c, 0));
+        DELETE FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 30
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action, kind,
+                                  target_id, text, flag, created_at)
+            VALUES (g, c, rid, subject, dmbot_current_user(), act, COALESCE(kd, ''),
+                    COALESCE(tgt, ''), clean, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r name_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'action', r.action,
+                                  'resultId', r.result_id, 'resultOther', r.result_other);
+    END
+    $fn$;
+    -- (redefined functions lose their pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
     -- session when the start-up fill-in found them. The website's transcripts show these instead
@@ -10141,6 +10436,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
+    ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
+    ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
