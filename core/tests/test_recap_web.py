@@ -485,6 +485,42 @@ class TheRoutes(Base):
         await self.client.aclose()
         await super().asyncTearDown()
 
+    async def mail(self) -> dict[str, Any]:
+        got = await self.client.get(f"/me/recaps/{self.ref}")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertNotIn(BOB.email, got.text)  # never another DM's address (#2334)
+        return dict(got.json()["recapEmail"])
+
+    async def test_the_recap_says_which_address_its_email_goes_to_and_where_it_came_from(
+        self,
+    ) -> None:
+        mail = await self.mail()
+        self.assertEqual(
+            (mail["source"], mail["address"], mail["on"]), ("signin", ALICE.email, True)
+        )
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = 'alice-pay@example.org', payment_email_at = 1"
+                " WHERE user_id = %s",
+                (ALICE.id,),
+            )
+        mail = await self.mail()
+        self.assertEqual((mail["source"], mail["address"]), ("payment", "alice-pay@example.org"))
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET payment_email = NULL, email = '' WHERE user_id = %s",
+                (ALICE.id,),
+            )
+        mail = await self.mail()
+        self.assertEqual((mail["source"], mail["address"]), ("none", None))
+
+    async def test_the_recap_says_when_the_campaigns_email_switch_is_off(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET recaps_email = false WHERE id = %s", (self.one.id,)
+            )
+        self.assertFalse((await self.mail())["on"])
+
     async def test_list_read_edit_and_decide(self) -> None:
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
