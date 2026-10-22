@@ -126,6 +126,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
 
 PERSON = "person"
 PLAYS = "plays"
@@ -181,7 +182,7 @@ def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
-        r["audience_limited"], r["party"], r["hidden_from_players"],
+        r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
     )  # fmt: skip
 
 
@@ -309,6 +310,16 @@ class PersonAdded:
     flagged: tuple[str, ...]  # characters named but not linked: played by someone else, or unknown
 
 
+def hidden_old_pronoun(entity: Entity) -> bool:
+    """A suggestion from before the pronoun gate that is a pronoun: never offered (#2358)."""
+    return (
+        entity.status == PROPOSED
+        and entity.source != DM
+        and entity.made_before_name_gate
+        and not_names.is_not_name(entity.name)
+    )
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -423,7 +434,12 @@ class MemoryStore:
             rows = await scope.select(
                 ENTITIES, " AND status = ANY(%s) ORDER BY name, id", [list(statuses)]
             )
-            return [_entity(r) for r in rows]
+            found = [_entity(r) for r in rows]
+        # Suggestions made before pronouns were kept out ("We", "I'll") are still stored; they
+        # are not offered again (#2358). Later ones passed the gate when they were made (a naming
+        # cue let "We" through), so only the old ones, marked by the database, are looked at
+        # again. A name the DM added or confirmed is never hidden.
+        return [e for e in found if not hidden_old_pronoun(e)]
 
     async def aliases(
         self,
