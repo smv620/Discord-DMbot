@@ -200,11 +200,22 @@ export interface SupportTicket {
   turnstile: string;
 }
 
-/** Which address a recap's email goes to. `payment` is the email on the payment account, `signin` the
- * one the DM signed in with, `none` no address at all. `on` is the DM's own email choice. */
+/** Whose address an email goes to: `payment` is the email on the payment account, `signin` the one the
+ * person signed in with, `none` no address at all (#2334, #2349). */
+export type EmailSource = "payment" | "signin" | "none";
+
+/** The address DMbot emails this person at (#2349). `pending` is a new address that has been sent a
+ * confirmation link and has not been confirmed yet. */
+export interface MyEmail {
+  address: string | null;
+  source: EmailSource;
+  pending: string | null;
+}
+
+/** Which address a recap's email goes to, and whether the DM's own email choice is on. */
 export interface RecapEmail {
   address: string | null;
-  source: "payment" | "signin" | "none";
+  source: EmailSource;
   on: boolean;
 }
 
@@ -410,7 +421,14 @@ export interface RecapChoices {
   email: boolean;
   canAudio: boolean;
   audioHow: string;
+  /** Why the narration can't be made right now (#2419), for the greyed button: "plan" (not in the
+   * plan), "allowance" (this month's are used up) or "not_set_up" (nothing here makes it); "" when
+   * it can be made. Missing from an older API, which the page reads as "no reason known". */
+  audioUnavailable?: AudioUnavailable | "";
 }
+
+// "unavailable" is what a co-DM is told instead of "plan" or "allowance" (they never learn the owner's plan).
+export type AudioUnavailable = "plan" | "allowance" | "not_set_up" | "unavailable";
 
 export type RecapChoice = "text" | "audio" | "email";
 
@@ -703,6 +721,19 @@ export interface WebNode {
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
+  /** False: the story hasn't revealed it to the players yet (#2405). Only in a view that shows
+   * unrevealed things: a DM's full view, or a player's peek. */
+  revealed?: boolean;
+}
+
+/** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
+export interface WebBelief {
+  /** Under 1 for a theory. */
+  confidence: number;
+  /** Plain words for what it is, such as "Party theory" or "Accusation". */
+  status: string;
+  /** Full view only: the party believes this and the truth holds it false. */
+  contradicted?: boolean;
 }
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
@@ -712,6 +743,10 @@ export interface WebLink {
   words: string;
   secret: boolean;
   direction: "ab" | "ba" | "both";
+  /** False: not revealed to the players yet (#2405). */
+  revealed?: boolean;
+  /** A theory the party holds rather than a fact (#2405). */
+  belief?: WebBelief;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -735,13 +770,28 @@ export interface WebGraph {
   maxHops: number;
   /** Only the campaign's DMs can change anything. */
   canEdit: boolean;
+  /** Who may see the DM screen's things in this campaign (#2405): "private" is the DM only. */
+  visibility?: "private" | "peek" | "open";
+  /** A player may turn peeking on (the visibility allows it). */
+  canPeek?: boolean;
+  /** Which web this is. */
+  view?: WebView;
 }
 
 export interface WebQuery {
   /** null: the API picks the most connected name. */
   center: string | null;
   hops: number;
+  /** "players": exactly what a player sees. "full": everything, for a DM or a player who peeks.
+   * Left out, the API picks for the person (#2405). */
+  view?: WebView;
 }
+
+/** Which web the page asks for (#2405). */
+export type WebView = "players" | "full";
+
+/** A name or a connection the DM shows the players (#2405). */
+export type WebRevealTarget = { kind: "name" | "link"; id: string };
 
 /** One change to the connections between names (DM only). */
 export type WebLinkChange =
@@ -858,6 +908,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
@@ -895,6 +946,8 @@ export type ApiErrorKind =
   | "not-found" // a recap that isn't there, or isn't yours to see (#1386)
   | "not-ending" // Renew when the plan was not cancelled, or has already run out (#2165)
   | "use-billing-page" // the company will not undo the cancellation from here: renew on its page (#2165)
+  | "in-use" // another account already uses that address (#2349)
+  | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
   | "name-exists" // another name already goes by that (#2295)
@@ -908,6 +961,7 @@ export type ApiErrorKind =
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
+  | "audio-unavailable" // the narration can't be made here, or this month's are used up (#2419)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
@@ -963,6 +1017,17 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
+   * Missing from an API older than that. */
+  myEmail?(): Promise<MyEmail>;
+  /** Ask to change it: a confirmation link goes to the new address and nothing changes until it is
+   * opened. Not for a payment email, which is changed with the payment company. */
+  changeEmail?(address: string): Promise<{ pending: string | null }>;
+  /** Open the emailed link's code (`#email-confirm=...`): changes the email, but only for the same
+   * signed-in account that asked. A wrong, used or ended code is `bad-link`. */
+  confirmEmail?(token: string): Promise<void>;
+  /** Stop a change that is waiting for its link, so a typo can be cancelled. */
+  cancelEmailChange?(): Promise<void>;
   /** Send a private ticket to the DMbot team (paid plans, #1340). Missing from an API older
    * than that. `turnstile` is Cloudflare's token, or "" when the site has no key. */
   sendSupport?(ticket: SupportTicket): Promise<SupportReceipt>;
@@ -980,7 +1045,9 @@ export interface AccountApi {
   ): Promise<Recap>;
   /** Approve the text and pick what to make: voice-over, music, both or text only (#2083). The
    * API checks the cues again and refuses with `bad-cues`; any choice but text queues audio. */
-  approveRecap?(ref: string, choice: ApproveChoice): Promise<Recap>;
+  /** `post`: approve the text-only choice and hand it to the bot to post, in one call (#2419). An
+   * older API ignores it and leaves the recap approved and not posted. */
+  approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1009,7 +1076,11 @@ export interface AccountApi {
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
-  /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
+    /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
+  webPeek?(ref: string): Promise<void>;
+  /** A DM shows a name or a connection to the players (#2405). */
+  webReveal?(ref: string, target: WebRevealTarget): Promise<void>;
+/** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
    * `{ removed: true }` when the last connection between two names went. */
   changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
@@ -1177,7 +1248,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_included: "already-included",
   already_subscribed: "already-subscribed",
   not_found: "not-found",
+  bad_email: "bad-email",
+  in_use: "in-use",
   bad_target: "bad-target",
+  peek_off: "peek-off",
   not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
@@ -1187,6 +1261,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_ending: "not-ending",
   use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
+  audio_unavailable: "audio-unavailable",
   audio_off: "audio-off",
   bad_choice: "bad-choice",
   too_big: "too-big",
@@ -1333,6 +1408,14 @@ export function httpApi(
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
+    },
+    myEmail: async () => (await call("GET", "/me/email")) as MyEmail,
+    changeEmail: async (address) => (await call("PUT", "/me/email", { address })) as { pending: string | null },
+    confirmEmail: async (token) => {
+      await call("POST", "/me/email/confirm", { token });
+    },
+    cancelEmailChange: async () => {
+      await call("DELETE", "/me/email/pending");
     },
     sendSupport: async (ticket) => {
       const answer = (await call("POST", "/support", ticket)) as {
@@ -1511,10 +1594,11 @@ export function httpApi(
           housekeeping,
         }),
       ),
-    approveRecap: async (ref, choice) =>
+    approveRecap: async (ref, choice, options) =>
       recapFrom(
         await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, {
           choice,
+          ...(options?.post ? { post: true } : {}),
         }),
       ),
     recapAudioLinks: async (ref) =>
@@ -1660,6 +1744,7 @@ export function httpApi(
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
@@ -1672,6 +1757,12 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
+    },
+    webPeek: async (ref) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
+    },
+    webReveal: async (ref, target) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/reveal`, target);
     },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;

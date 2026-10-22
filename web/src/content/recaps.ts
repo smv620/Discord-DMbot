@@ -71,7 +71,7 @@ export const text = {
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
-  failed: "DMbot couldn't write this recap. Press Try again, or don't post it.",
+  failed: "DMbot couldn't write this recap. Press Try again, or leave it.",
   failedNoTries:
     "DMbot couldn't write this recap, and there are no more tries. You can leave it unposted.",
   textHeading: "Recap",
@@ -100,10 +100,9 @@ export const text = {
   saved: "Saved.",
   post: "Post to the table",
   again: "Try again",
-  drop: "Don't post",
   busy: "Working…",
   noTriesLeft:
-    "You have tried twice. You can still edit it, post it or not post it.",
+    "You have tried twice. You can still edit it or approve it.",
   posting:
     "Sent. DMbot will check it once more, then post it. Check back here to see if it posted.",
   posted: "This recap was posted to your table.",
