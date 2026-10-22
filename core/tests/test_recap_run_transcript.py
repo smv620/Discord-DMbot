@@ -336,7 +336,7 @@ class TheLength(unittest.TestCase):
         line, inputs = self.read("Sam: " + " ".join(["word"] * 14_000) + "\nMia: hi.\n")
         self.assertEqual(inputs.hours, 2.0)
         self.assertIn("about 2 hours (estimated from the words; give --hours to set it)", line)
-        self.assertIn("about 300 words (between 150 and 360)", line)
+        self.assertIn("about 230 words (between 115 and 276)", line)
 
     def test_a_tiny_file_is_half_an_hour_at_least(self) -> None:
         _, inputs = self.read("Sam: hello there.\nMia: hi.\n")
@@ -346,7 +346,7 @@ class TheLength(unittest.TestCase):
         line, inputs = self.read("Sam: hello.\nMia: hi.\n", "--hours", "6")
         self.assertEqual(inputs.hours, 6)
         self.assertIn("about 6 hours (from --hours)", line)
-        self.assertIn("about 700 words", line)
+        self.assertIn("about 450 words", line)
 
     def test_a_file_with_times_uses_them(self) -> None:
         text = "[00:00:01] Sam: hello.\n[01:00:00] Mia: hi.\n[02:00:01] Sam: bye.\n"
@@ -453,8 +453,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             asked.append(question)
             return ask
 
-        # The canned recap is a 2.5-hour session's length (#2013): a file this small is not.
-        args = run.parse_args([*argv, *([] if "--hours" in argv else ["--hours", "2.5"])])
+        # The canned recap is a 3.5-hour session's length (#2013): a file this small is not.
+        args = run.parse_args([*argv, *([] if "--hours" in argv else ["--hours", "3.5"])])
         fast = fx.Canned(*(answers or []))
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):

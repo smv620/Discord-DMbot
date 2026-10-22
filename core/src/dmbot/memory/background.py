@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import chunks, request_text
 from dmbot.memory.scan import COMMON, GAME_TERMS
+from dmbot.names import not_names
 
 MAX_NAMES = 200  # suggestions from one document
 NAME_WORDS = 8
@@ -156,7 +157,9 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
-def _spellings(raw: object, name: str, haystack: str, *, skip: set[str]) -> list[str]:
+def _spellings(
+    raw: object, name: str, haystack: str, *, skip: set[str], cued: frozenset[str]
+) -> list[str]:
     """The other spellings in one list the text really holds, each once, not the name itself."""
     out: list[str] = []
     for other in raw if isinstance(raw, list) else []:
@@ -171,6 +174,7 @@ def _spellings(raw: object, name: str, haystack: str, *, skip: set[str]) -> list
             and key != name_key(name)
             and key not in skip
             and _has(haystack, other)
+            and not_names.allowed(other, cued)
         ):
             skip.add(key)
             out.append(other)
@@ -185,6 +189,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
     if not isinstance(items, list):
         return []
     haystack = _squash(piece)
+    cued = not_names.cued_in(piece)  # a pronoun is a name only where the text says so (#2358)
     out: list[Found] = []
     for item in items:
         if not isinstance(item, dict):
@@ -200,12 +205,13 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or len(name.split()) > NAME_WORDS
             or "|" in name
             or not _has(haystack, name)
+            or not not_names.allowed(name, cued)
         ):
             continue
         # A disguise is read first, so the same spelling is never also a public one.
         seen: set[str] = set()
-        secret = _spellings(item.get("secret"), name, haystack, skip=seen)
-        also = _spellings(item.get("also"), name, haystack, skip=seen)
+        secret = _spellings(item.get("secret"), name, haystack, skip=seen, cued=cued)
+        also = _spellings(item.get("also"), name, haystack, skip=seen, cued=cued)
         quote = item.get("quote")
         kept = ""
         if isinstance(quote, str):

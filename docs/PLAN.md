@@ -707,6 +707,31 @@ that house rules must be readable offline, so DMbot keeps a plain-text file of r
   to the DM; nothing is stored.
 - The offers wait in memory (the 20 newest); after a restart an old button says it has ended.
 
+**House rules from any file or link** (owner, 2026-10-22). The plain numbered format stays what DMbot
+**writes** (the download, sharing and review copy), but DMbot **reads** the house rules a DM already has,
+in whatever shape they are:
+- **What it reads:** an upload of PDF, Word (.docx), Excel (.xlsx) or CSV, plain text or Markdown; or a
+  link to a Google Doc, Google Sheet, Drive, Dropbox or OneDrive file, or a public web page. Everything is
+  read through the guarded link reader (`dmbot.fetch`: public https only, every address checked), 10 MB
+  and 200,000 characters of text at most. Text only: images and scanned pages without text are said, not
+  guessed at.
+- **How:** a file already in the plain format is read by code as today, with no AI. Anything else goes to
+  one AI call (the careful tier) that lists the house rules it finds, each with a short **quote** from
+  the file. Code keeps only rules whose quote is really in the file (DMbot never invents a rule), at most
+  200, each 500 characters at most, and drops repeats of a rule the campaign already has.
+- **The DM decides:** the result is the same offer as a linked file's changes today (**Accept all /
+  Review / Not now**, one at a time in Review), plus the plain-format file to download so the DM can
+  check it. Nothing is saved without a press, and every new rule goes through the disagreement check
+  ("Which one wins?", #2284). 📂 Sources shows "from <file name>" or "from <site>" (never the full link).
+- **A linked file in another shape** is read the same way at session start, **only when it has changed**
+  since the last read (DMbot keeps a fingerprint of the text, not the text), so the AI call is made once
+  per change, not once per session.
+- **Only the DM's own rules:** the form says "Your own house rules only. For a published book, use Share
+  a rulebook." A file that reads as a published book (long, page-numbered rules text with no house
+  rules) gets that line instead of an offer. The file's text goes to the AI for this one read and is not
+  stored; the link is stored and shown as today (site only, never logged).
+- **Cost:** one AI call per file read (or per change of a linked file), counted in the campaign's usage.
+
 **Homebrew (part 1)** (decided 2026-10-16 by Supervisor, #1520, migration 0097). A campaign stores its
 own homebrew: **entries** the DM wrote, in the DM's own words (a spell, monster, item, feat, condition,
 species, subclass, background or other). **A rule the DM makes up is a house rule, not homebrew** (owner, 2026-10-16, #1628): there is
@@ -3878,6 +3903,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   the beat sheet), and an ordinary word that only starts a sentence is not a name. The hours come
   from the session's first and last kept lines. A test file with no times (Craig's plain text)
   estimates them from the words spoken, and `recap_run --hours` sets them.
+  **Shorter recaps** (owner, 2026-10-22, after Test L): the target is now **75 words for every hour
+  played, plus 75**, rounded to the nearest 10, **at most 450** (1 hour 150, 3 hours 300, 5 hours or
+  more 450; under three minutes read aloud). This replaces the 100/100/700 rule above; the 50% under
+  and 20% (35% on the last try) over margins stay. Why: a recap is read or played at the start of
+  the next game, which must stay quick, and a shorter recap costs less to voice, gives the checks
+  less to read and leaves less room for an answer to be cut off.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4694,6 +4725,12 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   one can be cancelled. An address another account already uses is refused (sign-in by email
   needs one address per account). Once changed, the **old** address gets a short note, so a
   stolen session can't quietly move email sign-in. API shape: the comment on #2349.
+  *Two more rules (Supervisor, 2026-10-22, #2359 review):* an email the person chose **outlives
+  later Discord sign-ins** (a Discord sign-in no longer overwrites it), and confirming deletes any
+  unused sign-in links sent to the old address. "That address is already used by another account"
+  is the one place DMbot says whether an address has an account: only to a signed-in person, at
+  most 6 tries an hour, because two accounts sharing an address would lock both out of email
+  sign-in.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the

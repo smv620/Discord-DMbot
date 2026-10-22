@@ -82,7 +82,7 @@ class TheWordCheck(unittest.TestCase):
     def test_a_retry_shows_the_writer_its_draft_as_text(self) -> None:
         prose = rd.parse_prose(GOOD)
         assert prose is not None
-        retry = rd.prose_retry(["too short"], prose, rd.length_for(2.5), plain=True)
+        retry = rd.prose_retry(["too short"], prose, rd.length_for(3.5), plain=True)
         self.assertIn("MOOD: tense", retry)
         self.assertNotIn('"sections"', retry)
 
@@ -121,7 +121,7 @@ class TheWritersRoom(unittest.IsolatedAsyncioTestCase):
         for hours in (0.5, 1.0, 1.8, 3.0, 6.0):
             length = rd.length_for(hours)
             self.assertGreater(rd.write_room(length), length.max_tokens)
-        self.assertEqual(rd.length_for(1.8).target, 280)
+        self.assertEqual(rd.length_for(1.8).target, 210)
         self.assertGreater(rd.write_room(rd.length_for(1.8)), 1556)  # run 12's cut-off limit
 
     async def test_the_writer_is_given_it_and_the_formatter_keeps_the_old_room(self) -> None:
@@ -135,7 +135,7 @@ class TheWritersRoom(unittest.IsolatedAsyncioTestCase):
             creative_models=("creative-model", "formatting-model"),
         )
         self.assertEqual(out.job.state, "ready")
-        length = rd.length_for(2.5)
+        length = rd.length_for(3.5)
         self.assertEqual(creative.tokens, [rd.write_room(length)])
         self.assertEqual(formatting.tokens, [length.max_tokens])  # unchanged
 

@@ -68,7 +68,7 @@ describe("Try again on a failed recap", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);
     });
-    expect(await screen.findByText(text.failed)).toBeTruthy();
+    expect(await screen.findByText(text.failedNoTries)).toBeTruthy();
     const again = screen.getByRole("button", { name: text.again }) as HTMLButtonElement;
     expect(again.disabled).toBe(true);
     // A failed recap has nothing to edit or post, so the no-tries line must not say it has.
@@ -76,6 +76,23 @@ describe("Try again on a failed recap", () => {
     expect(screen.queryByText(text.noTriesLeft)).toBeNull();
     expect(screen.queryByText(text.tryingAgain)).toBeNull();
     expect(screen.getByRole("button", { name: text.drop })).toBeTruthy();
+  });
+});
+
+describe("a failed recap with no tries left", () => {
+  it("says there are no more tries in the failure box, and never tells the DM to press Try again", async () => {
+    open(failed(0));
+    expect(await screen.findByText(text.failedNoTries)).toBeTruthy();
+    expect(screen.queryByText(text.failed)).toBeNull();
+    expect(screen.queryByText(/Press Try again/)).toBeNull();
+    // Said once, not once in the box and once under the buttons.
+    expect(screen.getAllByText(text.failedNoTries)).toHaveLength(1);
+    expect((screen.getByRole("button", { name: text.again }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("still says 'Press Try again' while a try is left", async () => {
+    open(failed(1));
+    expect(await screen.findByText(text.failed)).toBeTruthy();
   });
 });
 
@@ -104,7 +121,8 @@ describe("when the run ends", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(await screen.findByText(text.failed)).toBeTruthy();
+    // The new failure used the last try, so the box says there are no more.
+    expect(await screen.findByText(text.failedNoTries)).toBeTruthy();
   });
 
   it("ignores a read that still shows the old failure, then follows the real one", async () => {
