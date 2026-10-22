@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // The DM's recap pages (#1386): the list, the review page, the three buttons, the edit round
 // trip and the refusal a player gets. Text only; the audio parts come with #1383.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
@@ -110,18 +110,26 @@ describe("the review page", () => {
   });
 
   it("counts down Try again and greys it at none", async () => {
-    renderPage(reviewPath);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Try again (2 left)" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Try again (1 left)" }),
-    );
-    const last = (await screen.findByRole("button", {
-      name: text.again,
-    })) as HTMLButtonElement;
-    expect(last.disabled).toBe(true);
-    expect(screen.getByText(text.noTriesLeft)).toBeTruthy();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPage(reviewPath);
+      fireEvent.click(await screen.findByRole("button", { name: "Try again (2 left)" }));
+      // While the new run is being made the page shows only that (#2333); the next read ends it.
+      await screen.findByText(text.working);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Try again (1 left)" }));
+      await screen.findByText(text.working);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      const last = (await screen.findByRole("button", { name: text.again })) as HTMLButtonElement;
+      expect(last.disabled).toBe(true);
+      expect(screen.getByText(text.noTriesLeft)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the recap and says so after Don't post", async () => {

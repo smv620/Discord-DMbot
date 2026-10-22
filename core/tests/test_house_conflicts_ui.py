@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import discord
+
 from dmbot.ai import Reply
 from dmbot.rules import conflicts, house_file_sync
 from dmbot.rules.conflicts import Checked, Disagreement, Existing
@@ -324,3 +326,26 @@ class Limits(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(found, Checked())
         ai.complete.assert_not_awaited()
         bot.all_house_rules.assert_not_awaited()
+
+
+class TheQuotedWords(unittest.TestCase):
+    """Rule words in the prompt are escaped (#2314), the buttons' labels are not."""
+
+    def test_a_rules_own_stars_and_underscores_are_escaped_in_the_prompt(self) -> None:
+        from dmbot.ui import house_conflicts as hc
+
+        view = hc.DisagreeView(
+            SimpleNamespace(),
+            SimpleNamespace(dm_user_ids={DM}),  # type: ignore[arg-type]
+            "A *potion* is a _bonus_ action",
+            [Existing(4, "A **potion** is an item interaction", None)],
+            save=AsyncMock(),
+            saved_note=lambda rule: "",
+            replace=None,
+            done=AsyncMock(),
+        )
+        text = view.prompt()
+        self.assertIn(r"A \*potion\* is a \_bonus\_ action", text)
+        self.assertIn(r"A \*\*potion\*\* is an item interaction", text)
+        labels = [c.label for c in view.children if isinstance(c, discord.ui.Button)]
+        self.assertEqual(labels[-2:], ["Rule 4 wins", "Cancel"])

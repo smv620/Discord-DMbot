@@ -1746,7 +1746,7 @@ def download_files(
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = (
-            tuple(a.text for a in mine if a.secret and not (e.audience_limited and a.key == own))
+            tuple(a.text for a in mine if a.secret and not (e.unseen_by_players and a.key == own))
             if secrets
             else ()
         )

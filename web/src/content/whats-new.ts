@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-22",
+    title: "Keep a name from the players until they learn it",
+    what: "When you add a name, 🙈 Hide from players keeps it to yourself: not in the NPC list, answers or recaps. On its card, 👀 Players know it now shows it to everyone when the players find out.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-21",
     title: "Pick the other name from a list",
     what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
@@ -423,7 +429,7 @@ export const held: Held[] = [
   {
     date: "2026-10-19",
     title: "Stops listening when no one's there",
-    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 30, 60 or 90 minutes, or Off. Off turns off only the quiet stop.",
+    what: "DMbot stops listening by itself when nobody has been in the voice channel for a few minutes, or nobody has spoken or typed for a while, so a forgotten game doesn't use up your listening hours. It warns you first on your DM screen, and you can press Keep listening. In ⚙️ Settings you choose how long \"a while\" is: 5, 10, 15 or 30 minutes (10 to start). When it stops, it sends you a private message saying why and where to change it, and tells each person still in the voice channel.",
     reason: "Merged with #2038 (#2041); held until dev1 deploys it.",
   },
   {

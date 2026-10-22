@@ -260,6 +260,15 @@ class Entity:
     # The campaign's party (#1655): one group per campaign whose members are its confirmed player
     # characters, worked out in code and not stored fact by fact.
     party: bool = False
+    # The DM's "Players don't know this one yet" (#2321): the entry is the DM's alone for now, like
+    # a clue only some people know, but with no audience to track. Any kind of entry.
+    hidden_from_players: bool = False
+
+    @property
+    def unseen_by_players(self) -> bool:
+        """The DM alone sees this entry: a clue only some know, or one the players don't know
+        yet. What lists, cards, answers and recaps hide from everyone but a DM."""
+        return self.audience_limited or self.hidden_from_players
 
     @property
     def is_unique(self) -> bool:

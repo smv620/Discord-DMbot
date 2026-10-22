@@ -1332,7 +1332,8 @@ so the docs always show names the way Discord does. For the campaign
   the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
   DM confirmed that are true now. Because players can peek here and the list sits in view all
   session, it is built by `RecallService.roster`, which applies the **players** audience's rules
-  and not a second copy: never a secret name or a name only misheard, a limited clue or anything
+  and not a second copy: never a secret name or a name only misheard, an entry the DM marked
+  "Players don't know yet" (#2321, see "Players don't know this one yet" below), a limited clue or anything
   that points to one, a story thread, a deed or standing, the DM's note (so there is **no
   description line**: the only description an entry has is the DM's note), a condition such as
   dead or missing (the table may not know yet), or anything from the adventure plan. Groups
@@ -1459,7 +1460,7 @@ Code changes: #87.
     stop, saying it stopped listening and why. The DM's message also says where to change it:
     ⚙️ Settings → Stop when quiet. A person whose private messages are closed is skipped; the DM screen
     line still says why it stopped.
-    *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
+    *Built (2026-10-19, #2034; auto-stop private messages #2288):* when DMbot stops by itself it also sends the campaign's DM a private message with the reason and where Settings is, and each other person still in the voice channel a short one (anyone there, opted in or not: it is a notice, not capture; a closed inbox is skipped and only counted in the log). `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132; since #2288 migration 0166 makes the choices 5, 10, 15 and 30 minutes, default 10, with no Off, and moves any campaign that was on Off, 60 or 90 to 30); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -4682,6 +4683,17 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address and per connection. No passwords, ever. *The account's email* is the one Stripe has
   for its payments (Checkout and the customer portal keep it up to date); an account that never
   paid has the email Discord gave the website, if it signed in there.
+- **Changing the email DMbot uses** (Supervisor, 2026-10-22, #2349: the recap page names the
+  address, so people need a way to fix it). The account page shows the address. A **payment
+  email** changes only in Stripe (the customer portal; `customer.updated` brings it back). Any
+  other email, or none, is changed on the account page: DMbot emails a link to the new address
+  and nothing changes until it is opened. The link is `/account#email-confirm=<token>` (in the
+  hash, so no server log holds it and a mail scanner opening it confirms nothing); the page
+  sends it back by POST, and it works only while signed in to **the same account** that asked.
+  One use, 15 minutes, like sign-in links; a new request replaces a waiting one, and a waiting
+  one can be cancelled. An address another account already uses is refused (sign-in by email
+  needs one address per account). Once changed, the **old** address gets a short note, so a
+  stolen session can't quietly move email sign-in. API shape: the comment on #2349.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the
@@ -4795,6 +4807,19 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   #227)
 
 *Settings menus (#2281, 2026-10-21).* Settings opens from the DM Bot channel's **👤 DMbot Main Menu** (it was "My buttons"). The Settings card keeps the daily choices and has two buttons for the rest: **👁️ Who can see the DM screen** (the three choices) and **🗂️ Campaign management** (hand over, pause, transcript retention, game masters, delete; drawn only for someone who can use at least one). Each submenu has **↩️ Back to Settings**. Every press re-checks the presser, as every settings button does.
+
+### Players don't know this one yet (#2321, 2026-10-22)
+Any entry (person, group, place, thing) can be kept from the players until the DM says they
+know it: the 🙈 switch on the kind step of Add a name, and 🙈 Hide from players / 👀 Players know
+it now on the name card (DM only). It is the clue's `audience_limited` treatment without an
+audience to track: `memory_entities.hidden_from_players`, read everywhere as
+`Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
+recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
+DM sets it. The relationship-level secret is separate and already exists (a secret connection).
+A player's character, the party and DMbot's own player entries can't be hidden. A hidden name is
+treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
+until the DM shows it.
+A database trigger clears the flag whenever an entry becomes a player's character or the party, whichever path does it (an import, a change of kind, the plays answer, a merge).
 
 ### Recap output room and Try again (#2341, 2026-10-22)
 The beat-sheet call's output room is sized for a full window of beats (`beats.room`) and doubles on the

@@ -872,17 +872,22 @@ class LevelButton(
 
 class QuietStopButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:quietstop:{_ID}:(?P<to>0|30|60|90)",
+    template=rf"dmbot:quietstop:{_ID}:(?P<to>[0-9]{{1,2}})",
 ):
-    """Stop when quiet (#2034): one tap goes to the next choice (30, 60, 90 minutes, Off) and the
-    card shows it. The button's ID carries the choice a press saves, so it works after a restart."""
+    """Stop when quiet (#2034, #2288): one tap goes to the next choice (5, 10, 15, 30 minutes,
+    then 5 again; there is no Off) and the card shows it. The button's ID carries the choice a
+    press saves, so it works after a restart. A button on an old card (60, 90 or 0) is read as
+    30 and saves the choice after it."""
 
     def __init__(self, campaign_id: str, minutes: int) -> None:
         self.campaign_id = campaign_id
-        self.next = QUIET_STOP_CHOICES[(QUIET_STOP_CHOICES.index(minutes) + 1) % 4]
+        shown = minutes if minutes in QUIET_STOP_CHOICES else 30
+        self.next = QUIET_STOP_CHOICES[
+            (QUIET_STOP_CHOICES.index(shown) + 1) % len(QUIET_STOP_CHOICES)
+        ]
         super().__init__(
             discord.ui.Button(
-                label=f"Stop when quiet: {quiet_stop.quiet_label(minutes)}",
+                label=f"Stop when quiet: {quiet_stop.quiet_label(shown)}",
                 emoji="🔇",
                 style=discord.ButtonStyle.secondary,
                 row=0,
@@ -895,8 +900,10 @@ class QuietStopButton(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> QuietStopButton:
         # What is saved is the choice in the ID; the label is redrawn from the saved value.
-        button = cls(match["campaign"], int(match["to"]))
-        button.next = int(match["to"])
+        wanted = int(match["to"])
+        button = cls(match["campaign"], wanted)
+        # A button from before #2288 may carry 0, 60 or 90, which are no longer choices: save 30.
+        button.next = wanted if wanted in QUIET_STOP_CHOICES else 30
         return button
 
     async def callback(self, interaction: discord.Interaction) -> Any:
