@@ -83,14 +83,26 @@ async def sign_in(
         [{"id": str(g.id), "name": g.name, "manage": g.manage} for g in guilds]
     )
     async with db.user(user.id) as conn:
+        # Two Discord accounts can share one mailbox. Discord's address comes in only when no other
+        # account already uses it (email sign-in needs one address per account, #2366); the check
+        # takes the per-address lock, held to the end of this transaction, so two sign-ins at once
+        # cannot both take it. Otherwise the account keeps the address it has, or none.
+        email, keep = user.email, False
+        if email:
+            taken = await conn.execute("SELECT dmbot_email_taken(%s) AS taken", (email,))
+            keep = bool((await taken.fetchone() or {}).get("taken"))
+            email = None if keep else email
         try:
             await conn.execute(
                 "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
                 " VALUES (%s, %s, %s, %s, %s)"
                 " ON CONFLICT (user_id) DO UPDATE"
-                " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at,"
+                # An address the person chose on the account page outlives Discord sign-ins (#2349).
+                " SET email = CASE WHEN web_users.email_chosen_at IS NULL AND NOT %s"
+                " THEN EXCLUDED.email ELSE web_users.email END,"
+                " last_sign_in_at = EXCLUDED.last_sign_in_at,"
                 " display_name = EXCLUDED.display_name",
-                (user.id, user.email, now, now, user.name),
+                (user.id, email, now, now, user.name, keep),
             )
         except psycopg.errors.RaiseException as exc:
             # The database refuses a new account for an ID that moved away.
