@@ -5,10 +5,10 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and its length follows the session's: about 100 words plus
-  100 for each hour played (`length_for`), at most 700, from half of that to 20% over it (35% over
-  on the last try: length is a quality target and not a grounding rule, owner decisions on #2013
-  and #2058);
+- it opens with an emotion cue `《…》` and its length follows the session's: about 75 words plus
+  75 for each hour played (`length_for`), at most 450, from half of that to 20% over it (35% over
+  on the last try: length is a quality target and not a grounding rule, owner decisions on #2013,
+  #2058 and, for the shorter numbers, #2368);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
@@ -46,17 +46,19 @@ from dmbot.recaps.text import (
     words,
 )
 
-BASE_WORDS = 100  # the recap's length: this many words, and 100 more for each hour played
-WORDS_PER_HOUR = 100
-WORDS_CEILING = 700  # a 6-hour session or longer
+BASE_WORDS = 75  # the recap's length: this many words, and 75 more for each hour played (#2368)
+WORDS_PER_HOUR = 75
+WORDS_CEILING = 450  # a 5-hour session or longer
 RANGE = 0.20  # a draft up to this far over the target passes
 LAST_UP = 0.35  # on the last try a draft this far over the target still passes
 BELOW = 0.50  # a draft of at least this share of the target passes, on every try (owner, #2058)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 CHARS_PER_WORD = 8  # characters allowed for each word of the longest accepted draft
+# The longest at all: the last try's limit at 8 characters a word, so the web editor never refuses a
+# draft the length check passed.
 SUMMARY_MAX = (
-    round(WORDS_CEILING * (1 + LAST_UP) * CHARS_PER_WORD) + FIXED_LINES_ROOM
+    round(WORDS_CEILING * (1 + LAST_UP)) * CHARS_PER_WORD + FIXED_LINES_ROOM
 )  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
@@ -246,14 +248,15 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """100 words and 100 for each hour played, to the nearest 10 and at most 700 (0.5 hours 150, 1
-    hour 200, 3 hours 400, 6 hours or more 700). A draft passes from half the target (the owner
-    asked for 50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
+    """75 words and 75 for each hour played, to the nearest 10 with a half rounding up (Python's
+    round() would make 2 hours 220) and at most 450: 0.5 hours 110, 1 hour 150, 2 hours 230,
+    3 hours 300, 5 hours or more 450. A draft passes from half the target (the owner asked for
+    50% under, #2058) up to 20% over it, and up to 35% over on the last try. The other
     limits follow: 3 beats an hour (3 to 10), a section for every 70 words (1 to 6),
     a paragraph for every 100 words (2 or more), 8 characters for each word of the longest
     accepted draft (so the cap never cuts a draft the length check passes) and a token budget for
     the words, the music prompts and the form."""
-    target = min(WORDS_CEILING, round((BASE_WORDS + WORDS_PER_HOUR * hours) / 10) * 10)
+    target = min(WORDS_CEILING, int((BASE_WORDS + WORDS_PER_HOUR * hours) / 10 + 0.5) * 10)
     low = round(target * BELOW)
     high = round(target * (1 + RANGE))
     last_high = round(target * (1 + LAST_UP))
