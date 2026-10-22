@@ -12,6 +12,7 @@ import {
   heldWords,
   isHeld,
   sessionDay,
+  sessionLine,
   statusLine,
   text,
 } from "../content/recaps";
@@ -154,9 +155,7 @@ function List({ api }: { api: AccountApi }) {
             <li key={r.ref}>
               <span class="campaign-name">{r.title || text.untitled}</span>
               <span class="small">
-                {[r.campaign, r.serverName, sessionDay(r.sessionAt)]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {sessionLine(r, [r.serverName])}
               </span>
               {r.transcriptsDeletedAt && (
                 <span class="small">
@@ -587,9 +586,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <span class="tag">{statusLine(recap, sawWaiting.current)}</span>
       </div>
       <p class="small">
-        {[recap.campaign, recap.serverName, sessionDay(recap.sessionAt)]
-          .filter(Boolean)
-          .join(" · ")}
+        {sessionLine(recap, [recap.serverName])}
       </p>
       {recap.transcriptsDeletedAt && (
         <p class="small">
