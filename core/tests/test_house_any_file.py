@@ -537,6 +537,34 @@ class Offering(SyncTest):
         await self.compare(NOTES + "Crits are doubled.\n", from_link=True)  # the file changed
         self.assertEqual(len(self.ai.calls), 2)
 
+    async def test_a_linked_file_cut_twice_is_recorded_and_not_read_again_until_it_changes(
+        self,
+    ) -> None:
+        self.links.link = DOC
+        self.ai.replies = [Reply("{", True, 10, 10, "m")]
+        said = await self.compare(from_link=True)
+        self.assertEqual(said, hs.TOO_MANY_RULES_LINKED)
+        self.assertIn("Split it into two files", hs.TOO_MANY_RULES_LINKED)
+        self.assertEqual(self.remembering.read_fp, house_reader.fingerprint_of(NOTES))
+        calls = len(self.ai.calls)
+        self.assertIsNone(await self.compare(from_link=True))  # the next session start: silent
+        self.assertEqual(len(self.ai.calls), calls)  # no call at all
+        await self.compare(NOTES + "Crits are doubled.\n", from_link=True)  # the file changed
+        self.assertGreater(len(self.ai.calls), calls)
+
+    async def test_an_upload_cut_twice_keeps_the_upload_words_and_records_nothing(self) -> None:
+        self.ai.replies = [Reply("{", True, 10, 10, "m")]
+        self.assertEqual(await self.compare(), hs.TOO_MANY_RULES)
+
+    async def test_the_retry_leaves_time_for_reading_the_file_first(self) -> None:
+        from dmbot.rules import house_ai
+
+        self.assertEqual(house_ai.ROOM_MAX, 6_000)
+        self.assertEqual(
+            house_ai.RETRY_MAX, int((house_ai.TIMEOUT_S - 30) * house_ai.TOKENS_PER_SECOND)
+        )
+        self.assertLess(house_ai.RETRY_MAX, house_ai.TIMEOUT_S * house_ai.TOKENS_PER_SECOND)
+
     async def test_compare_now_reads_again_so_a_lost_offer_can_be_asked_for(self) -> None:
         self.links.link = DOC
         await self.compare(from_link=True)

@@ -64,6 +64,12 @@ class Linking(LinkTest):
         self.assertEqual(back.site, "docs.google.com")
         self.assertNotIn("a" * 30, back.site)  # only the site is ever shown
 
+    async def test_a_onedrive_share_is_shown_as_onedrive_not_as_its_file_api(self) -> None:
+        saved = await self.links.set_link(
+            GUILD_A, self.campaign.id, DM, "https://1drv.ms/w/s!AbCdEfGhIjKlMn"
+        )
+        self.assertEqual(saved.site, "onedrive.live.com")
+
     async def test_a_second_dm_may_too_but_a_player_may_not(self) -> None:
         await self.campaigns.add_dm(GUILD_A, self.campaign.id, CO_DM)
         await self.links.set_link(GUILD_A, self.campaign.id, CO_DM, DOC)
