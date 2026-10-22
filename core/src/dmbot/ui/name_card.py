@@ -688,7 +688,7 @@ class NameCard(_Menu):
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
-        if undo_connection is not None:  # last row but one: out of the way of the edits
+        if undo_connection is not None:  # rows 0 and 1, because row 4 is Show all's (#2339)
             self.add_item(UndoConnectionButton(campaign_id, entity_id, undo_connection))
         if undo_spelling is not None:
             self.add_item(UndoSpellingButton(campaign_id, entity_id, undo_spelling))

@@ -32,7 +32,7 @@ class Layout(unittest.TestCase):
         for undo, kind in itertools.product(undos, KINDS):
             for r in range(len(SHARED) + 1):
                 for on in itertools.combinations(SHARED, r):
-                    flags = {**kind, **{f: True for f in on}}
+                    flags: dict[str, object] = {**kind, **{f: True for f in on}}
                     flags.update({k: v for k, v in undo.items() if v is not None})
                     self.build(**flags)  # must not raise
 
