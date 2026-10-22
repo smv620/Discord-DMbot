@@ -36,14 +36,14 @@ from dmbot.ui.name_card import (
     NOTHING_MORE,
     SECRET_DENIED_PRESS,
     Row,
-    _md,
     _names,
     _rows,
     sentence,
     show_card,
 )
-from dmbot.ui.names import _campaign_for, _memory, changed, sees_secrets
+from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
+EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
 ALL_LABEL = "🌐 See all on the website"
 WEBSITE_BUTTON = "Open all connections"

@@ -10,6 +10,7 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.ui import connection_edit, name_card
 from dmbot.ui import names as ui
@@ -306,7 +307,7 @@ class Cards(base.NamesTest):
         page = await self.page()
         (rel,) = await self.relations()
         await self.memory.update_relation(
-            GUILD, self.campaign.id, rel.id, status="rejected", source=base.DM_SOURCE
+            GUILD, self.campaign.id, rel.id, status="rejected", source=DM_SOURCE
         )  # another DM took it back meanwhile
         self.fresh()
         for press in (page._flip, page._remove):

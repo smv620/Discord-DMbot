@@ -2387,11 +2387,11 @@ class Connect(_Menu):
         )
         self.add_item(self.how)
         if rows:  # one menu for what is already there, in the card's order and words (#2323)
-            from dmbot.ui.connection_edit import choices  # (it builds on this module)
+            from dmbot.ui.connection_edit import EDIT_BUTTON, choices  # (it builds on this module)
 
             self.edit = _Select(
                 self._edit_picked,
-                placeholder="✏️ Edit a connection…",
+                placeholder=EDIT_BUTTON,
                 options=choices(rows),
                 row=1,
             )
