@@ -128,7 +128,8 @@ MORE_LINE = (
     "🗂️ Campaign management."
 )
 PAUSED_LINE = (
-    "• **⏸️ Paused.** DMbot is not listening. The owner can unpause it under 🗂️ Campaign management."
+    "• **⏸️ Paused:** DMbot won't start a session for this campaign until you unpause it. The "
+    "owner can unpause it under 🗂️ Campaign management."
 )
 
 
@@ -976,8 +977,13 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
     try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"
+        # The press is not answered yet when the edit itself fails, so a follow-up alone would
+        # fail too and Discord would show "This interaction failed" (#2292).
         with contextlib.suppress(discord.HTTPException):
-            await interaction.followup.send(FAILED, ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(FAILED, ephemeral=True)
+            else:
+                await interaction.followup.send(FAILED, ephemeral=True)
 
 
 class VisibilityMenuButton(

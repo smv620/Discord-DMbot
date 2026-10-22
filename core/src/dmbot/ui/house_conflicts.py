@@ -21,11 +21,12 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.mentions import NO_PINGS
 from dmbot.rules import conflicts
 from dmbot.rules.conflicts import Checked, Existing
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.wins import RuleRef
-from dmbot.ui.dmbot_commands import _Button, _Menu, _tell
+from dmbot.ui.dmbot_commands import TIMED_OUT, _Button, _Menu, _tell
 
 if TYPE_CHECKING:
     from dmbot.rules.wins import WinsStore
@@ -37,6 +38,7 @@ UNCHECKED = (
     "`/dmbot houserules`._"
 )
 ONLY_DMS = "Only this campaign's DMs can answer this."
+GONE = "That campaign is gone. Nothing was saved."
 WORDS_MAX = 150
 LABEL_MAX = 25  # a phone cuts a longer label
 
@@ -121,6 +123,7 @@ class DisagreeView(_Menu):
         self._save, self._saved_note, self._replace = save, saved_note, replace
         self._done, self._cancelled = done, cancelled
         self.at = 0
+        self.question: Any = None  # the follow-up message that holds the question, if any
         self._busy = asyncio.Lock()  # two presses at once must not save the rule twice
         self.remembered = True
         self.saved: HouseRule | None = None
@@ -171,7 +174,16 @@ class DisagreeView(_Menu):
         self.add_item(_Button(self._on_cancel, label="Cancel", style=discord.ButtonStyle.secondary))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Who may answer, read from the campaign as it is now (#2314), as `house_voice.press`
+        does: a DM removed since the question was shown can no longer answer it."""
         await super().interaction_check(interaction)
+        store = getattr(self.bot, "campaigns", None)
+        if store is not None:
+            fresh = await store.get(self.campaign.guild_id, self.campaign.id)
+            if fresh is None:
+                await _tell(interaction, GONE)
+                return False
+            self.campaign = fresh
         if interaction.user.id in self.campaign.dm_user_ids:
             return True
         await _tell(interaction, ONLY_DMS)
@@ -180,6 +192,10 @@ class DisagreeView(_Menu):
     async def on_timeout(self) -> None:
         if self.saved is None and self._cancelled is not None:
             self._cancelled()
+        if self.question is not None:  # say so on the question itself, nothing else
+            with contextlib.suppress(discord.HTTPException):
+                await self.question.edit(content=TIMED_OUT, view=None)
+            return
         await super().on_timeout()
 
     @property
@@ -191,7 +207,13 @@ class DisagreeView(_Menu):
         await self._done(interaction, note)
 
     async def _on_replace(self, interaction: discord.Interaction) -> None:
+        async with self._busy:  # one answer at a time, as for the other buttons
+            await self._on_replace_once(interaction)
+
+    async def _on_replace_once(self, interaction: discord.Interaction) -> None:
         assert self._replace is not None
+        if self.stopped:
+            return  # already answered
         try:
             note = await self._replace(self.other.number)
         except HouseRuleError as exc:
@@ -255,6 +277,12 @@ class DisagreeView(_Menu):
         )
 
     async def _on_cancel(self, interaction: discord.Interaction) -> None:
+        async with self._busy:  # not while a save or a replace is in progress
+            await self._on_cancel_once(interaction)
+
+    async def _on_cancel_once(self, interaction: discord.Interaction) -> None:
+        if self.stopped:
+            return  # already answered: a Cancel that waited behind a Replace
         if self.saved is None:
             if self._cancelled is not None:
                 self._cancelled()
@@ -296,4 +324,15 @@ async def ask(
         cancelled=cancelled,
     )
     with contextlib.suppress(discord.HTTPException):
-        await _tell(interaction, view.prompt(), view=view)
+        if interaction.response.is_done():
+            # The press was answered with a deferred update already, so `origin` is the message
+            # the flow began on (the rules list, the DM-screen offer): the question is a new
+            # message, kept so that a timeout edits it and not that one (#2314).
+            view.question = await interaction.followup.send(
+                view.prompt(), view=view, ephemeral=True, allowed_mentions=NO_PINGS, wait=True
+            )
+        else:
+            await interaction.response.send_message(
+                view.prompt(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+            view.origin = interaction  # (the question is the interaction's own reply)

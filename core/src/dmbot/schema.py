@@ -3029,6 +3029,65 @@ EMAIL_SIGN_IN = (
     """
 )
 
+EMAIL_CHANGES = """
+    -- A waiting change of the email DMbot uses (#2349): one row per account (a new ask replaces the
+    -- last one), holding the address asked for and only the SHA-256 of the confirm link's token,
+    -- like a session cookie. Own row only; the link works for the account that asked.
+    CREATE TABLE email_changes (
+        user_id     BIGINT PRIMARY KEY REFERENCES web_users ON DELETE CASCADE,
+        new_email   TEXT NOT NULL,
+        token_hash  TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL
+    );
+    -- When the person chose their address on the account page: a Discord sign-in keeps it from
+    -- then on instead of putting Discord's address back (no existing row changes).
+    ALTER TABLE web_users ADD COLUMN email_chosen_at BIGINT;
+    ALTER TABLE email_changes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE email_changes FORCE ROW LEVEL SECURITY;
+    CREATE POLICY user_isolation ON email_changes
+        USING (user_id = dmbot_current_user())
+        WITH CHECK (user_id = dmbot_current_user());
+
+    -- Whether another account already uses an address (sign-in by email needs one address per
+    -- account). The person is the one signed in; the function runs with its owner's rights to
+    -- read the other rows, opened by the same setting and policy as dmbot_user_by_email, and
+    -- answers only yes or no.
+    CREATE FUNCTION dmbot_email_taken(addr TEXT) RETURNS BOOLEAN
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        found BOOLEAN;
+        me BIGINT := dmbot_current_user();
+        before TEXT := COALESCE(current_setting('dmbot.email_lookup', true), '');
+    BEGIN
+        IF me IS NULL OR addr IS NULL OR addr = '' THEN
+            RETURN NULL;
+        END IF;
+        -- Two accounts confirming the same address at once would both pass the check below: one
+        -- lock per address, held until the caller's transaction ends, makes the second one wait
+        -- and then see the first one's row.
+        PERFORM pg_advisory_xact_lock(hashtextextended(lower(addr), 2349));
+        PERFORM set_config('dmbot.email_lookup', 'on', true);
+        SELECT EXISTS (
+            SELECT 1 FROM web_users
+            WHERE user_id <> me
+              AND (lower(email) = lower(addr) OR lower(payment_email) = lower(addr))
+        ) INTO found;
+        PERFORM set_config('dmbot.email_lookup', before, true);
+        RETURN found;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_email_taken(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_email_taken(TEXT) FROM PUBLIC;
+"""
+
 # What the website's role may touch at all: its own tables, and only reads of the two
 # server tables /me needs. Everything else (consent, transcripts, memory...) is refused
 # outright. Applied by Database.migrate whenever the role exists, so a new table is never
@@ -3041,6 +3100,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_claim_email", "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"),
     # Sign-in by emailed link (#1231).
     ("dmbot_user_by_email", "dmbot_user_by_email(TEXT)"),
+    # Whether another account has an address, for the signed-in person's change of email (#2349).
+    ("dmbot_email_taken", "dmbot_email_taken(TEXT)"),
     # Experience points (#1228): the one door to the person's all-time minutes.
     ("dmbot_minutes_total", "dmbot_minutes_total()"),
     ("dmbot_user_of", "dmbot_user_of(TEXT)"),  # links made before a move (#1230)
@@ -3225,6 +3286,8 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # (Only `used_at` can be changed: a holder of a link can spend it, never revive or move it.)
     ("SELECT, INSERT, DELETE", ("email_sign_in_links",)),
     ("UPDATE (used_at)", ("email_sign_in_links",)),
+    # A waiting change of the account's email (#2349): made, replaced, read, confirmed (deleted).
+    ("SELECT, INSERT, UPDATE, DELETE", ("email_changes",)),
     # Free access (#771): the admin page gives, changes and revokes grants (through
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
@@ -9565,6 +9628,35 @@ ALL_NAMES_PAGE = r"""
     REVOKE ALL ON FUNCTION dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)
         FROM PUBLIC;
 """
+# The All names door again (#2376, migration 0174): the check for an entry whose own spelling is
+# also a secret name ran once per entry over all of its names, which took seconds on a big campaign
+# before the database had statistics (right after a restore or an import). It is now found from the
+# secret names alone and joined once. The result is the same. 0170 is already applied everywhere,
+# so this redefines the door; a redefined function loses its pinned settings, so they are set again.
+_SECRET_EACH = """                   EXISTS (SELECT 1 FROM memory_aliases a
+                           WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,"""
+_SECRET_ONCE = """                   (e.id IN (SELECT s.entity_id FROM secret_own s)) AS secret,"""
+_SECRET_CTE = """        WITH secret_own AS (
+            SELECT DISTINCT a.entity_id
+            FROM memory_aliases a
+            JOIN memory_entities en ON en.guild_id = a.guild_id AND en.campaign_id = a.campaign_id
+                                   AND en.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.secret AND a.status <> 'rejected'
+              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                = regexp_replace(lower(en.name), '[^[:alnum:]]', '', 'g')
+        ), base AS ("""
+assert _SECRET_EACH in ALL_NAMES_PAGE and ALL_NAMES_PAGE.count("        WITH base AS (") == 1
+ALL_NAMES_SPEED = (
+    ALL_NAMES_PAGE.replace(
+        "CREATE FUNCTION dmbot_web_all_names(", "CREATE OR REPLACE FUNCTION dmbot_web_all_names(", 1
+    )
+    .replace(_SECRET_EACH, _SECRET_ONCE, 1)
+    .replace("        WITH base AS (", _SECRET_CTE, 1)
+)
 # Which suggested names were made before pronouns were kept out of them (#2358). The default
 # marks every existing row (a constant default is stored as metadata: no UPDATE runs, so no
 # row-level-security policy is opened) and is then changed, so every row written from now on is
@@ -9940,10 +10032,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0165_house_rule_source", HOUSE_RULE_SOURCE),  # where each house rule came from (#2285)
     ("0166_quiet_stop_choices", QUIET_STOP_CHOICES_SQL),  # no Off, 5/10/15/30, default 10 (#2288)
     ("0167_hidden_from_players", HIDDEN_FROM_PLAYERS),  # a name the players don't know yet (#2321)
+    ("0168_email_changes", EMAIL_CHANGES),  # a waiting change of the account email (#2349)
     ("0169_made_before_name_gate", NAME_GATE),  # suggestions from before the pronoun gate (#2358)
     ("0170_all_names_page", ALL_NAMES_PAGE),  # the website's All names list (#2294)
     ("0171_all_names_actions", NAME_ACTIONS),  # the DM's actions on that page, for the bot (#2294)
     ("0173_backstory_links", BACKSTORY_LINKS),  # connections a backstory found, waiting (#2380)
+    ("0174_all_names_speed", ALL_NAMES_SPEED),  # its secret-name check in one join (#2376)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -10028,6 +10122,7 @@ USER_ISOLATED_TABLES = (
     "payment_events",
     "web_sessions",
     "email_sign_in_links",
+    "email_changes",
     "installs",
     # Every Discord account a DMbot account used; keyed by its DMbot ID (#1230).
     "account_id_history",

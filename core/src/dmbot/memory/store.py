@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -128,11 +129,14 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.names import not_names
 
+log = logging.getLogger(__name__)
+
 PERSON = "person"
 PLAYS = "plays"
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
+ANALYZE_AFTER_NAMES = 500  # a list this long refreshes the planner's statistics (#2376)
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
 # _live_ids instead: joined to a campaign with no table statistics yet (one just given
@@ -1487,6 +1491,40 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def add_names(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        names: Sequence[NewName],
+        *,
+        source: str,
+        secret_clashes: bool = True,
+        more: Sequence[MoreNames] = (),
+        entity_source: str | None = None,
+    ) -> Written[list[str | None]]:
+        """`_add_names` (see there), then the memory tables' statistics refreshed after a big
+        list (#2376): the next read of a campaign that just grew by thousands of names is planned
+        from fresh counts."""
+        written = await self._add_names(
+            guild_id, campaign_id, names, source=source, secret_clashes=secret_clashes,
+            more=more, entity_source=entity_source,
+        )  # fmt: skip
+        if sum(1 for i in written.value if i is not None) >= ANALYZE_AFTER_NAMES:
+            await self.analyze(guild_id)
+        return written
+
+    async def analyze(self, guild_id: int) -> None:
+        """Refresh the planner's statistics for the memory tables, after a big import or a
+        restore (#2376): until the database's own ANALYZE has run, a read over thousands of new
+        rows is planned from guesses and can take seconds. Best effort: the database role may not
+        be allowed to (then nothing happens), and nothing here may fail the import that called
+        it. Only table names are run, never anyone's data."""
+        try:
+            async with self._db.guild(guild_id) as conn:
+                await conn.execute("ANALYZE memory_entities, memory_aliases, memory_relations")
+        except Exception:
+            log.warning("Couldn't refresh the memory tables' statistics", exc_info=False)
+
+    async def _add_names(
         self,
         guild_id: int,
         campaign_id: str,
@@ -4291,42 +4329,63 @@ async def _move_aliases(
 async def _move_npc_notes(
     w: Changes, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
 ) -> None:
-    """A person's private notes on the merged entry go to the one kept (#2265); a person with a
-    note on both keeps both, the kept entry's first, joined. If the two together would be over the
-    5,000 characters a note may hold, the merged entry's note is not joined: it stays as a note on
-    a name no longer listed (30 days, in the person's "Notes on names no longer listed", where they
-    can copy it), so no word is lost. Nothing of a note is read here beyond its length, and
-    nothing is logged. (Undoing a merge does not move notes back: they stay on the kept entry.)"""
+    """A person's private notes on the merged entry go to the one kept (#2265, #2298): every note,
+    the ones already marked "no longer listed" too. A person with a note on both keeps both, the
+    kept entry's first, joined. A note keeps its place in the 30 days it was given: one already
+    marked keeps its clock (the older of the two when joined), and the clock is never restarted. A
+    marked note is unmarked only if the kept entry is listed (the roster has it).
+
+    If the two together would be over the 5,000 characters a note may hold, the merged entry's note
+    is not joined: it stays as a note on a name no longer listed (30 days, in the person's "Notes
+    on names no longer listed", where they can copy it), so no word is lost. It is marked now
+    only if it was not marked already. Nothing of a note is read here beyond its length, a note
+    never leaves its writer's rows, and nothing is logged. (Undoing a merge does not move notes
+    back: they stay on the kept entry.)"""
     ids = (guild_id, campaign_id)
     now = int(time.time())
-    # too long to join: the merged note is kept apart, marked as no longer listed
+    cur = await w.conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM npc_roster WHERE guild_id = %s AND campaign_id = %s"
+        " AND entry_id = %s) AS listed",
+        (*ids, keep_id),
+    )
+    row = await cur.fetchone()
+    listed = bool(row and row["listed"])
+    # too long to join: the merged note stays apart, marked as no longer listed (a clock already
+    # running keeps running)
     await w.conn.execute(
-        "UPDATE npc_notes g SET orphaned_at = %s FROM npc_notes k"
+        "UPDATE npc_notes g SET orphaned_at = COALESCE(g.orphaned_at, %s) FROM npc_notes k"
         " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.entry_id = %s"
         " AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id AND k.entry_id = %s"
         " AND k.user_id = g.user_id AND char_length(k.body) + 2 + char_length(g.body) > 5000",
         (now, *ids, gone_id, keep_id),
     )
+    # The notes that fit are decided from the rows as they are now, in one statement: the merged
+    # note is deleted and its words are appended to the kept one (a separate UPDATE first would
+    # make the kept note longer, and the delete's length check would then miss the twin).
     await w.conn.execute(
-        "UPDATE npc_notes k SET body = k.body || E'\\n\\n' || g.body,"
-        " updated_at = greatest(k.updated_at, g.updated_at)"
-        " FROM npc_notes g WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
-        " AND g.guild_id = k.guild_id AND g.campaign_id = k.campaign_id AND g.entry_id = %s"
-        " AND g.user_id = k.user_id AND g.orphaned_at IS NULL",
-        (*ids, keep_id, gone_id),
+        "WITH joined AS ("
+        " DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
+        " AND g.entry_id = %s AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id"
+        " AND k.entry_id = %s AND k.user_id = g.user_id"
+        " AND char_length(k.body) + 2 + char_length(g.body) <= 5000"
+        " RETURNING g.user_id, g.body, g.updated_at, g.orphaned_at)"
+        " UPDATE npc_notes k SET body = k.body || E'\\n\\n' || j.body,"
+        " updated_at = greatest(k.updated_at, j.updated_at),"
+        " orphaned_at = CASE WHEN %s THEN NULL WHEN k.orphaned_at IS NULL THEN j.orphaned_at"
+        "  WHEN j.orphaned_at IS NULL THEN k.orphaned_at"
+        "  ELSE least(k.orphaned_at, j.orphaned_at) END"
+        " FROM joined j WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
+        " AND k.user_id = j.user_id",
+        (*ids, gone_id, keep_id, listed, *ids, keep_id),
     )
+    # a note with no twin moves over, whether it was marked or not
     await w.conn.execute(
-        "DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
-        " AND g.entry_id = %s AND g.orphaned_at IS NULL AND k.guild_id = g.guild_id"
-        " AND k.campaign_id = g.campaign_id AND k.entry_id = %s AND k.user_id = g.user_id",
-        (*ids, gone_id, keep_id),
-    )
-    await w.conn.execute(
-        "UPDATE npc_notes SET entry_id = %s, orphaned_at = NULL WHERE guild_id = %s"
-        " AND campaign_id = %s AND entry_id = %s AND orphaned_at IS NULL"
+        "UPDATE npc_notes SET entry_id = %s,"
+        " orphaned_at = CASE WHEN %s THEN NULL ELSE orphaned_at END"
+        " WHERE guild_id = %s AND campaign_id = %s AND entry_id = %s"
         " AND NOT EXISTS (SELECT 1 FROM npc_notes x WHERE x.guild_id = %s AND x.campaign_id = %s"
         "  AND x.entry_id = %s AND x.user_id = npc_notes.user_id)",
-        (keep_id, *ids, gone_id, *ids, keep_id),
+        (keep_id, listed, *ids, gone_id, *ids, keep_id),
     )
 
 
