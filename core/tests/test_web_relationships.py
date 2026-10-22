@@ -14,11 +14,14 @@ import httpx
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, callers
 from tests.test_web_all_names import MEMBER, Listing
 from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+
+BOB_USER = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
 
 
 class Web(Listing):
@@ -33,7 +36,7 @@ class Web(Listing):
         await self.link("ally_of", self.mira, self.rook, "mira-rook")
         await self.link("located_in", self.rook, self.keep, "rook-keep")
         await self.link("located_in", self.keep, self.hall, "keep-hall")
-        self.player = await self.signed(BOB, MEMBER)
+        self.player = await self.signed(BOB_USER, MEMBER)
 
     async def link(self, predicate: str, a: str, b: str, tag: str, *, secret: bool = False) -> str:
         made = await self.memory.add_relation(
@@ -150,6 +153,59 @@ class TheShape(Web):
         self.assertEqual(size["names"], 4)  # the size is the whole, not the cap
 
 
+class Shaping(unittest.TestCase):
+    """The pure part: grouping the door's rows into edges (no database)."""
+
+    def row(self, tag: str, a: str, b: str, predicate: str, at: int, **kw: Any) -> dict[str, Any]:
+        return {"id": tag, "a": a, "b": b, "predicate": predicate, "detail": "", "secret": False,
+                "at": at, **kw}  # fmt: skip
+
+    def test_a_pair_is_one_edge_with_the_latest_known_label_and_the_others_counted(self) -> None:
+        rows = [
+            self.row("1", "b", "a", "knows", 1),
+            self.row("2", "a", "b", "enemy_of", 2),
+            self.row("3", "a", "b", "owns", 3, secret=True),
+        ]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual((edge["a"], edge["b"]), ("a", "b"))  # the smaller id first
+        self.assertEqual((edge["label"], edge["more"]), ("is an enemy of", 2))
+        links = {x["id"]: x for x in edge["links"]}
+        self.assertEqual(links["1"]["direction"], "b-a")  # b knows a: the words read b to a
+        self.assertEqual(links["2"]["direction"], "both")
+        self.assertEqual(links["3"]["direction"], "a-b")
+        self.assertEqual([x["secret"] for x in edge["links"]], [False, False, True])
+
+    def test_the_secret_flag_is_a_dms_only_and_never_picks_the_label(self) -> None:
+        rows = [
+            self.row("1", "a", "b", "knows", 1),
+            self.row("2", "a", "b", "owns", 2, secret=True),
+        ]
+        (for_dm,) = relationships.edges_from(rows, can_edit=True)
+        (for_member,) = relationships.edges_from(rows, can_edit=False)
+        self.assertEqual(for_dm["label"], for_member["label"])
+        self.assertEqual(for_dm["label"], "knows")  # the secret one is newest, and not the label
+        self.assertEqual([x["secret"] for x in for_member["links"]], [False, False])
+
+    def test_only_secret_connections_still_give_a_label(self) -> None:
+        rows = [self.row("1", "a", "b", "owns", 1, secret=True)]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(edge["label"], "owns")
+
+    def test_the_words_of_a_said_connection_are_its_label(self) -> None:
+        rows = [self.row("1", "a", "b", "associated_with", 1, detail="sworn on the ashes of")]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(edge["links"][0]["words"], "sworn on the ashes of")
+
+    def test_label_of_prefers_the_latest_known_one(self) -> None:
+        links = [
+            {"secret": False, "words": "old"},
+            {"secret": False, "words": "new"},
+            {"secret": True, "words": "newest secret"},
+        ]
+        self.assertEqual(relationships.label_of(links)["words"], "new")
+        self.assertEqual(relationships.label_of(links[2:])["words"], "newest secret")
+
+
 class WhoSeesWhat(Web):
     async def test_a_member_never_gets_a_secret_connection_or_name(self) -> None:
         await self.link("owns", self.mira, self.hall, "secret-link", secret=True)
@@ -185,6 +241,42 @@ class WhoSeesWhat(Web):
         player = await self.graph(self.player, center=self.mira, hops=1)
         self.assertNotIn("Find the Lost Bell", {n["name"] for n in player["nodes"]})
 
+    async def test_a_member_does_not_get_what_has_ended_or_came_from_the_story_plan(self) -> None:
+        await self.link("enemy_of", self.mira, self.keep, "old-feud")
+        await self.sql(
+            "UPDATE memory_relations SET to_session_at = 5 WHERE id = %s", self.links["old-feud"]
+        )  # the feud is over
+        planned = await self.link("knows", self.rook, self.hall, "planned")
+        await self.sql("UPDATE memory_relations SET source = 'story_plan' WHERE id = %s", planned)
+        player = await self.graph(self.player, center=self.mira, hops=2)
+        seen = [x["id"] for e in player["edges"] for x in e["links"]]
+        self.assertNotIn(self.links["old-feud"], seen)
+        self.assertNotIn(planned, seen)
+        edge = next(e for e in player["edges"] if {e["a"], e["b"]} == {self.mira, self.keep})
+        self.assertEqual((edge["label"], edge["more"]), ("knows", 0))
+        dm = await self.graph(center=self.mira, hops=2)  # the DM has them (the card does too)
+        every = [x["id"] for e in dm["edges"] for x in e["links"]]
+        self.assertIn(self.links["old-feud"], every)
+        self.assertIn(planned, every)
+
+    async def test_the_size_and_the_cap_leave_out_what_a_member_may_not_see(self) -> None:
+        lady = await self.add("Lady Grey", "npc")
+        await self.alias(lady, "Lady Grey", secret=True)
+        await self.link("knows", self.mira, lady, "to-secret-name")
+        await self.link("knows", self.mira, self.sword, "to-sword")
+        member = await relationships.read_size(
+            self.web, self.player, self.cref, center=self.mira, hops=1
+        )
+        dm = await relationships.read_size(
+            self.web, self.session, self.cref, center=self.mira, hops=1
+        )
+        self.assertEqual(dm["names"], member["names"] + 1)  # the secret name is a DM's alone
+        with patch.object(relationships, "MAX_NODES", 4):
+            player = await self.graph(self.player, center=self.mira, hops=1)
+            dm_graph = await self.graph(center=self.mira, hops=1)
+        self.assertFalse(player["truncated"])  # four names a member may see fit
+        self.assertTrue(dm_graph["truncated"])  # five for a DM do not
+
     async def test_a_label_for_a_member_is_never_the_secret_one(self) -> None:
         await self.link("owns", self.mira, self.keep, "newest-secret", secret=True)
         player = await self.graph(self.player, center=self.mira, hops=1)
@@ -195,7 +287,9 @@ class WhoSeesWhat(Web):
 
 class Refusals(Web):
     async def test_someone_outside_the_server_another_campaign_or_a_missing_name(self) -> None:
-        elsewhere = await self.signed(BOB, MEMBER.__class__(id=999, name="Elsewhere", manage=True))
+        elsewhere = await self.signed(
+            BOB_USER, MEMBER.__class__(id=999, name="Elsewhere", manage=True)
+        )
         self.assertEqual(await self.refused_web(elsewhere, center=self.mira), "not_found")
         self.assertEqual(
             await self.refused_web(self.session, f"{self.g}.nosuchcampaign", center=self.mira),
@@ -206,6 +300,43 @@ class Refusals(Web):
         await self.sql("DELETE FROM memory_entities WHERE id = %s", other_campaign_name)
         self.assertEqual(await self.refused_web(self.session, center="f" * 32), "not_found")
         self.assertEqual(await self.refused_web(self.session, center="not-an-id"), "not_found")
+
+    async def test_another_campaign_is_not_reachable_through_this_ones_ref(self) -> None:
+        other = await self.campaigns.create(self.g, "Other", ALICE.id)
+        stranger = await self.memory.add_entity(
+            self.g, other.id, type="npc", name="Stranger", source=DM_SOURCE, status="confirmed"
+        )
+        # the other campaign's name as the centre of this campaign's web
+        self.assertEqual(
+            await self.refused_web(self.session, center=stranger.value.id), "not_found"
+        )
+        got = await relationships.read_web(self.web, self.session, f"{self.g}.{other.id}")
+        self.assertEqual({n["name"] for n in got["nodes"]}, {"Stranger"})  # and only its own
+
+    async def test_a_dm_of_one_campaign_is_a_member_of_the_other(self) -> None:
+        # Bob DMs "Two": reading "One" he is a member, with no secrets and no edit
+        await self.link("owns", self.mira, self.hall, "secret-link", secret=True)
+        as_bob = await self.signed(BOB_USER, THURSDAY)
+        got = await self.graph(as_bob, center=self.mira, hops=2)
+        self.assertFalse(got["canEdit"])
+        self.assertNotIn(
+            self.links["secret-link"], [x["id"] for e in got["edges"] for x in e["links"]]
+        )
+        self.assertTrue(all("secret" not in n for n in got["nodes"]))
+
+    async def test_a_dm_who_is_removed_is_a_member_on_the_next_call(self) -> None:
+        await self.link("owns", self.mira, self.hall, "secret-link", secret=True)
+        self.assertTrue((await self.graph(center=self.mira, hops=2))["canEdit"])
+        await self.sql(
+            "DELETE FROM campaign_dms WHERE campaign_id = %s AND user_id = %s",
+            self.one.id,
+            ALICE.id,
+        )
+        got = await self.graph(center=self.mira, hops=2)  # the same session, the next call
+        self.assertFalse(got["canEdit"])
+        self.assertNotIn(
+            self.links["secret-link"], [x["id"] for e in got["edges"] for x in e["links"]]
+        )
 
     async def test_the_steps_are_one_to_the_most(self) -> None:
         for hops in (0, relationships.MAX_HOPS + 1, -1):
@@ -237,8 +368,9 @@ class TheRoute(Web):
         return client
 
     async def token_of(self, who: Any) -> str:
-        user, guilds = (BOB, [MEMBER]) if who is self.player else (ALICE, [THURSDAY])
-        return await sessions.sign_in(self.web, user, guilds, now=NOW, days=30)
+        if who is self.player:
+            return await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
+        return await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
 
     async def test_the_routes_answer_and_a_bad_step_count_is_a_plain_400(self) -> None:
         async with await self.client(self.session) as client:

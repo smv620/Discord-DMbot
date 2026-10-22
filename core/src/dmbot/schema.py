@@ -3208,11 +3208,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_all_names",
         "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)",
     ),
-    # A move code asked for on the website (#1246).
+    # The relationship web's data (#2323).
     (
         "dmbot_web_relationships",
         "dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)",
     ),
+    # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_forget_move_asks", "dmbot_web_forget_move_asks(BIGINT)"),
@@ -9844,6 +9845,7 @@ WEB_RELATIONSHIPS = r"""
     DECLARE
         is_dm BOOLEAN;
         vis TEXT[];
+        rel_ids TEXT[];
         start_id TEXT := center_;
         within TEXT[];
         total INT;
@@ -9876,14 +9878,22 @@ WEB_RELATIONSHIPS = r"""
                              AND e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
                                                 'promise', 'deed')
                              AND e.id NOT IN (SELECT s.entity_id FROM secret_own s))));
+        -- The connections the caller may see, worked out once (every use below reads this list).
+        -- A member sees what the NPC pages show (memory/recall.py): no secret one, none that has
+        -- ended, none that came from the story plan. A DM sees all the confirmed ones.
+        rel_ids := ARRAY(
+            SELECT r.id FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
+              AND r.predicate <> 'led_to'
+              AND r.subject_id = ANY (vis) AND r.object_id = ANY (vis)
+              AND (is_dm OR (NOT r.secret AND r.to_session_at IS NULL
+                             AND r.source NOT IN ('plan', 'story_plan'))));
         IF start_id IS NULL THEN
             SELECT x.id INTO start_id FROM (
                 SELECT e.id, e.name,
                        (SELECT count(*) FROM memory_relations r
-                        WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
-                          AND r.predicate <> 'led_to' AND (is_dm OR NOT r.secret)
-                          AND (r.subject_id = e.id OR r.object_id = e.id)
-                          AND r.subject_id = ANY (vis) AND r.object_id = ANY (vis)) AS degree
+                        WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+                          AND (r.subject_id = e.id OR r.object_id = e.id)) AS degree
                 FROM memory_entities e
                 WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (vis)) x
             ORDER BY x.degree DESC, lower(x.name), x.id LIMIT 1;
@@ -9895,16 +9905,18 @@ WEB_RELATIONSHIPS = r"""
                                       'names', 0, 'nodes', '[]'::jsonb, 'edges', '[]'::jsonb,
                                       'truncated', false);
         END IF;
-        WITH RECURSIVE rel AS (
+        WITH RECURSIVE adj AS (
+            -- each connection both ways, so the walk joins on one column (no OR)
             SELECT r.subject_id AS a, r.object_id AS b FROM memory_relations r
-            WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
-              AND r.predicate <> 'led_to' AND (is_dm OR NOT r.secret)
-              AND r.subject_id = ANY (vis) AND r.object_id = ANY (vis)
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+            UNION ALL
+            SELECT r.object_id, r.subject_id FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
         ), walk(id, depth) AS (
             SELECT start_id, 0
             UNION
-            SELECT CASE WHEN rel.a = w.id THEN rel.b ELSE rel.a END, w.depth + 1
-            FROM walk w JOIN rel ON (rel.a = w.id OR rel.b = w.id)
+            SELECT adj.b, w.depth + 1
+            FROM walk w JOIN adj ON adj.a = w.id
             WHERE w.depth < hops
         )
         SELECT ARRAY(SELECT x.id FROM (SELECT w.id, min(w.depth) AS d FROM walk w GROUP BY w.id) x
@@ -9942,8 +9954,7 @@ WEB_RELATIONSHIPS = r"""
                     'detail', r.detail, 'secret', r.secret, 'at', r.created_at)
                     ORDER BY r.created_at, r.id)
                 FROM memory_relations r
-                WHERE r.guild_id = g AND r.campaign_id = c AND r.status = 'confirmed'
-                  AND r.predicate <> 'led_to' AND (is_dm OR NOT r.secret)
+                WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
                   AND r.subject_id = ANY (kept) AND r.object_id = ANY (kept)), '[]'::jsonb));
     END
     $fn$;

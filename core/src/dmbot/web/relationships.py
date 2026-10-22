@@ -52,23 +52,30 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
             {
                 "id": row["id"],
                 "words": link_words(str(row["predicate"]), str(row["detail"] or "")),
-                "secret": bool(row["secret"]) if can_edit else False,
+                "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "direction": direction,
                 "at": int(row["at"]),
-                "secretRow": bool(row["secret"]),
             }
         )
     out = []
     for (a, b), links in sorted(pairs.items()):
         links.sort(key=lambda x: (x["at"], x["id"]))
-        chosen = label_of([{**x, "secret": x["secretRow"]} for x in links])
+        chosen = label_of(links)
         out.append(
             {
                 "a": a,
                 "b": b,
                 "label": chosen["words"],
                 "more": len(links) - 1,
-                "links": [{k: x[k] for k in ("id", "words", "secret", "direction")} for x in links],
+                "links": [
+                    {
+                        "id": x["id"],
+                        "words": x["words"],
+                        "secret": x["secret"] if can_edit else False,
+                        "direction": x["direction"],
+                    }
+                    for x in links
+                ],
             }
         )
     return out
