@@ -264,4 +264,4 @@ class TheState(WorkerHarness):
     async def test_a_failed_job_leaves_no_count_for_the_next_try_again(self) -> None:
         job = await self.run_drafts(40, 41)  # stuck: fails ours
         self.assertIn("(check: length)", job.last_error)
-        self.assertNotIn((1, self.one.id, 100), self.worker._lengths)  # type: ignore[attr-defined]
+        self.assertNotIn((1, self.one.id, 100), self.worker._lengths)
