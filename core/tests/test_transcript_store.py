@@ -466,10 +466,18 @@ class BotTests(DatabaseTest):
         self.said(table, DM, "Roll.", 2)
         await self.bot.save_transcript(table)
         self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
-        self.guild.get_member = lambda uid: SimpleNamespace(display_name="Renamed")
+        asked: list[set[int]] = []
+        real = self.bot._keep_speaker_names
+
+        async def counting(gid: int, session_id: str, ids: set[int]) -> bool:
+            asked.append(ids)
+            return await real(gid, session_id, ids)
+
+        self.bot._keep_speaker_names = counting  # type: ignore[method-assign]
         self.said(table, PLAYER, "again", 3)
         await self.bot.save_transcript(table)
-        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})  # not looked up again
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia", DM: "Sam"})
+        self.assertEqual(asked, [])  # nobody is looked up again on a later save
 
     async def test_someone_who_stopped_while_saving_is_not_named(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
