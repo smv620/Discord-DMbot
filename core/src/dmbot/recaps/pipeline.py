@@ -232,6 +232,9 @@ class RecapWorker:
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
+        # The last draft that was too short (+1) or too long (-1): its words and which way, for the
+        # check that a retry moved the length the way it was steered (the owner's rule, #2383).
+        self._lengths: dict[tuple[int, str, int], tuple[int, int]] = {}
         self._rejected_prose: dict[tuple[int, str, int], rd.Prose] = {}
         self._rejected_finish: dict[tuple[int, str, int], tuple[str, list[str]]] = {}
         # A draft that passed every check but was graded below the bar, kept while its revision is
@@ -794,6 +797,7 @@ class RecapWorker:
             inputs.allowed_names,
             inputs.day,
             retold,
+            ending=sheet,
         )
         if job.problems:
             message += rd.prose_retry(
@@ -893,6 +897,26 @@ class RecapWorker:
             )
 
         problems = checked(False)
+        count = len(words(narration_of(prose.summary)))
+        low, high = rd.length_range(length, last)
+        if low <= count <= high:
+            self._lengths.pop(key, None)  # it fits: nothing to steer
+        else:
+            # A draft of the wrong length is steered (the retry says which way and how far). A
+            # retry that moves the wrong way, not at all, or past the other end fails the job on
+            # our side, so the DM keeps the Try again (#2383).
+            wrong = rd.length_move(self._lengths.get(key), count, length, last)
+            if wrong:
+                log.info(
+                    "Recap: the retry's length is %s: %d words (range %d-%d)",
+                    wrong,
+                    count,
+                    low,
+                    high,
+                )
+                self._annotate(gid, cid, job, stage, checks=["length"])
+                return await self._fail(gid, cid, job, FAILED_CHECKS, check="length", ours=True)
+            self._lengths[key] = (count, 1 if count < low else -1)
         if problems and last and not checked(True):
             # Length is a quality target, not a grounding rule: on the last try a draft up to
             # 35% over the target stands if everything else passes (owner, #2013).
@@ -907,10 +931,17 @@ class RecapWorker:
         self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
             log.info(
-                "Recap: a draft failed %d check(s): %s",
+                "Recap: a draft failed %d check(s): %s (%d words, %d to %d wanted, %d section(s) "
+                "of at most %d, about %.2f hours)",
                 len(problems),
                 ", ".join(cl.kinds(problems)),
-            )  # names only
+                count,
+                low,
+                high,
+                len(CUE.findall(prose.summary)),
+                length.sections,
+                length.hours,
+            )  # names and counts only
             self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
@@ -1111,6 +1142,7 @@ class RecapWorker:
         if event is not None:
             event.outcome = outcome
         self._rejected_prose.pop(key, None)
+        self._lengths.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
             gid,
@@ -1486,6 +1518,7 @@ class RecapWorker:
             inputs.allowed_names,
             inputs.day,
             retold,
+            ending=sheet,
         ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
         attempt = 1  # the careful writer's room, as for a retry
         kept = self._written.pop(key, None)  # the writer's text, if only the formatter failed
@@ -1937,6 +1970,7 @@ class RecapWorker:
 
     def _forget(self, gid: int, cid: str, job: Job) -> None:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
+        self._lengths.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)

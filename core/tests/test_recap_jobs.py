@@ -417,12 +417,16 @@ class Working(WorkerHarness):
         self,
     ) -> None:
         # A 1-hour session: about 150 words, 75 to 180, up to 202 on the last try.
-        long = fx.prose_answer(
-            "《Tense》 " + " ".join(["calm"] * 189) + " Oskar", "1. Low strings."
-        )
+        def long(words: int) -> str:
+            return fx.prose_answer(
+                "《Tense》 " + " ".join(["calm"] * (words - 1)) + " Oskar", "1. Low strings."
+            )
+
+        # Each try moves toward the range (the owner's rule, #2383): 199, 192, then 190, which the
+        # last try accepts.
         await self.setUpWorker(
-            fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
-            fx.Canned(long, long),
+            fx.Canned(fx.BEATS_ANSWER, long(199), fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(long(192), long(190)),
             hours=1.0,
         )
         notes: list[str] = []
