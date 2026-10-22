@@ -9134,14 +9134,18 @@ class DMBot(commands.AutoShardedBot):
                 "Write a new recap, or leave this one out."
             )
         # Sent first and marked posted after, so a failed send is never recorded as a post.
+        await self.recaps.posting_step(gid, cid, at, "post")  # the checks are done (#2435)
+        link = ""
         try:
             parts = recap_post.parts_of(text)
             for i, part in enumerate(parts):
                 none = discord.AllowedMentions.none()
                 if audio and i == len(parts) - 1:
-                    await channel.send(part, allowed_mentions=none, files=audio)
+                    sent = await channel.send(part, allowed_mentions=none, files=audio)
                 else:
-                    await channel.send(part, allowed_mentions=none)
+                    sent = await channel.send(part, allowed_mentions=none)
+                if i == 0:
+                    link = str(getattr(sent, "jump_url", "") or "")
         except Exception:
             for f in audio:
                 f.close()
@@ -9150,7 +9154,7 @@ class DMBot(commands.AutoShardedBot):
                 "DMbot couldn't write in the chat channel. Check it can post there, "
                 "then press Post again."
             )
-        await self.recaps.posted(gid, cid, at)
+        await self.recaps.posted(gid, cid, at, url=link)
         if campaign.dm_screen_channel_id:
             await self.post(
                 campaign.dm_screen_channel_id,

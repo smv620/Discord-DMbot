@@ -16,6 +16,7 @@ website's role cannot read the campaign's names.
 from __future__ import annotations
 
 import secrets
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -39,6 +40,7 @@ _COLUMNS = (
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
+    " r.posting_since, r.posting_step, r.posted_url,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -209,6 +211,13 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # posted recap's Discord message keeps the old spelling, so the page says so (#2178).
         "respelledAt": row.get("respelled_at"),
         "recapEmail": _mail_view(row),
+        # The progress clock (#2435): whole Unix seconds, so the page's clock starts from the
+        # server's own time. `postingStep` is check, post or audio while under way, else null;
+        # `postedUrl` the posted message's Discord link, else null.
+        "postingSince": row.get("posting_since"),
+        "postingStep": row.get("posting_step"),
+        "postedUrl": row.get("posted_url"),
+        "serverNow": int(time.time()),
     }
 
 
@@ -247,6 +256,10 @@ def _held_view(
         "keepDays": None,
         "waitingForNames": True,
         "namesToAnswer": int(held["namesOpen"]),
+        "postingSince": None,
+        "postingStep": None,
+        "postedUrl": None,
+        "serverNow": int(time.time()),
         **({"serverName": server_name} if server_name else {}),
     }
 

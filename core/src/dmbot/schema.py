@@ -10235,6 +10235,39 @@ RECAP_ADDRESS_CO_DM = """
     REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
 """
 
+# The recap posting clock (#2435): when a post or a narration began, at which step, and the posted
+# message's link, for the website's progress clock. New nullable columns: no row changes. The status
+# change itself starts and stops the clock (a trigger), so every writer of `status` (the bot, the
+# DM screen's buttons, the website) is covered at one place, and a failed or finished post can never
+# leave a clock running. The audio worker sets and clears the 'audio' step (recaps/store.py).
+RECAP_POSTING_CLOCK = r"""
+    ALTER TABLE recap_jobs ADD COLUMN posting_since BIGINT CHECK (posting_since > 0);
+    ALTER TABLE recap_jobs ADD COLUMN posting_step TEXT
+        CHECK (posting_step IN ('check', 'post', 'audio'));
+    ALTER TABLE recap_jobs ADD COLUMN posted_url TEXT
+        CHECK (posted_url ~ '^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$'
+               AND char_length(posted_url) <= 200);
+    ALTER TABLE recap_jobs ADD CONSTRAINT recap_jobs_posting_pair
+        CHECK ((posting_since IS NULL) = (posting_step IS NULL));
+
+    CREATE FUNCTION dmbot_recap_posting_clock() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+    BEGIN
+        IF NEW.status = 'posting' AND OLD.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+            NEW.posting_step := 'check';
+            NEW.posted_url := NULL;
+        ELSIF OLD.status = 'posting' AND NEW.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := NULL;  -- posted, put back as a draft or dropped: the clock stops
+            NEW.posting_step := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER recap_jobs_posting_clock BEFORE UPDATE OF status ON recap_jobs
+        FOR EACH ROW EXECUTE FUNCTION dmbot_recap_posting_clock();
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10438,6 +10471,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
     ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
+    ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

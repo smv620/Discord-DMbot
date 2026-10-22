@@ -434,6 +434,23 @@ class TheDmsPage(Base):
         with self.assertRaises(RecapError):  # no edits once it is on its way
             await edit_recap(self.web, self.session, self.ref, summary="x", housekeeping=[])
 
+    async def test_the_answer_carries_the_posting_clock_in_whole_seconds(self) -> None:
+        """#2435: nothing before a post; after it, the start, the step and the server's own time,
+        all whole Unix seconds; the link stays null until the bot has posted."""
+        before = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(
+            (before["postingSince"], before["postingStep"], before["postedUrl"]),
+            (None, None, None),
+        )
+        self.assertIsInstance(before["serverNow"], int)
+        shown = await decide(self.web, self.session, self.ref, "post")
+        self.assertIsInstance(shown["postingSince"], int)
+        self.assertEqual((shown["postingStep"], shown["postedUrl"]), ("check", None))
+        self.assertLessEqual(shown["postingSince"], shown["serverNow"] + 1)
+        # another campaign's recap, which this DM does not run, is not exposed at all
+        with self.assertRaises(RecapError):
+            await read_recap(self.web, self.session, self.other)
+
     async def test_dont_post_leaves_it_out_for_good(self) -> None:
         shown = await decide(self.web, self.session, self.ref, "drop")
         self.assertEqual(shown["status"], "dropped")
@@ -1498,6 +1515,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
     store = SimpleNamespace(
         get=AsyncMock(return_value=job),
         posted=AsyncMock(return_value=True),
+        posting_step=AsyncMock(),
         back_to_draft=AsyncMock(),
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
@@ -1562,6 +1580,36 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         bot.recaps.posted.assert_awaited_once()  # marked after the send, not before
         kwargs = bot.sent.send.await_args.kwargs
         self.assertEqual(kwargs["allowed_mentions"].users, False)
+
+    async def test_the_clock_moves_to_post_before_the_send_and_the_link_is_kept(self) -> None:
+        """#2435: the step is 'post' once the checks pass and before anything is sent; the link of
+        the first message is what is kept when it is marked posted."""
+        order: list[str] = []
+        bot = fake_bot(self.job())
+        bot.recaps.posting_step.side_effect = lambda *a: order.append(f"step {a[-1]}")
+        first = SimpleNamespace(jump_url="https://discord.com/channels/1/2/3")
+        later = SimpleNamespace(jump_url="https://discord.com/channels/1/2/4")
+        replies = iter([first, later, later, later])
+
+        async def send(*a: Any, **k: Any) -> Any:
+            order.append("send")
+            return next(replies)
+
+        bot.sent.send = send
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        self.assertEqual(order[0], "step post")
+        self.assertEqual(order[1], "send")
+        self.assertEqual(
+            bot.recaps.posted.await_args.kwargs["url"], "https://discord.com/channels/1/2/3"
+        )
+
+    async def test_a_check_that_stops_the_post_never_reaches_the_post_step(self) -> None:
+        bot = fake_bot(
+            self.job(summary="《Tense》 Mira feared the Arcane Brotherhood."),
+            secrets=["Arcane Brotherhood"],
+        )
+        await bot._post_one_recap(THURSDAY.id, "c" * 32, 100)
+        bot.recaps.posting_step.assert_not_awaited()
 
     def ready(self, **kw: Any) -> Job:
         from dmbot.recaps.approval import text_hash

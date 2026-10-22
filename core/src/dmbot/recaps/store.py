@@ -48,7 +48,8 @@ COLUMNS = (
     " problems, beats, title, summary, original, housekeeping, music, game_day, status, tries,"
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
-    " approved_by, approved_at, approved_hash, audio_choice, split, critics"
+    " approved_by, approved_at, approved_hash, audio_choice, split, critics,"
+    " posting_since, posting_step, posted_url"
 )
 
 
@@ -64,6 +65,9 @@ class RecapRespelled:
     approvals_kept: int = 0
     audio_old: int = 0  # recaps whose finished audio still says the old spelling
     skipped: int = 0  # recaps the new spelling would make too long: left as they were
+
+
+_DISCORD_LINK = re.compile(r"^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +118,11 @@ class Job:
     split: Any = None  # the opening's parts (dmbot.recaps.split.from_json reads it); None: not yet
     # Where the critics loop is (dmbot.recaps.critics.loop_from_json reads it); None: not begun.
     critics: Any = None
+    # The progress clock (#2435): since when the post or the narration has been under way (Unix
+    # seconds), at which step (check, post or audio; "" when none), and the posted message's link.
+    posting_since: int | None = None
+    posting_step: str = ""
+    posted_url: str = ""
 
     @property
     def finished(self) -> bool:
@@ -171,8 +180,18 @@ def _job(r: dict[str, Any]) -> Job:
         r["audio_choice"],
         r["split"],
         r["critics"],
+        None if r.get("posting_since") is None else int(r["posting_since"]),
+        r.get("posting_step") or "",
+        r.get("posted_url") or "",
     )
 
+
+# The progress clock stops when the narration stops, whatever happened to it: the right-hand sides
+# see the row as it was, so the step is read before it is cleared (#2435). A post's own step stays.
+_AUDIO_CLOCK_OFF = (
+    "posting_since = CASE WHEN posting_step = 'audio' THEN NULL ELSE posting_since END,"
+    " posting_step = CASE WHEN posting_step = 'audio' THEN NULL ELSE posting_step END"
+)
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
 _WRITABLE = frozenset(
@@ -375,7 +394,10 @@ class RecapStore:
             # The try is counted here, before any paid call: a process that is killed mid-work
             # (a deploy, a crash) still used one, so a crash loop can't bill without end.
             cur = await conn.execute(
-                "UPDATE recap_jobs SET leased_to = %s, audio_tries = audio_tries + 1"
+                "UPDATE recap_jobs SET leased_to = %s, audio_tries = audio_tries + 1,"
+                # The clock runs while the narration is made, unless a post is under way (#2435).
+                " posting_step = COALESCE(posting_step, 'audio'),"
+                " posting_since = COALESCE(posting_since, %s)"
                 " WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s AND leased_to <= %s AND audio_next_at <= %s"
                 " AND audio_tries < %s"
@@ -385,6 +407,7 @@ class RecapStore:
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
                     now + AUDIO_LEASE_S,
+                    now,
                     guild_id,
                     campaign_id,
                     session_at,
@@ -403,7 +426,8 @@ class RecapStore:
         so it stops waiting. Returns how many."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE recap_jobs SET audio = 'failed', audio_error = %s WHERE guild_id = %s"
+                "UPDATE recap_jobs SET audio = 'failed', audio_error = %s,"
+                f" {_AUDIO_CLOCK_OFF} WHERE guild_id = %s"
                 " AND state = 'ready' AND audio = 'queued' AND audio_tries >= %s"
                 " AND leased_to <= %s",
                 (STUCK, guild_id, AUDIO_MAX_TRIES, int(self._now())),
@@ -428,7 +452,7 @@ class RecapStore:
         posted one is narrated again for the page when its text changed, #2183), and, with
         `unchanged` (title, summary), only if the text is still what the audio was made from.
         False if nothing was written."""
-        sets = ["audio = %s", "audio_error = %s"]
+        sets = ["audio = %s", "audio_error = %s", _AUDIO_CLOCK_OFF]
         values: list[Any] = [audio, error[:200]]
         for column, value in (
             ("audio_tries", tries),
@@ -767,15 +791,39 @@ class RecapStore:
             )
             return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
 
-    async def posted(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
-        """The bot sent it: 'posting' becomes 'posted', once."""
+    async def posted(
+        self, guild_id: int, campaign_id: str, session_at: int, *, url: str = ""
+    ) -> bool:
+        """The bot sent it: 'posting' becomes 'posted', once. `url`: the link to the first
+        message (an https Discord link, else none is kept). The database ends the progress clock."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE recap_jobs SET status = 'posted', decided_at = %s WHERE guild_id = %s"
+                "UPDATE recap_jobs SET status = 'posted', decided_at = %s, posted_url = %s"
+                " WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'posting'",
-                (int(self._now()), guild_id, campaign_id, session_at),
+                (
+                    int(self._now()),
+                    url if _DISCORD_LINK.match(url) else None,
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                ),
             )
             return bool(cur.rowcount)
+
+    async def posting_step(
+        self, guild_id: int, campaign_id: str, session_at: int, step: str
+    ) -> None:
+        """The post has got to `step` (check, then post). Only while it is under way: the database
+        starts the clock at 'check' when the status becomes 'posting' and stops it when it ends."""
+        if step not in ("check", "post"):
+            raise ValueError(step)
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET posting_step = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND status = 'posting' AND posting_step IS NOT NULL",
+                (step, guild_id, campaign_id, session_at),
+            )
 
     async def decide(
         self,
