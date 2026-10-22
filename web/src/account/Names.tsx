@@ -259,7 +259,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
               act={act}
               api={api}
               refId={ref}
-              campaignPath={`/campaigns/${encodeURIComponent(ref)}/npcs/`}
+              campaignPath={`/account/npc/${encodeURIComponent(ref)}/`}
             />
           ))}
         </ul>

@@ -18,7 +18,7 @@ SENTINEL = "Zephyrquill"  # a word no check or fixture uses: it must never reach
 def inputs(**kw: Any) -> pl.Inputs:
     base: dict[str, Any] = {
         "lines": fx.lines(), "dm_ids": {fx.DM}, "allowed_names": list(fx.NAMES),
-        "secret_names": [], "previous": "", "day": 4, "hours": 2.5,
+        "secret_names": [], "previous": "", "day": 4, "hours": 3.5,
     }  # fmt: skip
     return pl.Inputs(**{**base, **kw})
 

@@ -112,7 +112,7 @@ describe("finding names", () => {
     expect(within(aldric).getByText("NPCs")).toBeTruthy();
     expect(within(aldric).getByText(/Also called: Captain, Captain Brask the Elder/)).toBeTruthy();
     const link = within(aldric).getByRole("link", { name: w.npcLinkFor("Captain Brask") });
-    expect(link.getAttribute("href")).toBe("/campaigns/100.cmp1/npcs/n4");
+    expect(link.getAttribute("href")).toBe("/account/npc/100.cmp1/n4");
     expect(screen.getAllByText(w.secretWords).length).toBeGreaterThan(0);
     // A place has no NPC page.
     fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "place" } });

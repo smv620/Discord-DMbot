@@ -823,6 +823,35 @@ const NAME_POLLS = 60;
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** One NPC's page, as the players see it, plus the caller's own note (#2266). */
+export interface NpcPage {
+  id: string;
+  name: string;
+  kind: string;
+  isGroup: boolean;
+  alsoCalled: string[];
+  groups: string[];
+  groupsMore: number;
+  ties: string[];
+  tiesMore: number;
+  /** Posted recaps that mention the name; `ref` is `<server>.<campaign>.<time>`. */
+  recaps: { ref: string; title: string; day: string }[];
+  /** The caller's own private note; empty when there is none. */
+  myNote: string;
+  isDm: boolean;
+  /** The DM's own note on the entry, for a DM of the campaign only; null for anyone else. */
+  dmNote: string | null;
+}
+
+/** One of the caller's notes. `listed` is false for a name that has left the NPC list. */
+export interface MyNpcNote {
+  id: string;
+  name: string;
+  body: string;
+  updatedAt: number;
+  listed: boolean;
+}
+
 /** Sent on `window` whenever the real API answers "not signed in" (#2301). */
 export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
@@ -831,6 +860,7 @@ export type ApiErrorKind =
   | "network" // couldn't reach the API
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
+  | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
   | "voice-off" // turning a recording into letters is switched off on the server (#2316)
@@ -966,6 +996,14 @@ export interface AccountApi {
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
+  /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
+  npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
+  /** Save my private note on an NPC; an empty note clears it. */
+  saveNpcNote?(campaignRef: string, entry: string, body: string): Promise<void>;
+  /** All of my notes in a campaign, including those on names no longer listed. */
+  myNpcNotes?(campaignRef: string): Promise<MyNpcNote[]>;
+  /** Delete all of my notes in a campaign; how many there were. */
+  deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
   /** The relationship web around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
@@ -1140,6 +1178,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   already_subscribed: "already-subscribed",
   not_found: "not-found",
   bad_target: "bad-target",
+  not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
   exists: "name-exists",
@@ -1189,7 +1228,7 @@ export function httpApi(
   const root = base.replace(/\/+$/, "");
 
   async function call(
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: unknown,
     asFile = false,
@@ -1561,6 +1600,26 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
         withLinks({ files, plan }, links),
       )) as ImportStarted,
+    npcPage: async (ref, entry) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/npcs/${encodeURIComponent(entry)}`,
+      )) as NpcPage,
+    saveNpcNote: async (ref, entry, body) => {
+      await call(
+        "PUT",
+        `/me/campaigns/${encodeURIComponent(ref)}/npcs/${encodeURIComponent(entry)}/note`,
+        { body },
+      );
+    },
+    myNpcNotes: async (ref) =>
+      ((await call("GET", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
+        notes: MyNpcNote[];
+      }).notes,
+    deleteMyNpcNotes: async (ref) =>
+      ((await call("DELETE", `/me/npc-notes?campaign=${encodeURIComponent(ref)}`)) as {
+        deleted: number;
+      }).deleted,
     allNames: async (ref, q) => {
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
       return (await call(

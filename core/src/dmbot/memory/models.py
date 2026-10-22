@@ -180,6 +180,12 @@ def spelling_key(text: str) -> str:
     return name_key(_POSSESSIVE.sub("", text))
 
 
+# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
+# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves. Shared
+# by Discord's name card and the website's All names page, so both refuse it.
+PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
+
+
 def lookup_key(text: str) -> str:
     """`name_key`, falling back to plain lower case for names that are all punctuation,
     so every name has a key. Raises MemoryRuleError when the key is too long."""
@@ -263,6 +269,10 @@ class Entity:
     # The DM's "Players don't know this one yet" (#2321): the entry is the DM's alone for now, like
     # a clue only some people know, but with no audience to track. Any kind of entry.
     hidden_from_players: bool = False
+
+    # Written before pronouns were kept out of the suggestions (#2358): such a suggestion that is a
+    # pronoun ("We", "I'll") is not offered again. Set by the database for the rows that existed.
+    made_before_name_gate: bool = False
 
     @property
     def unseen_by_players(self) -> bool:
