@@ -1,7 +1,7 @@
 """The NPC list's link to each NPC's page on the website, and what the page is made from (#2265;
 docs/PLAN.md, "Every NPC opens its own page").
 
-Each message of the NPC list gets one small link button, 📖 Open, to
+Each message of the NPC list is a link button, the name itself ("👤 Mira · NPC"), to
 `/account/npc/<server>.<campaign>/<entry>` on the configured website. It is a plain link button:
 the bot handles no click, nothing breaks after a restart, and the message text is unchanged. With
 no usable website address there is no button.
@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 import discord
@@ -28,8 +30,7 @@ from dmbot.memory.recall import RosterEntry
 
 log = logging.getLogger(__name__)
 
-OPEN_LABEL = "Open"
-OPEN_EMOJI = "📖"
+PERSON_MARK, GROUP_MARK = "👤", "👥"  # as the list has always marked them
 PAGE = "/account/npc"
 ORPHAN_DAYS = 30  # a note on a name no longer listed is kept this long
 
@@ -44,24 +45,101 @@ def page_url(site_url: str, guild_id: int, campaign_id: str, entry_id: str) -> s
     return f"https://{parts.netloc}{PAGE}/{guild_id}.{campaign_id}/{entry_id}"
 
 
-def open_view(url: str) -> discord.ui.View | None:
-    """The one link button of a list message, or None when there is no link."""
+LABEL_MAX = 80  # Discord's limit for a button's label
+CUT = "…"
+
+
+def button_label(name: str, kind: str) -> str:
+    """ "<name> · <kind>" for the button, at most `LABEL_MAX` letters, cut at a word with "…"
+    when the name is long. A button's label is plain text: the name is shown as it is spelt
+    (markdown characters and all), not escaped."""
+    tail = f" · {kind}"
+    label = f"{name}{tail}"
+    if len(label) <= LABEL_MAX:
+        return label
+    room = LABEL_MAX - len(tail) - len(CUT)
+    if room < 8:  # a kind this long leaves no room for a name: cut the whole label
+        return label[: LABEL_MAX - len(CUT)].rstrip() + CUT
+    cut = name[:room]
+    if len(name) > room and " " in cut:
+        cut = cut[: cut.rindex(" ")]  # at a word, not in the middle of one
+    return f"{cut.rstrip()}{CUT}{tail}"
+
+
+@dataclass(frozen=True, slots=True)
+class Look:
+    """What a list message shows, to tell whether it needs changing. `layout`: "v2" (the name is
+    the button; `text` is the other lines) or "text" (the name is in the text; `link` is the old
+    📖 Open button's address, if it has one)."""
+
+    layout: str
+    text: str = ""
+    label: str = ""
+    link: str = ""
+
+
+def wanted_look(entry: RosterEntry, other_lines: str, url: str, full_text: str) -> Look:
+    """How an entry's message should look: the name as a link button (with the other lines beside
+    it when there are any) when there is a page to open, else today's text."""
     if not url:
-        return None
-    view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label=OPEN_LABEL, emoji=OPEN_EMOJI, url=url))
+        return Look("text", full_text)
+    return Look("v2", other_lines, button_label(entry.name, entry.kind), url)
+
+
+def layout_for(entry: RosterEntry, other_lines: str, url: str) -> discord.ui.LayoutView:
+    """The message for an entry with a page: a link button whose label is the name, in a Section
+    beside the other lines, or alone in a row when there are none. The icon is the button's
+    emoji. Components v2: the message has no `content`."""
+    button: discord.ui.Button[Any] = discord.ui.Button(
+        label=button_label(entry.name, entry.kind),
+        emoji=GROUP_MARK if entry.is_group else PERSON_MARK,
+        url=url,
+    )
+    view = discord.ui.LayoutView(timeout=None)
+    if other_lines:
+        view.add_item(discord.ui.Section(other_lines, accessory=button))
+    else:
+        view.add_item(discord.ui.ActionRow(button))
     return view
 
 
+def _walk(components: Sequence[Any]) -> tuple[list[str], str, str]:
+    """(text pieces, button label, button address) from a message's components, whatever their
+    shape (a Section's text and accessory, a row's buttons)."""
+    texts: list[str] = []
+    label = url = ""
+    for part in components:
+        content = getattr(part, "content", None)
+        if isinstance(content, str):
+            texts.append(content)
+        for sub in getattr(part, "children", None) or []:
+            more, l2, u2 = _walk([sub])
+            texts += more
+            label, url = label or l2, url or u2
+        accessory = getattr(part, "accessory", None)
+        if accessory is not None:
+            _, l2, u2 = _walk([accessory])
+            label, url = label or l2, url or u2
+        link = getattr(part, "url", None)
+        if isinstance(link, str) and link:
+            label, url = label or str(getattr(part, "label", "") or ""), url or link
+    return texts, label, url
+
+
+def look_of(message: discord.Message) -> Look:
+    """How a list message looks now."""
+    components = list(getattr(message, "components", None) or [])
+    flags = getattr(message, "flags", None)
+    if getattr(flags, "components_v2", False):
+        texts, label, url = _walk(components)
+        return Look("v2", "\n".join(texts), label, url)
+    _, _, url = _walk(components)
+    return Look("text", message.content, "", url)
+
+
 def message_link(message: discord.Message) -> str:
-    """The link a message's button points to now ("" when it has none), to tell whether the
-    message needs its button added, changed or taken away."""
-    for row in getattr(message, "components", None) or []:
-        for child in getattr(row, "children", None) or []:
-            url = getattr(child, "url", None)
-            if isinstance(url, str) and url:
-                return url
-    return ""
+    """The link a message's button points to now ("" when it has none), in either layout."""
+    return look_of(message).link
 
 
 def entry_view(entry: RosterEntry) -> dict[str, object]:
