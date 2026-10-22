@@ -529,17 +529,40 @@ class Criticising(WorkerHarness):
         before = (await self.store.get(1, self.one.id, 100)).spent  # type: ignore[union-attr]
         self.clock.now += 3600
 
-        # (the reading that follows the revision is a step of its own, paid for as any reading is)
-        async def stored(*_a: Any) -> Job | None:
-            return await self.store.get(1, self.one.id, 100)
-
-        with patch.object(self.worker, "_read", stored):
-            job = await self.go()
+        # (the reading that follows the revision runs too: it is paid for as any reading is)
+        job = await self.go()
         self.assertEqual(job.summary, CLEAN)  # the revision landed
-        self.assertEqual(job.calls, edge)  # and cost the job's calls nothing
+        self.assertGreater(job.calls, edge)  # only that reading, and the title, were paid for
+        self.assertLess(job.calls, edge + pl.CRITIC_REVISE_CALLS)  # not the revision too
         self.assertLessEqual(job.spent - before, cr.WAIT_REVISE_CALLS)
         back = cr.loop_from_json(job.critics)
         self.assertEqual((back.waits, back.since, back.told, back.pending), (0, 0, False, None))
+
+    async def test_eight_waiting_tries_with_an_unreadable_fact_check_never_fail_the_recap(
+        self,
+    ) -> None:
+        # A held, unfixable best draft; the revision is written each try but its fact check is
+        # never readable. At the entry ceiling of the loop, waiting tries are off the job's calls
+        # and must not trip it: the recap stays "waiting for its check", calls unchanged (#2370).
+        fast = self.fast_for(WITH_MOTIVE, grades=3)
+        careful = fx.Canned(AIError("down"), facts=["not json"] * 10)
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        unfixable = cr.Best(WITH_MOTIVE, (), {}, 1, 0, (), (1,), True)
+        waiting = replace(loop, best=unfixable, waits=1, since=5)
+        edge = self.worker._ceiling(job) - pl.CRITIC_RESERVE  # the entry check's own line
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s, errors = 0", (edge,))
+        await self.store.update(1, self.one.id, 100, critics=waiting.to_json(), next_at=0)
+        for _ in range(8):
+            careful.answers[:] = [fx.prose_answer(CLEAN)]
+            self.clock.now += 13 * 3600
+            job = await self.go()
+            self.assertNotEqual(job.state, "failed", job.last_error)
+            self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+            self.assertEqual(job.calls, edge)
+        self.assertGreaterEqual(cr.loop_from_json(job.critics).waits, 8)
 
     async def test_a_revision_that_could_not_be_checked_stops_the_loop_as_unavailable(self) -> None:
         whys = await self.revision_stop(fx.prose_answer(CLEAN), True)
@@ -843,7 +866,8 @@ class Criticising(WorkerHarness):
         with patch.object(mo, "MAX_ASKED", 10):  # three batches for this recap
             job = await self.drive(await self.go(), 6)
             self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
-            self.assertEqual(cr.wait_budget(3), 5)  # the batches and PlotBot
+            self.assertEqual(cr.wait_budget(3), 6)  # a revision's calls are the larger
+            self.assertEqual(cr.wait_budget(10), 12)  # a long reading's: batches and PlotBot
             fast.down = False
             before = len(fast.motive_sent)
             job = await self.drive(job, 6)
