@@ -311,9 +311,9 @@ class TheProse(unittest.TestCase):
 
     def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
-        self.assertTrue(any("between 175 and 420" in p for p in short), short)
+        self.assertTrue(any("between 170 and 408" in p for p in short), short)
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
-        self.assertTrue(any("between 175 and 420" in p for p in long), long)
+        self.assertTrue(any("between 170 and 408" in p for p in long), long)
 
     def test_the_target_is_75_words_and_75_an_hour_to_the_nearest_10_and_at_most_450(
         self,
@@ -465,9 +465,9 @@ class TheProse(unittest.TestCase):
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
         system = rd.prose_system(None, rd.length_for(3.5))
         self.assertIn(
-            "about 2.5 hours, so write about 350 words in all (between 175 and 420)", system
+            "about 3.5 hours, so write about 340 words in all (between 170 and 408)", system
         )
-        self.assertIn("about 4 paragraphs", system)
+        self.assertIn("about 3 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
         self.assertIn("Alder", message)  # the campaign's names

@@ -416,9 +416,9 @@ class Working(WorkerHarness):
     async def test_a_recap_a_little_long_is_accepted_only_on_the_third_try_and_says_so(
         self,
     ) -> None:
-        # A 1-hour session: about 200 words, 160 to 240, up to 270 on the last try.
+        # A 1-hour session: about 150 words, 75 to 180, up to 202 on the last try.
         long = fx.prose_answer(
-            "《Tense》 " + " ".join(["calm"] * 249) + " Oskar", "1. Low strings."
+            "《Tense》 " + " ".join(["calm"] * 189) + " Oskar", "1. Low strings."
         )
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
@@ -433,12 +433,12 @@ class Working(WorkerHarness):
             len(self.careful.sent), 2
         )  # refused on the first two, accepted on the third
         self.assertEqual(len(notes), 1)
-        self.assertIn("250 words", notes[0])
+        self.assertIn("190 words", notes[0])
         self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
 
     async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
         long = fx.prose_answer(
-            "《Tense》 " + " ".join(["calm"] * 279) + " Oskar", "1. Low strings."
+            "《Tense》 " + " ".join(["calm"] * 209) + " Oskar", "1. Low strings."
         )
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
         job = await self.go()

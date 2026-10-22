@@ -263,7 +263,7 @@ class TheOutFolder(unittest.IsolatedAsyncioTestCase):
             story_file = Path(tmp) / "story.txt"
             story_file.write_text(story, encoding="utf-8")
             argv = ["--transcript", str(story_file), "--dm", "Sam", "--out", str(folder), "--yes"]
-            argv += ["--hours", "2.5"]  # the canned recap is a 3.5-hour session's length
+            argv += ["--hours", "3.5"]  # the canned recap is a 3.5-hour session's length
             out = io.StringIO()
             answers = [fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER]
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):

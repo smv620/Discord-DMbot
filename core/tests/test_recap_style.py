@@ -31,7 +31,7 @@ EXAMPLE = (
 class ThePrompt(unittest.TestCase):
     def test_the_style_is_a_block_after_the_rules_and_the_rules_win(self) -> None:
         plain = rd.prose_system(None)
-        styled = rd.prose_system(None, rd.length_for(3.0), style=[EXAMPLE, "Another one."])
+        styled = rd.prose_system(None, rd.length_for(2.0), style=[EXAMPLE, "Another one."])
         self.assertTrue(styled.startswith(plain))
         rules, _, block = styled.partition("\n<style_guide>\n")
         self.assertNotIn(EXAMPLE, rules)
