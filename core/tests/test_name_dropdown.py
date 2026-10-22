@@ -23,6 +23,9 @@ def lookup(people: list[Any], public: dict[str, set[str]], private: dict[str, se
         entities={e.id: e for e in people},
         neighbours={k: frozenset(v) for k, v in private.items()},
         confirmed_neighbours={k: frozenset(v) for k, v in public.items()},
+        secret_neighbours={
+            k: frozenset(private.get(k, set()) - public.get(k, set())) for k in private
+        },
     )
 
 

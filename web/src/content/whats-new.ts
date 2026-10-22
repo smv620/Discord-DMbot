@@ -96,7 +96,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep a connection secret",
-    what: "On a name's card, press Connect to…, press 🤫 Secret: no so it reads 🤫 Secret: yes, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
+    what: "On a name's card, press Connect to…, press 🤫 New one public so it reads 🤫 New one secret, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
   },
   {
     date: "2026-10-16",
