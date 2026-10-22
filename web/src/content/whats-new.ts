@@ -96,7 +96,7 @@ export const entries: Entry[] = [
   {
     date: "2026-10-16",
     title: "Keep a connection secret",
-    what: "On a name's card, press Connect to…, press 🤫 Secret: no so it reads 🤫 Secret: yes, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
+    what: "On a name's card, press Connect to…, press 🤫 Next one is public so it reads 🤫 Next one is secret, then pick the other name. Players never see that connection, and only a game master can turn Secret on.",
   },
   {
     date: "2026-10-16",
@@ -229,6 +229,12 @@ export interface Held extends Entry {
 }
 
 export const held: Held[] = [
+  {
+    date: "2026-10-21",
+    title: "Pick the other name from a list",
+    what: "On a name card, Connect to… and Same as… now show a list of your names to pick from instead of asking you to type. A switch puts the closest names first, or sorts them A to Z. As the game master you can also flip a connection between secret and public right there, without removing it.",
+    reason: "In review (#2321); held until dev1 deploys it.",
+  },
   {
     date: "2026-10-21",
     title: "DMbot asks when two house rules disagree",
