@@ -1393,7 +1393,8 @@ so the docs always show names the way Discord does. For the campaign
       anyone in the server may download a backup.
     - Each person can download all of their own notes, and delete them (Delete my notes).
     - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
-      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      into another, its notes move to the one kept, the ones already marked "no longer listed" too: they keep
+      their 30-day clock, and are unmarked only if the kept NPC is listed. When an NPC is rejected or deleted, the person's
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
@@ -1773,6 +1774,42 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **Who sees what:** DMs see everything, secret ones marked. Anyone else in the server sees the players'
     view only (what the NPC pages show) and cannot edit. Secret names and connections are never sent to
     them.
+  - **Players View / Full View, and revealed names** (owner, 2026-10-22). The graph shows players only
+    what the story has **revealed** to them.
+    - **Revealed** means said at the table: a line heard in the table voice channel, or typed in the
+      table's chat that DMbot reads ("Typed chat at the table"), while DMbot listens and only from people
+      who agreed. A past session the DM imports counts, because it is what was said at the table. DM-screen
+      lines, the DM sidebar, DMbot's own messages and the DM's private channels never count.
+    - **Not revealed yet** (new, besides 🤫 secret): every name and connection from 📜 Upload backstory, and
+      every name the DM adds by hand (➕ Add a name, 📥 Add many), starts unrevealed. Names DMbot first
+      heard at the table start revealed. Existing names and connections that aren't secret count as
+      revealed (no change for players today).
+    - **When it changes, by itself:** an unrevealed name becomes revealed when its name or one of its other
+      names is said or typed (the whole-name matcher that guards secrets). An unrevealed connection becomes
+      revealed when both its names are revealed and the after-session connection check hears it stated. The
+      DM sees "Revealed at the table: Vex (Session 4)" in the after-session report, with ↩️ Undo. The
+      DM can also press **👁️ Reveal to players** on a card or in the graph.
+    - **🤫 Secret is stronger:** a name or connection the DM kept as secret (🤫 Keep as secret, or 🤫 on a
+      card) is never revealed by itself. Saying it out loud still asks the DM, as under "When a secret is
+      revealed". "Revealed" decides only what players see; every listener still uses unrevealed names.
+    - **The same rule everywhere for players:** the graph, the NPC pages and the All names list show players
+      revealed names and connections only. Code decides it, never the AI, and nothing unrevealed is sent to
+      a player's browser.
+    - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
+      with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
+      DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
+    - **The player's switch: Normal view / Peek behind the DM screen.** It follows the campaign's DM-screen
+      visibility:
+      - **Players can peek** or **Everyone in the server:** the switch works. Turning it on first shows:
+        "Peeking shows you the DM's secrets and things your characters haven't found yet. It can spoil the
+        mystery and the fun. Your DM will be told you peeked. [Yes, show me] [Cancel]". Yes shows the full
+        view, read-only, and tells the DM once on the DM screen ("<name> peeked at the relationship web").
+        Normal view hides it again. The choice lasts for that browser visit only.
+      - **Only the DM:** the switch is shown greyed out and can't be turned on, with: "Turned off by the DM.
+        To turn it on, the DM opens 👤 DMbot Main Menu → ⚙️ Settings → 👁️ Who can see the DM screen →
+        👀 Players can peek."
+      - The API re-checks the visibility and the person on every call; the switch alone never unlocks
+        anything.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
@@ -1865,6 +1902,13 @@ names panel nor the speech-to-text hints can be a fixed list.
   **Where it is** (owner, 2026-10-22): a **📜 Upload backstory** button in the 👤 DMbot Main Menu (for the
   campaign's DMs only), opening the same flow, so a new campaign's DM finds it straight away. ⚙️ Settings →
   Names → 📥 Add many → 📜 From a story or background stays too.
+  **How they wait** (CloudDev, #2380, 2026-10-22): a found connection waits in the campaign's
+  `backstory_links` table (migration 0173): the two entries' IDs, the kind, a short quote and a secret
+  flag, never the text. It is asked only once both names are confirmed (after ✅ Add all, at the end of
+  📝 Check new names, or with 📜 Check the connections), so a restart loses nothing. Every read cleans
+  the queue: a refused name drops its connections, a merge moves them to the name that stayed, and a
+  connection the campaign already has is not asked again. One the text wrote with a secret spelling can
+  only be kept as secret.
 - **Connections between names.** Hints and helpers need to know that Ulfgar belongs to
   the Frostwolf tribe. They come from the DM (**🧭 Connect to…** on a name card) and
   from DMbot suggesting them after a session, with what was heard ("**Ulfgar** seems to
