@@ -362,6 +362,35 @@ export function mockRecaps(): Recap[] {
       triesLeft: 2,
       canDrop: false,
     },
+    // Written but unchecked for 3 days (#2297): the draft to read, one sentence marked.
+    {
+      ...base,
+      ref: "200000000000000001.cmp9.1789000000",
+      campaign: "The Quiet Choir",
+      share: { on: false, path: null },
+      sessionAt: 1789000000,
+      status: "draft",
+      state: "prose",
+      working: true,
+      waitingForCheck: true,
+      title: "",
+      text: "",
+      summary: "",
+      housekeeping: [],
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      triesLeft: 2,
+      canDrop: true,
+      uncheckedSince: 1788000000,
+      uncheckedDraft: [
+        "The party reached the river at dusk.",
+        "Mira kept quiet because she feared the ferryman.",
+        "They crossed after he asked for a story.",
+      ],
+      uncheckedSentences: [2],
+      canApproveUnchecked: true,
+    },
   ];
 }
 
@@ -668,6 +697,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(ref);
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
+      return { ...r };
+    },
+    async approveUnchecked(ref) {
+      calls.push(`approveUnchecked:${ref}`);
+      const r = await find(ref);
+      if (!r.canApproveUnchecked) throw new ApiError("not-allowed");
+      // As the bot would: the draft is finished as it stands, to edit and approve as usual.
+      const text = (r.uncheckedDraft ?? []).join(" ");
+      Object.assign(r, {
+        working: false, waitingForCheck: false, state: "ready", text, summary: text, title: "Session recap",
+        canEdit: true, canPost: true, canTryAgain: true, uncheckedSince: 0, uncheckedDraft: [],
+        uncheckedSentences: [], canApproveUnchecked: false,
+        approval: { approved: false, choice: "", approvedAt: null, canApprove: true },
+      });
       return { ...r };
     },
     async approveRecap(ref, choice, options) {

@@ -69,6 +69,15 @@ export const text = {
   // it stays up through the short gaps between tries, until the recap is ready or has failed.
   waitingForCheck:
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
+  // A draft DMbot couldn't check for 3 days (#2297): the DM reads it before it goes anywhere.
+  uncheckedHeading: "Not checked yet: read it before you share it",
+  uncheckedLead:
+    "DMbot wrote this recap but couldn't finish checking it. Nothing has been shared. The sentences marked below are the ones DMbot would have looked at twice.",
+  uncheckedMark: "Look at this one",
+  uncheckedUse: "Use this draft as it is",
+  uncheckedUsing: "Opening it…",
+  uncheckedAfter: "After this you can still change it and then approve it, as with any recap.",
+  uncheckedFailed: "That didn't work. Try again in a minute.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or leave it.",

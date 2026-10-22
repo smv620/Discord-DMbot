@@ -264,9 +264,27 @@ class TheDmsPage(Base):
         one = await read_recap(self.web, self.session, self.ref)
         self.assertEqual(one["uncheckedSince"], 1234)
         self.assertIsInstance(one["uncheckedSentences"], list)
+        # (long past 3 days) the draft is given to read, in the sentences the numbers count by
+        self.assertTrue(one["uncheckedDraft"])
+        self.assertFalse(one["canApproveUnchecked"])  # the approve is not on until the bot has it
         await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
         again = await read_recap(self.web, self.session, self.ref)
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
+        self.assertEqual(again["uncheckedDraft"], [])
+
+    async def test_a_recap_that_has_waited_less_than_3_days_gives_no_draft_to_read(self) -> None:
+        import time
+
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            critics=Loop(waits=2, since=int(time.time()) - 86400).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertGreater(one["uncheckedSince"], 0)
+        self.assertEqual(one["uncheckedDraft"], [])
+        self.assertFalse(one["canApproveUnchecked"])
 
     async def test_a_recap_says_when_its_sessions_transcript_was_deleted(self) -> None:
         """(#2022) The recap stays; its page says the transcript went, and when, and how long the

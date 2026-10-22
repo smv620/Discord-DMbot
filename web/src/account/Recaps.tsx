@@ -30,6 +30,7 @@ import {
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
+import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
@@ -662,6 +663,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
         </p>
       )}
+      <RecapUnchecked api={api} recap={recap} onRecap={setRecap} />
       {/* The only place the page says an email is coming, so the only place it names the address. */}
       {recap.working && (
         <RecapEmailLine

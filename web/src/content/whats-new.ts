@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Read a recap DMbot couldn't check",
+    what: "If DMbot can't finish checking a recap for 3 days, the recap page now shows you the draft, with the sentences DMbot would have looked at twice marked. Nothing is shared. You can use the draft as it is, and then change it and approve it like any recap.",
+    reason: "In review (#2297); held until the bot can open an unchecked draft (#2305) and dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "A page for each campaign",
     what: "On My Campaigns, tap a campaign's name to open its own page. It has links to its recaps, house rules, homebrew, story map, names and transcripts, all in one place. Players see only the pages for the whole table.",
     reason: "In review (#2416); held until the API sends each campaign's address and dev1 deploys it.",
