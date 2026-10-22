@@ -4227,6 +4227,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     aren't kept after the import, only the stored sessions.
   - **Order:** the importer and its storage with the consent mapping (core and API), then the
     website page, then building the campaign and the optional recaps.
+- **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
+  page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
+  number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21
+  October 2026 · 2 h 35 min". The session number is the one DMbot uses everywhere else (the transcripts'
+  "Session N"). The length runs from when DMbot started listening to when it stopped; an imported session
+  uses its transcript's length. The day is shown in the reader's own time zone.
 - **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
   liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
   recaps) is where the DM reviews a recap before any voice-over or music. **Discord opens it** (owner,
