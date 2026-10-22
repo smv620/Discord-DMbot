@@ -306,7 +306,7 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
             return True
 
         self.host.sidebar_campaign = campaign_of  # type: ignore[method-assign]
-        self.host.sidebar_record_win = record  # type: ignore[attr-defined]
+        self.host.sidebar_record_win = record  # type: ignore[method-assign]
         sides = rule_clash.named(
             "House rule 1, House rule 2", [house(1, POTION_A), house(2, POTION_B)]
         )

@@ -770,6 +770,7 @@ class SidebarService:
                 else message
             ]
         clash = answer.clash
+        under: discord.ui.View | None
         if clash is not None and not public:
             under = self._clash_view(
                 campaign,
@@ -1106,6 +1107,7 @@ class _Private:
     parts: Sequence[str] = (PRIVATE_NOTE,)
     one_for_dm: bool = False
     question: str = ""
+    clash: tuple[rule_clash.Side, rule_clash.Side] | None = None
 
 
 def _campaign_key(table: Table) -> tuple[int, str]:

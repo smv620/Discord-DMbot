@@ -50,7 +50,7 @@ class ClashView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         """Buttons that do nothing any more are taken away, so none looks live and fails."""
-        message = self.message
+        message = getattr(self, "message", None)  # (set by discord.py when it is sent)
         if message is not None and not self._answered:
             with contextlib.suppress(discord.HTTPException):
                 await message.edit(content=TIMED_OUT, view=None)
