@@ -45,7 +45,7 @@ from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
-ALL_LABEL = "🌐 See all on the website"
+ALL_LABEL = "🌐 All connections on the website…"
 WEBSITE_BUTTON = "Open all connections"
 WEBSITE_LINE = (
     "Every connection is on the website. Tap the button to open it. You may need to sign in."
@@ -238,15 +238,15 @@ class OneConnection(_Menu):
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
             return
-        if not moved:
+        if moved is None:
             await _tell(interaction, "It already says that. Press Back to see the card.")
             return
         changed(interaction, c)
         self.stop()
         await show_card(
             interaction, c.id, self.entity_id, replace=True,
-            note=f"Changed to: {_md(self._now_reads(found, predicate, detail))}. "
-            "Not right? Edit it again.",
+            note=f"Changed to: {_md(self._now_reads(found, predicate, detail))}. {UNDO_NOTE}",
+            undo_connection=moved.batch,
         )  # fmt: skip
 
     @staticmethod

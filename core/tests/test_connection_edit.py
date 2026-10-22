@@ -226,7 +226,10 @@ class Cards(base.NamesTest):
         page.words._values = ["enemy_of"]
         it = self.it()
         await page.words.callback(it)
-        self.assertIn("Changed to: Belleros is an enemy of Kesh.", it.response.edited[0][0])
+        self.assertIn(
+            "Changed to: Belleros is an enemy of Kesh. Wrong? Press **Undo**",
+            it.response.edited[0][0],
+        )
         (now,) = await self.relations()
         self.assertEqual((now.predicate, now.secret), ("enemy_of", True))
         self.assertNotEqual(now.id, old.id)
@@ -357,3 +360,40 @@ class Cards(base.NamesTest):
         await page._new_words(self.it(), "enemy_of", "")
         mine = await self.relations()
         self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", True)])
+
+    async def test_only_the_capitals_changed_keeps_the_connection(self) -> None:
+        await self.know("Kesh")
+        (rel,) = await self.relations()
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, rel.id, status="rejected", source=DM_SOURCE
+        )
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bell.id, FALLBACK_PREDICATE, rel.object_id
+            if rel.subject_id == self.bell.id else rel.subject_id,
+            source="dm", confidence=1.0, status=CONFIRMED, detail="sworn to",
+        )  # fmt: skip
+        self.fresh()
+        (free,) = await self.relations()
+        page = await self.page_of_relation(free.id)
+        form = connection_edit.OtherWords(self.campaign.id, self.bell.id, free.id, page)
+        form.words._value = "Sworn To"
+        it = self.it()
+        await form.on_submit(it)
+        self.assertIn("already says that", str(it.response.sent or it.followup.send.await_args))
+        (still,) = await self.relations()
+        self.assertEqual(still.id, free.id)
+
+    async def test_undo_after_new_words_puts_the_old_words_back_whole(self) -> None:
+        await self.know("Kesh")
+        (old,) = await self.relations()
+        page = await self.page()
+        page.words._values = ["enemy_of"]
+        it = self.it()
+        await page.words.callback(it)
+        note, card = it.response.edited[0]
+        self.assertIn("Wrong? Press **Undo**", note)
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        self.assertEqual([r.predicate for r in await self.relations()], ["enemy_of"])
+        await undo.callback(self.it())
+        (back,) = await self.relations()  # exactly one connection again
+        self.assertEqual((back.id, back.predicate), (old.id, "knows"))

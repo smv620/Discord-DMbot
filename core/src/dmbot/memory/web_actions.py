@@ -28,6 +28,7 @@ from dmbot.memory.models import (
     PRONOUNCED,
     REJECTED,
     MemoryRuleError,
+    Relation,
     lookup_key,
     name_key,
 )
@@ -295,15 +296,16 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id, result_other=other.id)
     # the others name one connection, filed under its first name
-    found = [
-        r
-        for r in await memory.relations(guild_id, cid, entity_id=entity_id, include_secret=True)
-        if r.id == a.target_id and r.status == CONFIRMED
-    ]
-    if not found:
+    link = await memory.relation(guild_id, cid, a.target_id)
+    if link is None or entity_id not in (link.subject_id, link.object_id):
         return _failed(NOT_FOUND)
-    link = found[0]
     pair = {"result_id": link.subject_id, "result_other": link.object_id}
+    if link.status != CONFIRMED:
+        # A retried job (the first try did its work, then stopped before it was marked done) finds
+        # the connection already ended: that is "done", as for a remove or merge in `apply`.
+        if link.status == REJECTED and await _already(memory, guild_id, cid, link, a):
+            return Outcome(**pair)
+        return _failed(NOT_FOUND)
     try:
         if a.action == "link-secret":
             await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
@@ -319,3 +321,22 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
     except MemoryRuleError:
         return _failed(BAD_TARGET)
     return Outcome(**pair)
+
+
+async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:
+    """Whether an ended connection is the work of this very action: a removal (it is ended), or
+    new words (a live connection with those words stands between the same two names)."""
+    if a.action == "link-remove":
+        return a.flag
+    if a.action != "link-words":
+        return False
+    predicate, detail = predicate_for(a.text)
+    return any(
+        r.status == CONFIRMED
+        and r.predicate == predicate
+        and r.detail.casefold() == detail.casefold()
+        and {r.subject_id, r.object_id} == {link.subject_id, link.object_id}
+        for r in await memory.relations(
+            guild_id, cid, entity_id=link.subject_id, include_secret=True
+        )
+    )
