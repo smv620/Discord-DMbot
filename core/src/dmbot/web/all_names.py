@@ -17,7 +17,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.background import LABELS
-from dmbot.memory.models import PRONOUNCED
+from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -128,7 +128,6 @@ ACTIONS = (
     "merge-many",
     "remove",
 )
-MERGE_MANY_MAX = 50  # names one merge-many takes (the same limit as the bot's and the door's)
 
 
 def _text(value: object) -> str:

@@ -1666,11 +1666,11 @@ class UndoManyButton(
     PREFIX = "dmbot:undomany"
 
     def busy(self, name: str) -> str:
-        return "↩️ Undoing… splitting the joined names apart."
+        return "↩️ Undoing… splitting the merged names apart."
 
     def done(self, name: str) -> str:
         return (
-            f"↩️ Done: the joined names are separate again. **{_md(name)}** is one of them, "
+            f"↩️ Done: the merged names are separate again. **{_md(name)}** is one of them, "
             "with its other names and connections."
         )
 

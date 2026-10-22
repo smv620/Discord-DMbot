@@ -24,6 +24,7 @@ from dmbot.memory.link_words import predicate_for
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
+    MERGE_MANY_MAX,
     PLAYER_CHARACTER,
     PRONOUNCED,
     REJECTED,
@@ -32,7 +33,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.store import MERGE_MANY_MAX, PERSON, MemoryStore
+from dmbot.memory.store import PERSON, MemoryStore
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this

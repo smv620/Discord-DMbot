@@ -80,6 +80,7 @@ from dmbot.memory.models import (
     LIST_MAX,
     LIVE,
     MENTION_METHODS,
+    MERGE_MANY_MAX,
     MERGED,
     PLAYER_CHARACTER,
     PROPOSED,
@@ -135,7 +136,6 @@ from dmbot.names import not_names
 log = logging.getLogger(__name__)
 
 PERSON = "person"
-MERGE_MANY_MAX = 50  # names one merge takes (the website sends up to this many; #2426)
 PLAYS = "plays"
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)

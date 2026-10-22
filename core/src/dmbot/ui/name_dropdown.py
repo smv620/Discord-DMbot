@@ -157,7 +157,7 @@ class NameDropdown(_Menu):
             self.add_item(
                 _Button(
                     self._several,
-                    label="🔗 Join several…",
+                    label="🔗 Merge several…",
                     style=discord.ButtonStyle.secondary,
                     row=2,
                 )

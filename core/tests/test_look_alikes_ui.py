@@ -1,11 +1,11 @@
-"""🔗 Look-alikes and 🔗 Join several… (#2426): the group message, the one confirmation that names
+"""🔗 Look-alikes and 🔗 Merge several… (#2426): the group message, the one confirmation that names
 every name, Discord's limits (25 options, 5 rows, 25-letter labels), and who may press what."""
 
 from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -14,7 +14,8 @@ from dmbot.memory.lookalikes import Name
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui import look_alikes as la
 from dmbot.ui import name_dropdown as dd
-from dmbot.ui.names import NamesHome
+from dmbot.ui.name_card import SAME
+from dmbot.ui.names import NamesHome, Reviews
 
 A, B, C = ("a" * 32, "b" * 32, "c" * 32)
 KINDS = {A: "NPC", B: "NPC", C: "place"}
@@ -52,7 +53,8 @@ class TheGroupMessage(unittest.TestCase):
         self.assertIn("Nothing is deleted", text)
 
     def test_different_kinds_are_said_once_in_that_same_confirmation(self) -> None:
-        self.assertIn("not all the same kind", la.confirm_text(NAMES[0], NAMES[1:], KINDS))
+        text = la.confirm_text(NAMES[0], NAMES[1:], KINDS)
+        self.assertIn("**the Belleros** is a place; it becomes an NPC's other name.", text)
         same = la.confirm_text(NAMES[0], NAMES[1:2], KINDS)
         self.assertNotIn("same kind", same)
 
@@ -89,7 +91,7 @@ class TheGroupView(unittest.TestCase):
     def test_the_rows_fit_and_the_labels_fit_a_phone(self) -> None:
         view = self.view(30, groups=3)
         self.assertEqual(len(view.children), 6)  # two menus, four buttons
-        rows = {c.row for c in view.children}
+        rows = {c.row for c in view.children if c.row is not None}
         self.assertLessEqual(max(rows), 4)
         self.assertTrue(all(len(x) <= 25 for x in labels(view)), labels(view))
 
@@ -101,11 +103,11 @@ class TheGroupView(unittest.TestCase):
 class TheCardsOtherRoute(unittest.TestCase):
     def test_merge_several_sits_under_same_as_not_under_connect(self) -> None:
         same = dd.NameDropdown(
-            "c1", "me", dd.SAME, "Jack", SimpleNamespace(entities={}), [],
+            "c1", "me", SAME, "Jack", cast(Any, SimpleNamespace(entities={})), [],
             secret=False, mode=dd.CLOSEST, page=0, last=0,
         )  # fmt: skip
         connect = dd.NameDropdown(
-            "c1", "me", "member_of", "Jack", SimpleNamespace(entities={}), [],
+            "c1", "me", "member_of", "Jack", cast(Any, SimpleNamespace(entities={})), [],
             secret=False, mode=dd.CLOSEST, page=0, last=0,
         )  # fmt: skip
         self.assertIn(la.MERGE_SEVERAL, labels(same))
@@ -117,10 +119,27 @@ class TheCardsOtherRoute(unittest.TestCase):
         self.assertEqual(len(selects(view)[0].options), 25)
         self.assertEqual(selects(view)[0].max_values, 25)
         self.assertIn("🔍 Search", labels(view))
-        self.assertIn("🔗 Join", labels(view))
+        self.assertIn("🔗 Merge", labels(view))
 
-    def test_with_no_names_there_is_nothing_to_join(self) -> None:
-        self.assertNotIn("🔗 Join", labels(la.MergeSeveral("c1", "me", "Jack", [])))
+    def test_with_no_names_there_is_nothing_to_merge(self) -> None:
+        self.assertNotIn("🔗 Merge", labels(la.MergeSeveral("c1", "me", "Jack", [])))
+
+
+class TheLimits(unittest.TestCase):
+    def test_a_group_message_stays_under_discords_2000_letters(self) -> None:
+        names = [Name(f"{i:032x}", f"{'Long' * 25} {i}", 99) for i in range(25)]
+        kinds = {n.id: "NPC" for n in names}
+        text = la.group_text(names, kinds, number=3, of=9, extra=7)
+        self.assertLessEqual(len(text), 2000)
+        self.assertIn("not shown", text)
+        self.assertIn("None are the same", text)
+
+    def test_the_confirmation_stays_under_2000_letters_with_25_long_names(self) -> None:
+        names = [Name(f"{i:032x}", f"{'Odd' * 33} {i}", 0) for i in range(26)]
+        kinds = {n.id: ("place" if i % 2 else "NPC") for i, n in enumerate(names)}
+        text = la.confirm_text(names[0], names[1:], kinds)
+        self.assertLessEqual(len(text), 2000)
+        self.assertIn("is a place; it becomes an NPC's other name", text)
 
 
 class ThePanelButton(unittest.TestCase):
@@ -132,10 +151,10 @@ class ThePanelButton(unittest.TestCase):
         row = next(c for c in dm.children if getattr(c, "label", "") == "🔗 Look-alikes (4)").row
         self.assertEqual(row, 1)
         self.assertLessEqual(len(dm.children), 25)
-        all_reviews = SimpleNamespace(heard=1, people=1, claims=1, said=1)
+        all_reviews = Reviews(heard=1, people=1, claims=1, said=1)
         full = NamesHome(
             "c1", 3, [("e1", "Belleros", "npc")], all_reviews, connections=2, look_alikes=4
-        )  # type: ignore[arg-type]
+        )
         self.assertLessEqual(len(full.children), 25)
 
 
@@ -152,9 +171,11 @@ def interaction() -> Any:
 class TheMerge(unittest.IsolatedAsyncioTestCase):
     """The confirmation's button: one `merge_many`, one Undo, then the groups asked for again."""
 
-    async def run_yes(self, memory: Any, *, dm: bool = True) -> tuple[Any, Any, Any]:
+    async def run_yes(
+        self, memory: Any, *, dm: bool = True, left: list[Name] | None = None, show: Any = None
+    ) -> tuple[Any, Any, Any]:
         campaign = SimpleNamespace(guild_id=1, id="c" * 32)
-        view = la.ConfirmMerge("c" * 32, [NAMES], 0, KINDS, NAMES[0], NAMES[1:])
+        view = la.ConfirmMerge("c" * 32, [NAMES], 0, KINDS, NAMES[0], NAMES[1:], left)
         reply, tell = AsyncMock(), AsyncMock()
         with (
             patch.object(la, "_campaign_for", AsyncMock(return_value=campaign)),
@@ -164,6 +185,7 @@ class TheMerge(unittest.IsolatedAsyncioTestCase):
             patch.object(la, "_tell", tell),
             patch.object(la, "_answer_first", AsyncMock()),
             patch.object(la, "changed", MagicMock()),
+            patch.object(la, "_show_group", show or AsyncMock()),
         ):
             asked = interaction()
             await view._yes(asked)
@@ -173,23 +195,81 @@ class TheMerge(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             merge_many=AsyncMock(return_value=SimpleNamespace(batch=42)),
             look_alikes=AsyncMock(return_value=[]),
+            not_the_same=AsyncMock(return_value=1),
             keep_days=30,
             **kw,
         )
 
     async def test_one_merge_many_call_and_one_undo_for_all_of_it(self) -> None:
         memory = self.memory()
-        asked, reply, _ = await self.run_yes(memory)
+        show = AsyncMock()
+        asked, _, _ = await self.run_yes(memory, show=show)
         memory.merge_many.assert_awaited_once_with(1, "c" * 32, A, [B, C], source=DM)
         sent = asked.followup.send.await_args
         self.assertIn("Undo", sent.args[0])
         undo = sent.kwargs["view"].children[0]
         self.assertEqual((undo.campaign_id, undo.entity_id, undo.batch), ("c" * 32, B, 42))
         self.assertTrue(sent.kwargs["ephemeral"])
-        said = " ".join(str(c.args[1]) for c in reply.await_args_list)
-        self.assertIn("2 names are now other names for **Belleros**", said)
+        assert show.await_args is not None
+        self.assertIn(
+            "2 names are now other names for **Belleros**", show.await_args.kwargs["note"]
+        )
 
-    async def test_a_name_that_is_not_the_dms_to_join_changes_nothing(self) -> None:
+    async def test_the_undo_is_sent_before_the_next_group_is_drawn(self) -> None:
+        """If drawing the next message fails, the merge must still have its Undo."""
+        memory = self.memory()
+        seen: list[bool] = []
+
+        async def failing(*a: Any, **k: Any) -> None:
+            seen.append(asked.followup.send.await_count == 1)
+            raise RuntimeError("the edit failed")
+
+        asked = interaction()
+        with self.assertRaises(RuntimeError):
+            await self.run_yes_with(memory, asked, failing)
+        self.assertEqual(seen, [True])
+
+    async def run_yes_with(self, memory: Any, asked: Any, show: Any) -> None:
+        campaign = SimpleNamespace(guild_id=1, id="c" * 32)
+        view = la.ConfirmMerge("c" * 32, [NAMES], 0, KINDS, NAMES[0], NAMES[1:])
+        with (
+            patch.object(la, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(la, "_memory", MagicMock(return_value=memory)),
+            patch.object(la, "sees_secrets", MagicMock(return_value=True)),
+            patch.object(la, "_replace", AsyncMock()),
+            patch.object(la, "_tell", AsyncMock()),
+            patch.object(la, "_answer_first", AsyncMock()),
+            patch.object(la, "changed", MagicMock()),
+            patch.object(la, "_show_group", show),
+        ):
+            await view._yes(asked)
+
+    async def test_a_name_the_dm_unticked_is_remembered_as_not_the_same_as_the_kept_one(
+        self,
+    ) -> None:
+        memory = self.memory()
+        extra = Name("d" * 32, "Belloros", 0)
+        await self.run_yes(memory, left=[extra])
+        memory.not_the_same.assert_awaited_once_with(1, "c" * 32, [A, "d" * 32], user_id=7)
+
+    async def test_none_are_the_same_remembers_every_name_shown_ticked_or_not(self) -> None:
+        memory = self.memory()
+        campaign = SimpleNamespace(guild_id=1, id="c" * 32)
+        view = la.LookAlikeGroup("c" * 32, [NAMES], 0, KINDS)
+        view.ticked = {A, B}  # the DM unticked the third: it is still one of "none"
+        with (
+            patch.object(la, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(la, "_memory", MagicMock(return_value=memory)),
+            patch.object(la, "sees_secrets", MagicMock(return_value=True)),
+            patch.object(la, "_answer_first", AsyncMock()),
+            patch.object(la, "_show_group", AsyncMock()),
+        ):
+            await view._apart(interaction())
+        ids = memory.not_the_same.await_args.args[2]
+        self.assertEqual(sorted(ids), sorted([A, B, C]))
+        self.assertIn("None are the same", labels(view))
+
+    async def test_a_name_that_is_not_the_dms_to_merge_changes_nothing(self) -> None:
         memory = self.memory()
         _, _, tell = await self.run_yes(memory, dm=False)
         memory.merge_many.assert_not_awaited()

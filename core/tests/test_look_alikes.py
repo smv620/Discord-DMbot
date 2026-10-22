@@ -52,6 +52,22 @@ class WhatLooksAlike(unittest.TestCase):
         )
         self.assertEqual(groups("Captain Varn", "Varn"), [["Captain Varn", "Varn"]])
 
+    def test_a_name_inside_several_longer_ones_is_a_hub_and_ties_none_of_them(self) -> None:
+        self.assertEqual(
+            groups("Waterdeep", "Lord of Waterdeep", "Waterdeep Harbor", "Waterdeep City Watch"), []
+        )
+        self.assertEqual(groups("Captain", "Captain Varn", "Captain Hale", "Captain Ross"), [])
+        self.assertEqual(groups("Dragon", "Red Dragon", "Blue Dragon"), [])
+
+    def test_a_name_inside_exactly_one_longer_name_still_links(self) -> None:
+        self.assertEqual(
+            groups("Red Dragon", "Red Dragon Inn", "Dragon"), [["Red Dragon", "Red Dragon Inn"]]
+        )
+
+    def test_a_hub_does_not_stop_real_spellings_in_its_family(self) -> None:
+        found = groups("Waterdeep", "Lord of Waterdeep", "Waterdeep Harbor", "Waterdeep Harbour")
+        self.assertEqual(found, [["Waterdeep Harbor", "Waterdeep Harbour"]])
+
     def test_a_short_word_alone_is_no_tie(self) -> None:
         self.assertEqual(groups("Al", "Al the Smith"), [])
         self.assertEqual(

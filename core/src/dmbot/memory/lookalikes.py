@@ -192,13 +192,18 @@ def find(names: Iterable[Name], *, apart: Collection[tuple[str, str]] = ()) -> l
     by_words: dict[tuple[str, ...], list[int]] = {}
     for i, t in enumerate(tidy):
         by_words.setdefault(t.words, []).append(i)
-    contained_pairs: list[tuple[int, int]] = []
+    # A name inside two or more longer names is a hub ("Waterdeep" in "Lord of Waterdeep" and
+    # "Waterdeep Harbor"; "Captain" in three captains), not a spelling of any of them, so it ties
+    # none of them together. It links only when exactly one longer name holds it.
+    holders: dict[int, set[int]] = {}
     for i, t in enumerate(tidy):
         n = len(t.words)
         for size in range(1, n):
             for at in range(n - size + 1):
                 for j in by_words.get(t.words[at : at + size], ()):
-                    contained_pairs.append((i, j))
+                    if _contained(t.words, tidy[j].words):
+                        holders.setdefault(j, set()).add(i)
+    contained_pairs = [(i, j) for j, over in holders.items() if len(over) == 1 for i in over]
 
     def add(i: int, j: int) -> None:
         if i != j:

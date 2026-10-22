@@ -140,7 +140,7 @@ class TheStoreMerge(Spellings):
         with self.assertRaises(ValueError):
             await self.memory.merge_many(self.g, self.one.id, self.b1, [self.b2], source="scan")
 
-    async def test_a_repeated_name_is_joined_once(self) -> None:
+    async def test_a_repeated_name_is_merged_once(self) -> None:
         written = await self.memory.merge_many(
             self.g, self.one.id, self.b1, [self.b2, self.b2], source=DM_SOURCE
         )
@@ -224,11 +224,14 @@ class TheLookAlikes(Spellings):
         await self.memory.add_entity(
             self.g, self.two.id, type="npc", name="Belleros", source=DM_SOURCE, status="confirmed"
         )
+        for other in (self.b3, self.b4):  # leave only the pair in campaign one
+            await self.memory.set_entity_status(
+                self.g, self.one.id, other, "rejected", source=DM_SOURCE
+            )
         await self.memory.not_the_same(self.g, self.one.id, [self.b1, self.b2], user_id=ALICE.id)
         theirs = await self.memory.look_alikes(self.g, self.two.id)
         self.assertEqual([sorted(n.name for n in g) for g in theirs], [["Beleros", "Belleros"]])
-        mine = await self.memory.look_alikes(self.g, self.one.id)
-        self.assertNotIn("Beleros", [n.name for g in mine for n in g if n.id == self.b2] and [])
+        self.assertEqual(await self.memory.look_alikes(self.g, self.one.id), [])  # apart in one
 
     async def test_an_answer_goes_with_either_name(self) -> None:
         await self.memory.not_the_same(self.g, self.one.id, [self.b1, self.b2], user_id=ALICE.id)

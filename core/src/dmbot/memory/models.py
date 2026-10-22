@@ -442,3 +442,7 @@ class Written[T]:
 
     value: T
     batch: int | None
+
+
+# Names one merge takes: the bot, the website and the database door agree (#2426).
+MERGE_MANY_MAX = 50

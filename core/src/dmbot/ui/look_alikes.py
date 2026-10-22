@@ -1,10 +1,10 @@
-"""🔗 Look-alikes and 🔗 Join several… (#2426): the easy way to make many spellings one name.
+"""🔗 Look-alikes and 🔗 Merge several… (#2426): the easy way to make many spellings one name.
 
 The names panel's **🔗 Look-alikes (N)** shows the groups DMbot found (`memory/lookalikes.py`,
 no AI), one group per message: every name ticked, **Keep which name?** (the most heard first),
-then **🔗 Join** with one confirmation that names them all, or **Not the same** (remembered, so
+then **🔗 Merge** with one confirmation that names them all, or **Not the same** (remembered, so
 the group is not offered again), or **Next group**. The Same as… screen of a name's card has
-**🔗 Join several…**: tick up to 25 other names for it. Both end in `MemoryStore.merge_many`:
+**🔗 Merge several…**: tick up to 25 other names for it. Both end in `MemoryStore.merge_many`:
 one change, one **Undo** for all of it, nothing deleted.
 
 The DM's alone (the same rule as the card's Same as…): the finder reads every confirmed name,
@@ -44,8 +44,8 @@ log = logging.getLogger(__name__)
 
 PAGE = 25  # what one Discord menu holds
 BUTTON = "🔗 Look-alikes"
-MERGE_SEVERAL = "🔗 Join several…"
-NOT_THE_DM = "Only the DM can join names. Ask your DM to do it."
+MERGE_SEVERAL = "🔗 Merge several…"
+NOT_THE_DM = "Only the DM can merge names. Ask your DM to do it."
 NONE_FOUND = "That's all the groups. No more look-alikes right now."
 NOTHING_CHANGED = "That didn't work, and nothing was changed. Please try again."
 
@@ -59,26 +59,40 @@ def _kind_of(kinds: dict[str, str], name: Name) -> str:
     return kinds.get(name.id, "other")
 
 
+MESSAGE_BUDGET = 1700  # of Discord's 2000, leaving room for the heading and the advice
+
+
+def _fit(lines: list[str], budget: int, noun: str = "more") -> list[str]:
+    """As many of the lines as fit in `budget` characters, then "…and N more" for the rest."""
+    out: list[str] = []
+    used = 0
+    for at, line in enumerate(lines):
+        if used + len(line) + 1 > budget:
+            out.append(f"…and {len(lines) - at} {noun} not shown.")
+            break
+        out.append(line)
+        used += len(line) + 1
+    return out
+
+
 def group_text(
     names: list[Name], kinds: dict[str, str], *, number: int, of: int, extra: int = 0
 ) -> str:
     head = "**DMbot thinks these may be one name:**" + (f" ({number} of {of})" if of > 1 else "")
     lines = [
-        f"• **{_md(n.name)}** ({_kind_of(kinds, n)}"
+        f"• **{_md(logic.shorten(n.name, 80))}** ({_kind_of(kinds, n)}"
         + (f", heard {n.mentions} times" if n.mentions > 1 else "")
         + ")"
         for n in names
     ]
-    more = [f"…and {extra} more not shown."] if extra else []
-    return "\n".join(
-        [
-            head,
-            *lines,
-            *more,
-            f"I'd keep **{_md(names[0].name)}**, the one heard most. Untick any that are "
-            "different, change the one to keep if you like, then press 🔗 Join.",
-        ]
+    advice = (
+        f"I'd keep **{_md(logic.shorten(names[0].name, 80))}**, the one heard most. Untick any "
+        "that are different, change the one to keep if you like, then press 🔗 Merge. "
+        "**None are the same** says that none of these are one name."
     )
+    shown = _fit(lines, MESSAGE_BUDGET - len(advice) - len(head))
+    more = [f"…and {extra} more not shown."] if extra else []
+    return "\n".join([head, *shown, *more, advice])
 
 
 def _options(
@@ -96,19 +110,32 @@ def _options(
     ]
 
 
+def _a(kind: str) -> str:
+    return "an" if kind[:1].lower() in "aeiou" or kind == "NPC" else "a"
+
+
 def confirm_text(keep: Name, others: list[Name], kinds: dict[str, str]) -> str:
-    """The one confirmation, naming every name it joins."""
-    joined = ", ".join(f"**{_md(n.name)}**" for n in others)
+    """The one confirmation, naming every name it merges. A name of another kind says so in the
+    same message ("X is a place; it becomes an NPC's other name"), never as a second question."""
+    names = _fit([f"**{_md(logic.shorten(n.name, 60))}**" for n in others], 900)
+    shown = ", ".join(names)
+    keeps = _kind_of(kinds, keep)
+    odd = [n for n in others if _kind_of(kinds, n) != keeps]
     kind_line = ""
-    if len({_kind_of(kinds, n) for n in [keep, *others]}) > 1:
-        kind_line = (
-            f"\nThey are not all the same kind. It keeps the kind of **{_md(keep.name)}** "
-            f"({_kind_of(kinds, keep)})."
+    if odd:
+        said = _fit(
+            [
+                f"**{_md(logic.shorten(n.name, 60))}** is {_a(_kind_of(kinds, n))} "
+                f"{_kind_of(kinds, n)}; it becomes {_a(keeps)} {keeps}'s other name."
+                for n in odd
+            ],
+            500,
         )
+        kind_line = "\n" + "\n".join(said)
     return (
-        f"Join {joined} into **{_md(keep.name)}**? They become other names for "
-        f"**{_md(keep.name)}**. Connections, notes and mentions go together. Nothing is "
-        f"deleted, and you can undo it.{kind_line}"
+        f"Merge {shown} into **{_md(logic.shorten(keep.name, 60))}**? They become other names "
+        f"for **{_md(logic.shorten(keep.name, 60))}**. Connections, notes and mentions go "
+        f"together. Nothing is deleted, and you can undo it.{kind_line}"
     )
 
 
@@ -215,9 +242,9 @@ class LookAlikeGroup(_Menu):
         self.add_item(self.chooser)
         grey = discord.ButtonStyle.secondary
         self.add_item(
-            _Button(self._merge, label="🔗 Join", style=discord.ButtonStyle.primary, row=2)
+            _Button(self._merge, label="🔗 Merge", style=discord.ButtonStyle.primary, row=2)
         )
-        self.add_item(_Button(self._apart, label="Not the same", style=grey, row=2))
+        self.add_item(_Button(self._apart, label="None are the same", style=grey, row=2))
         if index + 1 < len(groups):
             self.add_item(_Button(self._next, label="Next group ▸", style=grey, row=2))
         self.add_item(_Button(self._done, label="Done", style=grey, row=2))
@@ -237,7 +264,7 @@ class LookAlikeGroup(_Menu):
         chosen = self._chosen()
         if len(chosen) < 2:
             await _tell(
-                interaction, "Only one name is ticked. Tick another, or press Not the same."
+                interaction, "Only one name is ticked. Tick another, or press None are the same."
             )
             return
         keep = next((n for n in chosen if n.id == self.keep), None)
@@ -245,19 +272,18 @@ class LookAlikeGroup(_Menu):
             await _tell(interaction, "The name to keep is unticked. Pick another name to keep.")
             return
         others = [n for n in chosen if n.id != keep.id]
+        left = [n for n in self.names if n.id not in self.ticked]  # unticked: not one of these
         self.stop()
         await _replace(
             interaction,
             confirm_text(keep, others, self.kinds),
-            ConfirmMerge(self.campaign_id, self.groups, self.index, self.kinds, keep, others),
+            ConfirmMerge(self.campaign_id, self.groups, self.index, self.kinds, keep, others, left),
         )
 
     async def _apart(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
-        chosen = self._chosen()
-        if len(chosen) < 2:
-            await _tell(interaction, "Tick the names that are not the same (at least two).")
-            return
+        # "None are the same" means none of the names shown here are one, ticked or not.
+        chosen = list(self.names)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -283,9 +309,7 @@ class LookAlikeGroup(_Menu):
             rest,
             min(self.index, max(len(rest) - 1, 0)),
             self.kinds,
-            note="👍 Noted: "
-            + ", ".join(f"**{_md(n.name)}**" for n in chosen)
-            + " won't be suggested together again. Here is the next group.",
+            note="👍 Noted: none of those will be suggested together again. Next group:",
         )
 
     async def _next(self, interaction: discord.Interaction) -> None:
@@ -326,6 +350,7 @@ class ConfirmMerge(_Menu):
         kinds: dict[str, str],
         keep: Name,
         others: list[Name],
+        left: list[Name] | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -334,8 +359,9 @@ class ConfirmMerge(_Menu):
         self.kinds = kinds
         self.keep = keep
         self.others = others
+        self.left = left or []  # the names the DM unticked: not the same as the one kept
         self.add_item(
-            _Button(self._yes, label="🔗 Yes, join them", style=discord.ButtonStyle.primary)
+            _Button(self._yes, label="🔗 Yes, merge them", style=discord.ButtonStyle.primary)
         )
         self.add_item(_Button(self._no, label="No, go back", style=discord.ButtonStyle.secondary))
 
@@ -356,19 +382,40 @@ class ConfirmMerge(_Menu):
         self.stop()
         # Answer Discord at once (#351): a big merge can take longer than its 3 seconds, and
         # saying so in place also takes the buttons away so nothing is pressed twice.
-        await _replace(interaction, f"🔗 Joining into **{_md(self.keep.name)}**…", None)
+        await _replace(interaction, f"🔗 Merging into **{_md(self.keep.name)}**…", None)
         try:
             written = await memory.merge_many(
                 campaign.guild_id, campaign.id, self.keep.id, [n.id for n in self.others], source=DM
             )
         except MemoryRuleError as exc:
-            await _replace(interaction, f"Couldn't join them. {exc} Nothing was changed.", None)
+            await _replace(interaction, f"Couldn't merge them. {exc} Nothing was changed.", None)
             return
         except Exception:
-            log.exception("Joining %s names into %s failed", len(self.others), self.keep.id)
+            log.exception("Merging %s names into %s failed", len(self.others), self.keep.id)
             await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
+        # The Undo first: if the next message fails to draw, the merge still has its Undo.
+        await send_undo(
+            interaction,
+            campaign.id,
+            self.others[0].id,
+            written.batch,
+            memory,
+            self.keep.name,
+            len(self.others),
+        )
+        # A name the DM unticked is not the same as the one kept: not offered with it again.
+        for other in self.left:
+            try:
+                await memory.not_the_same(
+                    campaign.guild_id,
+                    campaign.id,
+                    [self.keep.id, other.id],
+                    user_id=interaction.user.id,
+                )
+            except Exception:
+                log.exception("Couldn't remember a name that is not the same")
         note = (
             f"🔗 Done: {len(self.others)} "
             f"{'name is' if len(self.others) == 1 else 'names are'} now other "
@@ -382,15 +429,6 @@ class ConfirmMerge(_Menu):
             min(self.index, max(len(rest) - 1, 0)),
             self.kinds,
             note=note,
-        )
-        await send_undo(
-            interaction,
-            campaign.id,
-            self.others[0].id,
-            written.batch,
-            memory,
-            self.keep.name,
-            len(self.others),
         )
 
 
@@ -421,13 +459,13 @@ async def send_undo(
     )
 
 
-# ---- 🔗 Join several… (a name's card) ----------------------------------------------------
+# ---- 🔗 Merge several… (a name's card) ----------------------------------------------------
 
 
 async def show_merge_several(
     interaction: discord.Interaction, campaign_id: str, entity_id: str, *, typed: str = ""
 ) -> None:
-    """Pick up to 25 other names to join into this one. Past 25 names, `typed` narrows the list
+    """Pick up to 25 other names to merge into this one. Past 25 names, `typed` narrows the list
     (the same search as Same as…)."""
     from dmbot.ui.name_card import _current, _names
     from dmbot.ui.name_dropdown import candidates
@@ -457,7 +495,7 @@ async def show_merge_several(
             interaction,
             f"No other name like **{_md(typed)}**. Search again."
             if typed
-            else "There are no other names to join yet.",
+            else "There are no other names to merge yet.",
             MergeSeveral(campaign_id, entity_id, name, []),
         )
         return
@@ -468,7 +506,7 @@ async def show_merge_several(
     )
     await _replace(
         interaction,
-        f"**Which names are the same as {_md(name)}?** Tick them all, then press 🔗 Join. "
+        f"**Which names are the same as {_md(name)}?** Tick them all, then press 🔗 Merge. "
         f"They become other names for **{_md(name)}**.{more}",
         MergeSeveral(campaign_id, entity_id, name, shown),
     )
@@ -512,7 +550,7 @@ class MergeSeveral(_Menu):
                 max_values=len(options),
             )
             self.add_item(self.pick)
-            self.add_item(_Button(self._join, label="🔗 Join", style=discord.ButtonStyle.primary))
+            self.add_item(_Button(self._join, label="🔗 Merge", style=discord.ButtonStyle.primary))
         grey = discord.ButtonStyle.secondary
         self.add_item(_Button(self._search, label="🔍 Search", style=grey))
         self.add_item(_Button(self._back, label="Back", style=grey))
@@ -547,7 +585,7 @@ class MergeSeveral(_Menu):
 
 
 class ConfirmCard(_Menu):
-    """The confirmation of Join several… on a card: the card's name is the one kept."""
+    """The confirmation of Merge several… on a card: the card's name is the one kept."""
 
     def __init__(self, campaign_id: str, keep: Name, others: list[Name]) -> None:
         super().__init__()
@@ -555,7 +593,7 @@ class ConfirmCard(_Menu):
         self.keep = keep
         self.others = others
         self.add_item(
-            _Button(self._yes, label="🔗 Yes, join them", style=discord.ButtonStyle.primary)
+            _Button(self._yes, label="🔗 Yes, merge them", style=discord.ButtonStyle.primary)
         )
         self.add_item(_Button(self._no, label="No, go back", style=discord.ButtonStyle.secondary))
 
@@ -574,16 +612,16 @@ class ConfirmCard(_Menu):
             await _tell(interaction, NOT_THE_DM)
             return
         self.stop()
-        await _replace(interaction, f"🔗 Joining into **{_md(self.keep.name)}**…", None)
+        await _replace(interaction, f"🔗 Merging into **{_md(self.keep.name)}**…", None)
         try:
             written = await memory.merge_many(
                 campaign.guild_id, campaign.id, self.keep.id, [n.id for n in self.others], source=DM
             )
         except MemoryRuleError as exc:
-            await _replace(interaction, f"Couldn't join them. {exc} Nothing was changed.", None)
+            await _replace(interaction, f"Couldn't merge them. {exc} Nothing was changed.", None)
             return
         except Exception:
-            log.exception("Joining %s names into %s failed", len(self.others), self.keep.id)
+            log.exception("Merging %s names into %s failed", len(self.others), self.keep.id)
             await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
@@ -592,8 +630,7 @@ class ConfirmCard(_Menu):
             f"🔗 Done: {count} {'name is' if count == 1 else 'names are'} now other "
             f"{'name' if count == 1 else 'names'} for **{_md(self.keep.name)}**."
         )
-        await show_card(interaction, campaign.id, self.keep.id, replace=True, note=note)
-        await send_undo(
+        await send_undo(  # first: if the card fails to draw, the merge still has its Undo
             interaction,
             campaign.id,
             self.others[0].id,
@@ -602,3 +639,4 @@ class ConfirmCard(_Menu):
             self.keep.name,
             len(self.others),
         )
+        await show_card(interaction, campaign.id, self.keep.id, replace=True, note=note)
