@@ -1954,6 +1954,12 @@ names panel nor the speech-to-text hints can be a fixed list.
       connections the text states, each with its quote. Code keeps a connection only when its quote is in the
       text and both names are in this read or the campaign. **Nothing is invented:** no AI (PlotBot included)
       adds a connection the text doesn't state. The DM answers each one: ✅ Keep, 🤫 Keep as secret, ❌ No.
+  - **How the read works** (owner, 2026-10-22, after a long document's answer was cut off, #2454): the whole
+    text is read at once (the models read hundreds of pages). **Pass 1** (the careful model) writes the names
+    and the relationships the text states, each with its quote, as a plain list, with output room sized to the
+    text and continued if needed. **Pass 2** (the fast model) only reshapes that list into the ingestion
+    format, never adding. Code then checks every quote against the original text. DMbot never says "no names
+    found" when an answer was cut short.
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
