@@ -58,6 +58,10 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/account/npc*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 # A shared recap's address holds its secret (#2119): never cached, never listed, and never sent on to
 # another site as a referrer. Cloudflare adds a matching rule's headers to the sitewide ones, so the
 # sitewide Referrer-Policy is detached first.

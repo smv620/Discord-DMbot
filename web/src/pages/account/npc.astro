@@ -1,0 +1,20 @@
+---
+import NpcIsland from "../../account/NpcIsland";
+import { npcPage } from "../../content/npc-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="NPC"
+  description="One name from a campaign: what the table knows about it, and your own private notes."
+  noindex
+>
+  <div class="account">
+    <h1>{npcPage.heading}</h1>
+    <NpcIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the NPC. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>
