@@ -151,6 +151,9 @@ async def build_me(
                 campaigns.append(
                     {
                         "id": str(row["id"]),
+                        # The campaign's address, as the other pages' (`<server>.<campaign>`), so
+                        # the account page can link to the campaign's own page (#2416).
+                        "ref": f"{guild.id}.{row['id']}",
                         "name": row["name"],
                         "serverName": guild.name,
                         "lastPlayedAt": _iso_time(row["last_played_at"]),

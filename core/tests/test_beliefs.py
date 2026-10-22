@@ -298,7 +298,7 @@ class Beliefs(MemoryTest):
             GUILD_A, self.c, rel, "ally_of", "", source="dm"
         )
         assert moved.batch is not None
-        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")  # type: ignore[arg-type]
+        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")
         self.assertEqual((await self.truth())[rel], (0.6, "theory"))
         self.assertEqual(set(await self.truth()), {rel})
         self.assertEqual(await self.party(), {rel: 1.0})
@@ -317,7 +317,7 @@ class Beliefs(MemoryTest):
         )
         assert moved.batch is not None
         self.assertEqual(moved.value.from_session_at, 1_000)
-        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")  # type: ignore[arg-type]
+        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
                 "SELECT id, status, from_session_at FROM memory_relations WHERE campaign_id = %s",
