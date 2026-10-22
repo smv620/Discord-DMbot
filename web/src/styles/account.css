@@ -24,6 +24,11 @@
     font-size: var(--text-sm);
   }
 
+  /* A note under a link, on its own line (the campaign page, #2416). */
+  .account .block {
+    display: block;
+  }
+
   /* A number never lands alone on the next line of a character card (#1164). */
   .account .nowrap {
     white-space: nowrap;
