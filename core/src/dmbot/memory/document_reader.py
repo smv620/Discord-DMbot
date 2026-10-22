@@ -31,7 +31,7 @@ from dmbot.memory.name_documents import UNREADABLE, DocumentError, text_of
 READ_TIME_S = 30.0
 # Read in a process: pure-Python parsers that a hostile file can keep busy. Other types
 # are read in a thread (text decoding; web pages have their own time limit).
-IN_A_PROCESS = (".pdf", ".docx")
+IN_A_PROCESS = (".pdf", ".docx", ".xlsx")
 # A child's memory: a damaged file can't take the whole server's (Linux only). A real
 # 10 MB, 500-page PDF peaks near 60 MB, and two can be read at once (#251 review). One
 # page holding a huge vector drawing (about 20 bytes per unpacked byte) can pass this
