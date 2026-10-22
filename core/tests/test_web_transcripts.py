@@ -210,6 +210,21 @@ class Transcripts(Base):
         self.assertIn("(Sam)", text)
         self.assertIn("(sam (2), DM)", text)
 
+    async def test_a_real_name_that_looks_like_the_stand_in_is_no_name(self) -> None:
+        await self.store_t.record_names(
+            THURSDAY.id, self.sid, {BOB.id: "Speaker 7", ALICE.id: "Belleros"}
+        )
+        shown = await self.shown_lines()
+        text = "\n".join(shown["lines"])
+        self.assertIn("(Speaker 1)", text)  # numbered among the unnamed, not taken at its word
+        self.assertNotIn("Speaker 7", text)
+        self.assertIn(transcripts.NAMES_NOTE, shown["notes"])
+
+    async def test_a_name_that_cleans_to_nothing_is_kept_as_not_found(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "\u200b\u200b"})
+        kept = (await self.store_t.session(THURSDAY.id, self.sid)).speaker_names  # type: ignore[union-attr]
+        self.assertEqual(dict(kept), {BOB.id: ""})
+
     async def test_nobody_can_pass_as_the_dm_by_choosing_a_name(self) -> None:
         await self.store_t.record_names(
             THURSDAY.id, self.sid, {BOB.id: "Eve, DM", ALICE.id: "Belleros"}

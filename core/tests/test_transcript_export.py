@@ -73,6 +73,47 @@ class Render(unittest.TestCase):
         )
         self.assertNotIn(", DM", text.split("\n\n", 1)[1])
 
+    def test_no_look_alike_of_the_dm_mark_passes(self) -> None:
+        names = {
+            MIA: "Bob\uff0c DM",  # full-width comma
+            DEE: "Bob\u201a DM",  # a low quotation mark
+            3: "Bob, \u1d05\u1d0d",  # small-capital letters
+            4: "Bob, DM_",
+            5: "Bob \u3001DM",
+        }
+        lines = [line(i, user, "hi") for i, user in enumerate(names)]
+        text = export.render("X", session(), lines, names, version=export.AS_HEARD)
+        body = text.split("\n\n", 1)[1]
+        self.assertNotIn(", DM", body)
+        self.assertNotIn("\uff0c", body)
+        self.assertNotIn("\u201a", body)
+        for user, who in ((MIA, "Bob DM"), (DEE, "Bob DM")):  # (a real DM is the only mark)
+            real = export.render("X", session(), [line(1, user, "hi")], names, dms={user})
+            self.assertIn(f"({who}, DM)", real)
+
+    def test_a_chosen_name_cannot_copy_the_duplicate_mark_or_collide_with_it(self) -> None:
+        names = export.distinct_names({1: "Sam", 2: "Sam", 3: "Sam (2)", 4: "sam [3]"})
+        self.assertEqual([str(v) for v in names.values()], ["Sam", "Sam (2)", "Sam 2", "sam 3"])
+        self.assertEqual(len({v.casefold() for v in names.values()}), 4)  # four people, four labels
+        text = export.render("X", session(), [line(1, 3, "hi")], names, version=export.AS_HEARD)
+        self.assertIn("(Sam 2): hi", text)  # brackets in a chosen name are gone, not kept
+        raw = export.render("X", session(), [line(1, 1, "hi")], {1: "Alice (2)"})
+        self.assertIn("(Alice 2): hi", raw)  # a name that was not made by distinct_names
+
+    def test_the_order_of_first_speaking_is_one_rule_for_every_version(self) -> None:
+        lines = [
+            dataclasses.replace(line(1, MIA, "typed"), typed=True),
+            line(2, DEE, "said"),
+            dataclasses.replace(
+                line(3, 3, "asked"), sidebar=SIDEBAR_QUESTION, lineage=Lineage(ref="x")
+            ),
+            line(4, MIA, "said"),
+        ]
+        self.assertEqual(export.speaker_order(lines, export.AS_HEARD), [MIA, DEE, 3])
+        self.assertEqual(
+            export.speaker_order(lines, export.CLEANED), [DEE, MIA]
+        )  # typed or asked: not listed
+
     def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
         names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})
         self.assertEqual(names, {MIA: "Sam", DEE: "sam (2)", 3: "Sam (3)", 4: "Ann"})

@@ -804,6 +804,32 @@ class BotTests(DatabaseTest):
         self.assertIn("(Sam, DM): Roll for it.", text)  # today's name, and the mark
         self.assertIn("(Mia then): We ride at dawn.", text)  # the kept name, not "Someone"
 
+    async def test_one_person_has_one_label_in_the_download_and_on_the_website(self) -> None:
+        from dmbot.web import transcripts as web
+
+        sid = await self.finished_session()
+        # Two people called Sam; the player (Mia's line is already there) only typed first
+        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "game", typed=True)
+        said = Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")
+        await self.store.add_lines(GUILD, sid, [typed, said])
+        self.guild.get_member = lambda uid: SimpleNamespace(display_name="Sam")
+        lines = await self.store.lines(GUILD, sid)
+        for version in (export.AS_HEARD, export.CLEANED):
+            result = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (version,))
+            assert not isinstance(result, str)
+            text = result[0].fp.read().decode()
+            site = web.speaker_names(lines, version, {PLAYER: "Sam", DM: "Sam", STRANGER: "Sam"})
+            for user in export.speaker_order(lines, version):
+                # the same label either way (the download adds the DM mark)
+                suffix = ", DM" if user == DM else ""
+                self.assertIn(f"({site[user]}{suffix})", text, (version, user))
+        cleaned = await ui.make_file(self.bot, self.guild, GUILD, sid, PLAYER, (export.CLEANED,))
+        assert not isinstance(cleaned, str)
+        body = cleaned[0].fp.read().decode()
+        self.assertNotIn(
+            "(2)", body.split("\n\n", 1)[1].replace("(Sam (2), DM)", "")
+        )  # the typist is hidden
+
     async def test_everyone_who_can_read_the_raw_file_sees_the_sidebar_lines_and_nobody_the_cleaned(
         self,
     ) -> None:

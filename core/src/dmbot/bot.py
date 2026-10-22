@@ -11421,8 +11421,10 @@ class DMBot(commands.AutoShardedBot):
 
     async def _name_old_speakers(self) -> None:
         """Once at start-up: keep the names of speakers in sessions saved before names were kept,
-        or cut short by a restart, where DMbot can still find them (#2337). A person who left the
-        server is kept as not found, so this finds nothing the next time."""
+        or cut short by a restart, where DMbot can still find them (#2337). The name is the one they
+        have now, and it includes people who stopped being recorded later but kept their past
+        lines (as the save path does). A person who left the server is kept as not found, so this
+        finds nothing the next time."""
         for guild in list(self.guilds):
             with log_context(guild_id=guild.id):
                 try:

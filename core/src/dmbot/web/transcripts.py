@@ -26,6 +26,7 @@ judged by the campaign's OWNER's plan, and only when plans are enforced. A campa
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -34,7 +35,7 @@ from dmbot.db import Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
 from dmbot.transcript import export
-from dmbot.transcript.models import QUESTION_KINDS, Line, Lineage, TranscriptSession
+from dmbot.transcript.models import Line, Lineage, TranscriptSession
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -43,6 +44,7 @@ from dmbot.web.sessions import Session
 VERSIONS = {"cleaned": export.CLEANED, "heard": export.AS_HEARD}
 
 SPEAKER = "Speaker"
+FALLBACK = re.compile(rf"{SPEAKER} \d+( \(\d+\))?", re.IGNORECASE)
 NAMES_NOTE = (
     "DMbot could not find the names of some people, so they are shown as Speaker 1, Speaker 2 and "
     "so on, in the order they first spoke in this session."
@@ -200,29 +202,21 @@ def speaker_names(
     kept = stored or {}
     names: dict[int, str] = {}
     unnamed = 0
-    for line in sorted(lines, key=lambda x: x.started_ms):
-        if line.sidebar and line.sidebar not in QUESTION_KINDS:
-            continue  # DMbot's own answers are shown as DMbot, not as a person
-        if version == export.CLEANED and (line.sidebar or line.typed):
-            continue
-        if line.user_id in names:
-            continue
-        if kept.get(line.user_id):
-            names[line.user_id] = kept[line.user_id]
+    for user_id in export.speaker_order(lines, version):
+        name = kept.get(user_id, "")
+        # (a real name that looks like the stand-in is no name: it could pass for one)
+        if name and not FALLBACK.fullmatch(export.person_name(name)):
+            names[user_id] = name
         else:
             unnamed += 1
-            names[line.user_id] = f"{SPEAKER} {unnamed}"
-    return export.distinct_names(names)
+            names[user_id] = f"{SPEAKER} {unnamed}"
+    return dict(export.distinct_names(names))
 
 
 def has_fallback(lines: list[Line], names: Mapping[int, str]) -> bool:
     """Whether anyone shown in the file has no name of their own (the note at the top says so)."""
     spoke = {line.user_id for line in lines}
-    return any(
-        name.startswith(f"{SPEAKER} ") and name[len(SPEAKER) + 1 :].isdigit()
-        for user, name in names.items()
-        if user in spoke
-    )
+    return any(FALLBACK.fullmatch(name) for user, name in names.items() if user in spoke)
 
 
 # The most lines read for one session, and the biggest text made from them: the bot's own limit for

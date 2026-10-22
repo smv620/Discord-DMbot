@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.transcript.export import clean_name
+from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
 
@@ -141,8 +141,20 @@ class TranscriptStore:
         start-up fill-in."""
         if not names:
             return
-        kept = {str(u): clean_name(n) if n else "" for u, n in names.items()}
+        # (a name that is nothing once cleaned is kept as not found, never as "Someone")
+        kept = {
+            str(u): ""
+            if not n or (clean_name(n) == UNKNOWN_SPEAKER and n.strip() != UNKNOWN_SPEAKER)
+            else clean_name(n)
+            for u, n in names.items()
+        }
         async with self._db.guild(guild_id) as conn:
+            # The session's row is locked first, as `delete_person` does, so a person's lines can't
+            # be deleted between the check below and the write (the statement's own snapshot
+            # would not see it).
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE id = %s FOR UPDATE", (session_id,)
+            )
             await conn.execute(
                 "UPDATE transcript_sessions s SET speaker_names = ("
                 "   SELECT COALESCE(jsonb_object_agg(j.key, j.value), '{}'::jsonb)"
@@ -622,6 +634,11 @@ class TranscriptStore:
                 " ORDER BY id FOR UPDATE",
                 (guild_id, guild_id, user_id),
             )
+            await conn.execute(  # the name kept for the website's transcripts first (#2337)
+                "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
+                " WHERE guild_id = %s AND speaker_names ? %s",
+                (str(user_id), guild_id, str(user_id)),
+            )
             await conn.execute(
                 "DELETE FROM transcript_suggestions WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
@@ -640,11 +657,6 @@ class TranscriptStore:
                 (guild_id, user_id),
             )
             gone = await cur.fetchall()
-            await conn.execute(  # and the name kept for the website's transcripts (#2337)
-                "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
-                " WHERE guild_id = %s AND speaker_names ? %s",
-                (str(user_id), guild_id, str(user_id)),
-            )
             if not gone:
                 # Nothing written down, but leftovers that belong with their lines still go.
                 await _forget_memory_traces(conn, guild_id, user_id, [])

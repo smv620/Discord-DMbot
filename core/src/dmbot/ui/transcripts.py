@@ -207,9 +207,7 @@ async def make_file(
     spoke = sorted({line.user_id for line in lines})
     live = await display_names(guild, tuple(spoke))
     # A person DMbot can no longer find (they left the server) keeps the name kept at the session.
-    names = export.distinct_names(
-        {u: live.get(u) or session.speaker_names.get(u) or "" for u in spoke}
-    )
+    called = {u: live.get(u) or session.speaker_names.get(u) or "" for u in spoke}
     running_table = bot.tables.get(guild_id)
     dms = set(campaign.dm_user_ids)
     if running_table is not None and running_table.campaign_id == campaign.id:
@@ -219,6 +217,9 @@ async def make_file(
     total = 0
     for version in versions:
         # Off the event loop: a long session's file takes a fifth of a second to build.
+        # (labels in the order people first speak in THIS version, as on the website: one person,
+        # one label, and a "(2)" never counts someone this version leaves out)
+        names = export.distinct_names({u: called[u] for u in export.speaker_order(lines, version)})
         data = await asyncio.to_thread(
             _build, campaign.name, session, lines, names, playing, running, version, dms
         )
