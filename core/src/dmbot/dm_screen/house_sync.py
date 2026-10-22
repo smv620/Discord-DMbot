@@ -339,6 +339,7 @@ async def press(
             return
         if action == "file":  # what the AI found, in the numbered format (#2377)
             await interaction.response.send_message(
+                FOUND_FILE,
                 file=discord.File(
                     io.BytesIO(pending.found_text.encode()),
                     filename=house_file.filename(campaign.name),
