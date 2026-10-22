@@ -9585,9 +9585,10 @@ NAME_ACTIONS = (
     -- the campaign and that the name is still there, and marks the row. Applied in the order made
     -- (`seq`), so a "spell" then a "merge" never run backwards. `text` is a spelling or another
     -- name (at most 100), `flag` the secret switch or the remove confirmation. `result_id` is the
-    -- name whose row the page shows afterwards (the survivor of a merge). A row lives an hour at
-    -- most and its words are never logged. Gone with its campaign, left out of backups, isolated
-    -- per server, and read back only by the DM who made it.
+    -- name whose row the page shows afterwards (the survivor of a merge). `secret` marks or unmarks
+    -- one other name (`text`); `hide` is the whole entry's "players don't know yet" (`flag`). A row
+    -- lives an hour at most and its words are never logged. Gone with its campaign, left out of
+    -- backups, isolated per server, and read back only by the DM who made it.
     CREATE TABLE name_actions (
         {_memory_scope()}
         id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
@@ -9595,7 +9596,7 @@ NAME_ACTIONS = (
         entity_id   TEXT NOT NULL CHECK (char_length(entity_id) <= 32),
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         action      TEXT NOT NULL CHECK (action IN
-            ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'merge', 'remove')),
+            ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')),
         kind        TEXT NOT NULL DEFAULT '' CHECK (char_length(kind) <= 40),
         target_id   TEXT NOT NULL DEFAULT '' CHECK (char_length(target_id) <= 32),
         text        TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= 100),
@@ -9636,17 +9637,18 @@ NAME_ACTIONS = (
             RETURN NULL;
         END IF;
         IF act IS NULL OR act NOT IN
-               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'merge', 'remove') THEN
+               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove')
+        THEN
             RETURN jsonb_build_object('status', 'bad_action');
         END IF;
         IF clean ~ '[[:cntrl:]]' OR char_length(clean) > 100
-           OR (act IN ('spell', 'add-other', 'remove-other') AND clean = '')
-           OR (act IN ('kind', 'merge', 'remove') AND clean <> '')
+           OR (act IN ('spell', 'add-other', 'remove-other', 'secret') AND clean = '')
+           OR (act IN ('kind', 'hide', 'merge', 'remove') AND clean <> '')
            OR (act = 'kind' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
            OR (act <> 'kind' AND COALESCE(kd, '') <> '')
            OR (act = 'merge' AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
            OR (act <> 'merge' AND COALESCE(tgt, '') <> '')
-           OR (act = 'secret' AND (fl IS NULL OR char_length(clean) > 100)) THEN
+           OR (act IN ('secret', 'hide') AND fl IS NULL) THEN
             RETURN jsonb_build_object('status', 'bad_text');
         END IF;
         IF act = 'remove' AND fl IS NOT TRUE THEN

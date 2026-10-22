@@ -101,20 +101,55 @@ class TheActions(Acting):
         await self.apply_all()
         self.assertEqual((await self.poll(missing))["error"], "not_found")
 
-    async def test_the_secret_switch_works_on_an_other_name_and_on_the_whole_entry(self) -> None:
+    async def test_secret_marks_one_other_name(self) -> None:
         other = await self.queue(self.mira, action="secret", other="the Ferrywoman", secret=True)
         await self.apply_all()
         row = (await self.poll(other))["row"]
         self.assertEqual(
             (row["others"], row["secretOthers"]), ([], ["Lady Grey", "the Ferrywoman"])
         )
-        whole = await self.queue(self.mira, action="secret", secret=True)
+        back = await self.queue(self.mira, action="secret", other="the Ferrywoman", secret=False)
+        await self.apply_all()
+        self.assertEqual((await self.poll(back))["row"]["others"], ["the Ferrywoman"])
+
+    async def test_hide_flips_the_whole_entry_and_undo_reverses_it(self) -> None:
+        before = await self.memory.version(self.g, self.one.id)
+        whole = await self.queue(self.mira, action="hide", hidden=True)
         await self.apply_all()
         self.assertTrue((await self.poll(whole))["row"]["hidden"])
         self.assertNotIn("Mira Voss", str(await self.page(await self.signed(BOB, THURSDAY))))
-        back = await self.queue(self.mira, action="secret", secret=False)
+        await self.memory.undo(
+            self.g, self.one.id, (await self.log_since(before))[-1]["batch"], source=DM_SOURCE
+        )
+        self.assertFalse(
+            next(n for n in (await self.page())["names"] if n["id"] == self.mira)["hidden"]
+        )
+        again = await self.queue(self.mira, action="hide", hidden=True)
         await self.apply_all()
-        self.assertFalse((await self.poll(back))["row"]["hidden"])
+        self.assertTrue((await self.poll(again))["row"]["hidden"])
+        shown = await self.queue(self.mira, action="hide", hidden=False)
+        await self.apply_all()
+        self.assertFalse((await self.poll(shown))["row"]["hidden"])
+
+    async def test_secret_without_an_other_name_is_refused_at_the_post_and_at_the_door(
+        self,
+    ) -> None:
+        for body in ({"action": "secret", "secret": True}, {"action": "secret", "secret": False}):
+            self.assertEqual(await self.refused_action(self.mira, **body), "bad_name", body)
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, 'secret', NULL, NULL, '', true) AS r",
+                (self.g, self.one.id, self.mira),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["r"]["status"], "bad_text")  # (the API says bad_name)
+        self.assertEqual(await self.apply_all(), [])  # and nothing was queued
+
+    async def test_hide_needs_its_boolean(self) -> None:
+        for body in ({"action": "hide"}, {"action": "hide", "hidden": "yes"}):
+            self.assertEqual(await self.refused_action(self.mira, **body), "bad_action", body)
 
     async def test_the_main_name_cannot_be_made_secret(self) -> None:
         answer = await self.queue(self.mira, action="secret", other="Mira Voss", secret=True)
@@ -176,7 +211,7 @@ class TheChecks(Acting):
             ({"action": "spell", "name": "x" * 101}, "too_long"),
             ({"action": "add-other"}, "bad_name"),
             ({"action": "kind", "kind": "Bad Kind!"}, "bad_kind"),
-            ({"action": "secret"}, "bad_action"),
+            ({"action": "secret", "secret": True}, "bad_name"),
             ({"action": "fly"}, "bad_action"),
             ({}, "bad_action"),
         ):
@@ -296,6 +331,21 @@ class TheBot(Acting):
         second = await self.actions.claim_next(self.g)
         assert second is not None
         self.assertEqual(second.action, "kind")
+
+    async def test_a_worker_cannot_pass_a_row_another_worker_has_locked_but_not_committed(
+        self,
+    ) -> None:
+        await self.queue(self.keep, action="spell", name="Greywater Hold")
+        await self.queue(self.keep, action="kind", kind="faction")
+        async with self.db.guild(self.g) as holder:
+            await holder.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s ORDER BY seq LIMIT 1 FOR UPDATE",
+                (self.g,),
+            )  # worker A is claiming row 1: locked, not yet committed
+            self.assertIsNone(await self.actions.claim_next(self.g))  # B must not take row 2
+        first = await self.actions.claim_next(self.g)  # A's lock is gone: row 1 is next
+        assert first is not None
+        self.assertEqual(first.action, "spell")
 
     async def test_a_retaken_merge_or_remove_that_already_happened_is_done_not_failed(self) -> None:
         merge = await self.queue(self.sword, action="merge", into=self.keep)

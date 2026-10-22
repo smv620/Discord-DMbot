@@ -75,11 +75,12 @@ class ActionStore:
                 "UPDATE name_actions SET state = 'working', claimed_at = %s WHERE (guild_id, id)"
                 " = (SELECT guild_id, id FROM name_actions WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
-                # Never past an earlier action of the campaign that another worker is still
-                # applying: the order made is the order done, even with two bots at once.
+                # Never past an earlier open action of the campaign: waiting (it may be locked by
+                # another worker whose claim has not committed yet) or being applied. The order
+                # made is the order done, even with two bots at once.
                 " AND NOT EXISTS (SELECT 1 FROM name_actions p WHERE p.guild_id = %s"
                 " AND p.campaign_id = name_actions.campaign_id AND p.seq < name_actions.seq"
-                " AND p.state = 'working' AND p.claimed_at >= %s)"
+                " AND (p.state = 'waiting' OR (p.state = 'working' AND p.claimed_at >= %s)))"
                 " ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, entity_id, user_id, action, kind, target_id, text,"
                 " flag",
@@ -227,20 +228,20 @@ async def _do(
             return _failed(NOT_FOUND)
         await memory.update_alias(guild_id, cid, alias_id, source=DM, status=REJECTED)
         return Outcome(result_id=entity_id)
-    if a.action == "secret":
-        if a.text:  # one of its other names
-            alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
-            if alias_id is None:
-                return _failed(NOT_FOUND)
-            try:
-                await memory.update_alias(guild_id, cid, alias_id, source=DM, secret=a.flag)
-            except MemoryRuleError:
-                return _failed(BAD_TARGET)
-        else:  # "Players don't know this one yet", the whole entry
-            try:
-                await memory.set_hidden_from_players(guild_id, cid, entity_id, a.flag, source=DM)
-            except MemoryRuleError:
-                return _failed(BAD_TARGET)
+    if a.action == "secret":  # one of its other names
+        alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
+        if alias_id is None:
+            return _failed(NOT_FOUND)
+        try:
+            await memory.update_alias(guild_id, cid, alias_id, source=DM, secret=a.flag)
+        except MemoryRuleError:
+            return _failed(BAD_TARGET)
+        return Outcome(result_id=entity_id)
+    if a.action == "hide":  # "Players don't know this one yet", the whole entry
+        try:
+            await memory.set_hidden_from_players(guild_id, cid, entity_id, a.flag, source=DM)
+        except MemoryRuleError:
+            return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
     if a.action == "merge":
         keep = await memory.entity(guild_id, cid, a.target_id)

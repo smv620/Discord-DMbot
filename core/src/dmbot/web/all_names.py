@@ -120,7 +120,7 @@ async def read_page(
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-ACTIONS = ("spell", "kind", "add-other", "remove-other", "secret", "merge", "remove")
+ACTIONS = ("spell", "kind", "add-other", "remove-other", "secret", "hide", "merge", "remove")
 
 
 def _text(value: object) -> str:
@@ -154,12 +154,15 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_kind")
     elif action in ("add-other", "remove-other"):
         text = _text(body.get("other"))
-    elif action == "secret":
+    elif action == "secret":  # one other name; the main name can't be secret (as on the card)
         if not isinstance(body.get("secret"), bool):
             raise RecapError("bad_action")
         flag = bool(body["secret"])
-        if body.get("other") is not None:
-            text = _text(body.get("other"))
+        text = _text(body.get("other"))  # (missing: "bad_name")
+    elif action == "hide":  # "Players don't know this one yet", the whole entry
+        if not isinstance(body.get("hidden"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["hidden"])
     elif action == "merge":
         target = str(body.get("into") or "")
         if not ID_PATTERN.match(target):
@@ -194,7 +197,8 @@ async def queue_action(
     if got is None:
         raise RecapError("not_allowed")
     if got["status"] != "ok":
-        raise RecapError(str(got["status"]))
+        # The door's own "bad_text" is a word the page can't use: a name it refused.
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
     return str(got["id"])
 
 
