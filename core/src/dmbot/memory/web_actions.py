@@ -19,6 +19,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory import link_edits
 from dmbot.memory.link_words import predicate_for
 from dmbot.memory.models import (
     CONFIRMED,
@@ -307,16 +308,14 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         return _failed(NOT_FOUND)
     try:
         if a.action == "link-secret":
-            await memory.update_relation(guild_id, cid, link.id, source=DM, secret=a.flag)
+            await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
         elif a.action == "link-remove":
             if not a.flag:
                 return _failed(BAD_TARGET)
-            await memory.update_relation(guild_id, cid, link.id, source=DM, status=REJECTED)
+            await link_edits.remove(memory, guild_id, cid, link)
         elif a.action == "link-words":
             predicate, detail = predicate_for(a.text)
-            await memory.change_relation_words(
-                guild_id, cid, link.id, predicate, detail[:100], source=DM
-            )
+            await link_edits.change_words(memory, guild_id, cid, link, predicate, detail)
         else:
             return _failed(FAILED)
     except MemoryRuleError:
