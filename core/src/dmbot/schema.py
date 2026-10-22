@@ -9885,8 +9885,8 @@ SHARED_RECAP_SESSION = """
         PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
         -- Which session it was and how long it ran, as the transcripts page numbers and times it
         -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
-        -- sessions, those whose transcripts were deleted by retention included). Only these two numbers
-        -- leave: nothing of the transcript itself.
+        -- sessions, those whose transcripts were deleted by retention included). Only these two
+        -- numbers leave: nothing of the transcript itself.
         SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
             SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
                    CASE WHEN t.ended_at IS NULL THEN NULL
