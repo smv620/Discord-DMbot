@@ -235,7 +235,7 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.members import MemberDirectory
-from dmbot.memory import definitions, document_reader, extractor, plan_reader
+from dmbot.memory import definitions, document_reader, extractor, plan_reader, web_actions
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
 from dmbot.memory.adventure import AdventureSection, AdventureStore
@@ -311,7 +311,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
-from dmbot.rules.wins import WinsSection, WinsStore
+from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -1011,6 +1011,8 @@ class DMBot(commands.AutoShardedBot):
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         # The DM's answers to a recap's names to check, from its page (#2113).
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
+        # What DMs did on the website's All names page, waiting to be applied (#2294).
+        self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -3231,6 +3233,11 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
+        async def settled(campaign: Campaign) -> Sequence[Win]:
+            if self.house_wins is None:
+                return []
+            return await self.house_wins.all(campaign.guild_id, campaign.id)
+
         recall_service = RecallService(self.memory) if self.memory is not None else None
 
         async def recall(campaign: Campaign, seeds: Sequence[str]) -> Recall | None:
@@ -3267,7 +3274,29 @@ class DMBot(commands.AutoShardedBot):
             recall=recall if self.settings.sidebar_recall else None,
             brews=brews,
             second_try=careful,
+            settled=settled,
         )
+
+    async def sidebar_record_win(
+        self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
+    ) -> bool:
+        """The DM chose which of two disagreeing house rules applies (#2284); False if there is
+        nowhere to keep it or it failed (the DM is told, and nothing was decided)."""
+        if self.house_wins is None:
+            return False
+        try:  # who is a DM now, not when the question was asked
+            now = await self.campaigns.get(campaign.guild_id, campaign.id)
+        except Exception:
+            log.exception("Couldn't re-read the campaign for a house-rule choice")
+            return False
+        if now is None or by not in now.dm_user_ids:
+            return False
+        try:
+            await self.house_wins.record(campaign.guild_id, campaign.id, winner, loser, by)
+        except Exception:
+            log.exception("Couldn't store which house rule applies")
+            return False
+        return True
 
     async def sidebar_people(self, campaign: Campaign) -> list[str]:
         """Who is who at this table, as short lines of names (never Discord IDs) for the
@@ -4424,7 +4453,10 @@ class DMBot(commands.AutoShardedBot):
             if view is None:
                 await user.send(text, allowed_mentions=NO_PINGS)
             else:
-                await user.send(text, view=view, allowed_mentions=NO_PINGS)
+                sent = await user.send(text, view=view, allowed_mentions=NO_PINGS)
+                keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
+                if keep is not None:
+                    keep(sent)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"
@@ -10069,6 +10101,10 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_name_answers()
             except Exception as exc:
                 log.warning("The name answers failed: %s", type(exc).__name__)
+            try:
+                await self.run_name_actions()
+            except Exception as exc:
+                log.warning("The name actions failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -10076,6 +10112,8 @@ class DMBot(commands.AutoShardedBot):
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:
                             await self.name_answers.sweep(guild.id)
+                        if self.name_actions is not None:
+                            await self.name_actions.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
@@ -10110,6 +10148,43 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
+
+    async def run_name_actions(self) -> None:
+        """What DMs did on the website's All names page (#2294), applied through the same memory
+        paths as Discord's name card, so a change on either shows on both and Undo works. Each
+        sender must still be a DM of the campaign; only the outcome word is logged, never the
+        spelling or the other name."""
+        store = self.name_actions
+        if store is None or self.memory is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(NAME_ANSWERS_PER_ROUND):
+                action = await store.claim_next(guild.id)
+                if action is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=action.campaign_id):
+                    try:
+                        campaign = await self.campaigns.get(guild.id, action.campaign_id)
+                        done = (
+                            web_actions.Outcome(error=web_actions.NOT_ALLOWED)
+                            if campaign is None
+                            else await web_actions.apply(
+                                self.memory, guild.id, campaign.dm_user_ids, action
+                            )
+                        )
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A name action failed: %s", type(exc).__name__)
+                        done = web_actions.Outcome(error=web_actions.FAILED)
+                    try:
+                        await store.finish(
+                            guild.id, action, error=done.error, result_id=done.result_id
+                        )
+                    except Exception as exc:  # taken again later: apply() sees it already done
+                        log.warning("A name action could not be marked: %s", type(exc).__name__)
+                        break
+                    log.info("Name action %s: %s", action.action, done.error or "done")
+                    if not done.error and self.lookup is not None:
+                        self.lookup.mark_stale(guild.id, action.campaign_id)
 
     async def run_recap_requests(self) -> None:
         store = self.recap_requests
