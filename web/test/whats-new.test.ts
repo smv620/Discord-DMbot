@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Transcripts show real names", // until #2337 merges and dev1 deploys it
       "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
       "Bring your house rules in any file", // until #2377 merges and dev1 deploys it
       "Upload your campaign's backstory from the main menu", // until #2380 merges and dev1 deploys it
