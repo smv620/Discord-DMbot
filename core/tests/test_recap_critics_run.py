@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -508,6 +509,37 @@ class Criticising(WorkerHarness):
         assert after is not None
         self.assertEqual((after.state != "failed", after.calls), (True, room + 1))
         self.assertEqual(after.last_error, pl.CHECK_WAIT)
+
+    async def test_a_waiting_revision_is_free_end_to_end_and_ends_the_waiting(self) -> None:
+        # Seven waits in, the job's calls at the edge of its ceiling: the writer, the fact check and
+        # the grader are all off the job's calls (#2370), so the good revision lands and the
+        # waiting is over (waits, since and told back to nothing).
+        fast = self.fast_for(WITH_MOTIVE, grades=3)
+        careful = fx.Canned(AIError("down"))  # the revision's write fails: the loop is waiting
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((job.state, loop.round, loop.pending is not None), ("prose", 1, True))
+        edge = self.worker._ceiling(job) - pl.CRITIC_RESERVE - 1  # the last step the loop may start
+        waiting = replace(loop, waits=7, since=5, told=True)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET calls = %s, errors = 0", (edge,))
+        await self.store.update(1, self.one.id, 100, critics=waiting.to_json(), next_at=0)
+        careful.answers[:] = [fx.prose_answer(CLEAN)]
+        before = (await self.store.get(1, self.one.id, 100)).spent  # type: ignore[union-attr]
+        self.clock.now += 3600
+
+        # (the reading that follows the revision is a step of its own, paid for as any reading is)
+        async def stored(*_a: Any) -> Job | None:
+            return await self.store.get(1, self.one.id, 100)
+
+        with patch.object(self.worker, "_read", stored):
+            job = await self.go()
+        self.assertEqual(job.summary, CLEAN)  # the revision landed
+        self.assertEqual(job.calls, edge)  # and cost the job's calls nothing
+        self.assertLessEqual(job.spent - before, cr.WAIT_REVISE_CALLS)
+        back = cr.loop_from_json(job.critics)
+        self.assertEqual((back.waits, back.since, back.told, back.pending), (0, 0, False, None))
 
     async def test_a_revision_that_could_not_be_checked_stops_the_loop_as_unavailable(self) -> None:
         whys = await self.revision_stop(fx.prose_answer(CLEAN), True)

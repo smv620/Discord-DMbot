@@ -63,6 +63,12 @@ UNCHECKED_TOLD = (
 )
 
 
+# What a waiting try of the revision may spend (#2370): the writer once, the formatter and the
+# fact check twice each (a second go when the first is cut off or misshapen), the grader once. All
+# of it off the job's calls and ceiling, so a recap that keeps waiting is never failed by them.
+WAIT_REVISE_CALLS = 6
+
+
 def wait_budget(batches: int) -> int:
     """Calls a waiting try may make: one for each batch of sentences, two for PlotBot (its second
     call, with more room when its answer was cut off, #2365, is counted, so a try never spends

@@ -1020,7 +1020,14 @@ class RecapWorker:
         )  # fmt: skip
 
     async def _shape(
-        self, gid: int, cid: str, job: Job, written: str, length: rd.Length, soft: bool = False
+        self,
+        gid: int,
+        cid: str,
+        job: Job,
+        written: str,
+        length: rd.Length,
+        soft: bool = False,
+        free: bool = False,
     ) -> rd.Prose | str:
         """The written text cut into the schema's sections by the formatting model, or why it
         could not be (#2074). The check is in code: the formatted narration's words must be the
@@ -1040,6 +1047,7 @@ class RecapWorker:
                 schema=rd.prose_schema(),
                 stage="format",
                 soft=soft,
+                free=free,
             )
             if reply is None:
                 return ""
@@ -1187,6 +1195,7 @@ class RecapWorker:
         prose: rd.Prose,
         names: Collection[str] = (),
         corrections: Sequence[str] = (),
+        free: bool = False,
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -1194,7 +1203,7 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections)
+        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections, free)
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
@@ -1208,16 +1217,19 @@ class RecapWorker:
         shown: Sequence[bt.Beat],
         prose: rd.Prose,
         corrections: Sequence[str] = (),
+        free: bool = False,
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
         it cannot be had (a failed or unreadable call): like the grader, it never stops a recap
-        that passed every check."""
+        that passed every check. `free`: a try of a recap that waits for its check, off the job's
+        calls and its ceiling (#2370)."""
+        step = 0 if free else 1
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= self._ceiling(fresh) - 1:  # the last call is the title's: keep it
+        if not free and fresh.calls >= self._ceiling(fresh) - 1:  # the last is the title's
             return None
         await self._store.update(
-            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+            gid, cid, job.session_at, calls=fresh.calls + step, spent=fresh.spent + 1
         )
         # Room for a number pair for every sentence, not a fixed 800: a long recap's answer was
         # cut off, unreadable, and the check then skipped (#2345). A cut-off answer is asked for
@@ -1227,11 +1239,11 @@ class RecapWorker:
         for again in (False, True):
             if again:
                 fresh = await self._store.get(gid, cid, job.session_at) or job
-                if fresh.calls >= self._ceiling(fresh) - 1:
+                if not free and fresh.calls >= self._ceiling(fresh) - 1:
                     break  # (the room reported stays the one the cut answer had)
                 room = min(room * 2, FACTS_ROOM_MAX)
                 await self._store.update(
-                    gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+                    gid, cid, job.session_at, calls=fresh.calls + step, spent=fresh.spent + 1
                 )
             try:
                 reply = await self._careful.complete(
@@ -1297,15 +1309,16 @@ class RecapWorker:
         return cut
 
     async def _grade(
-        self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str
-    ) -> dict[str, int]:
+        self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str,
+        free: bool = False,
+    ) -> dict[str, int]:  # fmt: skip
         """The grader's numbers, or none: a grader that fails never stops a recap that passed
-        every check."""
+        every check. `free`: a try of a recap that waits, off the job's calls (#2370)."""
         fresh = await self._store.get(gid, cid, job.session_at) or job
-        if fresh.calls >= self._ceiling(fresh):
+        if not free and fresh.calls >= self._ceiling(fresh):
             return {}  # the job's ceiling holds for the grader too
         await self._store.update(
-            gid, cid, job.session_at, calls=fresh.calls + 1, spent=fresh.spent + 1
+            gid, cid, job.session_at, calls=fresh.calls + (0 if free else 1), spent=fresh.spent + 1
         )
         try:
             reply = await self._fast.complete(
@@ -1554,7 +1567,9 @@ class RecapWorker:
         if kept is not None or (raw is not None and not unusable(raw)):
             written = kept if kept is not None else (raw.text if raw is not None else "")
             if self._two:
-                shaped = await self._shape(gid, cid, job, written, length, soft=True)
+                shaped = await self._shape(
+                    gid, cid, job, written, length, soft=True, free=loop.waits > 0
+                )
                 if shaped == "":  # the formatter's call failed; the loop will try again
                     self._written[key] = written  # without paying for the writing twice
                     return await self._store.get(gid, cid, job.session_at)
@@ -1585,7 +1600,7 @@ class RecapWorker:
                 facts, asked = await self._facts(
                     gid, cid, job, rd.pick_beats(sheet, length.beats), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                    inputs.corrections,
+                    inputs.corrections, loop.waits > 0,
                 )  # fmt: skip
             except AIOutOfFunds:
                 return await self._fail(gid, cid, job, FUNDS)
@@ -1596,7 +1611,7 @@ class RecapWorker:
                 revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
             if revised is not None:
                 try:
-                    grade = await self._grade(gid, cid, job, sheet, revised.summary)
+                    grade = await self._grade(gid, cid, job, sheet, revised.summary, loop.waits > 0)
                 except AIOutOfFunds:
                     return await self._fail(gid, cid, job, FUNDS)
                 if facts is not None and grade:
