@@ -4,13 +4,14 @@
 // counted from the server's start (right whatever the browser's clock says, and the same after a
 // reload), the step, the end states, and the page's quiet polling that backs off and stops while
 // the tab is hidden.
-import { act, cleanup, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { clock, discordLink } from "../src/account/RecapProgress";
+import { approveWords } from "../src/content/recap-approve";
 import { text } from "../src/content/recaps";
 
 const base = mockRecaps()[0]!;
@@ -96,6 +97,21 @@ describe("the clock", () => {
     const { serverNow: _unknown, ...rest } = posting(0);
     const noStart: Recap = { ...rest, postingSince: null };
     await show(pageWith([noStart]));
+    expect(screen.getByRole("timer").textContent).toBe("0:00");
+    await wait(2000);
+    expect(screen.getByRole("timer").textContent).toBe("0:02");
+  });
+
+  it("starts at 0:00 when the DM presses Post, not from when the page loaded (no recorded start)", async () => {
+    const { serverNow: _s, ...rest } = posting(0);
+    const noStart: Recap = { ...rest, postingSince: null };
+    const api = pageWith([{ ...base }]);
+    api.approveRecap = async () => noStart;
+    await show(api);
+    expect(screen.queryByRole("timer")).toBeNull();
+    await wait(5 * 60 * 1000); // sits on the page for five minutes
+    fireEvent.click(screen.getByRole("button", { name: approveWords.postText }));
+    await wait(0);
     expect(screen.getByRole("timer").textContent).toBe("0:00");
     await wait(2000);
     expect(screen.getByRole("timer").textContent).toBe("0:02");
@@ -193,6 +209,33 @@ describe("the polling", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(0);
     expect(api.looked).toHaveLength(1);
+  });
+
+  it("never has two looks going at once, even if the tab is hidden and shown during one", async () => {
+    let started = 0;
+    let finish: (() => void) | undefined;
+    const api = mockApi("table");
+    api.recap = () => {
+      started += 1;
+      return new Promise((resolve) => {
+        finish = () => resolve(posting(1));
+      });
+    };
+    render(<Recaps api={api} path={path} />);
+    await wait(0);
+    finish?.(); // the first read of the page
+    await wait(0);
+    started = 0;
+    await wait(3000); // a look begins and is left waiting
+    expect(started).toBe(1);
+    hidden(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    hidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await wait(0);
+    expect(started).toBe(1); // the one already on its way is enough
+    finish?.();
+    await wait(0);
   });
 
   it("stops looking once it is posted", async () => {

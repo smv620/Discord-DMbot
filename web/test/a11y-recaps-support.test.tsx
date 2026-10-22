@@ -104,7 +104,7 @@ describe("the recap pages", () => {
       postedUrl: "https://discord.com/channels/1/2/3",
     });
     render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
-    await screen.findByRole("link", { name: /See it in Discord/ });
+    await screen.findByRole("link", { name: /Open it in Discord/ });
     expect(await serious()).toEqual([]);
   });
 

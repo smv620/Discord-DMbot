@@ -32,19 +32,27 @@ export function discordLink(url: string | null | undefined): string | null {
   }
 }
 
+/** After this long with no end, say that leaving the page is fine. */
+const SLOW_SECONDS = 90;
+
 export default function RecapProgress({ recap }: { recap: Recap }) {
   const going = recap.status === "posting";
   const audio = !going && recap.audio?.state === "queued";
   // The server's clock now, kept as the gap from this browser's clock when the answer arrived.
   const gap = useRef(0);
   const lastServerNow = useRef<number | undefined>(undefined);
-  const firstSeen = useRef(Date.now() / 1000);
+  // When this page first saw the work going on, for a bot that doesn't say when it began: set when
+  // it starts, not when the page loaded, so a DM who sat on the page sees 0:00 after pressing Post.
+  const activeSince = useRef<number | null>(null);
   const [, redraw] = useState(0);
   // Taken once per answer (not on every redraw of the clock, which would freeze it).
   if (typeof recap.serverNow === "number" && recap.serverNow !== lastServerNow.current) {
     lastServerNow.current = recap.serverNow;
     gap.current = recap.serverNow - Date.now() / 1000;
   }
+  if (going || audio) {
+    if (activeSince.current === null) activeSince.current = Date.now() / 1000;
+  } else activeSince.current = null;
   useEffect(() => {
     if (!going && !audio) return;
     const timer = setInterval(() => redraw((n) => n + 1), 1000);
@@ -56,15 +64,16 @@ export default function RecapProgress({ recap }: { recap: Recap }) {
   const start =
     typeof recap.postingSince === "number" && recap.postingSince > 0
       ? recap.postingSince
-      : firstSeen.current;
+      : (activeSince.current ?? Date.now() / 1000);
   const now = Date.now() / 1000 + (typeof recap.serverNow === "number" ? gap.current : 0);
-  const step = going ? (recap.postingStep ?? null) : "audio";
+  const step = going ? (recap.postingStep === "audio" ? null : (recap.postingStep ?? null)) : "audio";
   return (
     <section class="panel" aria-labelledby="recap-progress">
       <h3 id="recap-progress">{going ? text.posting : text.audioMaking}</h3>
       <p class="small" role="status" aria-live="polite">
-        {going && step && step !== "audio" ? text.step[step] : ""}
+        {step ? text.step[step] : ""}
       </p>
+      {now - start >= SLOW_SECONDS && <p class="small muted">{text.slow}</p>}
       <p class="small muted">
         {text.clockLabel}: <span role="timer" aria-live="off">{clock(now - start)}</span>
       </p>

@@ -108,16 +108,18 @@ export const text = {
   step: {
     check: "Checking it once more",
     post: "Posting to your table",
-    audio: "Making the audio…",
+    audio: "Nothing is posted until you say so.",
   },
+  /** Said after a minute and a half with no end: the work is on DMbot's side, so leaving is fine. */
+  slow: "This is taking longer than usual. You can leave this page; DMbot keeps going.",
   /** Said while the audio is being made (nothing is posted until the DM says so). */
   audioMaking: "Making the audio…",
-  /** The running time, read out for people who can't see it (not live, so it is not repeated). */
+  /** The running time's label (the clock is not in a live region, so it is not read out each second). */
   clockLabel: "Time so far",
-  postedLink: "See it in Discord",
+  postedLink: "Open it in Discord",
   /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
   postFailed:
-    "DMbot couldn't post it this time. Nothing went to your table, and the recap is still saved here. Press Approve and post text only to try again.",
+    "DMbot couldn't confirm this recap was posted. Look at your table's channel in Discord before you try again. The recap is still saved here as a draft; approve it again to post it.",
   posted: "This recap was posted to your table.",
   dropped:
     "You chose not to post this recap. It stays here, and nobody else sees it.",

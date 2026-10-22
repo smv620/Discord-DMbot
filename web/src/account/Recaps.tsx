@@ -397,7 +397,15 @@ function AudioPanel({
 
 function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
-  const [recap, setRecap] = useState<Recap | null>(null);
+  const [recap, setRecapState] = useState<Recap | null>(null);
+  // When the DM (or the first read) last set the recap: a look at the server that began before that
+  // is older than what the page shows, and must not replace it (a draft read from before a press of
+  // Post would otherwise say the post failed while it is going out) (#2419).
+  const changedAt = useRef(0);
+  const setRecap = (next: Recap | null): void => {
+    changedAt.current = Date.now();
+    setRecapState(next);
+  };
   const [editing, setEditing] = useState(false);
   const [summary, setSummary] = useState("");
   const [bullets, setBullets] = useState("");
@@ -455,7 +463,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     let stopped = false;
     let step = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let reading = false; // a look is on its way: another one must not start beside it
     const schedule = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
       if (stopped || document.hidden) return;
       const wait = POLL_STEPS_MS[Math.min(step, POLL_STEPS_MS.length - 1)] ?? POLL_MS;
       step += 1;
@@ -464,11 +474,14 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     const look = (): void => {
       if (stopped) return;
       if (document.hidden) return; // the visibility handler starts it again
-      if (inFlight.current) {
-        schedule();
+      if (inFlight.current || reading) {
+        if (!reading) schedule();
         return;
       }
+      reading = true;
+      const began = Date.now();
       void api.recap?.(recapRef).then((read) => {
+        if (stopped || began < changedAt.current) return; // gone, or older than what is shown
         // Right after Try again, a read that still shows the old failure (the API is a moment behind)
         // must not bring the failure box back: the press used one try, so the old failure has one more.
         const stale = staleFailure.current;
@@ -476,8 +489,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         staleFailure.current = null;
         // "DMbot is making it again" is true only while it is being made (#2333).
         if (!read.working) setNote((now) => (now?.message === text.tryingAgain ? null : now));
-        setRecap(read);
-      }, () => undefined).finally(schedule);
+        setRecapState(read);
+      }, () => undefined).finally(() => {
+        reading = false;
+        schedule();
+      });
     };
     const shown = (): void => {
       if (document.hidden || stopped) return;
@@ -668,7 +684,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
       <RecapProgress recap={recap} />
       {recap.status === "draft" && sawPosting.current && !recap.working && (
-        <p class="warn" role="status">
+        <p class="warn" role="alert">
           {text.postFailed}
         </p>
       )}
