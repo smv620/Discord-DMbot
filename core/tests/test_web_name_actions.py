@@ -462,4 +462,7 @@ class TheRoutes(Acting):
 class TheDoors(Acting):
     async def test_the_doors_have_one_caller(self) -> None:
         for door in ("dmbot_web_name_action_add(", "dmbot_web_name_action_read("):
-            self.assertEqual(callers(door), {"schema.py", "web/all_names.py"})
+            # the relationship web queues its edits through the same doors (#2323)
+            self.assertEqual(
+                callers(door), {"schema.py", "web/all_names.py", "web/relationships.py"}
+            )
