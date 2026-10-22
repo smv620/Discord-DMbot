@@ -44,6 +44,7 @@ from dmbot.web import (
     imports,
     npc_pages,
     offers,
+    relationships,
     sessions,
     shared_recaps,
     strays,
@@ -1047,6 +1048,36 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web")
+    async def me_campaign_web(
+        ref: str, signed: Signed, center: str | None = None, hops: str = "2"
+    ) -> dict[str, Any]:
+        """The relationship web around one name (#2323): names within `hops` steps and the
+        connections among them. A DM gets everything (secret flagged); any other member of the
+        server gets the players' view; anyone else "not found"."""
+        session, _token = signed
+        try:
+            steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0  # (0 is refused)
+            return await relationships.read_web(db, session, ref, center=center, hops=steps)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/size")
+    async def me_campaign_web_size(
+        ref: str, signed: Signed, center: str | None = None, hops: str = "2"
+    ) -> dict[str, int]:
+        """How many names the web around one name would draw, so the page can warn first."""
+        session, _token = signed
+        try:
+            steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0
+            return await relationships.read_size(db, session, ref, center=center, hops=steps)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    relationship_refusals = {"not_found": (404, "not_found"), "bad_hops": (400, "bad_hops")}
 
     name_refusals = {
         "not_found": (404, "not_found"),

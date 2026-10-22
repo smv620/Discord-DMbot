@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "See where a new name was said",
+    what: "When DMbot asks you to check a name it heard, it now shows two short bits of what was said around it, with who said each line and when. A 🔎 More places button shows more, and 📜 Open in transcript opens that session on the website.",
+    reason: "In review (#2329); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Transcripts show real names",
     what: "On the website, a transcript now shows each person's Discord name and marks the game master as DM, instead of Speaker 1 and Speaker 2. Older sessions are filled in where DMbot can still find the person.",
     reason: "In review (#2337); held until dev1 deploys it.",

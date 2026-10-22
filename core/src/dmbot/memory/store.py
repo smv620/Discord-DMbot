@@ -3296,12 +3296,30 @@ class MemoryStore:
             )
             return cur.rowcount
 
-    # NOTE (#1740): nothing in production calls this. It was written with the first memory step
-    # (#165) for a mention index that was never wired: the after-session name scan writes
-    # `memory_heard` (add_session_heard) instead, and a confirmed fact's quoted lines come from
-    # its claim's `lines` (the extractor path, off until #1282). So `memory_mentions` is empty on
-    # a live table. To ask "was this name heard in a session?" read `memory_heard`, never this
-    # table. Wire it only together with whatever should read it.
+    # `memory_mentions` holds pointers, never words (#2329): the after-session name scan keeps
+    # where a suggested name was said (a line reference and the place in it, `memory/places.py`),
+    # and the review card reads the words from the session's own transcript when it is drawn.
+    # (Until then nothing wrote it, #1740; "was this name heard in a session?" is still
+    # `memory_heard`.)
+    async def mentions(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, int | None]]:
+        """The pointers kept for one entry: (line reference, the session's start), earliest
+        session first."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(
+                MENTIONS,
+                " AND entity_id = %s ORDER BY session_started_at NULLS LAST, created_at, id",
+                [entity_id],
+            )
+            return [
+                (
+                    str(r["line_ref"]),
+                    None if r["session_started_at"] is None else int(r["session_started_at"]),
+                )
+                for r in rows
+            ]
+
     async def add_mention(
         self,
         guild_id: int,

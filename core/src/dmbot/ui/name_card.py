@@ -25,6 +25,13 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.kinds import kind_phrase
+from dmbot.memory.link_words import (
+    BOTH_WAYS,
+    CARD_BACK,
+    CONNECTION_BACK,
+    CONNECTION_WORDS,
+    connection_words,
+)
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     CONFIRMED,
@@ -132,36 +139,7 @@ NOTHING_MORE = "That list has changed. Open the name card again to see it."
 NOTE_MAX = 600  # what just changed, above the card
 NAME_LIMIT = 100  # what a form field may hold
 
-# Connections in plain words (the fixed core of the memory rules).
-CONNECTION_WORDS = {
-    "located_in": "is in",
-    "member_of": "is a member of",
-    "ally_of": "is a friend or ally of",
-    "enemy_of": "is an enemy of",
-    "kin_of": "is family of",
-    "owns": "owns",
-    "knows": "knows",
-    "serves": "works for",
-    "carries": "carries",
-}
-# The same connection read from the other name's card ("Frostwolf tribe has as members
-# Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
-CONNECTION_BACK = {
-    "located_in": "is where you find",
-    "member_of": "has as a member",
-    "owns": "is owned by",
-    "knows": "is known to",
-    "serves": "is the boss of",
-    "carries": "is carried by",
-}
-# On a card, where several names may follow ("members include Ulfgar, Kesh").
-CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
-BOTH_WAYS = frozenset({"ally_of", "enemy_of", "kin_of"})
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
-
-
-def connection_words(predicate: str) -> str:
-    return CONNECTION_WORDS.get(predicate, predicate.replace("_", " "))
 
 
 def fact_words(r: Relation) -> str:
