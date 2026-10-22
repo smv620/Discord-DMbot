@@ -19,7 +19,10 @@ from dmbot.ui import logic
 VALUE = "dmbot:all-names"  # no name's id looks like this, so a menu can tell the choice apart
 LABEL = "🌐 All names on the website…"
 BUTTON = "Open all names"
-LINE = "Every name is on the website, with search and filters. Tap the button to open it. You may need to sign in."
+LINE = (
+    "Every name is on the website, with search and filters. Tap the button to open it. "
+    "You may need to sign in."
+)
 NO_SITE = "DMbot has no website link set up yet. Ask whoever runs DMbot to add it."
 PAGE = "/account/names"
 NAMES_MAX = logic.SELECT_OPTIONS_MAX - 1
