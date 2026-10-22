@@ -4321,23 +4321,24 @@ async def _move_npc_notes(
         " AND k.user_id = g.user_id AND char_length(k.body) + 2 + char_length(g.body) > 5000",
         (now, *ids, gone_id, keep_id),
     )
+    # The notes that fit are decided from the rows as they are now, in one statement: the merged
+    # note is deleted and its words are appended to the kept one (a separate UPDATE first would
+    # make the kept note longer, and the delete's length check would then miss the twin).
     await w.conn.execute(
-        "UPDATE npc_notes k SET body = k.body || E'\\n\\n' || g.body,"
-        " updated_at = greatest(k.updated_at, g.updated_at),"
-        " orphaned_at = CASE WHEN %s THEN NULL WHEN k.orphaned_at IS NULL THEN g.orphaned_at"
-        "  WHEN g.orphaned_at IS NULL THEN k.orphaned_at"
-        "  ELSE least(k.orphaned_at, g.orphaned_at) END"
-        " FROM npc_notes g WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
-        " AND g.guild_id = k.guild_id AND g.campaign_id = k.campaign_id AND g.entry_id = %s"
-        " AND g.user_id = k.user_id AND char_length(k.body) + 2 + char_length(g.body) <= 5000",
-        (listed, *ids, keep_id, gone_id),
-    )
-    await w.conn.execute(
-        "DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
-        " AND g.entry_id = %s AND k.guild_id = g.guild_id"
-        " AND k.campaign_id = g.campaign_id AND k.entry_id = %s AND k.user_id = g.user_id"
-        " AND char_length(k.body) + 2 + char_length(g.body) <= 5000",
-        (*ids, gone_id, keep_id),
+        "WITH joined AS ("
+        " DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
+        " AND g.entry_id = %s AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id"
+        " AND k.entry_id = %s AND k.user_id = g.user_id"
+        " AND char_length(k.body) + 2 + char_length(g.body) <= 5000"
+        " RETURNING g.user_id, g.body, g.updated_at, g.orphaned_at)"
+        " UPDATE npc_notes k SET body = k.body || E'\\n\\n' || j.body,"
+        " updated_at = greatest(k.updated_at, j.updated_at),"
+        " orphaned_at = CASE WHEN %s THEN NULL WHEN k.orphaned_at IS NULL THEN j.orphaned_at"
+        "  WHEN j.orphaned_at IS NULL THEN k.orphaned_at"
+        "  ELSE least(k.orphaned_at, j.orphaned_at) END"
+        " FROM joined j WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
+        " AND k.user_id = j.user_id",
+        (*ids, gone_id, keep_id, listed, *ids, keep_id),
     )
     # a note with no twin moves over, whether it was marked or not
     await w.conn.execute(

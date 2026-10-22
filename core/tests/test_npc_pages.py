@@ -351,6 +351,41 @@ class TheLifeOfANote(WithNpcs):
             (joined["body"], joined["listed"]), ("alice on keep\n\nalice on gone", True)
         )
 
+    async def merged_lengths(
+        self, kept: int, merged: int
+    ) -> tuple[list[Any], list[Any], list[Any]]:
+        """Carol's notes after a merge of two entries where she wrote `kept` and `merged` characters:
+        the kept entry's rows, the merged entry's rows, and her notes as the website lists them."""
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, keep.id, "k" * kept)
+        await web.save_note(self.web, self.carol, ref, gone.id, "g" * merged)
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        return (
+            await self.marks(keep.id),
+            await self.marks(gone.id),
+            await self.notes(self.carol),
+        )
+
+    async def test_two_notes_of_two_thousand_join_into_one_with_no_duplicate(self) -> None:
+        kept_rows, gone_rows, notes = await self.merged_lengths(2000, 2000)
+        self.assertEqual((len(kept_rows), gone_rows), (1, []))  # the merged note is not left over
+        (joined,) = notes
+        self.assertEqual(joined["body"], "k" * 2000 + "\n\n" + "g" * 2000)
+
+    async def test_the_join_fits_at_exactly_five_thousand_characters(self) -> None:
+        kept_rows, gone_rows, notes = await self.merged_lengths(2499, 2499)  # 2499 + 2 + 2499
+        self.assertEqual((len(kept_rows), gone_rows), (1, []))
+        self.assertEqual(len(notes[0]["body"]), 5000)
+
+    async def test_one_character_more_and_the_merged_note_stays_apart(self) -> None:
+        kept_rows, gone_rows, notes = await self.merged_lengths(2499, 2500)  # 5001 joined
+        self.assertEqual((len(kept_rows), len(gone_rows)), (1, 1))
+        self.assertEqual(sorted(len(n["body"]) for n in notes), [2499, 2500])
+
     async def test_two_marked_notes_that_join_keep_the_older_clock(self) -> None:
         keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
         other = await self.npc("Someone Else")
