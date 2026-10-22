@@ -5,6 +5,7 @@ Post step re-checks the plan, the chat channel, secret names and who is still re
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -19,7 +20,7 @@ import httpx
 import psycopg
 
 from dmbot.campaigns.store import CampaignStore
-from dmbot.consent import TERMS_VERSION
+from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
@@ -27,6 +28,7 @@ from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.draft import SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
 from dmbot.web.app import create_app
@@ -368,6 +370,83 @@ class TheDmsPage(Base):
             self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
         )
         self.assertIsNone(loose["transcriptsDeletedAt"])
+
+    async def test_a_recap_says_which_session_it_is_and_how_long_it_ran(self) -> None:
+        """(#2418) The number is the transcripts page's own (`TranscriptSession.number`), the length
+        is when the session ended minus when it started, and neither is made up: a recap whose
+        session isn't saved, or is still listening, leaves the missing part null. Another DM's
+        campaign with a session at the same time is not mixed in."""
+        transcripts = TranscriptStore(self.db)
+
+        async def played(campaign_id: str, start: int, end: int | None) -> None:
+            """A session with one line (the transcripts list shows only sessions with lines)."""
+            sid = await transcripts.open_session(THURSDAY.id, campaign_id, start)
+            await transcripts.add_lines(
+                THURSDAY.id, sid, [Line(start * 1000 + 1000, ALICE.id, "we go", "we go")]
+            )
+            if end is not None:
+                await transcripts.end_session(THURSDAY.id, sid, end)
+
+        # "One" has an earlier session (number 1) before the one its recap is about (number 2).
+        await played(self.one.id, 50, 90)
+        for campaign in (self.one, self.two):
+            await played(campaign.id, 100, 100 + 2 * 3600 + 35 * 60)
+        read = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual((read["sessionNumber"], read["sessionSeconds"]), (2, 9300))
+        listed = await list_recaps(self.web, self.session)
+        self.assertEqual(
+            {r["campaign"]: (r["sessionNumber"], r["sessionSeconds"]) for r in listed},
+            {"One": (2, 9300)},
+        )
+        # Still listening: the number is known, the length is not.
+        await played(self.one.id, 500, None)
+        await self.store.enqueue(THURSDAY.id, self.one.id, 500, dm_user_id=ALICE.id)
+        running = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 500)
+        )
+        self.assertEqual((running["sessionNumber"], running["sessionSeconds"]), (3, None))
+        # No session at its time: neither.
+        await self.store.enqueue(THURSDAY.id, self.one.id, 900, dm_user_id=ALICE.id)
+        loose = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 900)
+        )
+        self.assertEqual((loose["sessionNumber"], loose["sessionSeconds"]), (None, None))
+
+    async def test_an_imported_session_is_numbered_among_the_live_ones_and_has_its_length(
+        self,
+    ) -> None:
+        """(#2418) A session imported from a file is a stored session like any other: it takes its
+        place in the transcripts' numbering by its start time, and its length is its last line's
+        end. It is stored through the website's own door, as an import is."""
+        await ConsentStore(self.db).grant(THURSDAY.id, ALICE.id)
+        transcripts = TranscriptStore(self.db)
+        sid = await transcripts.open_session(THURSDAY.id, self.one.id, 100)
+        await transcripts.add_lines(THURSDAY.id, sid, [Line(101_000, ALICE.id, "we go", "we go")])
+        await transcripts.end_session(THURSDAY.id, sid, 160)
+        # The file's session started before the live one, so it is number 1 and the live one is 2.
+        sent = [{"ms": 0, "user": ALICE.id, "text": "long ago", "dur": 90_000}]
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                (
+                    THURSDAY.id,
+                    self.one.id,
+                    "b" * 32,
+                    "old.txt",
+                    40,
+                    json.dumps(sent),
+                    TERMS_VERSION,
+                ),
+            )
+            self.assertEqual(((await cur.fetchone()) or {})["r"]["kept"], 1)
+        await self.store.enqueue(THURSDAY.id, self.one.id, 40, dm_user_id=ALICE.id)
+        imported = await read_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 40)
+        )
+        self.assertEqual((imported["sessionNumber"], imported["sessionSeconds"]), (1, 90))
+        live = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual((live["sessionNumber"], live["sessionSeconds"]), (2, 60))
 
     async def test_a_recap_says_when_a_fixed_spelling_changed_its_text(self) -> None:
         # Never respelled: null. The bot writes respelled_at when it carries a fixed spelling into

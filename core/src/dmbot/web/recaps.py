@@ -228,6 +228,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # how many days the table keeps transcripts, for the page's words (#2022).
         "transcriptsDeletedAt": row.get("transcripts_deleted_at"),
         "keepDays": row.get("keep_days"),
+        # Which session this is, as the transcripts number it, and how long it ran (#2418): both
+        # null when the session can't be found or is still listening; an older page ignores them.
+        "sessionNumber": row.get("session_number"),
+        "sessionSeconds": row.get("session_seconds"),
         # A recap that exists is no longer waiting for the DM's name answers (#2174); a held one
         # has no job yet and is listed by `_held_view`.
         "waitingForNames": False,
@@ -272,6 +276,8 @@ def _held_view(
         "cue_words": cues.allowed_words(),
         "transcriptsDeletedAt": None,
         "keepDays": None,
+        "sessionNumber": None,  # (#2418) no session has been saved for it yet
+        "sessionSeconds": None,
         "waitingForNames": True,
         "namesToAnswer": int(held["namesOpen"]),
         **({"serverName": server_name} if server_name else {}),
@@ -297,8 +303,11 @@ async def _with_transcript_marks(
     role has no grant on the transcript tables, so this asks the transcripts page's own door
     (`dmbot_web_transcript_sessions`), once for each campaign, in the server the caller has already
     set for the transaction. A recap is matched to its session by its start time, as the bot does
-    (`recaps/inputs.py`). A campaign the door does not know adds nothing."""
-    marks: dict[str, tuple[dict[int, int], int | None]] = {}
+    (`recaps/inputs.py`). A campaign the door does not know adds nothing.
+
+    The same answer gives the session's number and length (#2418): the number is the one the
+    transcripts page shows, never a second count. A recap with no session adds nothing."""
+    marks: dict[str, tuple[dict[int, int], int | None, list[dict[str, Any]]]] = {}
     for campaign_id in {r["campaign_id"] for r in rows}:
         cur = await conn.execute(
             "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
@@ -311,13 +320,40 @@ async def _with_transcript_marks(
             if s.get("transcriptsDeletedAt") is not None
         }
         days = found.get("keepDays")
-        marks[campaign_id] = (deleted, None if days is None else int(days))
+        marks[campaign_id] = (
+            deleted,
+            None if days is None else int(days),
+            list(found.get("sessions", [])),
+        )
     out: list[dict[str, Any]] = []
     for r in rows:
-        deleted, days = marks[r["campaign_id"]]
+        deleted, days, sessions = marks[r["campaign_id"]]
         at = deleted.get(int(r["session_at"]))
-        out.append({**r, "transcripts_deleted_at": at, "keep_days": days if at else None})
+        number, seconds = session_facts(sessions, int(r["session_at"]))
+        out.append(
+            {
+                **r,
+                "transcripts_deleted_at": at,
+                "keep_days": days if at else None,
+                "session_number": number,
+                "session_seconds": seconds,
+            }
+        )
     return out
+
+
+def session_facts(sessions: list[dict[str, Any]], started_at: int) -> tuple[int | None, int | None]:
+    """The number and the length in seconds of the session that started at `started_at`, from the
+    transcripts page's own list (#2418). The number is exactly the one the transcripts show. The
+    length is when it ended minus when it started, for a live session and an imported one alike;
+    null while it is still listening or if it never recorded an end, so the page leaves it out
+    rather than guess. Both are null when no session starts then."""
+    for s in sessions:
+        if int(s["startedAt"]) == started_at:
+            ended = s.get("endedAt")
+            seconds = None if ended is None else max(0, int(ended) - started_at)
+            return int(s["number"]), seconds
+    return None, None
 
 
 def _guild_of(session: Session, guild_id: int) -> int:
