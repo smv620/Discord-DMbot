@@ -331,6 +331,20 @@ class TheProse(unittest.TestCase):
         ):
             self.assertEqual(rd.length_for(hours).target, target, hours)
 
+    def test_a_three_hour_drafts_words_are_held_to_150_to_360(self) -> None:
+        three = rd.length_for(3)
+        self.assertEqual((three.target, three.low, three.high), (300, 150, 360))
+
+        def problems(n: int) -> list[str]:
+            text = "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar"
+            return [p for p in prose_problems(text, "1. Strings.", length=three) if "words" in p]
+
+        self.assertEqual((problems(150), problems(360)), ([], []))
+        self.assertTrue(problems(149))
+        self.assertTrue(problems(361))
+        self.assertEqual(rd.length_for(1).target, 150)
+        self.assertEqual(rd.length_for(6).target, 450)
+
     def test_the_range_is_half_the_target_to_twenty_percent_over_and_the_last_try_35_over(
         self,
     ) -> None:
