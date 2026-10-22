@@ -135,6 +135,7 @@ class Isolation(MemoryTest):
         )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
+        await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         await self.memory.add_mention(
             GUILD_A,
             self.c,
@@ -1601,8 +1602,9 @@ class Lists(MemoryTest):
         with patch.object(AsyncConnection, "execute", counting):
             await self.memory.undo_names(GUILD_A, self.c, written.batch)  # still one Undo
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
-        # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this.
-        self.assertLess(statements, 30)
+        # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
+        # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
+        self.assertLess(statements, 34)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:
@@ -2243,13 +2245,37 @@ class MergeMatchesTheOldWalk(MemoryTest):
         return keep, gone
 
     async def logged(self, campaign: str, batch: int | None) -> list[str]:
+        """The batch's log rows, as strings. A belief or perspective row is shown by what it says,
+        not by its own id or sequence (those follow the order the two walks happen to write in,
+        which is not what this test compares; #2409)."""
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
                 "SELECT table_name, row_id, op, before, after FROM memory_changes"
                 " WHERE campaign_id = %s AND batch = %s",
                 (campaign, batch),
             )
-            return sorted(json.dumps(dict(r), sort_keys=True) for r in await cur.fetchall())
+            rows = [dict(r) for r in await cur.fetchall()]
+        out = []
+        for r in rows:
+            if r["table_name"] == "memory_beliefs":
+                shown = r["after"] or r["before"]
+                r = {"table_name": r["table_name"], "op": r["op"], "row": [
+                    shown["relation_id"], shown["confidence"], shown["status"]]}  # fmt: skip
+            elif r["table_name"] == "memory_perspectives":
+                r = {"table_name": r["table_name"], "op": r["op"]}
+            out.append(json.dumps(r, sort_keys=True))
+        return sorted(out)
+
+    async def shot(self, campaign: str) -> dict[str, Any]:
+        """A snapshot with the beliefs shown by what they say (see `logged`)."""
+        snap = await self.snapshot(GUILD_A, campaign)
+        kinds = {p["id"]: p["kind"] for p in snap.pop("memory_perspectives")}
+        snap["memory_perspectives"] = sorted(kinds.values())
+        snap["memory_beliefs"] = sorted(
+            (kinds[b["perspective_id"]], b["relation_id"], b["confidence"], b["status"])
+            for b in snap.pop("memory_beliefs")
+        )
+        return snap
 
     async def test_facts_come_back_in_id_order_whatever_the_disk_order(self) -> None:
         """#476: the facts a check reads (and so the flags it makes) come in id order,
@@ -2278,9 +2304,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
                 new = (await self.campaigns.create(GUILD_A, f"New {seed}", DM)).id
                 keep, gone = await self.build(old, seed)
                 self.assertEqual(await self.build(new, seed), (keep, gone))
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 start = seed * 1_000_000 + 900_000
                 with patch("dmbot.memory.store.new_id", side_effect=(
                     f"{n:032x}" for n in itertools.count(start)
@@ -2295,19 +2319,17 @@ class MergeMatchesTheOldWalk(MemoryTest):
                     f"{n:032x}" for n in itertools.count(start)
                 ).__next__):  # fmt: skip
                     if old_batch is None:  # refused before: refused now, nothing changed
-                        snap = await self.snapshot(GUILD_A, new)
+                        snap = await self.shot(new)
                         with self.assertRaises(MemoryRuleError):
                             await self.memory.merge(
                                 GUILD_A, new, keep, gone, source="dm", dm_said_same=True
                             )
-                        self.assertEqual(await self.snapshot(GUILD_A, new), snap)
+                        self.assertEqual(await self.shot(new), snap)
                         continue
                     merged = await self.memory.merge(
                         GUILD_A, new, keep, gone, source="dm", dm_said_same=True
                     )
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 self.assertEqual(
                     await self.logged(old, old_batch), await self.logged(new, merged.batch)
                 )
@@ -2316,9 +2338,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
                 with patch("dmbot.memory._changes._undo_run_or_not", AsyncMock(return_value=False)):
                     row_by_row = await self.memory.undo(GUILD_A, old, old_batch, source="dm")
                 bulk = await self.memory.undo(GUILD_A, new, merged.batch, source="dm")
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 self.assertEqual(
                     await self.logged(old, row_by_row.batch), await self.logged(new, bulk.batch)
                 )
