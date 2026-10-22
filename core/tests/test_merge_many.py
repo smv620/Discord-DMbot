@@ -85,6 +85,7 @@ class TheStoreMerge(Spellings):
             self.g, self.one.id, self.b1, [self.b2, self.b3, self.b4], source=DM_SOURCE
         )
         self.assertNotEqual(await self.dump(), before)
+        assert written.batch is not None
         await self.memory.undo(self.g, self.one.id, written.batch, source=DM_SOURCE)
         after = await self.dump()
         for table in TABLES:
