@@ -270,7 +270,7 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("Keep listening")).toBe(QUIET_STOP_LIVE);
     const words = quietStopSteps.map((x) => x.text).join(" ");
     // The numbers mirror the bot (idle_stop.py, QUIET_STOP_CHOICES); the choices are the DM's alone.
-    for (const phrase of ["5 minutes", "30 minutes", "60, 90 and Off", "bot never counts as a person", "empty-channel stop always stays on"]) {
+    for (const phrase of ["5 minutes", "10 minutes", "15, 30 and 5", "there is no Off", "bot never counts as a person", "private message"]) {
       expect(words).toContain(phrase);
     }
     expect(words).not.toMatch(/idle|timeout|session id|heartbeat/i);
