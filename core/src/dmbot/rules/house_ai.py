@@ -34,11 +34,12 @@ MIN_QUOTE = 20  # a quote shorter than this proves nothing: it would be found in
 QUOTE_MAX = 300
 # Room for the answer, in tokens. What a call can produce is bounded by its time limit: at a slow
 # 40 tokens a second, 230 seconds is about 9,000. The first call asks for at most 6,000, the retry
-# of a cut answer for twice that up to the time's worth, so neither is cut by the clock. A file with
+# of a cut answer for twice that up to the time's worth less 30 seconds (the file is read first,
+# up to 200,000 characters), so neither is cut by the clock. A file with
 # more rules than that is read in parts by the DM (the answer is cut twice: `Found.too_big`).
 ROOM_MIN, ROOM_MAX = 2_000, 6_000
 TOKENS_PER_SECOND = 40
-RETRY_MAX = int(TIMEOUT_S * TOKENS_PER_SECOND)
+RETRY_MAX = int((TIMEOUT_S - 30) * TOKENS_PER_SECOND)  # 30 s kept for reading the file first
 CALLS_MAX = 2  # the first and the retry of a cut answer
 
 SCHEMA: dict[str, Any] = {

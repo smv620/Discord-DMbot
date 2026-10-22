@@ -74,6 +74,10 @@ TOO_MANY_RULES = (
     "This file has more house rules than I can list in one go. Upload it in parts, a few pages "
     "at a time. Nothing was changed."
 )
+TOO_MANY_RULES_LINKED = (
+    "Your linked file has more house rules than DMbot can read in one go. Split it into two files, "
+    "or upload it in parts. Nothing was changed."
+)
 NOT_READ = (
     "I couldn't read that file just now, so nothing was changed. Try again in a minute, or put "
     "the rules in DMbot's numbered list (📥 Download rules in `/dmbot houserules` shows how)."
@@ -574,6 +578,12 @@ async def _compare_found(
     if found.unread:
         if found.out_of_reads:
             return TOO_MANY_READS
+        if found.too_big and link is not None and links is not None:
+            # A linked file cut twice would be read again at every session start (two calls each,
+            # capped only by the day's limit): record it, so DMbot waits until the file changes.
+            # 🔄 Compare now still reads it again.
+            await links.set_read(gid, campaign.id, fingerprint)
+            return TOO_MANY_RULES_LINKED
         return TOO_MANY_RULES if found.too_big else NOT_READ
     remember = link is not None and links is not None
     if found.published_book or not found.rules:
