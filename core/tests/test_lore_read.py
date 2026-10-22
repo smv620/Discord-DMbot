@@ -360,7 +360,10 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
     async def test_the_end_of_a_long_text_is_read(self) -> None:
         end = "Last of all, Queen Voss rules Ravenhold."
         text = ("Filler sentence about nothing. " * 3000) + end
-        listed = 'NAMES\n- Queen Voss | person | quote: "Queen Voss rules Ravenhold"\n- Ravenhold | place | quote: "rules Ravenhold"\n'
+        listed = (
+            'NAMES\n- Queen Voss | person | quote: "Queen Voss rules Ravenhold"\n'
+            '- Ravenhold | place | quote: "rules Ravenhold"\n'
+        )
         rows = [
             {
                 "name": "Queen Voss",

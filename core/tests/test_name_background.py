@@ -8,11 +8,9 @@ import json
 import time
 import unittest
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from dmbot.ai import Reply
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED, PROPOSED
