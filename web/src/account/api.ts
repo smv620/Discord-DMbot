@@ -821,8 +821,9 @@ export type NameChange =
   | { action: "hide"; hidden: boolean }
   | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
-  // Several names into the one the request is about (the kept name): one change, one Undo (#2427).
-  | { action: "merge-many"; keep: string; others: string[] }
+  // Several names into the one the request is about (the kept name, whose id is in the path): one
+  // change, one Undo, all or nothing (#2427, the contract CloudDev wrote on #2426).
+  | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
 /** What the bot says about a queued name change (#2294). */

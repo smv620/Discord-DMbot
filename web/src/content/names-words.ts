@@ -88,6 +88,9 @@ export const namesPage = {
   mergeManyYes: "Yes, merge them",
   mergeManyNo: "No, keep them",
   mergeManyBusy: "Merging…",
+  // The bot refused the whole merge (all or nothing): a person at the table, two players' characters, or a
+  // secret name that would become the main name.
+  mergeManyRefused: "Nothing was merged. DMbot can't merge those names together: a person at the table can't be merged into a character, and a secret name can't become the main name. Try keeping a different name.",
   mergedMany: (keep: string): string => `Merged into ${keep}. ↩️ Undo is on the Discord card.`,
   saved: "Saved.",
   removed: (name: string): string => `Removed ${name}.`,
@@ -102,6 +105,7 @@ export const namesPage = {
     "not-allowed": "Only this campaign's DM can change names.",
     "not-found": "That name is gone. The list is up to date now.",
     "bad-target": "DMbot can't do that to this name.",
+    "too-soon": "DMbot is busy with other changes. Wait a moment, then try again.",
     "still-waiting": "DMbot hasn't finished that yet. It may still happen; the list will show it. Check before trying again.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,

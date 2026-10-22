@@ -163,11 +163,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
     mergeFlight.current = true;
     setMergeBusy(true);
     try {
-      await api.changeName(ref, keep.id, {
-        action: "merge-many",
-        keep: keep.id,
-        others: others.map((r) => r.id),
-      });
+      await api.changeName(ref, keep.id, { action: "merge-many", others: others.map((r) => r.id) });
       setPicked([]);
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
@@ -179,7 +175,8 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
         setView("signed-out");
         return;
       }
-      setNews({ ok: false, text: said, n: ++sayings.current });
+      const refused = error instanceof ApiError && error.kind === "bad-target";
+      setNews({ ok: false, text: refused ? words.mergeManyRefused : said, n: ++sayings.current });
       if (error instanceof ApiError && (error.kind === "still-waiting" || error.kind === "not-found")) {
         // It may have happened, or a name is gone: read the list again and start the ticking over.
         setPicked([]);

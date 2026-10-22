@@ -141,7 +141,7 @@ describe("merging the ticked names", () => {
     const api = await ask("Mira Voss", "Brother Anselm");
     fireEvent.click(screen.getByRole("button", { name: w.mergeManyYes }));
     expect(await screen.findByText(w.mergedMany("Brother Anselm"))).toBeTruthy();
-    expect(merges(api)).toEqual([`changeName:100.cmp1:n14:${JSON.stringify({ action: "merge-many", keep: "n14", others: ["n1"] })}`]);
+    expect(merges(api)).toEqual([`changeName:100.cmp1:n14:${JSON.stringify({ action: "merge-many", others: ["n1"] })}`]);
     // The list is read again: the merged name is off it, and nothing stays ticked.
     await waitFor(() => expect(screen.queryByLabelText(w.pickLabel("Mira Voss"))).toBeNull());
     expect(screen.queryByRole("button", { name: w.mergeSelected })).toBeNull();
@@ -153,7 +153,7 @@ describe("merging the ticked names", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Mira Voss/ }));
     fireEvent.click(screen.getByRole("button", { name: w.mergeManyYes }));
     await screen.findByText(w.mergedMany("Mira Voss"));
-    expect(merges(api)[0]).toContain(`:n1:{"action":"merge-many","keep":"n1","others":["n14"]}`);
+    expect(merges(api)[0]).toContain(`:n1:{"action":"merge-many","others":["n14"]}`);
   });
 
   it("warns when the kinds differ, and not when they don't", async () => {
@@ -201,6 +201,23 @@ describe("merging the ticked names", () => {
       expect(screen.getAllByRole("alert").map((a) => a.textContent)).toContain(w.errors.network),
     );
     expect(screen.getByRole("button", { name: w.mergeManyYes })).toBeTruthy();
+  });
+
+  it("says nothing was merged when the bot refuses the whole merge, and keeps the question open", async () => {
+    const api = mockApi("table");
+    api.changeName = async () => {
+      throw new ApiError("bad-target");
+    };
+    open(DM, api);
+    await ready();
+    tick("Mira Voss");
+    tick("Brother Anselm");
+    fireEvent.click(screen.getByRole("button", { name: w.mergeSelected }));
+    fireEvent.click(await screen.findByRole("button", { name: w.mergeManyYes }));
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").map((a) => a.textContent)).toContain(w.mergeManyRefused),
+    );
+    expect(screen.getByRole("button", { name: w.mergeManyYes })).toBeTruthy(); // try another keeper
   });
 
   it("when the bot hasn't answered in time, says it may still happen and starts the ticking over", async () => {

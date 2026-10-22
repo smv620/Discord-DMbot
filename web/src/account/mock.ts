@@ -933,7 +933,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           // The queue action of #2427: every other name goes into this one, in one change.
           const others = [...new Set(change.others)].map((other) => memory.find((n) => n.id === other));
           if (others.length === 0 || others.some((o) => !o)) throw new ApiError("not-found");
-          if (change.others.includes(id) || change.keep !== id) throw new ApiError("bad-target");
+          if (change.others.includes(id)) throw new ApiError("bad-target");
           for (const other of others as NameRow[]) {
             row.others.push(other.name, ...other.others.filter((o) => !row.others.includes(o)));
             memory.splice(memory.indexOf(other), 1);
