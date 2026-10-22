@@ -37,7 +37,8 @@ from dmbot.rules import facts as rule_facts
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import ASKED_FOR, Hit, Index, normalize
-from dmbot.sidebar import brevity, context, looked, table_links
+from dmbot.rules.wins import Win
+from dmbot.sidebar import brevity, context, looked, rule_clash, table_links
 from dmbot.ui import rule_card
 
 log = logging.getLogger(__name__)
@@ -163,7 +164,7 @@ _NOTE_ANYWHERE = re.compile(
 )
 _OLD_WORDS = {"sure": "confident", "not sure": "uncertain"}
 _FIELD = re.compile(
-    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION|CITED)\s*:\s*(.*)$",
+    r"^\s*(ANSWER|SOURCE|CONFIDENCE|SURE|IN_GAME|ON_TOPIC|QUESTION|CITED|CONFLICT)\s*:\s*(.*)$",
     re.IGNORECASE,
 )
 
@@ -192,6 +193,8 @@ class AIClient(Protocol):
 # Why can't they use the AI? None if they can. (campaign, asking user id)
 Gate = Callable[[Campaign, int], Awaitable[str | None]]
 Houses = Callable[[Campaign], Awaitable[Sequence[HouseRule]]]
+# The DM's settled pairs of disagreeing house rules (#2284).
+SettledPairs = Callable[[Campaign], Awaitable[Sequence[Win]]]
 Brews = Callable[[Campaign], Awaitable[Sequence[Homebrew]]]
 Names = Callable[[Campaign], Awaitable[CampaignLookup | None]]
 # Who is who at the table, as short lines of names only (no ids): "Mia plays Cerric".
@@ -217,6 +220,9 @@ class Answer:
     # What the answer was built from (#1957), for the DM's "What I looked at" button: taken when
     # the answer is made, never worked out again.
     looked_at: tuple[looked.Looked, ...] = ()
+    # Two house rules that disagree about this question and the DM has not settled (#2284): the
+    # answer is the question to the DM, not an answer, and DMbot picks neither.
+    clash: tuple[rule_clash.Side, rule_clash.Side] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +236,7 @@ class Fields:
     on_topic: bool
     question: str = ""  # a table question restated in a few words (#1187); "" when none
     cited: tuple[str, ...] = ()  # the labels of the confirmed facts it used (#1370)
+    conflict: str = ""  # the labels of two house rules that disagree, as written (#2284)
 
 
 RESTATED_WORDS = 12
@@ -279,6 +286,7 @@ def parse(raw: str) -> Fields:
         on_topic=found.get("ON_TOPIC", "yes").strip().lower() != "no",
         question=restated(found.get("QUESTION", "")),
         cited=cited_labels(found.get("CITED", "")),
+        conflict=found.get("CONFLICT", ""),
     )
 
 
@@ -466,6 +474,7 @@ class Sidebar:
         recall: Recaller | None = None,
         brews: Brews | None = None,
         second_try: AIClient | None = None,
+        settled: SettledPairs | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ai = ai
@@ -477,6 +486,7 @@ class Sidebar:
         self._people = people
         self._recall = recall
         self._brews = brews
+        self._settled = settled
         self._clock = clock
 
     async def answer(
@@ -524,6 +534,11 @@ class Sidebar:
             if self._brews is not None
             else _nothing_brews(),
         )
+        if self._settled is not None and len(houses) > 1:
+            # A pair the DM settled is followed with no question: the losing rule is not given,
+            # so the answer comes from the winning one (#2284).
+            wins = await self._safely(self._settled(campaign), [], "settled house rules")
+            houses = rule_clash.settled(houses, wins)
         index = self._index() if callable(self._index) else self._index
         recalled = None
         if self._recall is not None and not table:
@@ -549,6 +564,8 @@ class Sidebar:
         system = SYSTEM + RECALL_RULES if ctx.labels else SYSTEM
         if ctx.homebrew:
             system += HOMEBREW_RULES
+        if len(ctx.house_rules) > 1:  # a clash needs two rules; with fewer the prompt is as before
+            system += rule_clash.CLASH_RULES
         # Asked for the whole text, and the rule is one DMbot has: no AI call at all. If it
         # isn't, the question is answered like any other, short (a paragraph is never sent).
         # (a glossary word like "spell", or a feature, in the question is not an entry it asks the
@@ -574,6 +591,23 @@ class Sidebar:
         if not fields.on_topic:
             return self._done(
                 Answer(OFF_TOPIC, in_game=False, model=self._ai.model, parts=(OFF_TOPIC,)),
+                started,
+            )
+        if clash := rule_clash.named(fields.conflict, ctx.house_rules):
+            # Two rules the DM has not settled disagree about this (#2284): DMbot answers from
+            # neither. The DM is asked; a table question gets "one for your DM" and the DM is told.
+            asked = rule_clash.question_text(*clash)
+            return self._done(
+                Answer(
+                    ONE_FOR_DM if table else asked,
+                    in_game=False,
+                    one_for_dm=table,
+                    question=fields.question if table else "",
+                    model=reply.model or self._ai.model,
+                    sources=ctx.sources,
+                    parts=(ONE_FOR_DM,) if table else (asked,),
+                    clash=clash,
+                ),
                 started,
             )
         if table and _ONE_FOR_DM.match(fields.answer.strip()):

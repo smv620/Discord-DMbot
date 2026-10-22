@@ -309,7 +309,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
-from dmbot.rules.wins import WinsSection, WinsStore
+from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
@@ -3229,6 +3229,11 @@ class DMBot(commands.AutoShardedBot):
             async with asyncio.timeout(NAMES_WAIT_S):
                 return await self.sidebar_people(campaign)
 
+        async def settled(campaign: Campaign) -> Sequence[Win]:
+            if self.house_wins is None:
+                return []
+            return await self.house_wins.all(campaign.guild_id, campaign.id)
+
         recall_service = RecallService(self.memory) if self.memory is not None else None
 
         async def recall(campaign: Campaign, seeds: Sequence[str]) -> Recall | None:
@@ -3265,7 +3270,22 @@ class DMBot(commands.AutoShardedBot):
             recall=recall if self.settings.sidebar_recall else None,
             brews=brews,
             second_try=careful,
+            settled=settled,
         )
+
+    async def sidebar_record_win(
+        self, campaign: Campaign, winner: RuleRef, loser: RuleRef, by: int
+    ) -> bool:
+        """The DM chose which of two disagreeing house rules applies (#2284); False if there is
+        nowhere to keep it or it failed (the DM is told, and nothing was decided)."""
+        if self.house_wins is None or by not in campaign.dm_user_ids:  # checked again here
+            return False
+        try:
+            await self.house_wins.record(campaign.guild_id, campaign.id, winner, loser, by)
+        except Exception:
+            log.exception("Couldn't store which house rule applies")
+            return False
+        return True
 
     async def sidebar_people(self, campaign: Campaign) -> list[str]:
         """Who is who at this table, as short lines of names (never Discord IDs) for the
