@@ -200,8 +200,6 @@ export interface SupportTicket {
   turnstile: string;
 }
 
-/** One session recap the DM reviews (#1382, #1386). The words come from the API already clean of
- * the music and voice cues the bot's own tools use, so the page shows `text` as it is. */
 /** Which address a recap's email goes to. `payment` is the email on the payment account, `signin` the
  * one the DM signed in with, `none` no address at all. `on` is the DM's own email choice. */
 export interface RecapEmail {
@@ -210,6 +208,8 @@ export interface RecapEmail {
   on: boolean;
 }
 
+/** One session recap the DM reviews (#1382, #1386). The words come from the API already clean of
+ * the music and voice cues the bot's own tools use, so the page shows `text` as it is. */
 export interface Recap {
   /** The id in the page's address: `<server>.<campaign>.<session>`. */
   ref: string;

@@ -722,7 +722,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
       {!editing && <AudioOffer api={api} />}
-      {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} />}
+      {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         (recap.canEdit ||

@@ -65,13 +65,13 @@ export default function RecapEmailLine({
   if (email.source === "none" || !email.address)
     return (
       <p class="small">
-        {words.none} <a href="/account">{words.add}</a>
+        {words.none}
       </p>
     );
   if (email.source === "signin")
     return (
       <p class="small">
-        {words.to(email.address)} {words.signin} <a href="/account">{words.change}</a>
+        {words.to(email.address)} {words.signin}
       </p>
     );
   return (
@@ -81,7 +81,7 @@ export default function RecapEmailLine({
       </p>
       {paymentsOff ? (
         <p>
-          {words.paymentsOff} <a href="/account">{words.accountPage}</a>
+          {words.paymentsOff}
         </p>
       ) : (
         <>

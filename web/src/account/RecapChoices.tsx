@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { choiceWords as words } from "../content/recap-choices";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type RecapChoice, type RecapChoices } from "./api";
+import { ApiError, type AccountApi, type RecapChoice, type RecapChoices, type RecapEmail } from "./api";
+import RecapEmailLine from "./RecapEmail";
 
 /** The campaign's address, from the recap's: `<server>.<campaign>.<session>` without the session. */
 const campaignRefOf = (recapRef: string): string => recapRef.split(".").slice(0, 2).join(".");
@@ -17,9 +18,12 @@ const ORDER: RecapChoice[] = ["text", "audio", "email"];
 export default function RecapChoicesPart({
   api,
   recapRef,
+  email,
 }: {
   api: AccountApi;
   recapRef: string;
+  /** Where this recap's email goes (#2335), so the switch never promises one with no address. */
+  email?: RecapEmail | undefined;
 }) {
   const [choices, setChoices] = useState<RecapChoices | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -107,6 +111,9 @@ export default function RecapChoicesPart({
             ))}
           </ul>
           {!choices.email && <p class="small muted">{words.emailOff}</p>}
+          {/* With the switch on, the same line as under a working recap: which address, or that there is none.
+              `on` follows the switch just changed here, not the page's first read. */}
+          {choices.email && <RecapEmailLine api={api} email={email ? { ...email, on: true } : undefined} />}
           {/* Always on the page, only its words change: a screen reader announces a live region that
               was already there, not one added together with its text. */}
           <p class="small" role="status">

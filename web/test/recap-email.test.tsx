@@ -9,6 +9,7 @@ import { ApiError, type RecapEmail } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import RecapEmailLine from "../src/account/RecapEmail";
 import Recaps from "../src/account/Recaps";
+import { choiceWords } from "../src/content/recap-choices";
 import { emailWords as w } from "../src/content/recap-email";
 import { text } from "../src/content/recaps";
 
@@ -23,10 +24,11 @@ const mount = (email: RecapEmail | undefined, over: { go?: (u: string) => void; 
 };
 
 describe("a sign-in email", () => {
-  it("names the address and links to the account page", () => {
+  it("names the address, with no link to a setting that does not exist yet (#2349)", () => {
     mount({ address: "dm@example.com", source: "signin", on: true });
     expect(screen.getByText(/We'll email dm@example\.com when it's ready\./)).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.change }).getAttribute("href")).toBe("/account");
+    expect(screen.getByText(new RegExp(w.signin))).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });
 });
@@ -65,7 +67,7 @@ describe("a payment email", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: w.changePayment }));
     expect(await screen.findByText(new RegExp(w.paymentsOff))).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.accountPage }).getAttribute("href")).toBe("/account");
+    expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("button", { name: w.changePayment })).toBeNull();
   });
 
@@ -81,11 +83,11 @@ describe("a payment email", () => {
 });
 
 describe("no address, or emails turned off", () => {
-  it("promises nothing without an address, and says how to add one", () => {
+  it("promises nothing without an address, and has no link to a dead end", () => {
     mount({ address: null, source: "none", on: true });
     expect(screen.getByText(new RegExp(w.none))).toBeTruthy();
     expect(screen.queryByText(/We'll email/)).toBeNull();
-    expect(screen.getByRole("link", { name: w.add }).getAttribute("href")).toBe("/account");
+    expect(screen.queryByRole("link")).toBeNull();
   });
 
   it("promises nothing with emails off, and links to the switch on the page", () => {
@@ -123,6 +125,36 @@ describe("no address, or emails turned off", () => {
   it("says nothing from an API that doesn't know the address yet", () => {
     const { container } = render(<RecapEmailLine api={mockApi("table")} email={undefined} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("under the email switch in the recap choices", () => {
+  const withEmail = (recapEmail: RecapEmail) => {
+    const api = mockApi("table");
+    const real = api.recap!.bind(api);
+    api.recap = async (r) => ({ ...(await real(r)), recapEmail });
+    render(<Recaps api={api} path={`/account/recaps/${mockRecaps()[0]!.ref}`} />);
+  };
+
+  it("does not promise an email when the switch is on and there is no address", async () => {
+    withEmail({ address: null, source: "none", on: true });
+    await screen.findByLabelText(choiceWords.labels.email);
+    expect(await screen.findByText(new RegExp(w.none))).toBeTruthy();
+    expect(screen.queryByText(/We'll email/)).toBeNull();
+  });
+
+  it("names the address when the switch is on", async () => {
+    withEmail({ address: "dm@example.com", source: "signin", on: true });
+    await screen.findByLabelText(choiceWords.labels.email);
+    expect(await screen.findByText(/We'll email dm@example\.com when it's ready\./)).toBeTruthy();
+  });
+
+  it("says nothing about an address once the switch is off", async () => {
+    withEmail({ address: "dm@example.com", source: "signin", on: true });
+    const box = (await screen.findByLabelText(choiceWords.labels.email)) as HTMLInputElement;
+    await screen.findByText(/We'll email/);
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.queryByText(/We'll email/)).toBeNull());
   });
 });
 
