@@ -14,7 +14,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -34,7 +34,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, name_places
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -1007,6 +1007,7 @@ def suggestion_text(
     kind: str = "",
     spelled: bool = False,
     fix_to: str = "",
+    places: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1034,7 +1035,8 @@ def suggestion_text(
         "" if fix_to else _heard(entity)
     )  # the note is the spelling: shown once, in the question
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
-    return f"📝 **{_md(entity.name)}**{heard}{others}{read}\n{question}{more}"
+    where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
+    return f"📝 **{_md(entity.name)}**{heard}{where}{others}{read}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -1099,6 +1101,8 @@ class SuggestionReview(_Menu):
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
+        self.places = name_places.Places()  # where the current one was said (#2329)
+        self.spellings: list[str] = []
         self._buttons()
 
     def _added(self, entity: Entity) -> str:
@@ -1125,6 +1129,8 @@ class SuggestionReview(_Menu):
             for a in await memory.aliases(campaign.guild_id, campaign.id, entity_id=entity.id)
             if a.key != own
         ]
+        self.spellings = [entity.name, *self.also]
+        self.places = await self._places(interaction, campaign, memory, entity)
         self._buttons()
         return suggestion_text(
             entity,
@@ -1134,7 +1140,59 @@ class SuggestionReview(_Menu):
             spelled=bool(self.spelled),
             fix_to=self.fix_to,
             kind=self.known_kind,
+            places=self.places.text(),
         )
+
+    async def _places(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        entity: Entity,
+    ) -> name_places.Places:
+        """Where the current suggestion was said, from the pointers kept with it; none for a
+        name that has none (read from a background, or suggested before places were kept)."""
+        transcripts = getattr(interaction.client, "transcripts", None)
+        if transcripts is None:
+            return name_places.Places()
+        try:
+            refs = await memory.mentions(campaign.guild_id, campaign.id, entity.id)
+        except Exception:
+            log.exception("Couldn't read where a suggested name was said")
+            return name_places.Places()
+        site = getattr(getattr(interaction.client, "settings", None), "site_url", "") or ""
+        return await name_places.first_places(
+            interaction.guild,
+            transcripts,
+            campaign.guild_id,
+            campaign.id,
+            refs,
+            self.spellings,
+            await cast(Any, interaction.client).consent.consenting(
+                campaign.guild_id
+            ),  # who agrees now
+            site if isinstance(site, str) else "",
+        )
+
+    async def _more_places(self, interaction: discord.Interaction) -> None:
+        """Up to five more windows, in a private message of their own."""
+        transcripts = getattr(interaction.client, "transcripts", None)
+        if transcripts is None or not self.places.more:
+            await _tell(interaction, name_places.GONE)
+            return
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        await _answer_first(interaction)
+        text = await name_places.more_places(
+            interaction.guild,
+            transcripts,
+            campaign.guild_id,
+            self.places.more,
+            self.spellings,
+            await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+        )
+        await interaction.followup.send(text, ephemeral=True)
 
     def _buttons(self) -> None:
         self.clear_items()
@@ -1183,6 +1241,19 @@ class SuggestionReview(_Menu):
         self.add_item(
             _Button(self._later, label="⏳ Later", style=discord.ButtonStyle.secondary, row=1)
         )
+        if self.places.more:  # more windows behind a button (#2329)
+            self.add_item(
+                _Button(
+                    self._more_places,
+                    label="🔎 More places",
+                    style=discord.ButtonStyle.secondary,
+                    row=2,
+                )
+            )
+        if self.places.link:  # the session's page on the website
+            self.add_item(
+                discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
+            )
 
     async def _current(
         self, interaction: discord.Interaction

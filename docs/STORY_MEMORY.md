@@ -543,6 +543,78 @@ on embeddings. Apache AGE is still not needed: these are 1–2 hop lookups.
   confirmed stay (they're the DM's word), with the evidence link removed. Proposals that
   rested only on those lines are dropped.
 
+### 9. Assertions, perspectives and evidence (owner, 2026-10-22)
+
+**Why.** In a mystery or political campaign, logging "facts" breaks: players' theories, revealed clues and
+NPCs' words can all be wrong, by mistake or on purpose (framing, illusions, lies). So the graph logs **the
+claim itself as its own object**, and records **who believes it, how strongly, and on what evidence**.
+Overlapping realities (the truth, the party's view, a theory, a frame-up) then live side by side without
+corrupting each other. This is the owner's assertion-centric design, kept in Postgres tables (section 1;
+no graph database, PLAN "Considered and not chosen").
+
+**The four kinds of thing, as tables in each campaign** (server + campaign columns, forced RLS, as today):
+
+| Owner's node | Here | Notes |
+|---|---|---|
+| `:Entity` (character, faction, place, item) | the names entries (`memory_entities`) | Unchanged. Never joined to each other directly. |
+| `:Assertion` (type, summary) | a connection row (`memory_relations`) | Each row already **is** the reified statement: its id is the assertion, and its subject and object columns are `HAS_SUBJECT` and `HAS_OBJECT`. "Lucian works for the Bishop" is one row whoever believes it. |
+| `:Perspective` (owner) | `memory_perspectives` (new) | Built in for every campaign: **The truth** (the DM's meta-truth) and **The party** (the shared log of what the players have learned). More as needed: one per PC, or an NPC whose beliefs matter. |
+| `:Evidence` (clue, event; session, game time) | the claims and transcript lines (section 1), clue entries, and events | A belief points at the lines or events that justify it, by id only (the same pointers as places, #2329). |
+
+**Beliefs** (`memory_beliefs`, new): perspective → assertion, with `confidence` (0.0 = certainly false,
+1.0 = certainly true), `status` (Theory · Accusation · Revealed Fact · False Evidence · Secret Plot ·
+Magically Verified · Evasion under Magic), the session, and the evidence ids. History is kept: a new belief
+adds a row (bitemporal, section 1). **Manipulation** (`MANIPULATED_BY`): an evidence row may point at the
+evidence or item that faked it ("Fabio plants the ledger" → the ledger clue; a Ring of Mind Shielding →
+the Zone of Truth event).
+
+**How today's words map onto it:**
+- **Secret** = The truth believes it, and The party has no belief.
+- **Not revealed yet** = the same. **Revealed** = The party believes it at 1.0 (Revealed Fact).
+- **A theory** = The party (or one PC) at about 0.5 (Theory).
+- **A lie or red herring** = The party believes it while The truth holds it at 0.0 (False Evidence), with
+  the real assertion beside it as a Secret Plot.
+- **The DM confirms** = The truth's belief. Only the DM writes The truth, so "only DM-confirmed facts
+  count" stands.
+- **Players View** draws The party's beliefs: theories dotted and marked "?", known ones solid. **Full
+  View** (DMs, and peekers) draws The truth, and marks where the party is wrong or doesn't know yet.
+
+**The four rules DMbot follows when reading a session** (the extractor and EntityBot, section 3):
+- **A. Theories:** a player or NPC voices a suspicion, a theory or an accusation the DM hasn't confirmed.
+  Find or make the assertion, then add the speaker's (or the party's) belief at 0.5 (higher or lower for
+  "surely" or "unlikely"), as Theory or Accusation, with the line as evidence. **A guess is never a
+  reveal:** a guessed name may become a lone name in the players' view, and a guessed connection is
+  drawn as uncertain.
+- **B. Revealed facts:** the DM lets the characters find a clue or see an event that confirms something.
+  The party's belief becomes 1.0, Revealed Fact, justified by that clue or event.
+- **C. Framing and secrets:** the DM says a revealed clue is fake, or someone is framed. The truth holds
+  the public assertion at 0.0 (False Evidence) and a new assertion ("Fabio framed Lucian") at 1.0 (Secret
+  Plot). The act of deception is an event that `MANIPULATED_BY` points at.
+- **D. Divination** (Zone of Truth, Detect Thoughts…): the casting is an event, and it justifies the party's
+  belief. A confession is 1.0 (Magically Verified), and an evasion or silence about 0.7 (Evasion under
+  Magic). When the target resisted or was protected, The truth stays as it is, and the protection is linked
+  to the event as `MANIPULATED_BY`.
+
+DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
+shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
+
+**The knowledge map review, after every session** (DM only, private). One summary with three lists:
+1. **Secrets exposed:** secret names and connections said or typed at the table. Each one is revealed
+   (The party, Revealed Fact) unless the DM presses **↩️ Recant**: a slip of the tongue, a misheard word, or
+   a name the DM will change to keep the mystery. "Is it revealed now?", asked during the session, is an
+   early answer to the same question.
+2. **New names** heard this session (today's 📝 Check new names).
+3. **New connections**, each marked with who believes it: the party's theories, revealed facts, the DM's
+   own words. Each has ✅ Keep, 🤫 Truth but secret, ❓ Party theory, and ❌ No.
+
+Each list is capped, like the after-session check, with the rest on the website.
+
+**What it's for: PlotBot and recaps.** The story is this graph plus the timeline. **Importance** is how
+connected an entity is in The truth, counting hidden connections too. Lucian, mentioned only as a patron at
+the inn, is important when the truth ties him to many others. The recap picks the session's beats by the
+importance of the entities in them, so Lucian is included. It **writes only what The party believes**:
+it mentions Lucian as the patron the party met, and never a hidden connection.
+
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.
