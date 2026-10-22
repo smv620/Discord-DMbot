@@ -9462,8 +9462,10 @@ ALL_NAMES_PAGE = r"""
                         ELSE e.type END AS kind,
                    EXISTS (SELECT 1 FROM memory_aliases a
                            WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
-                             AND a.status = 'confirmed' AND a.secret
-                             AND lower(a.text) = lower(e.name)) AS secret,
+                             AND a.status <> 'rejected' AND a.secret
+                             AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                               = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                   ) AS secret,
                    (e.audience_limited OR e.hidden_from_players) AS hidden
             FROM memory_entities e
             WHERE e.guild_id = g AND e.campaign_id = c
@@ -9486,7 +9488,7 @@ ALL_NAMES_PAGE = r"""
             SELECT h.* FROM hit h
             ORDER BY CASE WHEN newest THEN NULL ELSE lower(h.name) END,
                      CASE WHEN newest THEN h.created_at END DESC, h.id
-            LIMIT GREATEST(size, 1) OFFSET GREATEST(pg - 1, 0) * GREATEST(size, 1)
+            LIMIT GREATEST(size, 1) OFFSET GREATEST(pg - 1, 0)::BIGINT * GREATEST(size, 1)
         )
         SELECT jsonb_build_object(
             'campaign', cname,

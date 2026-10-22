@@ -137,6 +137,44 @@ class TheDmsList(Listing):
         self.assertEqual(await self.refused(self.session, self.cref, page=0), "bad_page")
         self.assertEqual(len((await self.page(q="zzz"))["names"]), 0)  # an empty list is page 1
 
+    async def test_a_huge_page_number_is_refused_not_a_server_error(self) -> None:
+        for page in (2_000_000_000, 100_001, -1):
+            self.assertEqual(await self.refused(self.session, self.cref, page=page), "bad_page")
+
+    async def test_search_characters_are_plain_letters(self) -> None:
+        await self.add("100% Sure", "item")
+        await self.add("Under_score", "item")
+        for typed, expected in (("%", ["100% Sure"]), ("_", ["Under_score"]), ("\\", [])):
+            got = await self.page(q=typed)
+            self.assertEqual([n["name"] for n in got["names"]], expected, typed)
+        long = await self.page(q="x" * 500)
+        self.assertEqual(long["total"], 0)  # (cut to 100 letters, no error)
+
+    async def test_a_kind_and_a_search_together_and_a_kind_nobody_has(self) -> None:
+        both = await self.page(kind="npc", q="grey")
+        self.assertEqual([n["name"] for n in both["names"]], ["Mira Voss"])
+        none = await self.page(kind="bogus")
+        self.assertEqual((none["names"], none["total"], none["pages"]), ([], 0, 1))
+
+    async def test_only_confirmed_aliases_are_listed_or_searched(self) -> None:
+        await self.memory.add_alias(
+            self.g, self.one.id, self.mira, "Rejected Name", kind="short", source=DM_SOURCE,
+            status="proposed",
+        )  # fmt: skip
+        await self.alias(self.mira, "Mira Voss")  # its own name again: not an "other" name
+        got = await self.page(q="rejected")
+        self.assertEqual(got["total"], 0)
+        mira = next(n for n in (await self.page())["names"] if n["name"] == "Mira Voss")
+        self.assertEqual(mira["others"], ["the Ferrywoman"])
+
+    async def test_a_secret_other_name_does_not_make_the_entry_secret(self) -> None:
+        mira = next(n for n in (await self.page())["names"] if n["name"] == "Mira Voss")
+        self.assertFalse(mira["secret"])  # (only its own spelling being secret does)
+
+    async def test_a_rejected_or_merged_away_entry_is_not_listed(self) -> None:
+        await self.sql("UPDATE memory_entities SET status = 'rejected' WHERE id = %s", self.sword)
+        self.assertNotIn("Dawnbreaker", str(await self.page()))
+
     async def test_newest_first_orders_by_when_it_was_added(self) -> None:
         await self.sql("UPDATE memory_entities SET created_at = 5 WHERE id = %s", self.keep)
         await self.sql("UPDATE memory_entities SET created_at = 9 WHERE id = %s", self.sword)
@@ -198,6 +236,41 @@ class TheManagersList(Listing):
         self.assertEqual(got["total"], 3)
         self.assertEqual(sum(k["count"] for k in got["kinds"]), 3)  # the counts leave them out
         self.assertEqual(len(got["kinds"]), 3)
+
+    async def test_a_manager_pages_like_a_dm_and_threads_and_deeds_stay_hidden(self) -> None:
+        for kind in ("thread", "mystery", "hook", "goal", "promise", "deed"):
+            await self.add(f"A {kind}", kind)
+        await self.sql(
+            "UPDATE memory_entities SET audience_limited = true WHERE id = %s", self.keep
+        )
+        for n in range(22):
+            await self.add(f"Person {n:02d}", "npc")
+        got = await self.page(self.bob, kind="npc")
+        self.assertEqual((got["total"], got["pages"]), (23, 2))  # Mira and 22 more; not Vecnor
+        self.assertEqual(len((await self.page(self.bob, kind="npc", page=2))["names"]), 3)
+        self.assertEqual(await self.refused(self.bob, self.cref, kind="npc", page=3), "bad_page")
+        rest = str(await self.page(self.bob))
+        for hidden in ("A thread", "A mystery", "A hook", "A goal", "A promise", "A deed"):
+            self.assertNotIn(hidden, rest)
+        self.assertNotIn("Greywater Keep", rest)  # a clue only some know
+
+    async def test_a_secret_spelling_counts_with_apostrophes_hyphens_case_and_a_proposal(
+        self,
+    ) -> None:
+        keep = await self.add("Kazeth", "npc")
+        await self.sql(
+            "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key, kind,"
+            " secret, status, sound_codes, source, created_at) VALUES"
+            " (%s, %s, %s, %s, %s, %s, 'full', true, 'proposed', '{}', 'dm', 0)",
+            self.g,
+            self.one.id,
+            "c" * 32,
+            keep,
+            "Ka'zeth",
+            "kazeth-x",
+        )  # (the same name but for the apostrophe, only proposed as a secret)
+        self.assertNotIn("Kazeth", str(await self.page(self.bob)))
+        self.assertIn("Kazeth", str(await self.page()))
 
     async def test_a_secret_name_cannot_be_found_by_searching_for_it(self) -> None:
         for typed in ("Vecnor", "Lady Grey", "Vault", "Lens"):

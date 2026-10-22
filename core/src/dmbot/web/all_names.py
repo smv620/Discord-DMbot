@@ -22,6 +22,7 @@ from dmbot.web.sessions import Session
 PAGE_SIZE = 20  # the same as Discord's Browse pages
 SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
 SORTS = ("name", "newest")
+PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
 
 # The kinds as the page lists them, in the order to show when counts tie; Discord's Browse puts the
 # biggest first. A kind the campaign added under a core one is shown by its own words.
@@ -72,8 +73,10 @@ async def read_page(
     list (or another campaign's ref); "bad_page" for a page past the end."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    if page < 1 or sort not in SORTS:
-        raise RecapError("bad_page" if page < 1 else "bad_sort")
+    if sort not in SORTS:
+        raise RecapError("bad_sort")
+    if not 1 <= page <= PAGE_LIMIT:  # (also keeps the database's arithmetic well inside range)
+        raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
