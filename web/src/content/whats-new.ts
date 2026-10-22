@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Merge several names at once",
+    what: "On the All names page, tick the names that are really one (like Belleros and Beleros), press Merge selected, and pick which to keep. They become one name, and you can undo it from the name's card in Discord.",
+    reason: "In review (#2430); held until the bot side (#2426) is deployed.",
+  },
+  {
+    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
