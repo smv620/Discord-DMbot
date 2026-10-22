@@ -134,9 +134,11 @@ class TranscriptStore:
         self, guild_id: int, session_id: str, names: Mapping[int, str | None]
     ) -> None:
         """Keep these speakers' display names for the website's transcripts (#2337). `None`: they
-        could not be found, kept as "" so DMbot does not look again. A name already kept is not
-        replaced (it is the name as it was at the session), and only people who spoke in the
-        session get one, so a name never outlives its lines (`delete_person` takes it out)."""
+        are not in the server any more, kept as "" so DMbot does not look again. A name already
+        kept is not replaced, and only people with lines in the session get one, so a name never
+        outlives its lines (`delete_person` and `remove_lines` take it out). It is the name when
+        DMbot first saved the person's words, or for an older session the one it found at the
+        start-up fill-in."""
         if not names:
             return
         kept = {str(u): clean_name(n) if n else "" for u, n in names.items()}
@@ -309,9 +311,13 @@ class TranscriptStore:
                 " line_count = (SELECT count(*) FROM transcript_lines"
                 "   WHERE session_id = %s AND sidebar IS NULL),"
                 " speakers = ARRAY(SELECT DISTINCT user_id FROM transcript_lines"
-                "   WHERE session_id = %s AND sidebar IS NULL ORDER BY user_id)"
+                "   WHERE session_id = %s AND sidebar IS NULL ORDER BY user_id),"
+                # a name never outlives its person's lines (#2337)
+                " speaker_names = (SELECT COALESCE(jsonb_object_agg(j.key, j.value), '{}'::jsonb)"
+                "   FROM jsonb_each(speaker_names) AS j WHERE EXISTS (SELECT 1"
+                "   FROM transcript_lines l WHERE l.session_id = %s AND l.user_id = j.key::bigint))"
                 " WHERE id = %s",
-                (session_id, session_id, session_id),
+                (session_id, session_id, session_id, session_id),
             )
 
     async def sessions(

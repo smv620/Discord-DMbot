@@ -469,7 +469,7 @@ class BotTests(DatabaseTest):
         asked: list[set[int]] = []
         real = self.bot._keep_speaker_names
 
-        async def counting(gid: int, session_id: str, ids: set[int]) -> bool:
+        async def counting(gid: int, session_id: str, ids: set[int]) -> set[int]:
             asked.append(ids)
             return await real(gid, session_id, ids)
 
@@ -500,6 +500,37 @@ class BotTests(DatabaseTest):
         release.set()
         await save
         self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+
+    async def test_a_busy_discord_is_not_taken_for_a_person_who_left(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, STRANGER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        self.said(table, STRANGER, "hi", 2)
+        self.guild.get_member = lambda uid: None
+        busy = discord.HTTPException(MagicMock(status=429), "slow down")
+        gone = discord.NotFound(MagicMock(status=404), "Unknown Member")
+        self.guild.fetch_member = AsyncMock(
+            side_effect=lambda uid: (_ for _ in ()).throw(busy if uid == PLAYER else gone)
+        )
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {STRANGER: ""})  # Mia is asked again, not "gone"
+        self.assertEqual(table.named_speakers, {STRANGER})
+
+    async def test_a_name_goes_when_the_persons_lines_are_taken_back_out(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        table = self.table()
+        self.said(table, PLAYER, "hello")
+        await self.bot.save_transcript(table)
+        self.assertEqual(await self.kept(table), {PLAYER: "Mia"})
+        assert table.transcript_session_id is not None
+        lines = await self.store.lines(GUILD, table.transcript_session_id)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT id FROM transcript_lines")
+            ids = [int(r["id"]) for r in await cur.fetchall()]
+        self.assertEqual(len(lines), len(ids))
+        await self.store.remove_lines(GUILD, table.transcript_session_id, ids)
+        self.assertEqual(await self.kept(table), {})
 
     async def test_a_server_not_there_to_ask_keeps_nothing_and_is_tried_again(self) -> None:
         await self.consent.grant(GUILD, PLAYER)

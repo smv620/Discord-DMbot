@@ -22,8 +22,8 @@ class TranscriptSession:
     number: int = 0  # Session 1, 2, … in its campaign (only sessions with lines count)
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
     deleted_at: int | None = None  # the retention job deleted its transcript (#1533)
-    # Each speaker's Discord display name as it was at the session (#2337); "" when DMbot looked
-    # and could not find them. Only people who spoke in it.
+    # Each speaker's Discord display name when DMbot kept it (#2337: at the session, or for an older
+    # session when it was filled in); "" when they were not in the server. Only people with lines.
     speaker_names: Mapping[int, str] = field(default_factory=dict)
 
 

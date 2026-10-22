@@ -9728,11 +9728,12 @@ NAME_ACTIONS = (
 )
 
 TRANSCRIPT_SPEAKER_NAMES = """
-    -- Each speaker's Discord display name as it was at the session (#2337), so the website's
-    -- transcripts can show names instead of "Speaker 1". A JSON object of Discord user id (text)
-    -- to the name; "" means DMbot looked and could not find them (they left the server), so it
-    -- does not look again. Kept on the session row: isolated with it, deleted with it and with the
-    -- campaign. Added with an empty default, so no existing row changes.
+    -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
+    -- session when the start-up fill-in found them. The website's transcripts show these instead
+    -- of "Speaker 1". A JSON object of Discord user id (text) to the name; "" means they were not
+    -- in the server (not found), so DMbot does not look again. Kept on the session row: isolated
+    -- with it, deleted with it and with the campaign. Added with an empty default, so no existing
+    -- row changes.
     ALTER TABLE transcript_sessions ADD COLUMN speaker_names JSONB NOT NULL DEFAULT '{}';
 
     -- dmbot_web_transcript_speakers: the session's stored names and which of its speakers are DMs

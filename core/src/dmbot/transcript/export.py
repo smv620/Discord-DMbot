@@ -77,7 +77,7 @@ def clean_name(raw: str | None) -> str:
     return name.strip()[:NAME_MAX] or UNKNOWN_SPEAKER
 
 
-_CALLS_THEMSELVES_DM = re.compile(r",\s*DM\s*$", re.IGNORECASE)
+_CALLS_THEMSELVES_DM = re.compile(r",\s*DM\b", re.IGNORECASE)
 _TWIN = re.compile(r"(.*\S) \((\d{1,3})\)(, DM)?")
 
 

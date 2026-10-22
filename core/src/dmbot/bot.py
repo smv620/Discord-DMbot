@@ -452,9 +452,9 @@ from dmbot.ui.transcripts import (
     download_view,
     ended_no_download_text,
     ended_text,
+    lookup_members,
     transcript_command,
 )
-from dmbot.ui.transcripts import display_names as member_names
 from dmbot.web import accounts
 
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
@@ -11393,25 +11393,31 @@ class DMBot(commands.AutoShardedBot):
             fresh -= table.named_speakers
             if fresh:
                 try:
-                    if await self._keep_speaker_names(gid, session_id, fresh):
-                        table.named_speakers |= fresh
+                    table.named_speakers |= await self._keep_speaker_names(gid, session_id, fresh)
                 except Exception:  # the names are a nicety: never hold up the lines
                     log.exception("Couldn't keep the speakers' names")
 
-    async def _keep_speaker_names(self, gid: int, session_id: str, user_ids: set[int]) -> bool:
+    async def _keep_speaker_names(self, gid: int, session_id: str, user_ids: set[int]) -> set[int]:
         """Keep these people's display names, as they are now, with the session's transcript so the
-        website can show them (#2337); a person who can't be found is kept as not found. False when
-        the server isn't available to ask (nothing is kept, so it is tried again). Counts in the
-        log, never names."""
+        website can show them (#2337). Returns the people settled: found, or not in the server
+        (kept as not found). Anyone Discord could not answer for just now, and everyone when the
+        server isn't there to ask, is left out, so they are tried again. Counts in the log, never
+        names."""
         assert self.transcripts is not None
         guild = self.get_guild(gid)
         if guild is None:
-            return False
-        ids = sorted(user_ids)[:MAX_SPEAKER_NAMES]
-        found = await member_names(guild, tuple(ids))
-        await self.transcripts.record_names(gid, session_id, {u: found.get(u) for u in ids})
-        log.info("Kept %d speaker name(s), %d not found", len(ids), len(ids) - len(found))
-        return True
+            return set()
+        settled: set[int] = set()
+        wanted = sorted(user_ids)
+        for start in range(0, len(wanted), MAX_SPEAKER_NAMES):
+            ids = tuple(wanted[start : start + MAX_SPEAKER_NAMES])
+            found, gone = await lookup_members(guild, ids)
+            names: dict[int, str | None] = {u: n for u, n in found.items()}
+            names.update({u: None for u in gone})
+            await self.transcripts.record_names(gid, session_id, names)
+            settled |= set(names)
+        log.info("Kept %d speaker name(s) of %d asked", len(settled), len(wanted))
+        return settled
 
     async def _name_old_speakers(self) -> None:
         """Once at start-up: keep the names of speakers in sessions saved before names were kept,

@@ -66,6 +66,13 @@ class Render(unittest.TestCase):
         self.assertIn("(Dee, DM): Roll for it.", text)
         self.assertIn("(Dee, DM) [DM Sidebar", text)
 
+    def test_a_name_with_dm_in_it_never_looks_like_the_mark_even_when_told_apart(self) -> None:
+        names = export.distinct_names({MIA: "Eve, DM", DEE: "Eve, DM"})  # two players, one name
+        text = export.render(
+            "X", session(), [line(5, MIA, "a"), line(6, DEE, "b")], names, version=export.AS_HEARD
+        )
+        self.assertNotIn(", DM", text.split("\n\n", 1)[1])
+
     def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
         names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})
         self.assertEqual(names, {MIA: "Sam", DEE: "sam (2)", 3: "Sam (3)", 4: "Ann"})
