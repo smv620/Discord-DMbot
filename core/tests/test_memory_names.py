@@ -1817,21 +1817,58 @@ class Lists(NamesTest):
 
         self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
-        text = "Ulfgar | NPC\nBryn Shander | place | Bryn | x | notes about the town"
+        text = "Ulfgar | NPC\nBryn Shander is a town in the far north, ruled by nine speakers."
         it = self.it()
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
         self.assertIn("Added 1 name", it.followup.send.call_args_list[0].args[0])
         self.assertIn("Ulfgar", await self.names())
-        offer = it.followup.send.call_args_list[-1]
-        self.assertIsInstance(offer.kwargs["view"], name_background.BackgroundOffer)
-        self.assertEqual(
-            offer.kwargs["view"].upload.text,
-            "Bryn Shander | place | Bryn | x | notes about the town",
-        )
+        offer = it.followup.send.call_args_list[-1].kwargs["view"]
+        self.assertIsInstance(offer, name_background.BackgroundOffer)
+        self.assertEqual(offer.upload.text, text.splitlines()[1])
         self.bot.background_ai = None  # no AI: what fits is added, and the prose is said to wait
         it = self.it()
         await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "your list"))
         self.assertIn("can't read documents or links here", it.followup.send.call_args.args[0])
+
+    async def test_hard_wrapped_prose_is_never_added_as_names(self) -> None:
+        from dmbot.ui import name_background, name_lists
+
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        before = await self.names()
+        text = "Bob runs the Rusty Nail.\nHe hates orcs.\nThe Nail stands in Vale Keep."
+        it = self.it()
+        await name_lists.take_list(it, self.campaign.id, name_lists.Upload(text, "notes"))
+        self.assertEqual(await self.names(), before)  # no junk names from short lines
+        offer = it.response.sent[0][1]["view"]
+        self.assertIsInstance(offer, name_background.BackgroundOffer)
+        self.assertEqual(offer.upload.text, text)  # all of it, in order
+
+    async def test_a_line_the_list_refuses_on_purpose_is_explained_not_sent_to_the_ai(self) -> None:
+        from dmbot.ui import name_lists
+
+        fake: Any = SimpleNamespace(complete=AsyncMock())
+        self.bot.background_ai = fake
+        self.fresh()
+        it = self.it(MANAGER)
+        await name_lists.take_list(
+            it, self.campaign.id, name_lists.Upload("Fireball | spell\nKesh | NPC", "x")
+        )
+        summary = it.followup.send.call_args.args[0]
+        self.assertIn("Added 1 name", summary)
+        self.assertIn("1 line wasn't added", summary)
+        self.assertEqual(it.followup.send.call_count, 1)  # no offer, no cost
+        fake.complete.assert_not_called()
+
+    async def test_a_link_is_not_fetched_for_someone_who_is_not_a_dm(self) -> None:
+        from dmbot.ui import name_lists
+
+        self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
+        self.fresh()
+        it = self.it(MANAGER)
+        with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
+            await name_lists.take_link(it, self.campaign.id, "https://example.com/lore")
+        fetched.assert_not_called()
 
     async def test_an_empty_list_or_a_managers_secret_line_never_goes_to_the_ai(self) -> None:
         from dmbot.ui import name_lists
