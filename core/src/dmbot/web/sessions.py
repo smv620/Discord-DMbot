@@ -88,7 +88,10 @@ async def sign_in(
                 "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
                 " VALUES (%s, %s, %s, %s, %s)"
                 " ON CONFLICT (user_id) DO UPDATE"
-                " SET email = EXCLUDED.email, last_sign_in_at = EXCLUDED.last_sign_in_at,"
+                # An address the person chose on the account page outlives Discord sign-ins (#2349).
+                " SET email = CASE WHEN web_users.email_chosen_at IS NULL"
+                " THEN EXCLUDED.email ELSE web_users.email END,"
+                " last_sign_in_at = EXCLUDED.last_sign_in_at,"
                 " display_name = EXCLUDED.display_name",
                 (user.id, user.email, now, now, user.name),
             )

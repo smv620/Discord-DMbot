@@ -125,6 +125,11 @@ async def confirm(
             "SELECT email FROM web_users WHERE user_id = %s FOR UPDATE", (user_id,)
         )
         old = (await before.fetchone() or {}).get("email")
-        await conn.execute("UPDATE web_users SET email = %s WHERE user_id = %s", (new, user_id))
+        await conn.execute(
+            "UPDATE web_users SET email = %s, email_chosen_at = %s WHERE user_id = %s",
+            (new, now, user_id),
+        )
         await conn.execute("DELETE FROM email_changes WHERE user_id = %s", (user_id,))
+        # A sign-in link already mailed to the old address must not work after the change.
+        await conn.execute("DELETE FROM email_sign_in_links WHERE user_id = %s", (user_id,))
     return old, new

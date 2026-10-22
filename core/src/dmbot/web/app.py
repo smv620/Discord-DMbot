@@ -622,7 +622,7 @@ def create_app(
         new, token = made
         if not await mail_change_link(session.user_id, new, token):
             await email_change.cancel(db, session.user_id)
-            raise HTTPException(status_code=502, detail="mail_failed")
+            raise HTTPException(status_code=502, detail="email_failed")
         log.info("An email change was asked for by user %s", session.user_id)
         return {"pending": new}
 
@@ -647,8 +647,9 @@ def create_app(
                 to=old,
                 subject="Your DMbot email was changed",
                 body=(
-                    f"Your DMbot email was changed to {new}. If this wasn't you, sign in and "
-                    f"sign out everywhere on your account page, then change it back: {account_page}"
+                    f"Your DMbot email was changed to {new}. If this wasn't you, sign in with "
+                    f"Discord and sign out everywhere on your account page, then change it back: "
+                    f"{account_page}"
                 ),
             )
         log.info("An email change was confirmed by user %s", session.user_id)

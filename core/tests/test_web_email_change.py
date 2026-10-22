@@ -4,14 +4,16 @@ uses is refused; the old address is told. As the website's own database role."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
 import httpx
+import psycopg
 
 from dmbot.db import Database
 from dmbot.mail import Mailer
-from dmbot.web import email_signin, sessions
+from dmbot.web import email_change, email_signin, sessions
 from dmbot.web.app import create_app
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
@@ -82,6 +84,10 @@ class Changing(DatabaseTest):
         )
         client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
         return client
+
+    async def exist(self, *users: Any) -> None:
+        for user in users:
+            await sessions.sign_in(self.web, user, [THURSDAY], now=self.now, days=30)
 
     async def email_of(self, user: Any) -> str | None:
         async with self.db.user(user.id) as conn:
@@ -192,5 +198,94 @@ class Changing(DatabaseTest):
         self.transport.fail = True
         async with await self.person(ALICE) as client:
             got = await client.put("/me/email", json={"address": NEW})
-            self.assertEqual((got.status_code, got.json()["error"]), (502, "mail_failed"))
+            self.assertEqual((got.status_code, got.json()["error"]), (502, "email_failed"))
+            self.assertIsNone((await client.get("/me/email")).json()["pending"])
+
+    async def test_a_discord_sign_in_keeps_the_address_the_person_chose(self) -> None:
+        async with await self.person(ALICE) as client:
+            await client.put("/me/email", json={"address": NEW})
+            await client.post(
+                "/me/email/confirm", json={"token": confirm_token(self.transport.sent[0][1])}
+            )
+        await sessions.sign_in(self.web, ALICE, [THURSDAY], now=self.now + 60, days=30)
+        self.assertEqual(await self.email_of(ALICE), NEW)  # Discord's address is not put back
+        await sessions.sign_in(self.web, BOB, [THURSDAY], now=self.now + 60, days=30)
+        self.assertEqual(await self.email_of(BOB), email_of(BOB))  # unchosen: Discord's, as before
+
+    async def test_two_accounts_cannot_confirm_the_same_address_at_once(self) -> None:
+        await self.exist(ALICE, BOB)
+        asked = await email_change.ask(self.web, BOB.id, NEW, now=self.now)
+        assert isinstance(asked, tuple)
+        # Alice is half way through taking the address (checked, not yet written) when Bob's
+        # confirm starts: Bob must wait for her and then find it taken.
+        async with self.web.user(ALICE.id) as conn:
+            free = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (NEW,))
+            self.assertIs((await free.fetchone())["t"], False)
+            bobs = asyncio.create_task(
+                email_change.confirm(self.web, BOB.id, asked[1], now=self.now)
+            )
+            await asyncio.sleep(0.5)
+            await conn.execute(
+                "UPDATE web_users SET email = %s, email_chosen_at = %s WHERE user_id = %s",
+                (NEW, self.now, ALICE.id),
+            )
+        self.assertEqual(await bobs, "in_use")
+        self.assertEqual(await self.email_of(BOB), email_of(BOB))
+
+    async def test_an_account_sees_and_changes_nothing_of_anothers_waiting_change(self) -> None:
+        await self.exist(ALICE, BOB)
+        await email_change.ask(self.web, BOB.id, NEW, now=self.now)
+        async with self.web.user(ALICE.id) as conn:
+            seen = await conn.execute("SELECT 1 FROM email_changes WHERE user_id = %s", (BOB.id,))
+            self.assertEqual(await seen.fetchall(), [])
+            moved = await conn.execute(
+                "UPDATE email_changes SET new_email = 'x@example.org' WHERE user_id = %s",
+                (BOB.id,),
+            )
+            self.assertEqual(moved.rowcount, 0)
+            gone = await conn.execute("DELETE FROM email_changes WHERE user_id = %s", (BOB.id,))
+            self.assertEqual(gone.rowcount, 0)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id) as conn:
+                await conn.execute(
+                    "INSERT INTO email_changes (user_id, new_email, token_hash, created_at,"
+                    " expires_at) VALUES (%s, 'y@example.org', 'h', 1, 2)",
+                    (BOB.id,),
+                )
+        self.assertEqual((await email_change.read(self.web, BOB.id, now=self.now)).pending, NEW)
+
+    async def test_the_taken_check_needs_a_signed_in_person_and_ignores_their_own_address(
+        self,
+    ) -> None:
+        await self.exist(ALICE, BOB)
+        async with self.web.anonymous() as conn:
+            cur = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
+            self.assertIsNone((await cur.fetchone())["t"])
+        async with self.web.user(ALICE.id) as conn:
+            mine = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(ALICE),))
+            self.assertIs((await mine.fetchone())["t"], False)
+            theirs = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
+            self.assertIs((await theirs.fetchone())["t"], True)
+
+    async def test_confirming_ends_the_sign_in_links_already_sent(self) -> None:
+        await self.exist(ALICE, BOB)
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO email_sign_in_links (token_hash, user_id, created_at, expires_at)"
+                " VALUES ('old-link', %s, %s, %s)",
+                (ALICE.id, self.now, self.now + 900),
+            )
+        asked = await email_change.ask(self.web, ALICE.id, NEW, now=self.now)
+        assert isinstance(asked, tuple)
+        await email_change.confirm(self.web, ALICE.id, asked[1], now=self.now)
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM email_sign_in_links WHERE user_id = %s", (ALICE.id,)
+            )
+            self.assertEqual((await cur.fetchone())["n"], 0)
+
+    async def test_a_waiting_change_is_gone_from_the_page_after_15_minutes(self) -> None:
+        async with await self.person(ALICE) as client:
+            await client.put("/me/email", json={"address": NEW})
+            self.now += email_signin.LINK_SECONDS + 1
             self.assertIsNone((await client.get("/me/email")).json()["pending"])

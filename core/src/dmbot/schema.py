@@ -3040,6 +3040,9 @@ EMAIL_CHANGES = """
         created_at  BIGINT NOT NULL,
         expires_at  BIGINT NOT NULL
     );
+    -- When the person chose their address on the account page: a Discord sign-in keeps it from
+    -- then on instead of putting Discord's address back (no existing row changes).
+    ALTER TABLE web_users ADD COLUMN email_chosen_at BIGINT;
     ALTER TABLE email_changes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE email_changes FORCE ROW LEVEL SECURITY;
     CREATE POLICY user_isolation ON email_changes
@@ -3061,6 +3064,10 @@ EMAIL_CHANGES = """
         IF me IS NULL OR addr IS NULL OR addr = '' THEN
             RETURN NULL;
         END IF;
+        -- Two accounts confirming the same address at once would both pass the check below: one
+        -- lock per address, held until the caller's transaction ends, makes the second one wait
+        -- and then see the first one's row.
+        PERFORM pg_advisory_xact_lock(hashtextextended(lower(addr), 2349));
         PERFORM set_config('dmbot.email_lookup', 'on', true);
         SELECT EXISTS (
             SELECT 1 FROM web_users
