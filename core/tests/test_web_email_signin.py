@@ -233,7 +233,12 @@ class EmailSignIn(DatabaseTest):
 
     async def test_an_address_two_accounts_share_gets_no_link(self) -> None:
         await self.account(ALICE)
-        await self.account(DiscordUser(id=3003, name="Twin", email=email_of(ALICE)))
+        await self.account(DiscordUser(id=3003, name="Twin", email="twin@example.com"))
+        # (a Discord sign-in no longer brings in a taken address, #2366; this is an old shared one)
+        async with self.db.user(3003) as conn:
+            await conn.execute(
+                "UPDATE web_users SET email = %s WHERE user_id = 3003", (email_of(ALICE),)
+            )
         async with self.browser() as client:
             answer = await self.ask(client, email_of(ALICE))
         self.assertEqual(answer.json(), SAME_ANSWER)
