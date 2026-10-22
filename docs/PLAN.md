@@ -1849,6 +1849,36 @@ names panel nor the speech-to-text hints can be a fixed list.
   it when it ends (posted, put back as a draft, dropped), so every writer of the status is covered; the bot
   moves it to `post` once its checks pass; the audio worker runs the `audio` step only when no post is under
   way. The web API's recap answer carries `postingSince`, `postingStep`, `postedUrl` and `serverNow`.
+- **Where everything is on the website** (owner, 2026-10-22, the account and campaign pages reorganised; it
+  builds on "A page for each campaign" below). One rule: **everything about one campaign lives on that
+  campaign's page; everything about you, or shared across campaigns, lives on My Account.** Every page shows
+  where it is (a breadcrumb: My Account › <Campaign> › Story graph) and the same campaign tabs, so nobody is
+  lost.
+  - **My Account** (`/account`), top to bottom:
+    1. **My campaigns:** one card per campaign. The **campaign's name is the link** to its page, and the card
+       shows its facts at a glance: 🟢 when DMbot is listening there right now; your part (You run it, You help
+       run it, You play in it); sessions; hours played; players; NPCs; started; last played. The DM tools are
+       not on the card; they are on the campaign's page.
+    2. **My characters.**
+    3. **Shared rules:** the one place for house-rules sets and homebrew packs you publish or follow, at
+       `/account/sharing`.
+    4. **My plan and billing.**
+    5. **My account:** email, DMbot ID, servers, sign-in.
+
+    The account-wide House rules, Homebrew and Transcripts cards go: each lives on its campaign's page.
+  - **The campaign's page** (`/account/campaigns/<server>.<campaign>`), the campaign's home. The heading has
+    the name, 🟢, your part and the facts. Below it are four groups, in this order, and the same four are the
+    tabs on every page of the campaign:
+    1. **Story:** Recaps · Story timeline · Story graph · Names and NPCs.
+    2. **At the table:** Transcripts · Import a past session.
+    3. **Rules:** House rules · Homebrew. Each of those pages links to **Shared rules** for sharing them.
+    4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
+       transcript retention · game masters · hand over · pause · delete. These are the same choices as
+       ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+  - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
+    (linked) and what was revealed at the table that session. It's built after the other pages.
+  - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
+    the account page.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
