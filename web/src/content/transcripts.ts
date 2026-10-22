@@ -62,7 +62,7 @@ export const text = {
   tooBig: "This transcript is too big to show here. Ask whoever runs DMbot for help.",
   noLines: "Nothing was said in this version.",
   names:
-    "On the website, people are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session. Discord's download has their names.",
+    "DMbot could not find the names of some people, so they are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session.",
   notFound: "We can't find that transcript. Pick it from the list.",
   notInPlan: "Transcripts aren't available for this campaign. Ask the campaign's owner to take a look.",
   failed: "That didn't load. Try again in a moment.",

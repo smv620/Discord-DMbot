@@ -15,7 +15,7 @@ import io
 import logging
 import re
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -113,25 +113,39 @@ def still_recording_text(is_dm: bool, so_far: str) -> str:
     )
 
 
-async def display_names(guild: discord.Guild | None, user_ids: tuple[int, ...]) -> dict[int, str]:
-    """Display names now, for a download. DMbot doesn't store names; people it can't
-    find show as 'Someone'. Lookups run a few at a time."""
+async def lookup_members(
+    guild: discord.Guild | None, user_ids: tuple[int, ...]
+) -> tuple[dict[int, str], set[int]]:
+    """(display names now, the people who are not in the server). Anyone else DMbot could not
+    reach (Discord busy or down) is in neither, so a caller can ask again later (#2337). Lookups
+    run a few at a time."""
     if guild is None:
-        return {}
+        return {}, set()
     limit = asyncio.Semaphore(NAME_LOOKUPS_AT_ONCE)
 
-    async def one(user_id: int) -> tuple[int, str | None]:
+    async def one(user_id: int) -> tuple[int, str | None, bool]:
         member = guild.get_member(user_id)
         if member is None:
             async with limit:
                 try:
                     member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    return user_id, None, True
                 except discord.HTTPException:
-                    return user_id, None
-        return user_id, member.display_name
+                    return user_id, None, False
+        return user_id, member.display_name, False
 
     found = await asyncio.gather(*(one(u) for u in user_ids[:MAX_NAME_LOOKUPS]))
-    return {user_id: name for user_id, name in found if name is not None}
+    return (
+        {user_id: name for user_id, name, _gone in found if name is not None},
+        {user_id for user_id, _name, gone in found if gone},
+    )
+
+
+async def display_names(guild: discord.Guild | None, user_ids: tuple[int, ...]) -> dict[int, str]:
+    """Display names now, for a download. People it can't find fall back to the name kept with
+    the session, else 'Someone'."""
+    return (await lookup_members(guild, user_ids))[0]
 
 
 async def player_characters(
@@ -190,7 +204,10 @@ async def make_file(
         if table is not None:
             await bot.save_transcript(table)
     lines = await store.lines(guild_id, session.id)
-    names = await display_names(guild, tuple(sorted({line.user_id for line in lines})))
+    spoke = sorted({line.user_id for line in lines})
+    live = await display_names(guild, tuple(spoke))
+    # A person DMbot can no longer find (they left the server) keeps the name kept at the session.
+    called = {u: live.get(u) or session.speaker_names.get(u) or "" for u in spoke}
     running_table = bot.tables.get(guild_id)
     dms = set(campaign.dm_user_ids)
     if running_table is not None and running_table.campaign_id == campaign.id:
@@ -200,8 +217,11 @@ async def make_file(
     total = 0
     for version in versions:
         # Off the event loop: a long session's file takes a fifth of a second to build.
+        # (labels in the order people first speak in THIS version, as on the website: one person,
+        # one label, and a "(2)" never counts someone this version leaves out)
+        names = export.distinct_names({u: called[u] for u in export.speaker_order(lines, version)})
         data = await asyncio.to_thread(
-            _build, campaign.name, session, lines, names, playing, running, version
+            _build, campaign.name, session, lines, names, playing, running, version, dms
         )
         total += len(data)
         if total > FILE_LIMIT:  # one message: both files together
@@ -215,10 +235,11 @@ def _build(
     campaign_name: str,
     session: TranscriptSession,
     lines: list[Line],
-    names: dict[int, str],
+    names: Mapping[int, str],
     playing: dict[int, str],
     running: bool,
     version: str,
+    dms: Collection[int] = (),
 ) -> bytes:
     text = export.render(
         campaign_name,
@@ -226,6 +247,7 @@ def _build(
         lines,
         names,
         characters=playing,
+        dms=dms,
         running=running,
         version=version,
     )

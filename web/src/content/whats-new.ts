@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Transcripts show real names",
+    what: "On the website, a transcript now shows each person's Discord name and marks the game master as DM, instead of Speaker 1 and Speaker 2. Older sessions are filled in where DMbot can still find the person.",
+    reason: "In review (#2337); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Open any NPC and keep your own notes on them",
     what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
     reason: "In review (#2266); held until dev1 deploys it.",
@@ -756,6 +762,12 @@ export const held: Held[] = [
     title: "Connections on a name's card, one to a line",
     what: "A name's card now lists its connections one to a line, like \"is a member of Frostwolf tribe\". Only a secret one has the 🤫 icon. A new ✏️ Edit a connection… menu lets a game master change the words of a connection, hide it from players or show it, or take it back (with Undo). A long list ends with \"and 12 more\" and a link to the website.",
     reason: "Held until dev1 deploys it and has seen it on the test server (#2323).",
+  },
+  {
+    date: "2026-10-22",
+    title: "Change the email DMbot uses",
+    what: "On your account page, see the email DMbot uses for recap emails and change it. DMbot sends a link to the new address and changes nothing until you open it. If it is the email on your payment account, you change it in Stripe instead.",
+    reason: "Waits for the email routes (#2349) to be merged and deployed. When they are live, move this up.",
   },
 ];
 

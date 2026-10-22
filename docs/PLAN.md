@@ -1379,6 +1379,13 @@ so the docs always show names the way Discord does. For the campaign
     that NPC's page on the website. It is a plain link button, so no click is handled by the bot,
     nothing breaks after a restart, and the message text is unchanged. The link carries the entry's
     reference in its address, not in the text.
+  - **The name is the button** (owner, 2026-10-22, replacing 📖 Open, which looked sloppy repeated down the
+    list): each NPC's message is the button itself, labelled with the kind's icon, the name and the kind
+    ("👤 Belleros · NPC" style; at most 80 characters, cut with "…"). Its other lines ("Also called: …") sit
+    beside it, as text with the button on the same line, using Discord's newer message layout (a section
+    with a button). With no other lines the message is just the button. With no website address the message
+    stays as it was, the name in bold and no button. Existing messages are replaced once, because a message
+    can't switch to the newer layout by an edit.
   - **Who sees the page:** anyone in the campaign's Discord server, signed in on the website with
     Discord, the same people who may read the transcripts. Someone not in that server gets "This
     page is for the people in that Discord server."
@@ -1756,10 +1763,12 @@ names panel nor the speech-to-text hints can be a fixed list.
   • is a member of The Thieves' Guild
   ```
   Each connection is its own line. Only a secret one carries 🤫; a known one has no icon. Discord can't put a
-  button on a line of text, so the card gets one **✏️ Edit a connection…** dropdown listing each connection
+  button on a line of text, so there is one **✏️ Edit a connection…** dropdown listing each connection
   in the same order and words (🤫 on secret ones). Choosing one opens that connection's choices: change the
   words, mark secret or known, or remove it (one confirmation). Each is the same action and Undo as today.
   More than 25 connections: the dropdown's last choice is "🌐 All connections on the website…".
+  **Where it is** (Supervisor, 2026-10-22, #2414): in the card's 🧭 Connect to… screen, not on the card itself,
+  because the card's five rows are full (three rows of five buttons, a thread's buttons, and Show all ▾).
 - **The relationship web on the website** (owner, 2026-10-21): a graph of names (nodes) and connections
   (edges) at `/account/web/<server>.<campaign>`.
   - **Centre and distance:** pick the centre from a searchable list of every name; the graph shows
@@ -1786,12 +1795,16 @@ names panel nor the speech-to-text hints can be a fixed list.
       revealed (no change for players today).
     - **When it changes, by itself:** an unrevealed name becomes revealed when its name or one of its other
       names is said or typed (the whole-name matcher that guards secrets). An unrevealed connection becomes
-      revealed when both its names are revealed and the after-session connection check hears it stated. The
-      DM sees "Revealed at the table: Vex (Session 4)" in the after-session report, with ↩️ Undo. The
-      DM can also press **👁️ Reveal to players** on a card or in the graph.
-    - **🤫 Secret is stronger:** a name or connection the DM kept as secret (🤫 Keep as secret, or 🤫 on a
-      card) is never revealed by itself. Saying it out loud still asks the DM, as under "When a secret is
-      revealed". "Revealed" decides only what players see; every listener still uses unrevealed names.
+      revealed when both its names are revealed and the session states it. The DM can also press **👁️ Reveal
+      to players** on a card or in the graph.
+    - **🤫 Secrets said out loud are revealed too, and the DM can recant** (owner, 2026-10-22, replacing "🤫 is
+      stronger"): after the session, the **knowledge map review** lists "Secrets exposed" with **↩️ Recant**
+      for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is
+      never a reveal: it becomes a theory, drawn as uncertain. Red herrings and lies are beliefs the truth
+      disagrees with. See docs/STORY_MEMORY.md section 9, "Assertions, perspectives and evidence".
+    - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
+      Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
+      every name.
     - **The same rule everywhere for players:** the graph, the NPC pages and the All names list show players
       revealed names and connections only. Code decides it, never the AI, and nothing unrevealed is sent to
       a player's browser.
@@ -1810,6 +1823,37 @@ names panel nor the speech-to-text hints can be a fixed list.
         👀 Players can peek."
       - The API re-checks the visibility and the person on every call; the switch alone never unlocks
         anything.
+- **Merging names, the easy way** (owner, 2026-10-22, after the NPC list showed one creature under four
+  spellings). Today a merge is one pair at a time (🔗 Same as… on a card, typing the other name). Three
+  easier ways, all the same merge underneath, so the kept name collects the others as "Also called", their
+  connections, notes and mentions move to it, and **one ↩️ Undo** reverses the whole merge:
+  1. **🔗 Look-alikes:** DMbot groups names that look or sound alike (spelling, sound, a shared word, "the"
+     dropped), in code, never by AI. The names overview gets **🔗 Look-alikes (N)**, and the after-session
+     knowledge map review lists new ones. Each group is one message: "These may be one name:" and a menu with
+     every name in the group already ticked, so the DM unticks any that are different. Then **Keep which
+     name? ▾** (the most-used one first), then **🔗 Merge** with one confirmation. **Not the same** stops that
+     group from being offered again. DMbot never merges by itself (two confirmed names are never merged
+     automatically).
+  2. **🔗 Merge several…** on a name card: a menu of up to 25 names (search first if there are more) to fold
+     into this one, in one go.
+  3. **On the website's All names page:** tick names, then **Merge selected**, pick the name to keep, and
+     confirm.
+
+  A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
+  a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+- **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
+  is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
+  to that one campaign:
+  - its recaps (the recap list, showing only this campaign's);
+  - its house rules and its homebrew;
+  - its story map (the relationship web);
+  - its names and NPC pages;
+  - its transcripts and importing a past session.
+
+  Each link opens that page already on this campaign. Every campaign keeps its own house rules, homebrew and
+  story map, as the isolation rule says. A **← My Campaigns** link goes back to `/account#campaigns`.
+  Players see only the links they may use (transcripts, NPC pages, the story map's players' view); the DM's
+  own tools show only to the campaign's DMs. The API decides, not the page.
 - **`/dmbot names` becomes an overview and a search, not a list.** Discord allows 2,000
   characters per message, 25 choices per menu and 5 fields per form, so:
   - **Overview, about 15 lines:** "🧠 **412 names**: 212 NPCs, 87 places, 41 groups, 72
@@ -4217,6 +4261,29 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     aren't kept after the import, only the stored sessions.
   - **Order:** the importer and its storage with the consent mapping (core and API), then the
     website page, then building the campaign and the optional recaps.
+- **Three plain ways to approve a recap** (owner, 2026-10-22, replacing "Post to the table" and "Don't post",
+  which read as unclear). On the recap page, and the same words on Discord:
+  - **✅ Approve and post text only:** DMbot posts the text to the table, after its last check, as Post did.
+  - **🎙️ Approve and make audio to review:** asks which (voice-over, background music, or both; only what the
+    plan includes), makes it, and shows it on the page to play. Nothing is posted until the DM presses
+    **Post to the table** or **Keep it, don't post** there. Where audio isn't available (the plan, the
+    month's allowance, or narration not set up on the server), the button shows greyed out with the reason.
+  - **📋 Approve but don't post:** the recap is approved and kept, and nothing goes to the table. The page
+    then offers **Copy the text**, the share link and the download, so the DM can share it their own way.
+    It can still be posted later.
+  - **Try again** stays. "Don't post" (setting a recap aside unread) is gone; a recap the DM doesn't approve
+    simply stays a draft.
+  - **While it goes out, the page shows it working** (owner, 2026-10-22): after any button that posts or makes
+    audio, the page shows "Getting it ready for Discord…" (or "Making the audio…") with a running clock (0:42)
+    and the step it's on (the last check, then posting). It updates by itself until it ends: "Posted to your
+    table" with a link to the message in Discord, or what went wrong and what to do next. Leaving and coming
+    back shows the same clock, counted from when it started.
+- **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
+  page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
+  number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21
+  October 2026 · 2 h 35 min". The session number is the one DMbot uses everywhere else (the transcripts'
+  "Session N"). The length runs from when DMbot started listening to when it stopped; an imported session
+  uses its transcript's length. The day is shown in the reader's own time zone.
 - **The recap page: three ways to fix a recap, and the names to check** (owner, 2026-10-20, after
   liking recap run 12's review page; details Supervisor's). The website's recap page (My Account →
   recaps) is where the DM reviews a recap before any voice-over or music. **Discord opens it** (owner,
