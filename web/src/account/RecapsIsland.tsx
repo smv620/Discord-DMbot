@@ -29,7 +29,7 @@ export default function RecapsIsland() {
   return (
     <>
       <SignedInLine api={api} />
-      <Recaps api={api} path={window.location.pathname} />
+      <Recaps api={api} path={window.location.pathname} search={window.location.search} />
     </>
   );
 }

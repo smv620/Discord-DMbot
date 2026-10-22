@@ -23,6 +23,7 @@ import {
   type ImportPreview,
   type ImportProgress,
 } from "./api";
+import BackToCampaign from "./BackToCampaign";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -654,6 +655,7 @@ export default function Import({
 
   return (
     <div class="stack">
+      {ref && <BackToCampaign campaignRef={ref} />}
       <p class="muted small">{words.lead}</p>
       {problem && (
         <p class="note bad" role="alert">
