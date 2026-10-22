@@ -354,8 +354,8 @@ class TheLifeOfANote(WithNpcs):
     async def merged_lengths(
         self, kept: int, merged: int
     ) -> tuple[list[Any], list[Any], list[Any]]:
-        """Carol's notes after a merge of two entries where she wrote `kept` and `merged` characters:
-        the kept entry's rows, the merged entry's rows, and her notes as the website lists them."""
+        """Carol's notes after a merge, having written `kept` and `merged` characters: the kept
+        entry's rows, the merged entry's rows, and her notes as the website lists them."""
         keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
         await self.listed(keep, gone)
         ref = f"{GUILD}.{self.one.id}"
