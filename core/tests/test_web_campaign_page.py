@@ -147,7 +147,7 @@ class TheCampaignRoute(Base):
         await self.sign_in(DAVE, [QUILLON])
         for ref in (self.ref, f"{THURSDAY.id}.nope", "garbage"):
             got = await self.client.get(f"/me/campaigns/{ref}")
-            self.assertEqual((got.status_code, got.json()), (404, {"detail": "not_found"}), ref)
+            self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}), ref)
 
     async def test_signed_out_gets_nothing(self) -> None:
         got = await self.client.get(f"/me/campaigns/{self.ref}")
