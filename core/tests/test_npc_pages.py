@@ -295,6 +295,110 @@ class TheLifeOfANote(WithNpcs):
         self.assertEqual(by_person["bob"], {keep.id: "bob on keep"})
         self.assertTrue(all(n["listed"] for n in await self.notes(self.carol)))
 
+    async def marks(self, entry_id: str, who: sessions.Session | None = None) -> list[Any]:
+        """(entry, person, orphaned_at) of every note, read as the database's owner."""
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT entry_id, user_id, orphaned_at FROM npc_notes WHERE entry_id = %s",
+                (entry_id,),
+            )
+            return [(r["entry_id"], r["user_id"], r["orphaned_at"]) for r in await cur.fetchall()]
+
+    async def test_a_note_already_marked_moves_and_unmarks_when_the_kept_entry_is_listed(
+        self,
+    ) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, gone.id, "from the merged one")
+        await self.listed(keep, now=NOW + 10)  # the merged entry fell off the list: marked
+        self.assertEqual([m[2] for m in await self.marks(gone.id)], [NOW + 10])
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        self.assertEqual(await self.marks(gone.id), [])
+        (moved,) = await self.marks(keep.id)
+        self.assertIsNone(moved[2])  # the kept entry is listed: the note is live again
+        self.assertEqual([n["body"] for n in await self.notes(self.carol)], ["from the merged one"])
+
+    async def test_a_marked_note_keeps_its_clock_when_the_kept_entry_is_not_listed(self) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        other = await self.npc("Someone Else")
+        await self.listed(gone, other)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, gone.id, "from the merged one")
+        await self.listed(other, now=NOW + 10)  # marked at NOW + 10
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        (moved,) = await self.marks(keep.id)
+        self.assertEqual(moved[2], NOW + 10)  # the merge did not restart its 30 days
+        day = 86400
+        self.assertEqual(await self.store_npc.sweep([GUILD], NOW + 10 + 30 * day), 1)
+
+    async def test_a_marked_note_joins_a_live_one_and_the_joined_note_is_live(self) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.alice, ref, keep.id, "alice on keep")
+        await web.save_note(self.web, self.alice, ref, gone.id, "alice on gone")
+        await self.listed(keep, now=NOW + 10)
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        (joined,) = await self.notes(self.alice)
+        self.assertEqual(
+            (joined["body"], joined["listed"]), ("alice on keep\n\nalice on gone", True)
+        )
+
+    async def test_two_marked_notes_that_join_keep_the_older_clock(self) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        other = await self.npc("Someone Else")
+        await self.listed(keep, gone, other)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, keep.id, "on keep")
+        await web.save_note(self.web, self.carol, ref, gone.id, "on gone")
+        await self.listed(gone, other, now=NOW + 5)  # the kept entry's note is marked at NOW + 5
+        await self.listed(other, now=NOW + 10)  # the merged entry's, later
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        (joined,) = await self.marks(keep.id)
+        self.assertEqual(joined[2], NOW + 5)  # neither restarted nor made later
+        self.assertEqual(await self.marks(gone.id), [])
+
+    async def test_over_the_limit_a_marked_note_stays_apart_and_its_clock_is_not_restarted(
+        self,
+    ) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.carol, ref, keep.id, "k" * 3000)
+        await web.save_note(self.web, self.carol, ref, gone.id, "g" * 3000)
+        await self.listed(keep, now=NOW + 10)  # the merged entry's note is marked at NOW + 10
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        (apart,) = await self.marks(gone.id)
+        self.assertEqual(apart[2], NOW + 10)  # not the time of the merge
+        (kept,) = await self.marks(keep.id)
+        self.assertIsNone(kept[2])
+
+    async def test_nobody_but_the_writer_sees_a_moved_note(self) -> None:
+        keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
+        await self.listed(keep, gone)
+        ref = f"{GUILD}.{self.one.id}"
+        await web.save_note(self.web, self.alice, ref, gone.id, "alice only")
+        await self.listed(keep, now=NOW + 10)
+        await self.memory.merge(
+            GUILD, self.one.id, keep.id, gone.id, source="dm", dm_said_same=True
+        )
+        self.assertEqual(await self.notes(self.carol), [])
+        self.assertEqual(await self.notes(self.bob), [])
+        page = await web.read_page(self.web, self.carol, ref, keep.id)
+        self.assertIsNone(page.get("myNote"))
+        self.assertNotIn("alice only", str(page))
+
     async def test_two_long_notes_are_not_cut_by_a_merge_the_second_is_kept_apart(self) -> None:
         keep, gone = await self.npc("Brother Aldric"), await self.npc("Aldric the Monk")
         await self.listed(keep, gone)

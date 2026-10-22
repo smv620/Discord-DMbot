@@ -1393,7 +1393,8 @@ so the docs always show names the way Discord does. For the campaign
       anyone in the server may download a backup.
     - Each person can download all of their own notes, and delete them (Delete my notes).
     - They go when the person deletes them, or when the campaign is deleted. When an NPC is merged
-      into another, its notes move to the one kept. When an NPC is rejected or deleted, the person's
+      into another, its notes move to the one kept, the ones already marked "no longer listed" too: they keep
+      their 30-day clock, and are unmarked only if the kept NPC is listed. When an NPC is rejected or deleted, the person's
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
