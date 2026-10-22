@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Open any NPC and keep your own notes on them",
+    what: "Every name in the NPC list gets a 📖 Open button. It opens that name's page on the website, with what the table knows and a box for your own notes. Only you can see your notes. Download or delete them any time.",
+    reason: "In review (#2266); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Bring your house rules in any file",
     what: "Upload your house rules as a PDF, Word, Excel, CSV or text file, or link a Google Doc, Google Sheet or web page, and DMbot reads them and shows what it found. It keeps only rules it can point to in your file. Nothing is saved until you press a button, and you can download what it found.",
     reason: "In review (#2377); held until dev1 deploys it and has read a real file.",

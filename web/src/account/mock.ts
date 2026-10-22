@@ -32,6 +32,8 @@ import type {
   WebLinkChange,
   WebNode,
   WebQuery,
+  MyNpcNote,
+  NpcPage,
 } from "./api";
 import { ApiError } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
@@ -463,6 +465,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
   const memory = startNames();
+  // My private notes on NPCs, by entry id (#2266). "old" is one on a name no longer listed.
+  const npcNotes = new Map<string, string>([["old", "He owed me a favour."]]);
   // One pretend web per campaign address, started on first use.
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
@@ -792,6 +796,59 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         state.links.splice(state.links.indexOf(link), 1);
       }
       return edgeOf(link.a, link.b);
+    },
+    // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
+    // one the person is not in; `.npc-dm` shows a DM's own note.
+    async npcPage(ref, entry): Promise<NpcPage> {
+      calls.push(`npcPage:${ref}:${entry}`);
+      await reachable();
+      signedIn();
+      if (/\.npc-outside$/.test(ref)) throw new ApiError("not-in-server");
+      if (entry === "gone") throw new ApiError("not-found");
+      const isDm = /\.npc-dm$/.test(ref);
+      return {
+        id: entry,
+        name: "Mira Voss",
+        kind: "npc",
+        isGroup: false,
+        alsoCalled: ["Voss", "the Ferrywoman"],
+        groups: ["The Brynwater Ferrymen"],
+        groupsMore: 0,
+        ties: ["Captain Harl Brask (works for)"],
+        tiesMore: 2,
+        recaps: [{ ref: `${ref}.1791000000`, title: "The night on the ferry", day: "12 Oct" }],
+        myNote: npcNotes.get(entry) ?? "",
+        isDm,
+        dmNote: isDm ? "Knows who burned the mill." : null,
+      };
+    },
+    async saveNpcNote(ref, entry, body): Promise<void> {
+      calls.push(`saveNpcNote:${ref}:${entry}:${body}`);
+      await reachable();
+      signedIn();
+      if (body.length > 5000) throw new ApiError("bad-text");
+      if (body === "") npcNotes.delete(entry);
+      else npcNotes.set(entry, body);
+    },
+    async myNpcNotes(ref): Promise<MyNpcNote[]> {
+      calls.push(`myNpcNotes:${ref}`);
+      await reachable();
+      signedIn();
+      return [...npcNotes].map(([id, body]) => ({
+        id,
+        name: id === "old" ? "Old Tam" : "Mira Voss",
+        body,
+        updatedAt: 1791000000,
+        listed: id !== "old",
+      }));
+    },
+    async deleteMyNpcNotes(ref): Promise<number> {
+      calls.push(`deleteMyNpcNotes:${ref}`);
+      await reachable();
+      signedIn();
+      const n = npcNotes.size;
+      npcNotes.clear();
+      return n;
     },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
       calls.push(`allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}`);
