@@ -65,6 +65,9 @@ class LookupData:
     # placeholder). Kept apart from `entities`, so no list, card or search ever shows a
     # person as a story name; only the Cleaner reads them.
     people: tuple[Alias, ...] = ()
+    # The DM's secret connections, kept apart from `relations` (which no one but a DM may see):
+    # only the name dropdown's "closest first" order reads them, and only for a DM (#2321).
+    secret_relations: tuple[Relation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +112,9 @@ class CampaignLookup:
     # fix the spelling of one; it never maps a word between a person and a character.
     people_by_key: dict[str, tuple[NameEntry, ...]] = field(default_factory=dict)
     people_by_sound: dict[str, tuple[NameEntry, ...]] = field(default_factory=dict)
+    # Who is joined to whom by a confirmed secret connection: a DM's view only (`for_viewer`
+    # drops it for anyone else), so an order built from it can never hint at a secret.
+    secret_neighbours: dict[str, frozenset[str]] = field(default_factory=dict)
 
     @classmethod
     def build(cls, data: LookupData) -> CampaignLookup:
@@ -165,6 +171,11 @@ class CampaignLookup:
                 if r.status == CONFIRMED and not r.secret:
                     confirmed_links[r.subject_id].add(r.object_id)
                     confirmed_links[r.object_id].add(r.subject_id)
+        hidden_links: dict[str, set[str]] = defaultdict(set)
+        for r in data.secret_relations:
+            if r.subject_id in entities and r.object_id in entities and r.status == CONFIRMED:
+                hidden_links[r.subject_id].add(r.object_id)
+                hidden_links[r.object_id].add(r.subject_id)
         links_by: dict[str, list[RuleLink]] = defaultdict(list)
         for link in data.links:
             if link.entity_id in entities:
@@ -186,6 +197,7 @@ class CampaignLookup:
             tuple(sorted({e.key for e in names if e.secret and not e.codes})),
             {k: tuple(v) for k, v in people_by_key.items()},
             {k: tuple(v) for k, v in people_by_sound.items()},
+            {k: frozenset(v) for k, v in hidden_links.items()},
         )
 
     @property
@@ -200,8 +212,10 @@ class CampaignLookup:
         """What a person who may not see secrets (a server manager who is not a DM) gets to
         read: the same names without the clues only some people know, in every list, search,
         card and file. The campaign's DMs, and the Cleaner, get the whole thing."""
+        if secrets:
+            return self
         gone = self.hidden
-        if secrets or not gone:
+        if not gone and not self.secret_neighbours:
             return self
 
         def keep(entries: tuple[NameEntry, ...]) -> tuple[NameEntry, ...]:
@@ -209,6 +223,7 @@ class CampaignLookup:
 
         return dataclasses.replace(
             self,
+            secret_neighbours={},  # a DM's view of secret connections: nobody else's
             entities={k: v for k, v in self.entities.items() if k not in gone},
             names=keep(self.names),
             by_key={k: v for k, v in ((k, keep(v)) for k, v in self.by_key.items()) if v},

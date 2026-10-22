@@ -1459,7 +1459,7 @@ Code changes: #87.
     stop, saying it stopped listening and why. The DM's message also says where to change it:
     ⚙️ Settings → Stop when quiet. A person whose private messages are closed is skipped; the DM screen
     line still says why it stopped.
-    *Built (2026-10-19, #2034):* `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132, 0 is Off); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
+    *Built (2026-10-19, #2034; auto-stop private messages #2288):* when DMbot stops by itself it also sends the campaign's DM a private message with the reason and where Settings is, and each other person still in the voice channel a short one (anyone there, opted in or not: it is a notice, not capture; a closed inbox is skipped and only counted in the log). `idle_stop.py` holds the pure rule; the DM's choice is `campaigns.quiet_stop_minutes` (migration 0132; since #2288 migration 0166 makes the choices 5, 10, 15 and 30 minutes, default 10, with no Off, and moves any campaign that was on Off, 60 or 90 to 30); the warning's **Keep listening** button and any speech or rejoining cancel it, and the stop is the same as the DM's own.
 - `/dmbot stop` posts the "Session ended" divider in the background, so it answers in
   time. Words still being written down when the session stops are lost (as before,
   #109); at shutdown, waiting lines are posted first.
@@ -4682,6 +4682,17 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
   address and per connection. No passwords, ever. *The account's email* is the one Stripe has
   for its payments (Checkout and the customer portal keep it up to date); an account that never
   paid has the email Discord gave the website, if it signed in there.
+- **Changing the email DMbot uses** (Supervisor, 2026-10-22, #2349: the recap page names the
+  address, so people need a way to fix it). The account page shows the address. A **payment
+  email** changes only in Stripe (the customer portal; `customer.updated` brings it back). Any
+  other email, or none, is changed on the account page: DMbot emails a link to the new address
+  and nothing changes until it is opened. The link is `/account#email-confirm=<token>` (in the
+  hash, so no server log holds it and a mail scanner opening it confirms nothing); the page
+  sends it back by POST, and it works only while signed in to **the same account** that asked.
+  One use, 15 minutes, like sign-in links; a new request replaces a waiting one, and a waiting
+  one can be cancelled. An address another account already uses is refused (sign-in by email
+  needs one address per account). Once changed, the **old** address gets a short note, so a
+  stolen session can't quietly move email sign-in. API shape: the comment on #2349.
 - **Moving to a new Discord account ("migrate").** Only for an **active paid subscription**
   (not Try It, a trial extension, a grant or the free list).
   1. Get a move code: `/dmbot migrate` in Discord (from the old account), or My Account on the

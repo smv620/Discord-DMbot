@@ -29,9 +29,7 @@ STALE = "That session has already ended. Start a new one when you're ready."
 
 
 def quiet_label(minutes: int) -> str:
-    return (
-        "Off" if minutes == 0 else f"{minutes} min"
-    )  # the button's label is 25 characters at most
+    return f"{minutes} min"  # the button's label is 25 characters at most
 
 
 def idle_warning_text(reason: str, quiet_minutes: int) -> str:
@@ -57,11 +55,6 @@ def stopped_text(reason: str, quiet_minutes: int) -> str:
 
 def line(minutes: int) -> str:
     """The settings card's line."""
-    if minutes == 0:
-        return (
-            f"• **Stop when quiet:** Off. I still stop after {EMPTY_S // 60} minutes with nobody "
-            "in the voice channel."
-        )
     return (
         f"• **Stop when quiet:** after {minutes} minutes of silence, or {EMPTY_S // 60} minutes "
         "with nobody in the voice channel. I warn you first, and you can tap **Keep listening**."
@@ -103,10 +96,42 @@ class KeepListeningButton(
         )
 
 
+def stopped_dm_text(campaign_name: str, reason: str, quiet_minutes: int, where: str) -> str:
+    """The private message to the campaign's DM when DMbot stopped by itself (#2288). `where` is
+    how to reach Settings today ("in <#channel>" or "with `/dmbot settings`")."""
+    return (
+        f"⏹ DMbot stopped listening in **{campaign_name}**: {_why_stopped(reason, quiet_minutes)}. "
+        f"The transcript is saved. To change how long I wait, go to ⚙️ Settings → **Stop when "
+        f"quiet** (under 👤 DMbot Main Menu, {where}). To start again, use `/dmbot start`."
+    )
+
+
+def stopped_player_text(campaign_name: str, reason: str, quiet_minutes: int) -> str:
+    """The private message to each person still in the voice channel (#2288)."""
+    return (
+        f"⏹ DMbot stopped listening in **{campaign_name}**: "
+        f"{_why_stopped(reason, quiet_minutes)}. Your DM can start it again."
+    )
+
+
+def _why_stopped(reason: str, quiet_minutes: int) -> str:
+    if reason == EMPTY:
+        return f"nobody was in the voice channel for {EMPTY_S // 60} minutes"
+    return f"nobody spoke for {quiet_minutes} minutes"
+
+
 def keep_view(campaign_id: str, session: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(KeepListeningButton(campaign_id, session))
     return view
 
 
-__all__ = ["KeepListeningButton", "idle_warning_text", "keep_view", "line", "stopped_text"]
+__all__ = [
+    "KeepListeningButton",
+    "idle_warning_text",
+    "keep_view",
+    "line",
+    "stopped_dm_text",
+    "stopped_player_text",
+    "stopped_text",
+]
