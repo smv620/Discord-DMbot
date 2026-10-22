@@ -854,7 +854,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           row.others = row.others.filter((o) => o !== change.other);
           break;
         case "hide":
-          row.secret = change.hidden;
+          row.hidden = change.hidden;
           break;
         case "secret":
           break; // a single other name's switch: the pretend memory keeps none

@@ -206,11 +206,39 @@ describe("what a DM can do", () => {
     const api = open();
     await ready();
     const row = await edit("Gorrak");
-    fireEvent.click(row.getByLabelText(w.secretCheck));
+    fireEvent.click(row.getByLabelText(w.hideCheck));
     await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":true}'));
-    await waitFor(() => expect((within(rowOf("Gorrak")).getByLabelText(w.secretCheck) as HTMLInputElement).checked).toBe(true));
-    fireEvent.click(within(rowOf("Gorrak")).getByLabelText(w.secretCheck));
+    await waitFor(() => expect((within(rowOf("Gorrak")).getByLabelText(w.hideCheck) as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(within(rowOf("Gorrak")).getByLabelText(w.hideCheck));
     await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"hide","hidden":false}'));
+  });
+
+  it("shows the hide switch from `hidden` only, not from a secret flag", async () => {
+    const api = mockApi("table");
+    const read = api.allNames!.bind(api);
+    api.allNames = async (r, q) => {
+      const page = await read(r, q);
+      // A secret main name, with no `hidden` at all: the switch is the entry's, so it stays unticked.
+      return { ...page, names: page.names.map(({ hidden: _hidden, ...n }) => ({ ...n, secret: true })) };
+    };
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    expect((row.getByLabelText(w.hideCheck) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("says a change may still happen when the bot never answers, and reads the list again", async () => {
+    const api = mockApi("table");
+    api.changeName = async () => {
+      throw new ApiError("still-waiting");
+    };
+    open(DM, api);
+    await ready();
+    const before = calls(api, "allNames").length;
+    const row = await edit("Gorrak");
+    fireEvent.click(row.getByLabelText(w.hideCheck));
+    expect(await screen.findByText(w.errors["still-waiting"]!)).toBeTruthy();
+    await waitFor(() => expect(calls(api, "allNames").length).toBeGreaterThan(before));
   });
 
   it("merges into a name picked from a search, only after a confirmation", async () => {

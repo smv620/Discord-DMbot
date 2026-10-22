@@ -829,6 +829,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
   | "voice-off" // turning a recording into letters is switched off on the server (#2316)
@@ -1574,18 +1575,26 @@ export function httpApi(
       };
       if (!queued?.answer) throw new ApiError("server");
       for (let i = 0; i < NAME_POLLS; i++) {
-        const got = (await call(
-          "GET",
-          `${base}/answers/${encodeURIComponent(queued.answer)}`,
-        )) as NameAnswer;
-        if (got.state === "done") return got.removed || !got.row ? { removed: true } : got.row;
-        if (got.state === "failed") {
+        // Once queued, the bot may still apply the change, so a failed look (a blip, a 5xx, a 404 on
+        // the answer) is not an answer: keep asking until the minute is up. Only "signed out" stops.
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call(
+            "GET",
+            `${base}/answers/${encodeURIComponent(queued.answer)}`,
+          )) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return got.removed || !got.row ? { removed: true } : got.row;
+        if (got?.state === "failed") {
           throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
         }
         if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
       }
-      // The bot may still apply it later; the page then shows its plain error and the list on reload.
-      throw new ApiError("server");
+      // The bot may still apply it later: the page says so and reads the list again, never "nothing
+      // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
     },
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
