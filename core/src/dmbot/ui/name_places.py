@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import discord
 
+from dmbot.discord_limits import fit_message
 from dmbot.memory.places import SHOWN_AT_FIRST, cut, find_in, trimmed
 from dmbot.transcript.export import clock
 from dmbot.transcript.store import Around, TranscriptStore
@@ -99,7 +100,7 @@ class Places:
         while len(block) > BLOCK_MAX and len(parts) > 1:
             parts.pop(1 if self.gone and len(parts) > 2 else len(parts) - 1)
             block = "\n".join(parts)
-        return block[:BLOCK_MAX]
+        return fit_message(block, limit=BLOCK_MAX)  # (never cut inside a bold name)
 
 
 class _Sessions:
@@ -129,6 +130,7 @@ async def _windows(
     pointers: Sequence[Pointer],
     spellings: Sequence[str],
     sessions: _Sessions,
+    agreed: Collection[int],
 ) -> tuple[list[str], bool, int | None]:
     """(the windows, whether any transcript is gone, the first session's number)."""
     texts: list[str] = []
@@ -141,7 +143,7 @@ async def _windows(
             gone = True
             continue
         around = await transcripts.around(
-            guild_id, pointer.session_id, pointer.started_ms, pointer.user_id
+            guild_id, pointer.session_id, pointer.started_ms, pointer.user_id, agreed
         )
         if around is None:
             gone = True
@@ -165,6 +167,7 @@ async def first_places(
     campaign_id: str,
     refs: Collection[tuple[str, int | None]],
     spellings: Sequence[str],
+    agreed: Collection[int],
     site_url: str = "",
 ) -> Places:
     """The card's two windows for these pointers (spread across the session, earliest first), and
@@ -183,7 +186,7 @@ async def first_places(
     try:
         sessions = _Sessions(transcripts, guild_id)
         texts, gone, number = await _windows(
-            guild, transcripts, guild_id, chosen, spellings, sessions
+            guild, transcripts, guild_id, chosen, spellings, sessions, agreed
         )
     except Exception:
         log.exception("Couldn't read where a suggested name was said")
@@ -202,15 +205,16 @@ async def more_places(
     guild_id: int,
     pointers: Sequence[Pointer],
     spellings: Sequence[str],
+    agreed: Collection[int],
 ) -> str:
     """Up to five more windows, for "More places": one private message, kept short."""
     try:
         sessions = _Sessions(transcripts, guild_id)
         texts, gone, _ = await _windows(
-            guild, transcripts, guild_id, pointers[:5], spellings, sessions
+            guild, transcripts, guild_id, pointers[:5], spellings, sessions, agreed
         )
     except Exception:
         log.exception("Couldn't read more places a suggested name was said")
         return GONE
     parts = [*texts, *([GONE] if gone else [])]
-    return "\n".join(parts)[:1900] or GONE
+    return fit_message("\n".join(parts), limit=1900) or GONE

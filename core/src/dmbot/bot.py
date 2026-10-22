@@ -9691,6 +9691,9 @@ class DMBot(commands.AutoShardedBot):
         lines: Sequence[str],
         users: Collection[int],
         session_id: str | None = None,
+        *,
+        agreed: Collection[int] | None = None,
+        game_only: bool = False,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
@@ -9701,7 +9704,14 @@ class DMBot(commands.AutoShardedBot):
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
-                heard_in = await self.transcripts.lines(gid, session_id)
+                # only the lines the scan itself read: people who still agree and, for an imported
+                # session, game talk (a place must never quote what the scan left out)
+                heard_in = [
+                    x
+                    for x in await self.transcripts.lines(gid, session_id)
+                    if (agreed is None or x.user_id in agreed)
+                    and (not game_only or x.topic == GAME)
+                ]
             except Exception:  # the places are a nicety: the suggestion is still made
                 log.exception("Couldn't read the session to find where names were said")
         # People at the table aren't story names: skip their whole display names and
@@ -9804,7 +9814,7 @@ class DMBot(commands.AutoShardedBot):
             if table.transcript_session_id is not None:
                 await self.save_transcript(table)  # so every line is stored to point at
             added = await self._propose_new_names(
-                gid, cid, lines, users, table.transcript_session_id
+                gid, cid, lines, users, table.transcript_session_id, agreed=agreed
             )
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
@@ -10060,8 +10070,9 @@ class DMBot(commands.AutoShardedBot):
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         added = await self._propose_new_names(
-            gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id
-        )
+            gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
+            agreed=set(agreed), game_only=True,
+        )  # fmt: skip
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
         return added
 

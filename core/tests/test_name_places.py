@@ -8,7 +8,7 @@ import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -123,6 +123,8 @@ class Cards(NamesTest):
         self.bot.settings = replace(self.bot.settings, site_url="https://dmbot.example")
         self.sid = await self.store.open_session(GUILD, self.campaign.id, START)
         self.speakers = {DM: "Sam", PLAYER: "Mia"}
+        await self.consent.grant(GUILD, DM)  # both agree, so the card may quote them
+        await self.consent.grant(GUILD, PLAYER)
 
     def it(self, user_id: int = DM) -> Any:
         it = super().it(user_id)
@@ -240,6 +242,43 @@ class Cards(NamesTest):
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM memory_mentions")
             self.assertEqual((await cur.fetchone())["n"], 0)  # type: ignore[index]
+
+    async def test_someone_who_stopped_without_deleting_is_not_quoted(self) -> None:
+        await self.said(10)
+        await self.consent.revoke(GUILD, PLAYER)  # Stop: their past lines stay in the transcript
+        _view, text = await self.card()
+        self.assertNotIn("okay then", text)  # (Mia's quiet lines are the neighbours)
+        self.assertNotIn("Mia:", text)
+        self.assertIn("Sam:", text)  # the DM still agrees
+
+    async def test_an_imported_off_topic_line_is_not_a_place(self) -> None:
+        off = line(5, PLAYER, f"{SAID} off the record", topic="off_topic")
+        game = line(9, DM, SAID)
+        await self.store.add_lines(GUILD, self.sid, [off, game])
+        stored = await self.store.lines(GUILD, self.sid)
+        await self.bot._propose_new_names(
+            GUILD, self.campaign.id, [x.text for x in stored], {DM, PLAYER}, self.sid,
+            agreed={DM, PLAYER}, game_only=True,
+        )  # fmt: skip
+        entity = await self.entity()
+        refs = await self.memory.mentions(GUILD, self.campaign.id, entity.id)
+        self.assertEqual(len(refs), 1)  # only the game line
+        self.assertTrue(refs[0][0].endswith(f":{game.started_ms}:{DM}"))
+
+    async def test_a_bold_name_near_the_cut_is_never_left_open(self) -> None:
+        window = name_places.window_text(
+            "Session 1, 0:00:01",
+            Around(None, (DM, "we meet Hrothgar " + "x" * 60), None),
+            {DM: "Sam"},
+            ["Hrothgar"],
+            width=40,
+        )
+        places = name_places.Places(windows=[window] * 2)
+        for limit in range(30, len(places.text()) + 1, 7):
+            with patch.object(name_places, "BLOCK_MAX", limit):
+                text = places.text()
+            self.assertEqual(text.count("**") % 2, 0, (limit, text))
+            self.assertLessEqual(len(text), limit)
 
     async def test_long_lines_keep_the_card_inside_discords_limit(self) -> None:
         wall = "word " * 200

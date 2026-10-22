@@ -1135,6 +1135,7 @@ class SuggestionReview(_Menu):
             campaign.id,
             refs,
             self.spellings,
+            await interaction.client.consent.consenting(campaign.guild_id),  # who agrees now
             site if isinstance(site, str) else "",
         )
 
@@ -1149,7 +1150,12 @@ class SuggestionReview(_Menu):
             return
         await _answer_first(interaction)
         text = await name_places.more_places(
-            interaction.guild, transcripts, campaign.guild_id, self.places.more, self.spellings
+            interaction.guild,
+            transcripts,
+            campaign.guild_id,
+            self.places.more,
+            self.spellings,
+            await interaction.client.consent.consenting(campaign.guild_id),
         )
         await interaction.followup.send(text, ephemeral=True)
 
@@ -1206,12 +1212,12 @@ class SuggestionReview(_Menu):
                     self._more_places,
                     label="🔎 More places",
                     style=discord.ButtonStyle.secondary,
-                    row=1,
+                    row=2,
                 )
             )
         if self.places.link:  # the session's page on the website
             self.add_item(
-                discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=1)
+                discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
             )
 
     async def _current(

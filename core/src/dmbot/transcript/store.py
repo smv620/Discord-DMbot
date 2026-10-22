@@ -351,18 +351,25 @@ class TranscriptStore:
             return None if row is None else _session(row)
 
     async def around(
-        self, guild_id: int, session_id: str, started_ms: int, user_id: int
+        self,
+        guild_id: int,
+        session_id: str,
+        started_ms: int,
+        user_id: int,
+        speakers: Collection[int],
     ) -> Around | None:
         """One line of table speech and the one before and after it (#2329): what the review of a
-        suggested name shows. None when the line is not there any more (the transcript was
+        suggested name shows. Only `speakers` (the people who agree now) are read, the line
+        itself and its neighbours: someone who stopped being recorded is not quoted even though
+        their past lines stay. None when the line is not there any more (the transcript was
         deleted, or the person withdrew). The DM sidebar is skipped, so neighbours are what the
         table said."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT id, started_ms, user_id, coalesce(text, heard) AS text"
                 " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL"
-                " AND started_ms = %s AND user_id = %s ORDER BY id LIMIT 1",
-                (session_id, started_ms, user_id),
+                " AND started_ms = %s AND user_id = %s AND user_id = ANY(%s) ORDER BY id LIMIT 1",
+                (session_id, started_ms, user_id, list(speakers)),
             )
             row = await cur.fetchone()
             if row is None:
@@ -371,14 +378,14 @@ class TranscriptStore:
             before = await conn.execute(
                 "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
                 " WHERE session_id = %s AND sidebar IS NULL AND (started_ms, id) < (%s, %s)"
-                " ORDER BY started_ms DESC, id DESC LIMIT 1",
-                (session_id, *here),
+                " AND user_id = ANY(%s) ORDER BY started_ms DESC, id DESC LIMIT 1",
+                (session_id, *here, list(speakers)),
             )
             after = await conn.execute(
                 "SELECT user_id, coalesce(text, heard) AS text FROM transcript_lines"
                 " WHERE session_id = %s AND sidebar IS NULL AND (started_ms, id) > (%s, %s)"
-                " ORDER BY started_ms, id LIMIT 1",
-                (session_id, *here),
+                " AND user_id = ANY(%s) ORDER BY started_ms, id LIMIT 1",
+                (session_id, *here, list(speakers)),
             )
             prev, nxt = await before.fetchone(), await after.fetchone()
         return Around(
