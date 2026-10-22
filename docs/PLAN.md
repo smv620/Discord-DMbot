@@ -1843,6 +1843,12 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+- **The recap posting clock** (#2435, migration 0184). A recap job records `posting_since` (whole Unix seconds),
+  `posting_step` (`check`, `post`, or `audio` while narration is made) and `posted_url` (the first message's
+  Discord link). A database trigger starts the clock at `check` when the status becomes `posting` and stops
+  it when it ends (posted, put back as a draft, dropped), so every writer of the status is covered; the bot
+  moves it to `post` once its checks pass; the audio worker runs the `audio` step only when no post is under
+  way. The web API's recap answer carries `postingSince`, `postingStep`, `postedUrl` and `serverNow`.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
