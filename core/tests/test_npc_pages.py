@@ -19,6 +19,7 @@ from dmbot.bot import register_backup_sections
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import npc_pages as npg
 from dmbot.dm_screen import npcs_channel as nc
+from dmbot.dm_screen.rules_channel import MAX_SENDS
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.recall import RosterEntry
 from dmbot.memory.store import MemoryStore
@@ -703,7 +704,7 @@ class TheButton(WithNpcs):
         chan, mapping = V2Channel(), MemMap()
         entries = [entry(n, f"Name {n}") for n in range(1, 8)]
         await self.run_sync(chan, mapping, entries, "")
-        with patch.object(nc, "MAX_SENDS", 3):
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 3):
             first = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
             self.assertEqual((first.replaced, first.left_for_next_time), (3, 4))
             second = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
@@ -737,7 +738,7 @@ class TheButton(WithNpcs):
         entries = [replace(entry(n, f"Name {n}"), also_called=(f"Alias {n}",)) for n in range(1, 8)]
         await self.run_sync(chan, mapping, entries, "")
         entries[5] = replace(entries[5], also_called=())  # the DM made "Alias 6" secret
-        with patch.object(nc, "MAX_SENDS", 2):
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 2):
             await self.run_sync(chan, mapping, entries, "https://dmbot.example")
         shown = [npg.look_of(cast(Any, m)).text for m in chan.messages]
         self.assertFalse([t for t in shown if "Alias 6" in t])  # gone at once, swapped or not
@@ -746,7 +747,7 @@ class TheButton(WithNpcs):
     async def test_the_more_message_stays_last_after_the_swap(self) -> None:
         chan, mapping = V2Channel(), MemMap()
         entries = [entry(n, f"Name {n}") for n in range(1, nc.MAX_ENTRIES + 4)]
-        with patch.object(nc, "MAX_SENDS", 1000):
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 1000):
             await self.run_sync(chan, mapping, entries, "")
             await self.run_sync(chan, mapping, entries, "https://dmbot.example")
             await self.run_sync(chan, mapping, entries, "https://dmbot.example")
@@ -796,16 +797,13 @@ class TheButton(WithNpcs):
     async def test_the_replacements_are_paced_like_any_other_posting(self) -> None:
         chan = V2Channel()
         mapping = MemMap()
-        entries = [entry(n) for n in range(1, nc.MAX_SENDS + 6)]
+        entries = [entry(n) for n in range(1, MAX_SENDS + 6)]
         for _ in range(3):  # (posting is paced too: a few passes to put them all out)
-            await nc.sync_roster(chan, ME, entries, mapping, guild_id=1, campaign_id="c" * 32)  # type: ignore[arg-type]
+            await self.run_sync(chan, mapping, entries, "")
         self.assertEqual(len(chan.messages), len(entries))
 
-        done = await nc.sync_roster(
-            chan, ME, entries, mapping, guild_id=1, campaign_id="c" * 32,  # type: ignore[arg-type]
-            site_url="https://dmbot.example",
-        )  # fmt: skip
-        self.assertEqual(done.replaced, nc.MAX_SENDS)
+        done = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual(done.replaced, MAX_SENDS)
         self.assertEqual(done.left_for_next_time, 5)
         self.assertEqual(len(chan.messages), len(entries))  # never two for one entry
 
@@ -815,19 +813,9 @@ class TheButton(WithNpcs):
         entries = [entry(n) for n in range(1, nc.MAX_EDITS + 6)]
         site = "https://dmbot.example"
         for _ in range(4):  # (posting is paced too: a few passes to put them all out)
-            await nc.sync_roster(
-                chan,
-                ME,
-                entries,
-                mapping,
-                guild_id=1,
-                campaign_id="c" * 32,
-                site_url=site,  # type: ignore[arg-type]
-            )
+            await self.run_sync(chan, mapping, entries, site)
         renamed = [replace(e, also_called=("A new name",)) for e in entries]
-        done = await nc.sync_roster(
-            chan, ME, renamed, mapping, guild_id=1, campaign_id="c" * 32, site_url=site  # type: ignore[arg-type]
-        )  # fmt: skip
+        done = await self.run_sync(chan, mapping, renamed, site)
         self.assertEqual(done.edited, nc.MAX_EDITS)
         self.assertEqual(done.left_for_next_time, 5)
 
