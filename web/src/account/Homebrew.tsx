@@ -56,11 +56,9 @@ function useRead<T>(read: (() => Promise<T>) | null, deps: unknown[]): Load<T> {
 }
 
 function Shell<T>({
-  api,
   load,
   children,
 }: {
-  api: AccountApi;
   load: Load<T>;
   children: (value: T) => preact.ComponentChildren;
 }) {
@@ -74,9 +72,6 @@ function Shell<T>({
     return (
       <div class="panel" role="status">
         <p>{text.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {text.signIn}
-        </a>
       </div>
     );
   if (load.kind === "error")
@@ -116,7 +111,7 @@ function Campaigns({ api }: { api: AccountApi }) {
     [api],
   );
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(campaigns: HomebrewCampaign[]) =>
         campaigns.length === 0 ? (
           <p class="panel" role="status">
@@ -226,7 +221,7 @@ function Entries({
     campaignRef,
   ]);
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(found: HomebrewPage) => {
         const packs = found.packs ?? []; // an older API has none
         return (

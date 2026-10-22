@@ -185,6 +185,7 @@ async def run_text(
     creative: Client | None = None,
     formatting: Client | None = None,
     creative_models: tuple[str, str] = ("creative", "formatting"),
+    critics: bool = False,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -224,6 +225,7 @@ async def run_text(
         on_call=calls.append,
         creative=creative_c,
         formatting=formatting_c,
+        critics=critics,
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -567,6 +569,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
         "--audio the mp3s",
     )  # fmt: skip
+    parser.add_argument(
+        "--no-critics", action="store_true",
+        help="leave out the critics loop (#2255), to compare with the recap before it",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -705,6 +711,7 @@ async def main_async(args: argparse.Namespace) -> int:
     if got is None:
         return 2
     fast, careful, models = got
+    _WRITERS["critics"] = not args.no_critics  # as live (#2255): the critics read each draft
     prices = prices_of(args.price, (*models, *_WRITERS.get("creative_models", ())))
     if args.golden:
         try:

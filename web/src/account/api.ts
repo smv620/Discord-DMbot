@@ -226,6 +226,17 @@ export interface Recap {
   waitingForNames?: boolean;
   /** How many of those questions are left. */
   namesToAnswer?: number;
+  /** Written, and waiting for the checks to be able to run (#2280, #2297). While `working` is also
+   * true, the page says so in one steady line instead of "still writing". Missing from an older API. */
+  waitingForCheck?: boolean;
+  /** Notes from the checks about a recap that still had things they were unsure of: the DM's copy
+   * only, never posted or in a shared link (#2280). Missing from an older API. */
+  criticNotes?: string[];
+  /** Unix seconds the recap first waited for its check, 0 when it isn't waiting, and the numbers of
+   * the sentences nothing has read (#2280). The page for reading and approving such a draft needs
+   * #2305 and is not built yet. */
+  uncheckedSince?: number;
+  uncheckedSentences?: number[];
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -730,6 +741,9 @@ export type NameChange =
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** Sent on `window` whenever the real API answers "not signed in" (#2301). */
+export const SIGNED_OUT_EVENT = "dmbot:signed-out";
+
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
@@ -1105,7 +1119,12 @@ export function httpApi(
     } catch {
       throw new ApiError("network");
     }
-    if (response.status === 401) throw new ApiError("signed-out");
+    if (response.status === 401) {
+      // Tell the page's "who is signed in" line, which asked only once when the page opened: a
+      // sign-in that ends later (expired, signed out elsewhere) must show its Sign in button (#2301).
+      if (!anonymous && typeof window !== "undefined") window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+      throw new ApiError("signed-out");
+    }
     if (!response.ok) {
       let code = "";
       let cueProblems: CueProblem[] = [];
@@ -1151,7 +1170,12 @@ export function httpApi(
         throw error;
       }
     },
-    signInUrl: () => `${root}/auth/discord/start`,
+    // Back to the page the person is on after Discord (#2301). Only an /account page is sent: the
+    // API checks the same rule again, so this is a courtesy, not the guard.
+    signInUrl: () => {
+      const here = typeof window === "undefined" ? "" : window.location.pathname;
+      return `${root}/auth/discord/start${here.startsWith("/account") ? `?next=${encodeURIComponent(here)}` : ""}`;
+    },
     signOut: async () => {
       await call("POST", "/auth/logout");
     },

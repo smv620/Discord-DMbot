@@ -32,7 +32,7 @@ from dmbot.rules.house import RULE_MAX, HouseRule, HouseRuleError, HouseRuleStor
 
 if TYPE_CHECKING:
     from dmbot.rules.house_voice import Proposal
-from dmbot.ui import house_conflicts, logic
+from dmbot.ui import house_conflicts, house_sources, logic
 from dmbot.ui import house_file as file_ui
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -190,6 +190,7 @@ async def show_list(
         page,
         is_dm=is_dm,
         suggest_to=await _suggest_target(interaction, campaign, is_dm),
+        follows=await _follows_a_set(interaction, campaign),
     )
     view = menu if menu.children else None
     if first:
@@ -211,6 +212,20 @@ async def _suggest_target(
         log.warning("Couldn't look up the followed set for the house rules list", exc_info=True)
         return None
     return next((f.name for f in follows if f.kind == "house_rules" and f.updating), None)
+
+
+async def _follows_a_set(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Does the campaign follow a set of house rules? Its rules are a source too (#2285), so
+    📂 Sources is offered even before the campaign has a rule of its own."""
+    sets = getattr(_bot(interaction), "rule_sets", None)
+    if sets is None:
+        return False
+    try:
+        follows = await sets.following(campaign.guild_id, campaign.id)
+    except Exception:
+        log.warning("Couldn't look up the followed sets for the house rules list", exc_info=True)
+        return False
+    return any(f.kind == "house_rules" for f in follows)
 
 
 async def _show(interaction: discord.Interaction, text: str, view: _Menu | None) -> None:
@@ -248,6 +263,7 @@ class ListMenu(_Menu):
         *,
         is_dm: bool,
         suggest_to: str | None = None,
+        follows: bool = False,
     ) -> None:
         super().__init__()
         self.campaign, self.rules, self.page = campaign, rules, page
@@ -261,6 +277,8 @@ class ListMenu(_Menu):
             self.add_item(_Button(self._older, label=OLDER_LABEL))
         if rules:  # nothing to download before the first rule
             self.add_item(_Button(self._download, label=file_ui.DOWNLOAD_LABEL))
+        if rules or follows:  # where they came from (#2285): anyone who may read the list
+            self.add_item(_Button(self._sources, label=house_sources.SOURCES_LABEL))
         if is_dm:
             self.add_item(_Button(self._file, label=file_ui.FILE_LABEL))
         if not is_dm or not rules:
@@ -312,6 +330,9 @@ class ListMenu(_Menu):
 
     async def _file(self, interaction: discord.Interaction) -> None:
         await file_ui.open_menu(interaction, self.campaign)
+
+    async def _sources(self, interaction: discord.Interaction) -> None:
+        await house_sources.open_sources(interaction, self.campaign)
 
     async def _newer(self, interaction: discord.Interaction) -> None:
         await _redraw(interaction, self.campaign, page=self.page - 1)
@@ -578,9 +599,13 @@ class _RuleForm(discord.ui.Modal):
 
 
 class AddForm(_RuleForm, title="Add a house rule"):
+    source = "typed"  # where the rule says it came from (#2285)
+
     async def store_rule(self, store: HouseRuleStore, user_id: int) -> HouseRule:
         c = self.campaign
-        return await store.add(c.guild_id, c.id, user_id, self.rule.value, self.instead.value)
+        return await store.add(
+            c.guild_id, c.id, user_id, self.rule.value, self.instead.value, source=self.source
+        )
 
     def saved_note(self, rule: HouseRule) -> str:
         return f"➕ Added house rule {rule.number}."
@@ -618,6 +643,8 @@ class OverrideForm(AddForm, title="Add a house rule"):
     """⚖️ Override on a rules card (#931): the same form as Add, with "Instead of" already
     holding the name on the card. The card is in the DM screen, which this must not turn into
     the list, so the answer is a private message."""
+
+    source = "alert"  # made from a rules card
 
     def __init__(self, campaign: Campaign, name: str) -> None:
         super().__init__(campaign)
@@ -679,6 +706,7 @@ class ProposalForm(AddForm, title="Edit before saving"):
                 self.instead.value,
                 scenario=self.proposal.scenario,
                 session_id=self.proposal.session_id,
+                source="voice",
             )
 
         async def shown(where: discord.Interaction, note: str) -> None:

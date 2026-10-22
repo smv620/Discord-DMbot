@@ -7,13 +7,7 @@ the audio is dropped as soon as it is transcribed.
 
 from __future__ import annotations
 
-import io
-from typing import TYPE_CHECKING
-
-from dmbot.ears.protocol import BYTES_PER_SAMPLE, SAMPLE_RATE
-
-if TYPE_CHECKING:
-    import av
+from dmbot import audio_decode
 
 MAX_MEMO_S = 30.0  # a question is short; a long memo would hold the speech worker
 MAX_MEMO_BYTES = 1_500_000  # about 30 s of Discord's Opus with room to spare
@@ -26,38 +20,29 @@ class MemoError(RuntimeError):
 
 
 def seconds(pcm: bytes) -> float:
-    return len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+    return audio_decode.seconds(pcm)
+
+
+# What each refusal says to the DM; the reading itself is shared (#2162).
+_WORDS = {
+    audio_decode.Why.TOO_BIG: TOO_LONG,
+    audio_decode.Why.TOO_LONG: TOO_LONG,
+    audio_decode.Why.NO_SOUND: "That file has no sound. Send a voice message instead.",
+    audio_decode.Why.UNREADABLE: "I couldn't read that voice message. Try sending it again.",
+    audio_decode.Why.TOO_SLOW: "I couldn't read that voice message. Try sending it again.",
+    audio_decode.Why.TOO_SHORT: "Too short to hear. Try again.",
+}
 
 
 def decode(data: bytes) -> bytes:
     """The voice message as 16 kHz mono s16le PCM. Blocking: run it off the event loop."""
-    import av
-
-    if not data or len(data) > MAX_MEMO_BYTES:
-        raise MemoError(TOO_LONG)
-    resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-    chunks: list[bytes] = []
-    total = 0
-    limit = int(MAX_MEMO_S * SAMPLE_RATE * BYTES_PER_SAMPLE)
     try:
-        with av.open(io.BytesIO(data), "r", format="ogg") as container:  # what Discord sends
-            if not container.streams.audio:
-                raise MemoError("That file has no sound. Send a voice message instead.")
-            for frame in container.decode(audio=0):
-                for out in resampler.resample(frame):
-                    chunks.append(_samples(out))
-                    total += len(chunks[-1])
-                if total > limit:
-                    raise MemoError(TOO_LONG)
-        chunks.extend(_samples(out) for out in resampler.resample(None))
-    except av.FFmpegError as exc:
-        raise MemoError("I couldn't read that voice message. Try sending it again.") from exc
-    pcm = b"".join(chunks)
-    if seconds(pcm) < MIN_MEMO_S:
-        raise MemoError("Too short to hear. Try again.")
-    return pcm
-
-
-def _samples(frame: av.AudioFrame) -> bytes:
-    # A plane's buffer can be padded past the last sample.
-    return bytes(frame.planes[0])[: frame.samples * BYTES_PER_SAMPLE]
+        return audio_decode.decode_pcm(
+            data,
+            container="ogg",  # what Discord sends
+            max_bytes=MAX_MEMO_BYTES,
+            max_s=MAX_MEMO_S,
+            min_s=MIN_MEMO_S,
+        )
+    except audio_decode.Refused as refused:
+        raise MemoError(_WORDS[refused.why]) from refused

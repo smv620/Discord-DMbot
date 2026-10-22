@@ -174,6 +174,18 @@ describe("the public page", () => {
     expect(tokenFromPath("/account/recaps/x")).toBeNull();
   });
 
+  it("never shows the checks' notes, even if the answer carried them (#2297)", async () => {
+    const api = mockApi("table");
+    const real = api.publicRecap!.bind(api);
+    await api.shareRecap!(posted!.ref, "on");
+    api.publicRecap = async (token) =>
+      ({ ...(await real(token)), criticNotes: ["Check: a note only the DM may read."] }) as never;
+    show(api, "/r/secret1");
+    await screen.findByRole("heading", { name: posted!.title });
+    expect(document.body.textContent).not.toContain("Check: a note only the DM may read.");
+    expect(screen.queryByText("What the checks said")).toBeNull();
+  });
+
   it("shows the title and text and nothing else, without a sign-in", async () => {
     const api = mockApi("table");
     await api.shareRecap!(posted!.ref, "on");

@@ -147,6 +147,7 @@ from dmbot.dm_screen.name_questions import (
     question_view,
 )
 from dmbot.dm_screen.names_button import NamesButton
+from dmbot.dm_screen.npc_pages import NpcRosterStore
 from dmbot.dm_screen.npcs_channel import (
     MessageMap,
     NpcMessageStore,
@@ -273,7 +274,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps import allowance as recap_allowance
-from dmbot.recaps import cues, name_answers, short, voice
+from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
@@ -518,6 +519,7 @@ PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#140
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
+RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
 NAME_ANSWERS_PER_ROUND = 10  # a page of names answered at once, for one server
 CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
@@ -918,6 +920,9 @@ class DMBot(commands.AutoShardedBot):
     so nothing runs twice when several processes split the shards between them.
     """
 
+    # A class-level default so tests that build a bot without __init__ still see "no pages" (#2265).
+    _npcs_roster: NpcRosterStore | None = None
+
     def __init__(
         self,
         settings: Settings,
@@ -945,6 +950,7 @@ class DMBot(commands.AutoShardedBot):
         adventure: AdventureStore | None = None,
         plan: PlanStore | None = None,
         npcs_messages: MessageMap | None = None,
+        npcs_roster: NpcRosterStore | None = None,
         recap_styles: StyleStore | None = None,
         recap_notes: NoteStore | None = None,
         installs: InstallStore | None = None,
@@ -1004,6 +1010,10 @@ class DMBot(commands.AutoShardedBot):
         # The DM's answers to a recap's names to check, from its page (#2113).
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
+        self._voice_tasks: dict[
+            int, asyncio.Task[None]
+        ] = {}  # a spoken note being written down, by server (#2161)
+        self._voice_next = 0  # where the next voice round starts looking, so servers take turns
         self.recap_styles = recap_styles  # the examples for how recaps sound (#2075)
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
@@ -1058,6 +1068,7 @@ class DMBot(commands.AutoShardedBot):
         self._npcs_guilds: dict[str, int] = {}
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
+        self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
         for store in (house_rules, rule_sets):
             if store is not None:
                 store.on_change = self._rules_archive_changed
@@ -1236,10 +1247,12 @@ class DMBot(commands.AutoShardedBot):
                 consenting=lambda gid: lambda: self.consent.consenting(gid),
                 allowed=self.recap_allowed,
                 notify=self.recap_told,
+                unchecked=self.recap_unchecked,
                 allowance=self.recap_text_allowance,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
+                critics=True,  # the critics read each draft until they agree (#2255)
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -1525,7 +1538,10 @@ class DMBot(commands.AutoShardedBot):
                 else []
             ),
             *(
-                [self._watched(self._recap_request_loop(), "recap-requests")]
+                [
+                    self._watched(self._recap_request_loop(), "recap-requests"),
+                    self._watched(self._recap_voice_loop(), "recap-voice"),
+                ]
                 if self.recap_requests is not None
                 else []
             ),
@@ -1594,8 +1610,17 @@ class DMBot(commands.AutoShardedBot):
         await self.sidebar.close()
         for task in [*self._background, *self._asking, *self._loops, *lookups]:
             task.cancel()
+        # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
+        clips = list(self._voice_tasks.values())
+        for task in clips:
+            task.cancel()
         await asyncio.gather(
-            *self._background, *self._asking, *self._loops, *lookups, return_exceptions=True
+            *self._background,
+            *self._asking,
+            *self._loops,
+            *lookups,
+            *clips,
+            return_exceptions=True,
         )
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
@@ -2879,6 +2904,13 @@ class DMBot(commands.AutoShardedBot):
                 await self.keep_job.run_once(int(time.time()))
             except Exception:
                 log.exception("The daily keep-transcripts job failed")
+        if self._npcs_roster is not None:  # notes on names unlisted for 30 days (#2265)
+            try:
+                await self._npcs_roster.sweep(
+                    await self.campaigns.guilds_with_campaigns(), int(time.time())
+                )
+            except Exception:
+                log.exception("The daily NPC-notes clean-up failed")
         if self.sources is not None:  # pages nothing uses any more (#1646)
             try:
                 await self.sources.sweep_pages(await self.campaigns.guilds_with_campaigns())
@@ -8405,6 +8437,16 @@ class DMBot(commands.AutoShardedBot):
             await self._say_writing(campaign, channel_id, session_at)
         return True
 
+    async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
+        """A recap that DMbot could not finish checking for three days (#2255): said once on the
+        DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        link = page_link(self.settings.site_url, gid, cid, job.session_at)
+        where = f"\nYour recap page: {link}" if self.settings.site_url else ""
+        await self.post(campaign.dm_screen_channel_id, f"{critics.UNCHECKED_TOLD}{where}")
+
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
     ) -> None:
@@ -10081,21 +10123,9 @@ class DMBot(commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(RECAP_REQUESTS_PER_ROUND):
-                request = await store.claim_next(guild.id)
+                request = await store.claim_next(guild.id, voice=False)
                 if request is None:
                     break
-                if request.kind == "voice":
-                    with log_context(guild_id=guild.id, campaign_id=request.campaign_id):
-                        outcome = await recap_requests.run_voice(
-                            store,
-                            guild.id,
-                            request,
-                            gate=lambda req, gid=guild.id: self._voice_gate(gid, req),  # type: ignore[misc]
-                            write=lambda req, gid=guild.id: self.recap_voice_text(gid, req),  # type: ignore[misc]
-                            meter=lambda req, secs, gid=guild.id: self._meter_voice(gid, req, secs),  # type: ignore[misc]
-                        )
-                        log.info("Recap voice request: %s", outcome)  # the word only
-                    continue
 
                 async def gate(req: RecapRequest, gid: int = guild.id) -> str | None:
                     campaign = await self.campaigns.get(gid, req.campaign_id)
@@ -10124,6 +10154,63 @@ class DMBot(commands.AutoShardedBot):
                         store, guild.id, request, gate=gate, sort=sort
                     )
                     log.info("Recap request: %s", outcome)  # the word only, never the text
+
+    async def _recap_voice_loop(self) -> None:
+        """Spoken notes (#2113) are worked apart from typed ones (#2161): a clip near two minutes
+        takes a minute of decoding and speech-to-text, and must not hold up a typed note behind it
+        in any server. At most `RECAP_VOICE_AT_ONCE` at a time overall and one for each server;
+        each runs as a task of its own, which keeps the claim, deletes the clip with the outcome
+        and adds the meter once the claim has finished the row."""
+        while True:
+            try:
+                await self.run_recap_voice()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The recap voice requests failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def run_recap_voice(self) -> None:
+        """One round of `_recap_voice_loop`: start a voice task for each server that has a waiting
+        clip and none running, while there is room."""
+        store = self.recap_requests
+        if store is None or self.recaps is None or not self.settings.recaps_on:
+            return
+        guilds = list(self.guilds)
+        # Start after the server served last, so a busy server cannot keep the later ones waiting.
+        start = self._voice_next % len(guilds) if guilds else 0
+        for guild in guilds[start:] + guilds[:start]:
+            if len(self._voice_tasks) >= RECAP_VOICE_AT_ONCE:
+                return
+            if guild.id in self._voice_tasks:
+                continue
+            request = await store.claim_next(guild.id, voice=True)
+            if request is None:
+                continue
+            task = asyncio.create_task(
+                self._run_voice_request(guild.id, request), name=f"recap-voice-{guild.id}"
+            )
+            self._voice_tasks[guild.id] = task
+            self._voice_next = guilds.index(guild) + 1
+            task.add_done_callback(partial(self._voice_done, guild.id))
+
+    def _voice_done(self, guild_id: int, _task: asyncio.Task[None]) -> None:
+        self._voice_tasks.pop(guild_id, None)  # the slot is free again, however it ended
+
+    async def _run_voice_request(self, guild_id: int, request: RecapRequest) -> None:
+        store = self.recap_requests
+        assert store is not None
+        try:
+            with log_context(guild_id=guild_id, campaign_id=request.campaign_id):
+                outcome = await recap_requests.run_voice(
+                    store,
+                    guild_id,
+                    request,
+                    gate=lambda req: self._voice_gate(guild_id, req),
+                    write=lambda req: self.recap_voice_text(guild_id, req),
+                    meter=lambda req, secs: self._meter_voice(guild_id, req, secs),
+                )
+                log.info("Recap voice request: %s", outcome)  # the word only
+        except Exception as exc:  # the type only; the claim is taken back after a while
+            log.warning("A recap voice request failed: %s", type(exc).__name__)
 
     async def _voice_gate(self, guild_id: int, request: RecapRequest) -> str | None:
         """Why a spoken note is not written down, or None: the sender is still a DM of the
@@ -10893,7 +10980,12 @@ class DMBot(commands.AutoShardedBot):
             if fresh is not None and self.memory is not None and self._npcs_messages is not None:
                 # (a session is starting, so this is the moment to put the list in order)
                 done = await sync_npcs(
-                    guild, fresh, self._npcs_service(), self._npcs_messages, reorder=True
+                    guild,
+                    fresh,
+                    self._npcs_service(),
+                    self._npcs_messages,
+                    reorder=True,
+                    **self._npcs_pages(),
                 )
                 self._npcs_last[campaign.id] = time.monotonic()
                 if done is not None and done.left_for_next_time:
@@ -10947,6 +11039,15 @@ class DMBot(commands.AutoShardedBot):
             if late:
                 self._npcs_changed(campaign_id)  # a change came in during the last pass
 
+    def _npcs_pages(self) -> dict[str, Any]:
+        """What the NPC list needs for the pages its 📖 Open buttons open (#2265): the website's
+        address, where the pages' view is kept, and the time."""
+        return {
+            "site_url": self.settings.site_url,
+            "roster": self._npcs_roster,
+            "now": int(time.time()),
+        }
+
     async def _sync_npcs(self, campaign_id: str) -> NpcsSyncResult | None:
         guild_id = self._npcs_guilds.get(campaign_id)
         guild = self.get_guild(guild_id) if guild_id is not None else None
@@ -10961,7 +11062,12 @@ class DMBot(commands.AutoShardedBot):
         # Finish a rebuild that was cut short, but never while a session runs for the campaign.
         reorder = campaign_id in self._npcs_reorder and not self._session_running(campaign_id)
         done = await sync_npcs(
-            guild, campaign, self._npcs_service(), self._npcs_messages, reorder=reorder
+            guild,
+            campaign,
+            self._npcs_service(),
+            self._npcs_messages,
+            reorder=reorder,
+            **self._npcs_pages(),
         )
         if reorder and (done is None or not done.left_for_next_time):
             self._npcs_reorder.discard(campaign_id)
@@ -11024,6 +11130,7 @@ class DMBot(commands.AutoShardedBot):
                         self._npcs_service(),
                         self._npcs_messages,
                         reorder=not self._session_running(campaign.id),
+                        **self._npcs_pages(),
                     )
                     self._npcs_last[campaign.id] = time.monotonic()
                     if done is not None and done.left_for_next_time:
@@ -11492,6 +11599,33 @@ def _attachable(
     return out
 
 
+def register_backup_sections(
+    campaigns: CampaignStore,
+    *,
+    forget_audio: Callable[[int, str], None],
+    consenting: Callable[[int], Awaitable[frozenset[int]]],
+) -> None:
+    """Everything a campaign's backup holds (and so what a backup test must export): one list, used
+    by the running bot and by the tests, so a test exports exactly what production does."""
+    campaigns.register_section(MemorySection())  # campaign memory goes in backups
+    campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
+    campaigns.register_section(WinsSection())  # and which disagreeing rule wins (#2284)
+    campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
+    campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
+    campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
+    campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
+    campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
+    campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
+    campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
+    campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
+    campaigns.register_section(ClockSection())  # and the game clock (#965)
+    campaigns.register_section(EffectsSection())  # and its timed effects (#998)
+    # and its session recaps (#1382), whose audio files go with the campaign (#1383)
+    campaigns.register_section(RecapSection(forget_audio=forget_audio))
+    # And how often names were said, kept only for who is recorded now (#1747).
+    campaigns.register_section(HeardSection(consenting))
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     alerter = alerts.Alerter(settings.mail)
@@ -11516,28 +11650,13 @@ async def run(settings: Settings) -> None:
             else CampaignStore(db)
         )
         homebrew_store, sources = HomebrewStore(db), SourceStore(db)
-        campaigns.register_section(MemorySection())  # campaign memory goes in backups
-        campaigns.register_section(HouseRulesSection())  # and so do house rules (#865)
-        campaigns.register_section(WinsSection())  # and which disagreeing rule wins (#2284)
-        campaigns.register_section(HomebrewSection())  # and its own homebrew (#1520)
-        campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
-        campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
-        campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
-        campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
-        campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
-        campaigns.register_section(
-            ImportSpeakersSection()
-        )  # and who its import labels were (#2105)
-        campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
-        campaigns.register_section(ClockSection())  # and the game clock (#965)
-        campaigns.register_section(EffectsSection())  # and its timed effects (#998)
-        # and its session recaps (#1382), whose audio files go with the campaign (#1383)
-        recap_audio_forgetter = AudioFiles(settings.data_dir / "recap-audio").forget_campaign
-        campaigns.register_section(RecapSection(forget_audio=recap_audio_forgetter))
         # DMBot sets this too; passing it here means the store never starts out wrong.
         consent = ConsentStore(db, outside=settings.transcription.outside_engine)
-        # And how often names were said, kept only for who is recorded now (#1747).
-        campaigns.register_section(HeardSection(consent.consenting))
+        register_backup_sections(
+            campaigns,
+            forget_audio=AudioFiles(settings.data_dir / "recap-audio").forget_campaign,
+            consenting=consent.consenting,
+        )
         bot = DMBot(
             settings,
             consent,
@@ -11564,6 +11683,7 @@ async def run(settings: Settings) -> None:
             AdventureStore(db),
             PlanStore(db),
             npcs_messages=NpcMessageStore(db),
+            npcs_roster=NpcRosterStore(db),
             recap_styles=StyleStore(db),
             recap_notes=NoteStore(db),
             installs=InstallStore(db),

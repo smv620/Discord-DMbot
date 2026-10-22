@@ -39,6 +39,7 @@ from dmbot.web import (
     entitlements_writer,
     feedback,
     imports,
+    npc_pages,
     offers,
     sessions,
     shared_recaps,
@@ -100,6 +101,7 @@ from dmbot.web.recaps import (
     read_recap,
     share_recap,
 )
+from dmbot.web.return_path import safe_return_path
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 from dmbot.web.support_ai import SupportHelper
@@ -197,6 +199,8 @@ def create_app(
     session_cookie = f"{prefix}dmbot_session"
     state_cookie = f"{prefix}dmbot_signin"
     install_cookie = f"{prefix}dmbot_install"
+    # The page a signed-out person asked for (#2301), kept just long enough to come back to it.
+    return_cookie = f"{prefix}dmbot_signin_next"
     account_page = f"{settings.site_url}/account"
 
     def limit_key(address: str) -> str:
@@ -303,7 +307,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/auth/discord/start")
-    async def sign_in_start() -> Response:
+    async def sign_in_start(request: Request) -> Response:
         state = sessions.new_state(settings.secret_key, clock())
         response = RedirectResponse(
             discord.authorize_url(state, settings.oauth_redirect_uri), status_code=302
@@ -317,6 +321,19 @@ def create_app(
             httponly=True,
             samesite="lax",
         )
+        back = safe_return_path(request.query_params.get("next"))
+        if back is not None:
+            response.set_cookie(
+                return_cookie,
+                back,
+                max_age=sessions.STATE_SECONDS,
+                path="/",
+                secure=settings.secure_cookies,
+                httponly=True,
+                samesite="lax",
+            )
+        else:
+            response.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         return response
 
     @app.get("/auth/discord/callback")
@@ -326,6 +343,7 @@ def create_app(
         code = request.query_params.get("code", "")
         failed = RedirectResponse(f"{account_page}?signin=failed", status_code=302)
         failed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+        failed.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         cookie = request.cookies.get(state_cookie)
         if not code or not sessions.state_ok(settings.secret_key, state, cookie, clock()):
             return failed
@@ -344,6 +362,7 @@ def create_app(
             # This Discord account's plan moved to another one (#1230): say so plainly.
             moved = RedirectResponse(f"{account_page}?signin=moved", status_code=302)
             moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            moved.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
             return moved
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
@@ -357,8 +376,14 @@ def create_app(
                 except DiscordError as exc:
                     log.warning("Couldn't revoke a Discord sign-in token: %s", exc)
         log.info("Signed in: user %s", user.id)
-        response = RedirectResponse(account_page, status_code=302)
+        # Back to the page they asked for, checked again here: the cookie is only ever a hint, and
+        # the address is always built on the site's own.
+        back = safe_return_path(request.cookies.get(return_cookie))
+        response = RedirectResponse(
+            f"{settings.site_url}{back}" if back is not None else account_page, status_code=302
+        )
         response.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+        response.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
         set_session_cookie(response, session_token)
         return response
 
@@ -601,6 +626,7 @@ def create_app(
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
+        "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -1206,6 +1232,68 @@ def create_app(
             # `name` is `house_file.filename`'s slug (letters, digits, dashes): safe in a header.
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
+
+    # An NPC's page and the caller's private notes on it (#2265): any member of the campaign's
+    # server. A note is read and written only by its own person; nothing here logs one.
+    npc_note_limit = RateLimit(60, count=60)
+
+    def npc_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.get("/me/campaigns/{ref}/npcs/{entry}")
+    async def me_npc_page(ref: str, entry: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await npc_pages.read_page(db, session, ref, entry)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+
+    @app.put("/me/campaigns/{ref}/npcs/{entry}/note")
+    async def me_npc_note(ref: str, entry: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save or clear my note: `{"body": "..."}` (empty clears it)."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > npc_pages.NOTE_MAX * 8:
+            raise HTTPException(status_code=413, detail="too_big")  # (read nothing bigger)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("body") if isinstance(body, dict) else None
+        try:
+            await npc_pages.save_note(db, session, ref, entry, text)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return {"ok": True}
+
+    @app.get("/me/npc-notes")
+    async def me_npc_notes(campaign: str, signed: Signed) -> Response:
+        """All of my notes in one campaign, as a file (including those on names no longer
+        listed)."""
+        session, _token = signed
+        try:
+            found = await npc_pages.my_notes(db, session, campaign)
+        except RecapError as err:
+            raise npc_refusal(err) from None
+        return Response(
+            json.dumps(found, ensure_ascii=False, indent=2).encode(),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="my-npc-notes.json"'},
+        )
+
+    @app.delete("/me/npc-notes")
+    async def me_npc_notes_delete(campaign: str, signed: Signed) -> dict[str, Any]:
+        """Delete all of my notes in one campaign."""
+        session, _token = signed
+        if npc_note_limit.take(f"npc-note:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            return {"deleted": await npc_pages.delete_my_notes(db, session, campaign)}
+        except RecapError as err:
+            raise npc_refusal(err) from None
 
     # A campaign's homebrew the DM let the players know (#1525): any member of the server; hidden
     # entries never leave the database. No plan rule, as the bot has none for homebrew.

@@ -115,8 +115,12 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         exact = [b for text, b in labels if text == label]
         return (exact or [b for text, b in labels if text.startswith(label)])[0]
 
-    async def offer(self, text: str = FILE, *, from_link: bool = True) -> tuple[str, Any]:
-        words = await hs.compare_text(self.bot, campaign(), text, self.send, from_link=from_link)
+    async def offer(
+        self, text: str = FILE, *, from_link: bool = True, file_name: str | None = None
+    ) -> tuple[str, Any]:
+        words = await hs.compare_text(
+            self.bot, campaign(), text, self.send, from_link=from_link, file_name=file_name
+        )
         self.assertIsNone(words)
         return self.sent[-1]
 
@@ -198,6 +202,16 @@ class Pressing(SyncTest):
         self.assertEqual(len(self.bot.house_syncs), 0)
         files = [c for c in it.followup.send.await_args_list if "file" in c.kwargs]
         self.assertEqual(len(files), 1)  # the updated file, privately (part 1)
+
+    async def test_added_rules_say_whether_the_linked_file_or_an_upload_gave_them(self) -> None:
+        _, view = await self.offer()
+        await self.button(view, "Accept all").callback(self.interaction())
+        self.assertEqual(self.store.sources, [("linked", None)])
+        self.store.sources.clear()
+        self.store.rules[:] = [r for r in self.store.rules if r.number != 9]
+        _, view = await self.offer(from_link=False, file_name="our-rules.txt")
+        await self.button(view, "Accept all").callback(self.interaction())
+        self.assertEqual(self.store.sources, [("upload", "our-rules.txt")])
 
     async def test_ignore_remembers_this_version_of_the_file(self) -> None:
         _, view = await self.offer()
@@ -626,7 +640,9 @@ class Uploading(SyncTest):
     def form(self, data: bytes | None, size: int | None = None) -> Any:
         form = file_ui.UploadForm(campaign())
         attachment = SimpleNamespace(
-            size=size or len(data or b""), read=AsyncMock(return_value=data)
+            size=size or len(data or b""),
+            filename="our-rules.txt",
+            read=AsyncMock(return_value=data),
         )
         form.file.component._values = [attachment] if data is not None else []  # type: ignore[attr-defined]
         form.attachment = attachment  # type: ignore[attr-defined]
@@ -641,6 +657,14 @@ class Uploading(SyncTest):
         self.assertTrue(offer.kwargs["ephemeral"])
         self.assertEqual(self.sent, [])  # not on the DM screen
         self.assertEqual(len(self.store.rules), 3)
+
+    async def test_the_uploads_name_reaches_the_rules_it_adds(self) -> None:
+        form = self.form(FILE.encode())
+        it = self.interaction()
+        await form.on_submit(it)
+        view = it.followup.send.await_args.kwargs["view"]
+        await self.button(view, "Accept all").callback(self.interaction())
+        self.assertEqual(self.store.sources, [("upload", "our-rules.txt")])
 
     async def test_a_player_is_refused_before_anything_is_read(self) -> None:
         form = self.form(FILE.encode())

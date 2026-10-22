@@ -660,7 +660,7 @@ class Command(HouseRulesTest):
         text, kw = call.args[0], call.kwargs
         self.assertIn("1. A natural 20 doubles the damage dice", text)
         labels = [str(c.label) for c in kw["view"].children]
-        self.assertEqual(labels, [file_ui.DOWNLOAD_LABEL])  # a download, and nothing to change
+        self.assertEqual(labels, [file_ui.DOWNLOAD_LABEL, "📂 Sources"])  # downloads, no changes
 
     async def test_a_player_with_a_form_in_hand_still_changes_nothing(self) -> None:
         number = await self.add("Crits double the dice")

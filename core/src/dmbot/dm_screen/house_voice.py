@@ -240,6 +240,7 @@ async def press(
                 None,
                 scenario=proposal.scenario,
                 session_id=proposal.session_id,
+                source="voice",
             )
             note = f"✅ Saved as house rule {saved.number}."
             if found.unchecked:

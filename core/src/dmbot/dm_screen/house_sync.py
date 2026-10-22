@@ -110,6 +110,7 @@ class Pending:
     index: int = 0  # the item a review is on
     applied: Applied = field(default_factory=Applied)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    file_name: str | None = None  # an upload's name: where its new rules say they came from
 
 
 class Pendings:
@@ -230,6 +231,14 @@ async def _show(interaction: discord.Interaction, text: str, view: discord.ui.Vi
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
 
+def _origin(pending: Pending) -> tuple[str, str | None]:
+    """Where the rules a file adds say they came from (#2285): the linked file, or an upload
+    by its name."""
+    if pending.from_link:
+        return "linked", None
+    return "upload", pending.file_name
+
+
 async def _answer_long_job(interaction: discord.Interaction, how_many: int) -> None:
     """Many changes take a while (each is its own step in the database), and Discord waits
     3 seconds: answer first."""
@@ -311,6 +320,8 @@ async def press(
                 user_id,
                 todo,
                 await _checker(interaction, bot, guild_id, pending),
+                source=_origin(pending)[0],
+                source_name=_origin(pending)[1],
             )
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
@@ -319,9 +330,15 @@ async def press(
             if action == "accept":
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
-                    store, guild_id, pending.campaign_id, user_id, one,
+                    store,
+                    guild_id,
+                    pending.campaign_id,
+                    user_id,
+                    one,
                     await _checker(interaction, bot, guild_id, pending),
-                )  # fmt: skip
+                    source=_origin(pending)[0],
+                    source_name=_origin(pending)[1],
+                )
                 pending.applied.done += done.done
                 pending.applied.skipped += done.skipped
             pending.index += 1
@@ -359,6 +376,7 @@ async def compare_text(
     *,
     from_link: bool,
     respect_ignore: bool = True,
+    file_name: str | None = None,
 ) -> str | None:
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
@@ -395,6 +413,7 @@ async def compare_text(
         from_link,
         removals,
         big,
+        file_name=file_name,
     )
     bot.house_syncs.drop_campaign(campaign.guild_id, campaign.id)  # the older ones are stale
     key = bot.house_syncs.add(pending)
