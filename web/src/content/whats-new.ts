@@ -232,7 +232,7 @@ export const held: Held[] = [
   {
     date: "2026-10-22",
     title: "Read a recap DMbot couldn't check",
-    what: "If DMbot can't finish checking a recap for 3 days, the recap page now shows you the draft, with the sentences DMbot would have looked at twice marked. Nothing is shared. You can use the draft as it is, and then change it and approve it like any recap.",
+    what: "If DMbot can't check a recap for 3 days, you can now read the draft anyway. Sentences it would have double-checked are marked. Nothing is shared. Open it, edit it, then approve it as usual.",
     reason: "In review (#2297); held until the bot can open an unchecked draft (#2305) and dev1 deploys it.",
   },
   {

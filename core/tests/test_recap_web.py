@@ -265,12 +265,41 @@ class TheDmsPage(Base):
         self.assertEqual(one["uncheckedSince"], 1234)
         self.assertIsInstance(one["uncheckedSentences"], list)
         # (long past 3 days) the draft is given to read, in the sentences the numbers count by
-        self.assertTrue(one["uncheckedDraft"])
+        from dmbot.recaps import draft
+        from dmbot.recaps.text import strip_cues
+
+        self.assertEqual(one["uncheckedDraft"], draft.sentences_of(strip_cues(one["summary"])))
+        self.assertTrue(
+            all(1 <= n <= len(one["uncheckedDraft"]) for n in one["uncheckedSentences"])
+        )
         self.assertFalse(one["canApproveUnchecked"])  # the approve is not on until the bot has it
         await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
         again = await read_recap(self.web, self.session, self.ref)
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
         self.assertEqual(again["uncheckedDraft"], [])
+
+    async def test_the_draft_is_given_only_after_exactly_3_days(self) -> None:
+        import time
+
+        from dmbot.recaps.critics import CHECK_WAIT, UNCHECKED_AFTER_S, Loop
+
+        for age, given in ((UNCHECKED_AFTER_S - 3600, False), (UNCHECKED_AFTER_S + 3600, True)):
+            await self.store.update(
+                THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+                critics=Loop(waits=2, since=int(time.time()) - age).to_json(),
+            )  # fmt: skip
+            one = await read_recap(self.web, self.session, self.ref)
+            self.assertEqual(bool(one["uncheckedDraft"]), given, age)
+
+    async def test_a_failed_recap_is_not_offered_to_be_opened_unchecked(self) -> None:
+        from dmbot.recaps.critics import Loop
+
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="failed", last_error="x",
+            critics=Loop(waits=3, since=1234).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertFalse(one["canApproveUnchecked"])
 
     async def test_a_recap_that_has_waited_less_than_3_days_gives_no_draft_to_read(self) -> None:
         import time

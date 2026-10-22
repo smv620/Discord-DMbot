@@ -79,6 +79,28 @@ describe("a draft unchecked for 3 days", () => {
     await waitFor(() => expect(screen.queryByRole("heading", { name: text.uncheckedHeading })).toBeNull());
   });
 
+  it("asks once when the button is pressed twice quickly", async () => {
+    let asked = 0;
+    const api = pageWith(unchecked(), {
+      approveUnchecked: async () => {
+        asked += 1;
+        await new Promise((r) => setTimeout(r, 30));
+        return { ...base, text: DRAFT.join(" ") };
+      },
+    });
+    render(<Recaps api={api} path={path} />);
+    const button = await screen.findByRole("button", { name: text.uncheckedUse });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: text.uncheckedHeading })).toBeNull());
+    expect(asked).toBe(1);
+  });
+
+  it("says what comes next when the API doesn't take the approval yet", async () => {
+    render(<Recaps api={pageWith(unchecked({ canApproveUnchecked: false }))} path={path} />);
+    expect(await screen.findByText(text.uncheckedKeepTrying)).toBeTruthy();
+  });
+
   it("says so when it didn't work and keeps the draft", async () => {
     const api = pageWith(unchecked(), {
       approveUnchecked: async () => {

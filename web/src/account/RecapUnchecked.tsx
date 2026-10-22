@@ -14,10 +14,13 @@ export default function RecapUnchecked({
   api,
   recap,
   onRecap,
+  pageFocus,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
+  /** Where focus goes once the draft is open and this part is gone: the page's own heading. */
+  pageFocus?: () => HTMLElement | null | undefined;
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(false);
@@ -35,6 +38,7 @@ export default function RecapUnchecked({
     setProblem(false);
     try {
       onRecap(await api.approveUnchecked(recap.ref));
+      keepFocus(() => pageFocus?.());
     } catch {
       setProblem(true);
       keepFocus(() => headingRef.current);
@@ -49,14 +53,13 @@ export default function RecapUnchecked({
       <h3 id="recap-unchecked" tabIndex={-1} ref={headingRef}>
         {text.uncheckedHeading}
       </h3>
-      <p class="muted small">{text.uncheckedLead}</p>
+      <p>{text.uncheckedLead}</p>
       <p class="recap-unchecked-text">
         {draft.map((sentence, i) =>
           marked.has(i + 1) ? (
             <span key={i}>
               <mark>
-                <span class="visually-hidden">{text.uncheckedMark}: </span>
-                {sentence}
+                <strong>{text.uncheckedMark}</strong> {sentence}
               </mark>{" "}
             </span>
           ) : (
@@ -64,18 +67,20 @@ export default function RecapUnchecked({
           ),
         )}
       </p>
+      {canUse ? (
+        <>
+          <p>{text.uncheckedAfter}</p>
+          <button type="button" class="button" aria-busy={busy} disabled={busy} onClick={use}>
+            {busy ? text.uncheckedUsing : text.uncheckedUse}
+          </button>
+        </>
+      ) : (
+        <p>{text.uncheckedKeepTrying}</p>
+      )}
       {problem && (
         <p class="warn" role="alert">
           {text.uncheckedFailed}
         </p>
-      )}
-      {canUse && (
-        <>
-          <button type="button" class="button" aria-busy={busy} disabled={busy} onClick={use}>
-            {busy ? text.uncheckedUsing : text.uncheckedUse}
-          </button>
-          <p class="muted small">{text.uncheckedAfter}</p>
-        </>
       )}
     </section>
   );

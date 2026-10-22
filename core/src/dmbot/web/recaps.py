@@ -197,8 +197,12 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # themselves. Players never see an unchecked draft unless the DM approves it.
         "uncheckedSince": _unchecked_since(row, ready),
         "uncheckedSentences": _unchecked_sentences(row, ready),
-        "uncheckedDraft": _unchecked_draft(row, ready),
-        "canApproveUnchecked": APPROVE_UNCHECKED_LIVE and bool(_unchecked_draft(row, ready)),
+        "uncheckedDraft": (unchecked := _unchecked_draft(row, ready)),
+        # Only while it still waits (a failed or dropped recap is not opened this way).
+        "canApproveUnchecked": APPROVE_UNCHECKED_LIVE
+        and bool(unchecked)
+        and status == "draft"
+        and state not in ("ready", "failed"),
         "canEdit": ready,
         "canPost": ready,
         "canTryAgain": status == "draft"

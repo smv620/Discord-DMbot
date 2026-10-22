@@ -663,7 +663,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
         </p>
       )}
-      <RecapUnchecked api={api} recap={recap} onRecap={setRecap} />
+      <RecapUnchecked api={api} recap={recap} onRecap={setRecap} pageFocus={() => headingRef.current} />
       {/* The only place the page says an email is coming, so the only place it names the address. */}
       {recap.working && (
         <RecapEmailLine
