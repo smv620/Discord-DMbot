@@ -147,6 +147,7 @@ PLOT_TOKENS_PER_SENTENCE = 50  # a change names its sentence, its kind and the r
 PLOT_ROOM_MAX = 12_000  # after doubling too
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
+HOLD_WAITS_MAX = 8  # waits (about 3 days) of a draft whose critics cannot be read before it fails
 CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
 # Why the loop stopped before any draft was read: the recap then waits for its check (below),
 # or fails when the job's own ceiling is the reason, and is never shipped unchecked or cut.
@@ -1617,6 +1618,20 @@ class RecapWorker:
         )  # fmt: skip
         return await self._store.get(gid, cid, job.session_at)
 
+    async def _hold_or_give_up(
+        self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str
+    ) -> Job | None:
+        """A draft with a failed check whose critics cannot be read waits for its check (#2365),
+        but not for ever: answers that stay unreadable (declined, cut off at the cap) would
+        otherwise be asked again every 12 hours without end and free of the job's calls. After
+        `HOLD_WAITS_MAX` waits it fails, on our side, so the DM's Try again is given back."""
+        if loop.waits >= HOLD_WAITS_MAX:
+            log.info(
+                "Recap: the check never got through (%s), %d waits: giving up", why, loop.waits
+            )
+            return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
+        return await self._hold(gid, cid, job, loop, why)
+
     async def _stop_critics(
         self, gid: int, cid: str, job: Job, loop: cr.Loop, inputs: Inputs, why: str
     ) -> Job | None:
@@ -1651,8 +1666,8 @@ class RecapWorker:
         if best.hard:
             if best.unfixable:
                 if ours:
-                    return await self._hold(gid, cid, job, loop, why)
-                return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
+                    return await self._hold_or_give_up(gid, cid, job, loop, why)
+                return await self._fail(gid, cid, job, FAILED_CHECKS)
             prose = rd.cut_sentences(prose, best.cuts)
             problems = rd.check_prose(
                 prose, beats=sheet, transcript=transcript,
@@ -1668,8 +1683,8 @@ class RecapWorker:
                     cl.kinds(problems),
                 )
                 if ours:
-                    return await self._hold(gid, cid, job, loop, why)
-                return await self._fail(gid, cid, job, FAILED_CHECKS, ours=True)
+                    return await self._hold_or_give_up(gid, cid, job, loop, why)
+                return await self._fail(gid, cid, job, FAILED_CHECKS)
             cut = len(best.cuts)
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",

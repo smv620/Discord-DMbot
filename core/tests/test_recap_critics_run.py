@@ -257,6 +257,26 @@ class Criticising(WorkerHarness):
         self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
 
+    async def test_a_draft_whose_critics_stay_unreadable_waits_and_in_the_end_fails_on_our_side(
+        self,
+    ) -> None:
+        fast = self.fast_for(WITH_MOTIVE)
+        careful = fx.Canned(NO_NOTES, *(["not json"] * 12))
+        await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
+        real = rd.check_prose
+
+        def ending_fails(*a: Any, **k: Any) -> list[str]:
+            return (
+                ["the recap must end exactly where the session stopped"]
+                if k.get("last")
+                else real(*a, **k)
+            )
+
+        with patch.object(rd, "check_prose", ending_fails), patch.object(pl, "HOLD_WAITS_MAX", 1):
+            job = await self.settle(await self.go(), times=10)
+        self.assertEqual(job.state, "failed")  # not for ever: it gave up, on our side
+        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
+
     async def test_critics_that_never_agree_stop_at_four_readings_and_leave_notes(self) -> None:
         fast = self.fast_for(grades=4)
         ask = change(0, "weight", "elaborate considerably", MEMORY.id)
