@@ -2,7 +2,7 @@
 // An NPC's page (#2266): what the table already knows about one name (the same as Discord's NPC
 // list shows the players), the posted recaps that mention it, a DM's own note (DM only), and the
 // signed-in person's private notes. Who may see what is the API's rule: this page only shows what it
-// is given. My notes belong to one person; nobody else, the DM included, can read them.
+// is given (the DM note is also withheld here unless `isDm`, as a second guard). My notes belong to one person; nobody else, the DM included, can read them.
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NOTE_LIMIT, npcPage as words } from "../content/npc-words";
@@ -25,6 +25,9 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
   const where = npcFromPath(path);
   const [view, setView] = useState<View>("loading");
   const [page, setPage] = useState<NpcPage | null>(null);
+  // Bumped when my notes change (a save, or all deleted) so the parts that show them read again.
+  const [saves, setSaves] = useState(0);
+  const [wipes, setWipes] = useState(0);
 
   async function load() {
     if (!where || !api.npcPage) return setView("none");
@@ -118,8 +121,20 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
         </section>
       )}
 
-      <MyNotes api={api} refId={where.ref} entry={where.entry} first={page.myNote} />
-      <AllNotes api={api} refId={where.ref} />
+      <MyNotes
+        key={wipes}
+        api={api}
+        refId={where.ref}
+        entry={where.entry}
+        first={wipes === 0 ? page.myNote : ""}
+        onSaved={() => setSaves((n) => n + 1)}
+      />
+      <AllNotes
+        api={api}
+        refId={where.ref}
+        version={saves + wipes}
+        onWiped={() => setWipes((n) => n + 1)}
+      />
     </div>
   );
 }
@@ -145,11 +160,13 @@ function MyNotes({
   refId,
   entry,
   first,
+  onSaved,
 }: {
   api: AccountApi;
   refId: string;
   entry: string;
   first: string;
+  onSaved: () => void;
 }) {
   const [text, setText] = useState(first);
   const saved = useRef(first);
@@ -157,9 +174,12 @@ function MyNotes({
     "idle",
   );
   const busy = useRef(false);
+  const latest = useRef(first);
+  latest.current = text;
 
   async function save() {
-    if (!api.saveNpcNote || busy.current || text === saved.current) return;
+    if (!api.saveNpcNote || text === saved.current) return;
+    if (busy.current) return; // the save in flight looks again when it ends
     if (text.length > NOTE_LIMIT) return setState("long");
     busy.current = true;
     setState("saving");
@@ -168,11 +188,26 @@ function MyNotes({
       await api.saveNpcNote(refId, entry, sent);
       saved.current = sent;
       setState("saved");
+      onSaved();
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       setState(kind === "bad-text" ? "long" : kind === "too-soon" ? "quick" : "failed");
     } finally {
       busy.current = false;
+    }
+    // Words typed while that save was out: send them too, so leaving the box never drops them.
+    if (latest.current !== saved.current && latest.current.length <= NOTE_LIMIT) {
+      const again = latest.current;
+      busy.current = true;
+      try {
+        await api.saveNpcNote(refId, entry, again);
+        saved.current = again;
+        onSaved();
+      } catch {
+        setState("failed");
+      } finally {
+        busy.current = false;
+      }
     }
   }
 
@@ -220,7 +255,7 @@ function MyNotes({
   );
 }
 
-/** A plain text file of every note, oldest line first as the API sent them. */
+/** A plain text file of every note, in the order the API sent them: the name, then the note. */
 function notesFile(notes: MyNpcNote[]): string {
   return (
     [words.fileHeading, ...notes.map((n) => `\n${n.name}\n${n.body}`)].join("\n") + "\n"
@@ -228,7 +263,17 @@ function notesFile(notes: MyNpcNote[]): string {
 }
 
 /** Download or delete all of my notes in this campaign, with those on names no longer listed. */
-function AllNotes({ api, refId }: { api: AccountApi; refId: string }) {
+function AllNotes({
+  api,
+  refId,
+  version,
+  onWiped,
+}: {
+  api: AccountApi;
+  refId: string;
+  version: number;
+  onWiped: () => void;
+}) {
   const [notes, setNotes] = useState<MyNpcNote[] | null>(null);
   const [asking, setAsking] = useState(false);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
@@ -245,7 +290,7 @@ function AllNotes({ api, refId }: { api: AccountApi; refId: string }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refId]);
+  }, [refId, version]);
 
   if (!api.myNpcNotes || !api.deleteMyNpcNotes) return null;
 
@@ -278,6 +323,7 @@ function AllNotes({ api, refId }: { api: AccountApi; refId: string }) {
       const n = await api.deleteMyNpcNotes!(refId);
       setAsking(false);
       setNotes([]);
+      onWiped();
       setSaid({ ok: true, text: words.deleted(n) });
     } catch {
       setSaid({ ok: false, text: words.deleteFailed });

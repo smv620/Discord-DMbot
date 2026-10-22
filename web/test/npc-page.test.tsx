@@ -2,6 +2,8 @@
 // @vitest-environment happy-dom
 // An NPC's page (#2266) against the pretend API: the member's view, a DM's extra note, someone
 // outside the server, a name that isn't there, saving My notes, and downloading or deleting them.
+import { readFileSync } from "node:fs";
+
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -194,6 +196,104 @@ describe("all my notes", () => {
     fireEvent.click(await screen.findByRole("button", { name: w.deleteAsk }));
     fireEvent.click(screen.getByRole("button", { name: w.deleteYes }));
     await screen.findByText(w.deleteFailed);
+  });
+});
+
+describe("keeping the parts in step", () => {
+  it("empties the box when all my notes are deleted", async () => {
+    const api = mockApi("table");
+    await api.saveNpcNote!("100.cmp1", "e1", "keep?");
+    open(MEMBER, api);
+    const field = await box();
+    expect(field.value).toBe("keep?");
+    fireEvent.click(await screen.findByRole("button", { name: w.deleteAsk }));
+    fireEvent.click(screen.getByRole("button", { name: w.deleteYes }));
+    await screen.findByText(w.deleted(2));
+    expect((await box()).value).toBe("");
+  });
+
+  it("turns Delete on once a first note is saved", async () => {
+    const api = mockApi("table");
+    await api.deleteMyNpcNotes!("100.cmp1"); // nothing at all
+    open(MEMBER, api);
+    const del = (await screen.findByRole("button", { name: w.deleteAsk })) as HTMLButtonElement;
+    await screen.findByText(w.noneYet);
+    expect(del.disabled).toBe(true);
+    fireEvent.input(await box(), { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.deleteAsk }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("sends words typed while a save was still out", async () => {
+    const api = mockApi("table");
+    const real = api.saveNpcNote!.bind(api);
+    let release: () => void = () => {};
+    let first = true;
+    api.saveNpcNote = async (r, e, b) => {
+      if (first) {
+        first = false;
+        await new Promise<void>((go) => (release = go));
+      }
+      return real(r, e, b);
+    };
+    open(MEMBER, api);
+    const field = await box();
+    fireEvent.input(field, { target: { value: "one" } });
+    fireEvent.blur(field);
+    fireEvent.input(field, { target: { value: "one two" } });
+    fireEvent.blur(field);
+    release();
+    await waitFor(() => expect(calls(api, "saveNpcNote").pop()).toBe("saveNpcNote:100.cmp1:e1:one two"));
+  });
+});
+
+describe("the DM note", () => {
+  it("is not shown when a DM has none to show, and shows a dash when it is empty", async () => {
+    const api = mockApi("table");
+    const read = api.npcPage!.bind(api);
+    api.npcPage = async (r, e) => ({ ...(await read(r, e)), isDm: true, dmNote: null });
+    const { unmount } = render(<Npc api={api} path={MEMBER} />);
+    await screen.findByRole("heading", { name: "Mira Voss" });
+    expect(screen.queryByText(w.dmNote)).toBeNull();
+    unmount();
+    api.npcPage = async (r, e) => ({ ...(await read(r, e)), isDm: true, dmNote: "" });
+    render(<Npc api={api} path={MEMBER} />);
+    await screen.findByRole("heading", { name: w.dmNote });
+    expect(screen.getByText("—")).toBeTruthy();
+  });
+
+  it("is not shown to someone who is not a DM, even if the API sent one", async () => {
+    const api = mockApi("table");
+    const read = api.npcPage!.bind(api);
+    api.npcPage = async (r, e) => ({ ...(await read(r, e)), isDm: false, dmNote: "secret" });
+    open(MEMBER, api);
+    await screen.findByRole("heading", { name: "Mira Voss" });
+    expect(screen.queryByText("secret")).toBeNull();
+  });
+});
+
+describe("try again", () => {
+  it("reads the page again", async () => {
+    const api = mockApi("table");
+    const read = api.npcPage!.bind(api);
+    let fail = true;
+    api.npcPage = async (r, e) => {
+      if (fail) throw new ApiError("network");
+      return read(r, e);
+    };
+    open(MEMBER, api);
+    await screen.findByRole("alert");
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: w.tryAgain }));
+    await screen.findByRole("heading", { name: "Mira Voss" });
+  });
+});
+
+describe("the site's rules for the page", () => {
+  const read = (f: string) => readFileSync(`${process.cwd()}/public/${f}`, "utf8");
+  it("serves every NPC from the one page, and never stores or indexes it", () => {
+    expect(read("_redirects")).toContain("/campaigns/*/npcs/*  /campaigns/npcs  200");
+    expect(read("_headers")).toMatch(/\/campaigns\/\*\n {2}Cache-Control: no-store\n {2}X-Robots-Tag: noindex, nofollow/);
   });
 });
 
