@@ -380,6 +380,7 @@ class TheRealSend(unittest.IsolatedAsyncioTestCase):
         sides = rule_clash.named(
             "House rule 1, House rule 2", [house(1, POTION_A), house(2, POTION_B)]
         )
+        assert sides is not None
         view = ClashView(sides, dm_ids={DM}, record=AsyncMock(), retry=AsyncMock())
         status = await DMBot.sidebar_send_dm(bot, DM, "Which one applies?", view)  # type: ignore[arg-type]
         self.assertEqual(status, "sent")
