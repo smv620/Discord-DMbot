@@ -103,6 +103,18 @@ class Window(unittest.TestCase):
         self.assertIsNone(name_places.parse_ref("a:b:c"))
 
 
+class Fitting(unittest.TestCase):
+    def test_windows_that_are_too_much_for_a_card_are_cut_to_fit(self) -> None:
+        big = name_places.Places(windows=["_Session 1, 0:00:01_\n" + "> a: " + "x" * 700] * 2)
+        big.gone = True
+        text = big.text()
+        self.assertLessEqual(len(text), 1100)  # what a card can spare
+        self.assertTrue(text.startswith("_Session 1"))  # the first window stays
+
+    def test_a_gone_transcript_is_said_once(self) -> None:
+        self.assertEqual(name_places.Places(gone=True).text(), name_places.GONE)
+
+
 class Cards(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
