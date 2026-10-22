@@ -303,6 +303,30 @@ class Beliefs(MemoryTest):
         self.assertEqual(set(await self.truth()), {rel})
         self.assertEqual(await self.party(), {rel: 1.0})
 
+    async def test_undo_of_new_words_puts_back_mentions_and_the_session_span_exactly(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET from_session_at = 1000, mention_ids = %s"
+                " WHERE id = %s",
+                (["m" * 32], rel),
+            )
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        assert moved.batch is not None
+        self.assertEqual(moved.value.from_session_at, 1_000)
+        await self.memory.undo(GUILD_A, self.c, moved.batch, source="dm")  # type: ignore[arg-type]
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id, status, from_session_at FROM memory_relations WHERE campaign_id = %s",
+                (self.c,),
+            )
+            rows = {r["id"]: (r["status"], r["from_session_at"]) for r in await cur.fetchall()}
+        self.assertEqual(rows, {rel: ("confirmed", 1_000)})
+        self.assertEqual(set(await self.truth()), {rel})
+
     async def test_a_secret_connection_reworded_stays_secret_to_the_players(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b, secret=True)

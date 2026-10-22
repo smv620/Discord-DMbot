@@ -1528,7 +1528,10 @@ class MemoryStore:
         it. Only table names are run, never anyone's data."""
         try:
             async with self._db.guild(guild_id) as conn:
-                await conn.execute("ANALYZE memory_entities, memory_aliases, memory_relations")
+                await conn.execute(
+                    "ANALYZE memory_entities, memory_aliases, memory_relations,"
+                    " memory_beliefs, memory_perspectives"
+                )
         except Exception:
             log.warning("Couldn't refresh the memory tables' statistics", exc_info=False)
 

@@ -703,7 +703,7 @@ class Speed(MemoryTest):
             )
             for table in (
                 "memory_entities", "memory_aliases", "memory_relations", "memory_mentions",
-                "memory_claims", "memory_heard",
+                "memory_claims", "memory_heard", "memory_beliefs", "memory_perspectives",
             ):  # fmt: skip
                 await conn.execute(f"ANALYZE {table}")
 

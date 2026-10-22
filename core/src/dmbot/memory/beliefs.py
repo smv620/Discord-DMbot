@@ -254,14 +254,19 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
         if relation_id != old["id"]:
             continue
         mine = held.get((new_id, perspective_id))
-        same = mine is not None and (
-            float(mine["confidence"]),
-            mine["status"],
-            list(mine["evidence_ids"]),
-        ) == (float(belief["confidence"]), belief["status"], list(belief["evidence_ids"]))
+
+        def shape(row: dict[str, Any]) -> tuple[Any, ...]:
+            return (
+                float(row["confidence"]),
+                row["status"],
+                list(row["evidence_ids"]),
+                row["session_at"],
+            )
+
+        same = mine is not None and shape(mine) == shape(belief)
         if same:
             continue
-        if perspective_id == party and new["secret"] and float(belief["confidence"]) >= KNOWN:
+        if perspective_id == party and new["secret"]:
             continue  # (the flag decides what the players know; see `follow`)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
@@ -274,7 +279,9 @@ def party_knows(table: str = "memory_relations") -> str:
     readers that show the players the story use it where they used to test the `secret` flag, so
     they read what The party believes (#2409); until guesses arrive the two always agree (`follow`
     keeps them so, and a test holds the readers to it). `table` is the connections' table or alias
-    in the query; the SQL reads that table's own guild, campaign and id."""
+    in the query; the SQL reads that table's own guild, campaign and id. Whoever inserts confirmed
+    connections by raw SQL (a migration, a test) must write their beliefs too (`backfill`), or the
+    players do not see them."""
     return (
         "EXISTS (SELECT 1 FROM memory_beliefs pb JOIN memory_perspectives pp"
         " ON pp.guild_id = pb.guild_id AND pp.campaign_id = pb.campaign_id"
