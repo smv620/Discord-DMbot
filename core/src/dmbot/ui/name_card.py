@@ -31,6 +31,7 @@ from dmbot.memory.models import (
     DM,
     DM_ONLY_TYPES,
     MERGED,
+    PRONOUNCED,
     REJECTED,
     Alias,
     Entity,
@@ -90,9 +91,6 @@ FLAG_WHY = {
     "too_many": "That's more than one place at once",
 }
 ONLY_ONE = "☝️ Only one of these exists (you said so)."
-# A spelling box holding "Name pronounced …" is the sound, not the spelling (#2332). It needs
-# words after the cue, so a name like "Pronouncer Vex" or a bare "Sounds Like" still saves.
-PRONOUNCED = re.compile(r"\b(?:pronounced|sounds? like)\s+\S", re.IGNORECASE)
 SPELLING_ONLY = "That looks like how to say the name. Type only how it's spelled here."
 SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it box below."
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
