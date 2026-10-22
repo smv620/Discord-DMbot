@@ -15,6 +15,7 @@ from dmbot.db import Database
 from dmbot.mail import Mailer
 from dmbot.web import email_change, email_signin, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -216,6 +217,22 @@ class Changing(DatabaseTest):
         self.assertEqual(await self.email_of(ALICE), NEW)  # Discord's address is not put back
         await sessions.sign_in(self.web, BOB, [THURSDAY], now=self.now + 60, days=30)
         self.assertEqual(await self.email_of(BOB), email_of(BOB))  # unchosen: Discord's, as before
+
+    async def test_a_discord_sign_in_does_not_take_an_address_another_account_uses(self) -> None:
+        shared = DiscordUser(id=3003, name="Second", email=email_of(ALICE))  # one mailbox, two
+        await self.exist(ALICE)
+        await sessions.sign_in(self.web, shared, [THURSDAY], now=self.now, days=30)
+        self.assertEqual(await self.email_of(ALICE), email_of(ALICE))
+        self.assertIsNone(await self.email_of(shared))  # a new account: none, Discord still works
+        # an account that already has an address keeps it when Discord now offers a taken one
+        await self.exist(BOB)
+        moved = DiscordUser(id=BOB.id, name=BOB.name, email=email_of(ALICE))
+        await sessions.sign_in(self.web, moved, [THURSDAY], now=self.now + 60, days=30)
+        self.assertEqual(await self.email_of(BOB), email_of(BOB))
+        # the address still finds exactly one account
+        async with self.web.user(ALICE.id) as conn:
+            found = await conn.execute("SELECT dmbot_email_taken(%s) AS t", (email_of(BOB),))
+            self.assertIs(row_of(await found.fetchone())["t"], True)
 
     async def test_two_accounts_cannot_confirm_the_same_address_at_once(self) -> None:
         await self.exist(ALICE, BOB)
