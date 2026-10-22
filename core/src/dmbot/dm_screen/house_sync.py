@@ -54,13 +54,10 @@ FAILED = (
     "you try again. If it keeps happening, tell the person who runs DMbot."
 )
 STALE = "That one was already dealt with."
-FOUND_NOTE = (
-    "_Nothing is saved until you press a button. **Review** lets you read them one at a time._"
-)
+FOUND_NOTE = "_Nothing is saved until you accept. **Review** lets you read them one at a time._"
 FOUND_FILE = (
-    "Here are the new rules I found, numbered like your house rules (only the new ones; "
-    "📥 Download rules in `/dmbot houserules` has your whole list). Check them, fix them, and "
-    "upload the file back if you like."
+    "Here is your whole house-rules list with the new rules I found added at the end, numbered "
+    "like your house rules. Check it, change it, and upload it back if you like: it only adds."
 )
 NOTHING_CHANGES = (
     "_Nothing changes until you press a button. Review lets you go one rule at a time._"
@@ -73,6 +70,10 @@ SAME = "Your house-rules file and DMbot's house rules match. Nothing to change."
 HOUSE_AI_READS_PER_DAY = 20  # files read by the AI, a server a day (a linked file: per change)
 BOOK = "Your own house rules only. For a published book, use Share a rulebook."
 NOTHING_FOUND = "I read your file and found no new house rules. Nothing was changed."
+TOO_MANY_RULES = (
+    "This file has more house rules than I can list in one go. Upload it in parts, a few pages "
+    "at a time. Nothing was changed."
+)
 NOT_READ = (
     "I couldn't read that file just now, so nothing was changed. Try again in a minute, or put "
     "the rules in DMbot's numbered list (📥 Download rules in `/dmbot houserules` shows how)."
@@ -87,9 +88,6 @@ TOO_MANY_READS = (
     f"This server has reached today's limit for reading files ({HOUSE_AI_READS_PER_DAY}). Try "
     "again tomorrow, or use a file in DMbot's numbered list, which has no limit."
 )
-HOUSE_AI_READS_PER_DAY = (
-    20  # files read by the AI, a server a day (a linked file counts once per change)
-)
 TOO_BIG = "That file is too big. Send just the house-rules part (up to 10 MB). Nothing was changed."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
 DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
@@ -102,7 +100,7 @@ LABELS = {
     "accept": ("Accept", "✅", discord.ButtonStyle.primary),
     "skip": ("Skip", "⏭️", discord.ButtonStyle.secondary),
     "rest": ("Accept this and the rest", "✅", discord.ButtonStyle.secondary),
-    "file": ("Download what I found", "📥", discord.ButtonStyle.secondary),
+    "file": ("Download the full list", "📥", discord.ButtonStyle.secondary),
 }
 
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
@@ -553,22 +551,30 @@ async def _compare_found(
     day = time.strftime("%Y-%m-%d", time.gmtime())
     if gid in _ai_busy:
         return BUSY
-    if _ai_reads.get((gid, day), 0) >= HOUSE_AI_READS_PER_DAY:
-        return TOO_MANY_READS
-    _ai_busy.add(gid)
     for old in [k for k in _ai_reads if k[1] != day]:
         del _ai_reads[old]  # only today counts
-    _ai_reads[(gid, day)] = _ai_reads.get((gid, day), 0) + 1
+    left = HOUSE_AI_READS_PER_DAY - _ai_reads.get((gid, day), 0)
+    if left <= 0:
+        return TOO_MANY_READS
+    _ai_busy.add(gid)
+    found = house_ai.Found(unread=True)
     try:
         mine = await store.list(gid, campaign.id)
         found = await house_ai.read(
-            bot.house_file_ai.complete, text, [(r.rule, r.supersedes) for r in mine]
+            bot.house_file_ai.complete,
+            text,
+            [(r.rule, r.supersedes) for r in mine],
+            budget=left,  # the retry of a cut answer is a call of the day's too
         )
     finally:
         _ai_busy.discard(gid)
+        # Every call that reached the service is counted, the retry included, and none is given
+        # back: a read that failed or was cut still cost.
+        _ai_reads[(gid, day)] = _ai_reads.get((gid, day), 0) + found.calls
     if found.unread:
-        _ai_reads[(gid, day)] -= 1  # a read that gave nothing does not use up the day's reads
-        return NOT_READ
+        if found.out_of_reads:
+            return TOO_MANY_READS
+        return TOO_MANY_RULES if found.too_big else NOT_READ
     remember = link is not None and links is not None
     if found.published_book or not found.rules:
         if remember:  # nothing to offer: this version is done with
@@ -587,7 +593,7 @@ async def _compare_found(
         _found_summary(found, source),
         from_link,
         file_name=file_name,
-        found_text=_found_file(campaign, added),
+        found_text=_found_file(campaign, mine, added),
     )
     if not await _offer(bot, campaign, pending, send):
         return None  # not seen by the DM, so not recorded as read: the next start offers it again
@@ -596,14 +602,20 @@ async def _compare_found(
     return None
 
 
-def _found_file(campaign: Campaign, rules: Sequence[house_file.FileRule]) -> str:
-    """What was found, in DMbot's numbered format (a file the DM can check, keep or upload)."""
+def _found_file(
+    campaign: Campaign, mine: Sequence[Any], rules: Sequence[house_file.FileRule]
+) -> str:
+    """The campaign's whole list in DMbot's numbered format with the new rules added at the end: a
+    file the DM can check, change and upload back, which only adds (a file of the new rules alone
+    would offer to remove every other rule)."""
 
     class _Row:  # the shape `house_file.write` reads
-        def __init__(self, r: house_file.FileRule) -> None:
-            self.number, self.rule, self.supersedes = r.number, r.rule, r.supersedes
+        def __init__(self, number: int, rule: str, supersedes: str | None) -> None:
+            self.number, self.rule, self.supersedes = number, rule, supersedes
 
-    return house_file.write(campaign.name, [_Row(r) for r in rules])  # type: ignore[misc]
+    rows = [_Row(r.number, r.rule, r.supersedes) for r in mine]
+    rows += [_Row(r.number, r.rule, r.supersedes) for r in rules]
+    return house_file.write(campaign.name, rows)  # type: ignore[arg-type]
 
 
 async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | None]:

@@ -46,8 +46,13 @@ def csv_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
             if line:
                 lines.append(line)
                 size += len(line)
-            if number >= MAX_CSV_ROWS or size > max_chars:
-                break
+            if number >= MAX_CSV_ROWS:
+                raise DocumentError(
+                    f"That CSV has more than {MAX_CSV_ROWS:,} rows. Keep only the rows with your "
+                    "rules, or split it into smaller files."
+                )
+            if size > max_chars:
+                break  # too long anyway: house_text_of says so
     except csv.Error as exc:
         raise DocumentError(
             "DMbot couldn't read that CSV file. Save it again as a CSV or a text file."
