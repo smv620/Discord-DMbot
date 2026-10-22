@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from dmbot.memory.extractor import readable
+from dmbot.memory.models import name_key
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
@@ -20,6 +21,33 @@ from dmbot.recaps.text import strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
 
 log = logging.getLogger(__name__)
+
+
+def said_in(lines: Any) -> str:
+    """What the table said in a session, for the recap's name check: the consented table lines
+    (as heard and as cleaned), never the DM sidebar, and squashed as names are compared."""
+    return " ".join(
+        name_key(f"{line.heard} {line.text}") for line in lines if not getattr(line, "sidebar", "")
+    )
+
+
+def recap_name_sets(names: Any, said: str | None) -> tuple[list[str], list[str]]:
+    """(the names the recap may use, the names it must not) for a session. A secret name is never
+    allowed. A name the players haven't been shown yet (#2404) is allowed only when the table said
+    it in this session (`said`, from `said_in`): the recap writes what the party knows, and saying
+    a name at the table is how the party learns it. With no `said` (the session's lines can't be
+    read) it is not allowed: stricter, never looser."""
+
+    def spoken(text: str) -> bool:
+        return said is not None and f" {name_key(text)} " in f" {said} "
+
+    allowed = {
+        n.text
+        for n in names.names
+        if n.confirmed and not n.secret and not n.person and (not n.entry_hidden or spoken(n.text))
+    }
+    secret = {n.text for n in names.names if n.secret or (n.entry_hidden and not spoken(n.text))}
+    return sorted(allowed), sorted(secret)
 
 
 async def load_inputs(
@@ -59,10 +87,8 @@ async def load_inputs(
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
-        allowed_names=sorted(
-            {n.text for n in names.names if n.confirmed and not n.secret and not n.person}
-        ),
-        secret_names=sorted({n.text for n in names.names if n.secret}),
+        allowed_names=recap_name_sets(names, said_in(lines))[0],
+        secret_names=recap_name_sets(names, said_in(lines))[1],
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,

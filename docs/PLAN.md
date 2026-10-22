@@ -1814,7 +1814,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       revealed when The party believes it (STORY_MEMORY section 9); `memory_relations.unrevealed` (default
       off, so every connection that exists is revealed) keeps the party from believing a backstory
       connection until the DM presses **👁️ Reveal to players** (both its names must be revealed first).
-      Every players' reader already looks at those two, so none changed. Full View marks `revealed` on each
+      Every players' reader already looks at those two, so none changed. **Unrevealed is not secret for the
+      listeners** (Supervisor, 2026-10-22): the cleaner and the DM sidebar use an unrevealed name like any
+      other; only a 🤫 spelling or a clue only some know keeps the secret treatment. The recap may use an
+      unrevealed name only when the table said it in that session's lines (the recap writes what the party
+      knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
       node and connection. Matching what is said at the table, and the after-session "Revealed at the
       table" line, are the next slice.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,

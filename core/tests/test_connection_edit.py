@@ -271,7 +271,30 @@ class Cards(base.NamesTest):
         (hidden,) = await self.relations()
         self.assertTrue(hidden.secret)
         shown = await self.page()
-        self.assertIn("👁 Show players", self.labels(shown))
+        self.assertIn("👁️ Show to players", self.labels(shown))
+
+    async def test_a_backstory_connection_is_shown_to_players_from_here_and_undo_hides_it(
+        self,
+    ) -> None:
+        """#2404: kept from a backstory it waits unrevealed, not secret; the switch shows it."""
+        other = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bell.id, "knows", other.id,
+            source="dm", confidence=1.0, status=CONFIRMED, unrevealed=True,
+        )  # fmt: skip
+        self.fresh()
+        page = await self.page()
+        self.assertIn("👁️ Show to players", self.labels(page))
+        it = self.it()
+        await page._flip(it)
+        note, card = it.response.edited[0]
+        self.assertIn("Players can see it now", note)
+        (shown,) = await self.relations()
+        self.assertEqual((shown.secret, shown.unrevealed), (False, False))
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())
+        (held,) = await self.relations()
+        self.assertEqual((held.secret, held.unrevealed), (False, True))
 
     async def test_a_manager_has_no_flip_and_cannot_press_a_dm_pages(self) -> None:
         await self.know("Kesh")

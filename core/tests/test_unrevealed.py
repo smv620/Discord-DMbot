@@ -158,6 +158,78 @@ class TheNames(Held):
         self.assertNotIn(fresh, theirs)
 
 
+class TheListeners(Held):
+    async def test_a_name_made_on_the_spot_in_a_thread_starts_unrevealed(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.ui import threads
+
+        campaign = SimpleNamespace(guild_id=self.g, id=self.one.id)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
+        interaction = MagicMock()
+        interaction.client.lookup.get = AsyncMock(return_value=lookup)
+        then = AsyncMock()
+        with (
+            patch.object(
+                threads, "_dm_and_memory", AsyncMock(return_value=(campaign, self.memory))
+            ),
+            patch.object(threads, "changed", MagicMock()),
+        ):
+            await threads.link_by_name(
+                interaction, self.one.id, "t" * 32, "The Ford Fight",
+                kinds=None, then=then, make="event",
+            )  # fmt: skip
+        made = then.await_args.args[3]
+        entity = await self.memory.entity(self.g, self.one.id, made)
+        assert entity is not None
+        self.assertTrue(entity.hidden_from_players)
+
+    async def test_an_unrevealed_name_is_not_secret_for_the_listeners(self) -> None:
+        from dmbot.memory.lookup import CampaignLookup
+
+        fresh = await self.add("Orla Finch", "npc", hidden_from_players=True)
+        clue = await self.add("The Map", "clue")
+        await self.link("knows", self.mira, clue, "knows-clue")
+        await self.memory.set_audience_limited(self.g, self.one.id, clue, True, source=DM)
+        secret = await self.add("Lord Veil", "npc")
+        await self.alias(secret, "The Stranger", secret=True)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
+        by_entity = {e.entity_id: e for e in lookup.names if e.key in ("orla finch", "the map")}
+        self.assertFalse(by_entity[fresh].secret)  # the cleaner and the sidebar use it
+        self.assertTrue(by_entity[fresh].entry_hidden)
+        self.assertTrue(by_entity[clue].secret)  # only a clue (or a 🤫 spelling) stays secret
+        self.assertTrue(any(e.secret and e.text == "The Stranger" for e in lookup.names))
+
+    async def test_the_recap_may_use_an_unrevealed_name_only_if_the_table_said_it(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.recaps.inputs import recap_name_sets, said_in
+
+        await self.add("Orla Finch", "npc", hidden_from_players=True)
+        secret = await self.add("Lord Veil", "npc")
+        await self.alias(secret, "The Stranger", secret=True)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
+
+        def line(text: str, sidebar: str = "") -> Any:
+            return SimpleNamespace(heard=text, text=text, sidebar=sidebar)
+
+        allowed, hidden = recap_name_sets(lookup, said_in([line("We met orla finch at the ford")]))
+        self.assertIn("Orla Finch", allowed)
+        self.assertNotIn("Orla Finch", hidden)
+        self.assertIn("The Stranger", hidden)  # a 🤫 spelling stays secret, said or not
+        for lines in ([line("We met Mira at the ford")], [line("Orla Finch?", sidebar="question")]):
+            allowed, hidden = recap_name_sets(lookup, said_in(lines))
+            self.assertNotIn("Orla Finch", allowed)  # not said at the table: not for the recap
+            self.assertIn("Orla Finch", hidden)
+        allowed, hidden = recap_name_sets(lookup, None)  # lines unreadable: stricter, not looser
+        self.assertIn("Orla Finch", hidden)
+        allowed, hidden = recap_name_sets(lookup, said_in([line("Orla Finchley was there")]))
+        self.assertIn("Orla Finch", hidden)  # a whole name, not a prefix of another
+
+
 class TheMigration(unittest.IsolatedAsyncioTestCase):
     """0187 on a table that already holds connections: each reads as revealed, as before."""
 

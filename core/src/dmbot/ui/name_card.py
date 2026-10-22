@@ -348,13 +348,11 @@ def card_text(
     others = [
         _md(e.text) + (" (old spelling)" if e.kind == "old" else "")
         for e in mine
-        if (not e.secret or e.entry_hidden) and e.key != own
+        if not e.secret and e.key != own
     ]
     # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
     hidden = [
-        _md(e.text)
-        for e in mine
-        if e.secret and not e.entry_hidden and not (entity.unseen_by_players and e.key == own)
+        _md(e.text) for e in mine if e.secret and not (entity.unseen_by_players and e.key == own)
     ]
     heard = lookup.heard.get(entity_id)
     when = (

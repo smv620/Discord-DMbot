@@ -507,8 +507,7 @@ async def queue_links(
     ends: dict[str, str] = {}
     for key, entries in lookup.by_key.items():
         for e in entries:
-            # (a name the players don't know yet is still the DM's to connect, #2404)
-            if e.confirmed and (not e.secret or e.entry_hidden) and not e.person:
+            if e.confirmed and not e.secret and not e.person:
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
 
     def entry(name: str) -> str | None:

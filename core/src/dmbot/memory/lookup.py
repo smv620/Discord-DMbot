@@ -86,9 +86,9 @@ class NameEntry:
     codes: tuple[str, ...]
     person: bool = False  # a name of someone at the table, not of a story character
     said_as: str | None = None  # the DM's spelling for the recap's narrator (#1419)
-    # `secret` only because its entry is "Players don't know this one yet" (#2321); the name itself
-    # is not a secret one. A name a DM adds starts so (#2404), and a new spelling joined to it stays
-    # hidden with it, so a DM's list may still match it and the card calls it an ordinary name.
+    # Its entry is "Players don't know this one yet" (#2321); the name itself is not a secret one.
+    # A name a DM adds starts so (#2404). Listeners use it like any other; only what players are
+    # shown (lists, cards, answers) and the recap leave it out until it is said at the table.
     entry_hidden: bool = False
 
 
@@ -130,10 +130,12 @@ class CampaignLookup:
                 a.text,
                 a.key,
                 a.kind,
-                # A clue only some people know (#1649), or an entry the DM hasn't told the players
-                # of (#2321), is as secret as a secret name: the Cleaner must never write it into
-                # the shared transcript, and it is the DM's alone.
-                a.secret or entities[a.entity_id].unseen_by_players,
+                # A clue only some people know (#1649) is as secret as a secret name: the Cleaner
+                # must never write it into the shared transcript, and it is the DM's alone. An
+                # entry the DM hasn't told the players of (#2321, and every new name starts so,
+                # #2404) is not: "revealed" decides only what players are shown, every listener
+                # still uses every name (see `entry_hidden`, and the recap check).
+                a.secret or entities[a.entity_id].audience_limited,
                 a.status == CONFIRMED and entities[a.entity_id].status == CONFIRMED,
                 sound_codes(a.text),  # the same function as for heard words
                 False,

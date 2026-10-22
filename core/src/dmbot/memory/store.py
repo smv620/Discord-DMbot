@@ -3777,8 +3777,10 @@ class MemoryStore:
                 for r in rows
                 if r["op"] == "update" and (r["after"] or {}).get("status") == REJECTED
             ]
+            if not ended and _is_a_reveal(rows):  # 👁️ Show to players on a held-back one (#2404)
+                ended = rows
             if len(ended) != 1 or any(r["source"] != DM for r in rows):
-                raise MemoryRuleError(NOT_FOUND)  # only a removal or rewording by the DM
+                raise MemoryRuleError(NOT_FOUND)  # only a removal, rewording or reveal by the DM
             for r in rows:  # a secret is not even mentioned, old or not
                 secret = (r["before"] or {}).get("secret") or (r["after"] or {}).get("secret")
                 if secret and not secrets:
@@ -4161,6 +4163,16 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
     elif _stronger(old["status"], status) != old["status"]:
         changes["status"] = status
     return changes
+
+
+def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
+    """One connection changed in place, and only in who may see it (secret or unrevealed): the
+    DM showing a held-back connection to the players."""
+    if len(rows) != 1 or rows[0]["op"] != "update":
+        return False
+    before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
+    changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
+    return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
