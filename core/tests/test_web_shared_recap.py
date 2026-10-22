@@ -107,8 +107,13 @@ class TheLink(Shared):
         self.assertEqual(body["postedAt"], 777)
         self.assertNotIn("《", body["text"])
         self.assertEqual(
-            set(body), {"title", "text", "postedAt", "audio"}
+            set(body),
+            {"title", "text", "postedAt", "audio", "sessionAt", "sessionNumber", "sessionSeconds"},
         )  # the table version only
+        # The signed-out door knows only the day; the number and length wait for its migration.
+        self.assertEqual(body["sessionAt"], 100)
+        self.assertIsNone(body["sessionNumber"])
+        self.assertIsNone(body["sessionSeconds"])
         self.assertNotIn("Mira drew her blade.", got.text)  # not the housekeeping list
         self.assertEqual(got.headers["x-robots-tag"], "noindex, nofollow")
         self.assertIn("no-store", got.headers["cache-control"])
