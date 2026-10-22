@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Recaps are shorter",
+    what: "Recaps are shorter, so the game starts sooner: about 150 words for a one-hour game, 300 for three hours, and 450 at most.",
+    reason: "In review (#2368); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "All your names on the website",
     what: "When a name list in Discord is too long to show everything, its last choice is now \"All names on the website\". It gives you a private button that opens the whole list.",
     reason: "In review (#2294); held until dev1 deploys it and the website's Names page is live (#2295, WebDev).",
