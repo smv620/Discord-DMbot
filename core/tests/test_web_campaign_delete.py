@@ -114,16 +114,77 @@ class Deleting(Base):
         self.assertEqual(await self.sweep(), 1)
         self.assertFalse((self.audio_root / str(LOST) / self.lost.id).exists())
 
-    async def sweep(self) -> int:
-        """The bot's own method, on a stand-in with the real store and the real audio files."""
+    async def sweep(self, me: Any = None, passes: int = 2) -> int:
+        """The bot's own method, on a stand-in with the real store and the real audio files. A
+        folder goes only when two passes in a row list it, so a test runs two."""
         from types import SimpleNamespace
 
         from dmbot.bot import DMBot
 
-        me = SimpleNamespace(campaigns=self.campaigns, recap_audio_files=self.audio)
+        me = me or SimpleNamespace(campaigns=self.campaigns, recap_audio_files=self.audio)
         before = sum(1 for _ in self.audio_root.glob("*/*"))
-        await DMBot._sweep_deleted_campaign_audio(me)  # type: ignore[arg-type]
+        for _ in range(passes):
+            await DMBot._sweep_deleted_campaign_audio(me)  # type: ignore[arg-type]
         return before - sum(1 for _ in self.audio_root.glob("*/*"))
+
+    async def test_one_pass_removes_nothing_the_next_one_does(self) -> None:
+        stray = self.audio_root / str(LOST) / "gonecampaign" / "recaps/1"
+        stray.mkdir(parents=True)
+        self.assertEqual(await self.sweep(passes=1), 0)
+        self.assertTrue(stray.exists())
+
+    async def test_a_move_that_lands_between_the_reads_of_one_pass_loses_nothing(self) -> None:
+        """A pass reads the new server first (the campaign is not there yet), then the move
+        commits, then it reads the old server (the campaign is gone from it): in that pass the
+        campaign looks deleted and its folder in the new server a stray. It is not removed on that
+        sighting, and the next pass, reading a settled database, finds the campaign there."""
+        from types import SimpleNamespace
+
+        moved = self.audio_root / "999" / self.one.id / "recaps/1"
+        moved.mkdir(parents=True)
+        one, two = self.one.id, self.two.id
+
+        class Flaky:
+            settled = False
+
+            async def guilds_with_campaigns(self_) -> list[int]:
+                return [999, THURSDAY.id]
+
+            async def campaign_ids(self_, guild_id: int) -> set[str]:
+                if guild_id == 999:
+                    return {one} if self_.settled else set()
+                return {two}
+
+            async def exists_anywhere(self_, campaign_id: str) -> bool:
+                return campaign_id == one and self_.settled
+
+        store = Flaky()
+        me = SimpleNamespace(campaigns=store, recap_audio_files=self.audio)
+        self.assertEqual(await self.sweep(me, passes=1), 0)  # looks gone, first sighting
+        store.settled = True
+        self.assertEqual(await self.sweep(me, passes=1), 0)  # the next pass finds it
+        self.assertTrue(moved.exists())
+
+    async def test_even_a_second_sighting_does_not_remove_a_campaign_found_again(self) -> None:
+        from types import SimpleNamespace
+
+        moved = self.audio_root / "999" / self.one.id / "recaps/1"
+        moved.mkdir(parents=True)
+        one, two = self.one.id, self.two.id
+
+        class Unsettled:
+            async def guilds_with_campaigns(self_) -> list[int]:
+                return [999, THURSDAY.id]
+
+            async def campaign_ids(self_, guild_id: int) -> set[str]:
+                return set() if guild_id == 999 else {two}
+
+            async def exists_anywhere(self_, campaign_id: str) -> bool:
+                return campaign_id == one  # the fresh, single lookup finds it
+
+        me = SimpleNamespace(campaigns=Unsettled(), recap_audio_files=self.audio)
+        self.assertEqual(await self.sweep(me), 0)
+        self.assertTrue(moved.exists())
 
     async def test_the_sweep_removes_only_the_folders_of_campaigns_that_exist_nowhere(self) -> None:
         mine = self.audio_root / str(THURSDAY.id) / self.one.id / "recaps/1"

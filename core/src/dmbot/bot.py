@@ -11231,19 +11231,24 @@ class DMBot(commands.AutoShardedBot):
 
     async def _sweep_deleted_campaign_audio(self) -> None:
         """A campaign deleted on the website leaves its audio on the disk: that container mounts
-        the volume read-only (#2554), so the bot removes it here. A folder is only a candidate
-        when the snapshot does not list it; right before removing it the campaign is looked for
-        again in every server, because a campaign that moved servers keeps its ID and its folder
-        appears in the new server's directory before any snapshot knows (#2532). If no server
-        lists a campaign the sweep does nothing, so a failed read can never wipe the audio."""
+        the volume read-only (#2554), so the bot removes it here. A folder is removed only when
+        two passes in a row (an hour apart) both list it as a stray and a fresh look in every
+        server still finds no such campaign: the passes read the servers one after another, so a
+        campaign that moves servers while one runs can look gone for that pass (#2532), and its
+        new folder is as old as the files copied into it. If no server lists a campaign the sweep
+        does nothing, so a failed read can never wipe the audio."""
         keep: dict[int, set[str]] = {}
         for guild_id in await self.campaigns.guilds_with_campaigns():
             keep[guild_id] = await self.campaigns.campaign_ids(guild_id)
         if not any(keep.values()):
+            self._audio_strays: set[tuple[int, str]] = set()
             return
         files = self.recap_audio_files
+        strays = set(await asyncio.to_thread(files.strays, keep))
+        seen_before = getattr(self, "_audio_strays", set())
+        self._audio_strays = strays  # (this pass's list replaces the last one)
         gone = 0
-        for guild_id, campaign_id in await asyncio.to_thread(files.strays, keep):
+        for guild_id, campaign_id in sorted(strays & seen_before):
             if await self.campaigns.exists_anywhere(campaign_id):
                 continue
             if await asyncio.to_thread(files.remove_stray, guild_id, campaign_id):
