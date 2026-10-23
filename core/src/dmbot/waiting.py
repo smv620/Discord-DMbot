@@ -83,14 +83,17 @@ class WaitingMessage:
         self._total = 0
         self._sent = ""
         self._over = False
+        self._keeps = True
         self._task: asyncio.Task[None] | None = None
 
-    def step(self, words: str, done: int = 0, total: int = 0) -> None:
+    def step(self, words: str, done: int = 0, total: int = 0, *, keeps: bool = True) -> None:
         """Where the job is now. `done` of `total` is shown only when `total` is known. Anything
-        that differs from the last call counts as movement."""
+        that differs from the last call counts as movement. `keeps`: whether stopping now would
+        keep what the job has (a stage that has produced nothing yet says that nothing is added)."""
         if (words, done, total) != (self._step, self._done, self._total):
             self._moved = self._clock()
         self._step, self._done, self._total = words, done, total
+        self._keeps = keeps
 
     def moved(self) -> None:
         """The job did something that is not a new step (a call went round again)."""
@@ -109,7 +112,8 @@ class WaitingMessage:
             stall = f"No change for {ago_text(still)}."
             if self._stops_at is not None:
                 stop = elapsed_text(self._stops_at)
-                stall += f" DMbot will stop by itself at {stop} and keep what it has."
+                kept = "keep what it has" if self._keeps else "add nothing"
+                stall += f" DMbot will stop by itself at {stop} and {kept}."
             notes.append(stall)
         elif still >= SHOW_LAST_CHANGE_AFTER_S:
             notes.append(f"Last change {ago_text(still)} ago.")

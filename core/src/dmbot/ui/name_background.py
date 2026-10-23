@@ -381,7 +381,7 @@ class BackgroundOffer(_Menu):
                 def on_step(stage: str, done: int, total: int) -> None:
                     if stage == "reading":
                         again = f", try {done}" if done > 1 else ""
-                        waiting.step(f"Step 1 of 2: reading it through{again}")
+                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
                     else:
                         waiting.step("Step 2 of 2: picking out names and links", done, total)
 

@@ -79,6 +79,16 @@ class TheText(unittest.TestCase):
         waiting.step("Step 2 of 2", 1, 4)  # the next step clears it
         self.assertNotIn("No change", waiting.text())
 
+    def test_a_stage_that_has_made_nothing_yet_says_nothing_will_be_added(self) -> None:
+        clock = Clock()
+        waiting = WaitingMessage(_nothing, "t", clock=clock, stall_after_s=240, stops_at_s=840)
+        waiting.step("Step 1 of 2: reading it through", keeps=False)
+        clock.now = 250
+        self.assertIn("stop by itself at 14 min and add nothing.", waiting.text())
+        waiting.step("Step 2 of 2", 1, 4)
+        clock.now = 500
+        self.assertIn("and keep what it has.", waiting.text())
+
     def test_another_call_of_the_same_pass_counts_as_movement(self) -> None:
         clock = Clock()
         waiting = WaitingMessage(_nothing, "t", clock=clock, stall_after_s=240)
