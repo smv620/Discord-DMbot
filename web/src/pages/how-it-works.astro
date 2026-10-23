@@ -51,6 +51,7 @@ const charts = [duringChart, afterChart];
 
   <section class="stack" aria-labelledby="the-team">
     <h2 id="the-team">{team.heading}</h2>
+    <p>{team.lead}</p>
     {
       team.groups.map((g) => (
         <div class="stack">
@@ -93,6 +94,7 @@ const charts = [duringChart, afterChart];
                       {stage.arrow && <span class="arrow-word"> {stage.arrow}</span>}
                     </p>
                   )}
+                  {stage.boxes.length > 1 && <p class="together">At the same time:</p>}
                   <div class="stage">
                     {stage.boxes.map((box) => (
                       <p class={`box g-${box.group}`}>{box.text}</p>
@@ -111,7 +113,8 @@ const charts = [duringChart, afterChart];
             </li>
           ))}
         </ul>
-        <details class="alt">
+        <p class="skip"><a href={`#${chart.id}-list`}>Skip the chart and read the steps</a></p>
+        <details class="alt" id={`${chart.id}-list`} open>
           <summary>{chart.listHeading}</summary>
           <ol>
             {chart.steps.map((s) => (
@@ -242,6 +245,20 @@ const charts = [duringChart, afterChart];
     gap: var(--space-2);
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   }
+  .together {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .skip {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  @media (max-width: 40rem) {
+    .stage {
+      grid-template-columns: 1fr;
+    }
+  }
   .arrow {
     margin: 0;
     text-align: center;
@@ -263,9 +280,10 @@ const charts = [duringChart, afterChart];
   .g-table { --hue: #c9a227; }
   .g-listen { --hue: #4a7fb5; }
   .g-think { --hue: #7b5cc4; }
-  .g-private { --hue: #c0504d; }
+  .g-private { --hue: #c0504d; border-style: dashed; }
+  .g-chat { --hue: #d07a2e; }
   .g-memory { --hue: #3c9a50; }
-  .g-dm { --hue: #b8860b; font-weight: 700; }
+  .g-dm { --hue: #b8860b; font-weight: 700; border-width: 3px; }
   .g-doc { --hue: #c9a227; }
   .g-out { --hue: #4a7fb5; }
   .legend {

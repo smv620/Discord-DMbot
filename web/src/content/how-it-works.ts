@@ -22,7 +22,7 @@ export const fourRules = {
     {
       icon: "🙋",
       name: "Only people who said yes",
-      text: 'DMbot only listens to people who pressed "yes". Bots are never recorded. Anyone can press Stop recording me, or say "Hey DMbot, off the record", at any time.',
+      text: 'DMbot only listens to people who pressed "yes". Bots are never recorded. Anyone can open the 🗂️ Menu and press Stop recording me, or say "Hey DMbot, off the record", at any time.',
     },
     { icon: "👑", name: "The DM decides", text: "Helpers suggest. Nothing goes into the story until the DM says yes." },
     {
@@ -50,6 +50,7 @@ export interface Helper {
 
 export const team = {
   heading: "Meet the team",
+  lead: "Two helpers are not working yet: MapBot (coming later) and the picture reader (built, and off until it is switched on).",
   groups: [
     {
       title: "While you play",
@@ -149,7 +150,7 @@ export const team = {
   ],
 };
 
-export type ChartGroup = "table" | "listen" | "think" | "private" | "memory" | "dm" | "doc" | "out";
+export type ChartGroup = "table" | "listen" | "think" | "private" | "chat" | "memory" | "dm" | "doc" | "out";
 
 export interface ChartBox {
   group: ChartGroup;
@@ -181,7 +182,7 @@ export const duringChart: Chart = {
   id: "during-the-game",
   heading: "How it all flows: during the game",
   lead: "Follow the arrows from the top. Purple boxes are the helpers that think about the game. The gold crown is always the end of the line: the DM decides.",
-  listHeading: "The same chart as a list",
+  listHeading: "Read this chart as a list of steps",
   lanes: [
     {
       title: "From the table to DMbot",
@@ -211,7 +212,7 @@ export const duringChart: Chart = {
           boxes: [
             b("private", "🛡️ The DM's private screen (rules, time and plot)"),
             b("private", "📩 A private reminder to that player only (FightBot)"),
-            b("private", "💬 A short answer: rules, never secrets (Hey DMbot)"),
+            b("chat", "💬 A short answer in the campaign's chat: rules, never secrets (Hey DMbot)"),
           ],
         },
         { boxes: [b("dm", "👑 The DM decides")] },
@@ -241,6 +242,7 @@ export const duringChart: Chart = {
     { group: "listen", text: "Listening and writing down" },
     { group: "think", text: "Helpers that think about the game" },
     { group: "private", text: "Private to the DM or one player" },
+    { group: "chat", text: "Posted in the campaign's chat" },
     { group: "memory", text: "Story Memory" },
     { group: "dm", text: "The DM decides" },
   ],
@@ -250,7 +252,7 @@ export const afterChart: Chart = {
   id: "after-the-game",
   heading: "How it all flows: after the game",
   lead: "When the game ends, DMbot writes the recap and tidies the Story Memory. Nothing is shared until the DM says so.",
-  listHeading: "The same chart as a list",
+  listHeading: "Read this chart as a list of steps",
   lanes: [
     {
       title: "Tidying the Story Memory",
@@ -271,7 +273,7 @@ export const afterChart: Chart = {
         { boxes: [b("think", "✍️ RecapBot writes a draft")] },
         {
           boxes: [b("think", "🔍 Do the checkers agree? PlotBot · fact checker · why checker · style checker")],
-          arrow: "Not yet: here's what to fix (up to 4 tries, then back to the draft)",
+          arrow: "Not yet: RecapBot gets the notes and tries again (up to 4 times)",
         },
         { boxes: [b("dm", "👑 The DM reads the recap")], arrow: "Yes" },
         {
@@ -312,25 +314,25 @@ export const whoSees = {
   rows: [
     {
       what: "The transcript",
-      dm: "✅",
-      players: "✅ Everyone in the server can read it. Only people who said yes are in it.",
+      dm: "✅ Yes",
+      players: "✅ Yes. Everyone in the server can read it. Only people who said yes are in it.",
     },
     {
       what: "Tips, secret names, plot notes (the DM screen)",
-      dm: "✅",
-      players: "🚫 Only if the DM lets them peek.",
+      dm: "✅ Yes",
+      players: "🚫 No, only if the DM lets them peek.",
     },
-    { what: "FightBot's reminder", dm: "—", players: "✅ Only the player it's about." },
+    { what: "FightBot's reminder", dm: "No: it is private to the player", players: "✅ Yes, only the player it's about." },
     {
       what: "An answer to a rules question",
-      dm: "✅",
-      players: "✅ In the campaign's chat. Never a secret, never a ruling.",
+      dm: "✅ Yes",
+      players: "✅ Yes, in the campaign's chat. Never a secret, never a ruling.",
     },
-    { what: "The recap", dm: "✅ First", players: "✅ Only after the DM posts it." },
+    { what: "The recap", dm: "✅ Yes, reads it first", players: "✅ Yes, only after the DM posts it." },
     {
       what: "The Story Memory",
-      dm: "✅ The truth",
-      players: "✅ The party (what the players already know).",
+      dm: "✅ Yes: The truth",
+      players: "✅ Yes: The party (what the players already know).",
     },
   ],
 };
@@ -349,7 +351,7 @@ export const brains = {
       name: "The careful brain",
       text: "for jobs that need more thought: finding new names, house rules, reading character sheets.",
     },
-    { icon: "🔭", name: "The deep brain", text: "for the hardest thinking: PlotBot." },
+    { icon: "🔭", name: "The deep brain", text: "is for the hardest thinking, which is PlotBot's job." },
     { icon: "🖋️", name: "The storyteller brain", text: "for writing the recap." },
   ],
   close: "Small jobs use the small brain, so DMbot stays quick at the table and doesn't cost more than it needs to.",
