@@ -983,3 +983,12 @@ as today.
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
 at the top. The 5a extractor was measured on 2026-10-15; the numbers and costs are in
 `docs/costs.md` ("Measured 2026-10-15").
+
+**Built (#2409).** Part A (migration 0179): the two perspectives, the beliefs, `manipulated_by`, the backfill,
+`MemoryStore.believe`, `party_view` and `truth_view`, and the writers kept in step through the connection's
+`secret` flag. Part B: the readers that show the players the story read what The party believes, not the flag:
+recall's players audience and the NPC roster behind the NPC pages, the name lookup the name dropdown and the
+cleaner use (`beliefs.party_knows()` in SQL), and the website's relationship web (migration 0185). Until
+guesses arrive (#2412) The party's belief and the flag always agree, and tests hold the readers to it. A
+reworded connection (#2408) carries the old one's beliefs, evidence, mentions and session span. The flag
+and the API's `secret` field stay until every reader has moved and a later migration drops the flag.

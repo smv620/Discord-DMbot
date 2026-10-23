@@ -237,6 +237,12 @@ export const held: Held[] = [
   },
   {
     date: "2026-10-22",
+    title: "The name is the button in the NPC list",
+    what: "In the NPC channel, each NPC's name is now the button that opens its page, with its other names beside it, instead of a 📖 Open button under every entry. The list tidies itself once, in the same order.",
+    reason: "In review (#2425); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "Every recap says which session it is",
     what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
     reason: "In review (#2418); held until dev1 deploys it.",
