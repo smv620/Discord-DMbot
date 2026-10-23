@@ -33,7 +33,8 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
                 self.fail("DMBOT_TEST_DATABASE_URL is needed")
             self.skipTest("set DMBOT_TEST_DATABASE_URL to test the migration")
         self.schema = f"t_{uuid.uuid4().hex[:16]}"
-        self.before = tuple(m for m in MIGRATIONS if m[0] != BEFORE)
+        # everything before the migration under test (later ones may build on its tables)
+        self.before = MIGRATIONS[: [m[0] for m in MIGRATIONS].index(BEFORE)]
         self.db = await Database.open(
             TEST_URL, schema=self.schema, max_size=2, migrations=self.before
         )
@@ -604,6 +605,81 @@ class Beliefs(MemoryTest):
                      "confidence": 1.0, "seq": 99})  # fmt: skip
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(backup)), DM)
+
+    # ---- the DM's 📌 100% truth (#2447) ----
+
+    async def test_a_pin_is_the_dms_word_one_change_and_undo_takes_it_back(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b, secret=True)
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+        pinned = await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        self.assertTrue(pinned.value.pinned)
+        self.assertEqual((pinned.value.confidence, pinned.value.status), (1.0, "secret_plot"))
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {rel})
+        self.assertEqual(await self.party(), {})  # a pin is not a reveal: still secret
+        assert pinned.batch is not None
+        await self.memory.undo(GUILD_A, self.c, pinned.batch, source="dm")
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+        again = await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        gone = await self.memory.pin(GUILD_A, self.c, rel, False, source="dm")
+        self.assertFalse(gone.value.pinned)
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+        assert again.batch is not None
+
+    async def test_only_the_dm_pins_and_only_a_confirmed_connection(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        for source in ("scan", "extractor", "character"):
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.pin(GUILD_A, self.c, rel, True, source=source)
+        proposed = (await self.relate(a, "ally_of", b, status=PROPOSED)).value[0].id
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.pin(GUILD_A, self.c, proposed, True, source="dm")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.pin(GUILD_A, self.c, rel, False, source="dm")  # not pinned
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+
+    async def test_a_pin_survives_the_flag_flipping_and_new_words_and_a_doubt_is_lifted(
+        self,
+    ) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        truth = (await self.kinds())["truth"]
+        await self.memory.believe(GUILD_A, self.c, truth, rel, 0.4, "theory", source="dm")
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        self.assertEqual((await self.truth())[rel], (1.0, "revealed_fact"))  # 100%, not a theory
+        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {rel})
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, rel, "ally_of", "", source="dm"
+        )
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {moved.value.id})
+
+    async def test_a_pin_makes_the_dms_view_apart_from_another_campaigns(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        other = (await self.campaigns.create(GUILD_A, "Other", 8)).id
+        with self.assertRaises(MemoryRuleError):  # another campaign's connection is not found
+            await self.memory.pin(GUILD_A, other, rel, True, source="dm")
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, other), set())
+
+    async def test_a_backup_round_trip_keeps_the_pin_and_an_older_file_has_none(self) -> None:
+        a, b = await self.pair()
+        rel = await self.link(a, b)
+        await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        after = await self.memory.pinned_connections(GUILD_B, restored.id)
+        self.assertEqual(len(after), 1)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        for row in self.memory_rows(backup):
+            if row["table"] == "belief":
+                row.pop("pinned", None)  # a file from before the pin
+        older = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        self.assertEqual(await self.memory.pinned_connections(GUILD_B, older.id), set())
 
     async def test_an_older_backup_without_beliefs_gets_them_worked_out(self) -> None:
         a, b = await self.pair()
