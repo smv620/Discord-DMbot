@@ -110,7 +110,7 @@ class TheLink(Shared):
             set(body),
             {"title", "text", "postedAt", "audio", "sessionAt", "sessionNumber", "sessionSeconds"},
         )  # the table version only
-        # The signed-out door knows only the day; the number and length wait for its migration.
+        # No transcript session was saved for this recap, so it has a day and no number or length.
         self.assertEqual(body["sessionAt"], 100)
         self.assertIsNone(body["sessionNumber"])
         self.assertIsNone(body["sessionSeconds"])
@@ -158,6 +158,117 @@ class TheLink(Shared):
             )
         body = (await self.public.get(f"/recaps/{token}")).json()
         self.assertEqual((body["sessionNumber"], body["sessionSeconds"]), (3, None))
+
+    async def approve_text(self) -> None:
+        got = await self.dm.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual(got.status_code, 200, got.text)
+
+    async def test_an_approved_unposted_recap_gets_a_link_only_when_asked(self) -> None:
+        """(#2419) Approving does not make a link; pressing the button does. It then opens with no
+        sign-in, though it was never posted."""
+        await self.approve_text()
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual((view["status"], view["share"]), ("draft", {"on": False, "path": None}))
+        token = await self.token()
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["title"], got.json()["postedAt"]), ("The Silver Lock", None))
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertTrue(view["share"]["on"])
+
+    async def test_a_draft_that_was_never_approved_never_gets_a_link(self) -> None:
+        got = await self.share("on")
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_posted"))
+        got = await self.share("new")
+        self.assertEqual(got.status_code, 409)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM recap_jobs WHERE share_token IS NOT NULL"
+            )
+            self.assertEqual(((await cur.fetchone()) or {})["n"], 0)
+
+    async def test_an_edit_after_sharing_hides_the_recap_until_it_is_approved_again(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
+        saved = await self.dm.put(
+            f"/me/recaps/{self.ref}", json={"summary": "A new ending.", "housekeeping": []}
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual(view["share"], {"on": False, "path": None})  # the page shows no live link
+        await self.approve_text()
+        got = await self.public.get(f"/recaps/{token}")
+        self.assertEqual((got.status_code, got.json()["text"]), (200, "A new ending."))
+
+    async def test_a_stored_token_opens_only_an_approved_unchanged_recap(self) -> None:
+        """The public read has its own rule: a token written straight onto an unapproved draft, or
+        a not-ready one, or with an empty approval, opens nothing; a wrong token opens nothing."""
+        token = "T" * 43
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET share_token = %s"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (token, self.one.id),
+            )
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+        await self.approve_text()
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
+        self.assertEqual((await self.public.get(f"/recaps/{'U' * 43}")).status_code, 404)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'failed'"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'ready', approved_hash = ''"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+
+    async def test_only_the_campaigns_dm_makes_a_link_for_an_approved_draft(self) -> None:
+        await self.approve_text()
+        got = await self.share("on", self.bob)
+        self.assertEqual(got.status_code, 404)
+        view = (await self.dm.get(f"/me/recaps/{self.ref}")).json()
+        self.assertEqual(view["share"], {"on": False, "path": None})
+
+    async def test_a_new_link_replaces_the_old_one_for_an_approved_draft(self) -> None:
+        await self.approve_text()
+        first = await self.token()
+        got = await self.share("new")
+        second = str(got.json()["path"]).removeprefix("/r/")
+        self.assertNotEqual(first, second)
+        self.assertEqual((await self.public.get(f"/recaps/{first}")).status_code, 404)
+        self.assertEqual((await self.public.get(f"/recaps/{second}")).status_code, 200)
+
+    async def test_the_link_stays_open_while_the_recap_is_being_posted(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting'"
+                " WHERE campaign_id = %s AND session_at = 100",
+                (self.one.id,),
+            )
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
+
+    async def test_a_turned_off_link_on_an_unposted_recap_answers_not_found(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        self.assertEqual((await self.share("off")).status_code, 200)
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 404)
+
+    async def test_the_link_keeps_working_when_the_recap_is_posted_later(self) -> None:
+        await self.approve_text()
+        token = await self.token()
+        await self.post_it()
+        self.assertEqual((await self.public.get(f"/recaps/{token}")).status_code, 200)
 
     async def test_asking_again_for_the_link_gives_the_same_one(self) -> None:
         await self.post_it()
