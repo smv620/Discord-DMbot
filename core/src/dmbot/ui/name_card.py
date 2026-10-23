@@ -1583,12 +1583,14 @@ class UndoButton(
     working after a restart (all it needs is in its ID, under Discord's 100 characters).
     Only acts while that name is still forgotten or joined to another."""
 
+    PREFIX = "dmbot:undo"
+
     def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
         super().__init__(
             discord.ui.Button(
                 label="Undo",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:undo:{campaign_id}:{entity_id}:{batch}",
+                custom_id=f"{self.PREFIX}:{campaign_id}:{entity_id}:{batch}",
             )
         )
         self.campaign_id = campaign_id
@@ -1600,6 +1602,12 @@ class UndoButton(
         cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
     ) -> UndoButton:
         return cls(match["campaign"], match["entity"], int(match["batch"]))
+
+    def busy(self, name: str) -> str:
+        return f"↩️ Undoing… bringing back **{_md(name)}**."
+
+    def done(self, name: str) -> str:
+        return f"↩️ **{_md(name)}** is back, with its other names and connections."
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         await _answer_first(interaction, in_place=True)  # (#1803) two reads come before "Undoing…"
@@ -1613,7 +1621,7 @@ class UndoButton(
             return
         # Answer Discord at once (#351): a big undo can take longer than its 3 seconds.
         # Saying so in place also takes the button away, so it isn't pressed twice.
-        await _replace(interaction, f"↩️ Undoing… bringing back **{_md(entity.name)}**.", None)
+        await _replace(interaction, self.busy(entity.name), None)
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
         except MemoryRuleError as exc:
@@ -1644,8 +1652,27 @@ class UndoButton(
             await _replace(interaction, NOTHING_CHANGED, None)
             return
         changed(interaction, campaign)
-        note = f"↩️ **{_md(entity.name)}** is back, with its other names and connections."
+        note = self.done(entity.name)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+class UndoManyButton(
+    UndoButton,
+    template=r"dmbot:undomany:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
+):
+    """Undo a 🔗 Merge of several names (#2426): one press splits every name that went in that
+    one merge. `entity` is the first name that went; the texts say it is all of them."""
+
+    PREFIX = "dmbot:undomany"
+
+    def busy(self, name: str) -> str:
+        return "↩️ Undoing… splitting the merged names apart."
+
+    def done(self, name: str) -> str:
+        return (
+            f"↩️ Done: the merged names are separate again. **{_md(name)}** is one of them, "
+            "with its other names and connections."
+        )
 
 
 UNDO_CONNECTION_SECONDS = 600  # a wrong pick is noticed at once; later, add it again

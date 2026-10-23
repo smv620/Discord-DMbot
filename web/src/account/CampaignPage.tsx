@@ -9,7 +9,9 @@ import { useEffect, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { IMPORT_LIVE } from "../content/import-words";
 import { RECAPS_LIVE } from "../content/recap-words";
-import { type AccountApi, ApiError, type CampaignPage } from "./api";
+import { type AccountApi, ApiError, type Campaign, type CampaignPage } from "./api";
+import CampaignFacts from "./CampaignFacts";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign in the address: `/account/campaigns/<server>.<campaign>`. */
 export function campaignRefFromPath(path: string): string | null {
@@ -28,6 +30,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   const ref = campaignRefFromPath(path);
   const [view, setView] = useState<View>("loading");
   const [page, setPage] = useState<CampaignPage | null>(null);
+  // The campaign's card on My Account: its facts for this page's heading (left out when the API
+  // cannot say, or the person is not in /me's list).
+  const [card, setCard] = useState<Campaign | null>(null);
 
   async function load() {
     if (!ref || !api.campaignPage) return setView("none");
@@ -35,6 +40,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
     try {
       setPage(await api.campaignPage(ref));
       setView("ok");
+      void Promise.resolve(api.me())
+        .then((me) => setCard(me?.campaigns.find((c) => c.ref === ref) ?? null))
+        .catch(() => undefined);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       setView(kind === "signed-out" ? "signed-out" : kind === "not-found" || kind === "not-allowed" ? "none" : "down");
@@ -94,37 +102,75 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   // Fail closed: only a role the API names as a DM role shows the DM tools (a missing or new one does not).
   const isDm = page.role === "owner" || page.role === "co-dm";
   const e = encodeURIComponent(ref);
-  const dm: [string, string, string][] = [];
-  if (RECAPS_LIVE) dm.push([`/account/recaps?campaign=${e}`, words.recaps, words.recapsNote]);
-  dm.push([`/account/names/${e}`, words.names, words.namesNote]);
-  if (IMPORT_LIVE || page.importsOn) dm.push([`/account/import/${e}`, words.importSessions, words.importNote]);
+  type Link = [href: string, label: string, note: string];
+  const story: Link[] = [];
+  if (isDm && RECAPS_LIVE) story.push([`/account/recaps?campaign=${e}`, words.pages.recaps, words.pageNotes.recaps]);
+  story.push([`/account/timeline/${e}`, words.pages.timeline, words.pageNotes.timeline]);
+  story.push([`/account/web/${e}`, words.pages.graph, words.pageNotes.graph]);
+  if (isDm) story.push([`/account/names/${e}`, words.pages.names, words.pageNotes.names]);
+  const table: Link[] = [[`/account/transcripts/${e}`, words.pages.transcripts, words.pageNotes.transcripts]];
+  if (isDm && (IMPORT_LIVE || page.importsOn)) table.push([`/account/import/${e}`, words.pages.import, words.pageNotes.import]);
   // House rules and homebrew are read by anyone in the server (only changing them is the DM's, in
   // Discord), so they are for the whole table.
-  const table: [string, string, string][] = [
-    [`/account/house-rules/${e}`, words.houseRules, words.houseRulesNote],
-    [`/account/homebrew/${e}`, words.homebrew, words.homebrewNote],
-    [`/account/transcripts/${e}`, words.transcripts, words.transcriptsNote],
-    [`/account/web/${e}`, words.story, words.storyNote],
+  const rules: Link[] = [
+    [`/account/house-rules/${e}`, words.pages.houseRules, words.pageNotes.houseRules],
+    [`/account/homebrew/${e}`, words.pages.homebrew, words.pageNotes.homebrew],
   ];
+  if (isDm) rules.push(["/account/sharing", words.sharedRules, words.sharedRulesNote]);
+  const mine = card ?? null;
   return (
     <div class="stack campaign-page">
-      {back}
+      <CampaignNav api={api} campaignRef={ref} page="campaign" name={page.name} />
       <p class="muted">{words.lead(page.serverName)}</p>
-      {isDm && <LinkList heading={words.dmHeading} id="campaign-dm" links={dm} />}
-      <LinkList heading={words.tableHeading} id="campaign-table" links={table} />
+      {mine && <CampaignFacts campaign={mine} />}
+      <LinkList heading={words.groups.story} id="story" links={story} />
+      <LinkList heading={words.groups.table} id="table" links={table} />
+      <LinkList heading={words.groups.rules} id="rules" links={rules} />
+      {isDm && <SettingsGroup page={page} />}
     </div>
   );
 }
 
 function LinkList({ heading, id, links }: { heading: string; id: string; links: [string, string, string][] }) {
   return (
-    <section class="stack" aria-labelledby={id}>
-      <h2 id={id}>{heading}</h2>
+    <section class="stack" aria-labelledby={`${id}-heading`} id={id}>
+      <h2 id={`${id}-heading`}>{heading}</h2>
       <ul class="campaigns">
         {links.map(([href, label, note]) => (
           <li key={href}>
             <a href={href}>{label}</a>
             <span class="small muted block">{note}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The campaign's current choices, for its game masters. Read-only: where the website cannot change
+ * one yet, the line says where to in Discord (the same names as Discord's ⚙️ Settings). */
+function SettingsGroup({ page }: { page: CampaignPage }) {
+  const s = page.settings;
+  const rows: [key: keyof typeof words.paths, value: string | null][] = [
+    ["visibility", s ? ((words.visibility as Record<string, string>)[s.visibility] ?? null) : null],
+    ["level", s ? ((words.level as Record<string, string>)[s.level] ?? null) : null],
+    ["retention", s ? (s.keepDays === null ? words.retentionForever : words.retentionDays(s.keepDays)) : null],
+    ["gameMasters", s ? words.gameMastersCount(s.gameMasters) : null],
+    ["handOver", null],
+    ["pause", s ? (s.paused ? words.pausedYes : words.pausedNo) : null],
+    ["delete", null],
+  ];
+  return (
+    <section class="stack" aria-labelledby="settings-heading" id="settings">
+      <h2 id="settings-heading">{words.groups.settings}</h2>
+      <p class="muted small">{words.settingsLead}</p>
+      <ul class="campaigns">
+        {rows.map(([key, value]) => (
+          <li key={key}>
+            <span class="campaign-name">{words.settingsLabels[key]}</span>
+            {value !== null && <span class="block">{value}</span>}
+            <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
+            {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
         ))}
       </ul>

@@ -128,6 +128,7 @@ export const siteButtons = [
   "House rules",
   "Session transcripts",
   "Forgot your password",
+  "Merge selected", // the All names page (#2427), on the website, not in Discord
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note

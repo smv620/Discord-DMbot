@@ -91,8 +91,20 @@ describe("the share controls", () => {
 
   it("say a draft has to be posted first", async () => {
     await open(`/account/recaps/${draft!.ref}`);
-    expect(await screen.findByText(shareWords.notPosted)).toBeTruthy();
+    expect(await screen.findByText(shareWords.notPosted)).toBeTruthy(); // approve it first
     expect(screen.queryByRole("button", { name: shareWords.make })).toBeNull();
+  });
+
+  it("are there for a recap the DM approved and did not post, only when asked for", async () => {
+    live.share = true;
+    const api = mockApi("table");
+    await api.approveRecap!(draft!.ref, "text"); // approved, not posted
+    render(<Recaps api={api} path={`/account/recaps/${draft!.ref}`} />);
+    expect(await screen.findByText(shareWords.offLeadApproved(shareWords.audio))).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("shareRecap"))).toBe(false); // nothing made by approving
+    fireEvent.click(screen.getByRole("button", { name: shareWords.make }));
+    expect(await screen.findByLabelText(shareWords.linkLabel)).toBeTruthy();
+    expect(api.calls).toContain(`shareRecap:${draft!.ref}:on`);
   });
 
   it("make a link with the page's own address, then turn it off or make a new one", async () => {
@@ -172,6 +184,17 @@ describe("the public page", () => {
     expect(tokenFromPath("/r/")).toBeNull();
     expect(tokenFromPath("/r/%E0")).toBeNull(); // mangled: a dead link, not a crash
     expect(tokenFromPath("/account/recaps/x")).toBeNull();
+  });
+
+  it("says a recap the DM approved and shared was not posted, instead of a posted day (#2419)", async () => {
+    const api = mockApi("table");
+    const real = api.publicRecap!.bind(api);
+    await api.shareRecap!(posted!.ref, "on");
+    api.publicRecap = async (token) => ({ ...(await real(token)), postedAt: null });
+    show(api, "/r/secret1");
+    await screen.findByRole("heading", { name: posted!.title });
+    expect(screen.getByText(publicWords.approved)).toBeTruthy();
+    expect(screen.queryByText(/^Posted /)).toBeNull();
   });
 
   it("never shows the checks' notes, even if the answer carried them (#2297)", async () => {
