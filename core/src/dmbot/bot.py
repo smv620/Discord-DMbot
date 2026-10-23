@@ -5109,18 +5109,21 @@ class DMBot(commands.AutoShardedBot):
     ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
-        off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
-        the as-heard version, never the cleaned one."""
+        audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
+        about the game goes through the same off-topic filter as talk and is left out of the
+        cleaned version (#2447, item 6)."""
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
         listeners = table.typed_rate.allow(user_id, now)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
             log.info("Typed chat: a flood of lines; extra lines skip the listeners")
+        names_said = 0
         if listeners:
             table.vocabulary.note(user_id, text)
             if table.name_lookup is not None:
                 named = mentions(table.name_lookup, text)
+                names_said = len(named)
                 table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
             self._act_on_line(table, user_id, text, typed=True)
@@ -5128,6 +5131,10 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.add(
                 Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
             )
+            if listeners and self._topic_holds(table, text, names_said):
+                # Its words already reached the names scan above; the label only decides whether
+                # the cleaned transcript shows the line (no `held` entry: nothing to put back).
+                self._topic_wait(table, user_id, start_ms, text, 0.0, typed=True)
         if not listeners:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
@@ -5875,10 +5882,33 @@ class DMBot(commands.AutoShardedBot):
         (when unsure, keep). The cost of holding the words with the line: a held line's words
         reach the word list when its window is labelled, up to a window later. And it is the
         cleaned line's words (a name fix included) that count, as for the names scan. The
-        two callers run in one synchronous stretch (no await between), so they agree."""
+        callers run in one synchronous stretch (no await between), so they agree. A typed line
+        (#2447) is judged by the same rule but holds no words: its words reach the names scan and
+        the word list when it is typed, and the label only decides whether the cleaned transcript
+        shows it. Typing over the rate limit skips the filter, so it always shows."""
         if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
+
+    def _topic_wait(
+        self,
+        table: Table,
+        user_id: int,
+        started_ms: int,
+        text: str,
+        seconds: float,
+        *,
+        typed: bool = False,
+    ) -> None:
+        """Put a line in the off-topic filter's window (#52); the window is asked about when it
+        fills or has waited long enough."""
+        first = not table.topics.lines
+        waiting = Waiting(user_id, started_ms, text, seconds, typed)
+        if table.topics.add(waiting, time.monotonic()):
+            self._topic_task(table, self._label_topics(table, table.topics.take()))
+        elif first:
+            later = self._label_topics_later(table, table.topics.opened_at)
+            self._topic_task(table, later, timer=True)
 
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, holds: bool) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
@@ -5889,13 +5919,7 @@ class DMBot(commands.AutoShardedBot):
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
-        first = not table.topics.lines
-        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
-        if table.topics.add(waiting, time.monotonic()):
-            self._topic_task(table, self._label_topics(table, table.topics.take()))
-        elif first:
-            later = self._label_topics_later(table, table.topics.opened_at)
-            self._topic_task(table, later, timer=True)
+        self._topic_wait(table, utterance.user_id, utterance.start_ms, text, utterance.duration_s)
         return True
 
     def _topic_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
@@ -5971,9 +5995,11 @@ class DMBot(commands.AutoShardedBot):
             topics = [GAME] * len(lines)
         hide: list[Waiting] = []
         for waiting, topic in zip(lines, topics, strict=True):
-            said = table.held.pop((waiting.speaker, waiting.started_ms), None)
-            spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
-            sounds = table.held_pronounced.pop((waiting.speaker, waiting.started_ms), None)
+            # (a typed line holds no words: a spoken line may share its key)
+            key = None if waiting.typed else (waiting.speaker, waiting.started_ms)
+            said = table.held.pop(key, None) if key else None
+            spelling = table.held_spelled.pop(key, None) if key else None
+            sounds = table.held_pronounced.pop(key, None) if key else None
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and spelling:
@@ -6414,12 +6440,12 @@ class DMBot(commands.AutoShardedBot):
         guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
-                found = table.unsaved.set_topic(speaker, started, topic)
+                found = table.unsaved.set_topic(speaker, started, topic, typed=waiting.typed)
                 session_id = table.transcript_session_id
                 if not found and self.transcripts is not None and session_id is not None:
                     try:
                         await self.transcripts.set_topic(
-                            guild_id, session_id, speaker, started, topic
+                            guild_id, session_id, speaker, started, topic, typed=waiting.typed
                         )
                     except Exception:
                         log.exception("Couldn't save a line's topic")
@@ -6439,6 +6465,8 @@ class DMBot(commands.AutoShardedBot):
                 if not self.consent.has_consent(table.guild_id, waiting.speaker):
                     continue
                 hidden.append(waiting)
+                if waiting.typed:  # typed chat is never in the live channel (a spoken line may
+                    continue  # share its key): only the saved transcript hides it
                 key = (waiting.speaker, waiting.started_ms)
                 if table.transcript.can_change(*key, time.monotonic()):
                     table.hidden.add(key)  # a marker in the channel (too late: its words)
@@ -7057,6 +7085,8 @@ class DMBot(commands.AutoShardedBot):
         # What the names scan would have had (#52), now: before the channel's awaits, so
         # a /dmbot stop meanwhile still scans them (it reads these at the end).
         for line in run.lines:
+            if line.typed:  # its words reached the scan and the word list when it was typed
+                continue
             now_said = self._words_now(table, line)
             if len(table.heard) < HEARD_MAX:
                 table.heard.append((line.speaker, now_said))
@@ -7081,9 +7111,9 @@ class DMBot(commands.AutoShardedBot):
             if not self.consent.has_consent(guild_id, speaker):
                 return True
             saved = [
-                line.started_ms
+                line
                 for line in lines
-                if not table.unsaved.set_topic(speaker, line.started_ms, GAME)
+                if not table.unsaved.set_topic(speaker, line.started_ms, GAME, typed=line.typed)
             ]
             session_id = table.transcript_session_id  # under the lock: a save may set it
             if not saved:
@@ -7094,10 +7124,16 @@ class DMBot(commands.AutoShardedBot):
                 log.warning("Put it back found no stored transcript for %d lines", len(saved))
                 return False
             try:
-                changed = await asyncio.wait_for(
-                    self.transcripts.set_topics(guild_id, session_id, speaker, saved, GAME),
-                    PUT_BACK_TIMEOUT_S,
-                )
+                changed = 0
+                for typed in (False, True):  # (typed chat and speech can share a millisecond)
+                    started = [line.started_ms for line in saved if line.typed == typed]
+                    if started:
+                        changed += await asyncio.wait_for(
+                            self.transcripts.set_topics(
+                                guild_id, session_id, speaker, started, GAME, typed=typed
+                            ),
+                            PUT_BACK_TIMEOUT_S,
+                        )
             except Exception:
                 log.exception("Couldn't put lines left out as off-topic back")
                 return False
@@ -7112,7 +7148,8 @@ class DMBot(commands.AutoShardedBot):
         late when hidden, or no channel). Consent is checked before every edit: a Stop
         meanwhile leaves the rest as markers."""
         speaker = lines[0].speaker
-        markers = [x for x in lines if (x.speaker, x.started_ms) in table.hidden]
+        # typed lines never had a marker in the live channel and can share a spoken line's key
+        markers = [x for x in lines if not x.typed and (x.speaker, x.started_ms) in table.hidden]
         if not markers:
             return None
         changed = True
