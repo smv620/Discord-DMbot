@@ -700,7 +700,8 @@ async def undo_batch(changes: Changes, batch: int) -> None:
             await _undo_rows(changes, run)
         start = end
     # a merge's notes and sheet live outside the log: they come back with the name (#2438)
-    await merge_restore.restore(conn, ids, batch)
+    await merge_restore.restore(conn, ids, batch, changes.batch)
+    await merge_restore.redo(conn, ids, batch, changes.batch)
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:

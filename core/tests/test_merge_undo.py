@@ -12,7 +12,7 @@ from tests.test_memory_store import GUILD_A, MemoryTest
 LINK = "https://www.dndbeyond.com/characters/123456"
 
 
-class MergeThenUndo(MemoryTest):
+class MergeHelpers(MemoryTest):
     async def names(self) -> tuple[str, str]:
         keep = await self.add("Brother Aldric", status=CONFIRMED)
         gone = await self.add("Aldric the Monk", status=CONFIRMED)
@@ -63,6 +63,8 @@ class MergeThenUndo(MemoryTest):
             )
             return {r["entity_id"]: r["player_id"] for r in await cur.fetchall()}
 
+
+class MergeThenUndo(MergeHelpers):
     async def test_notes_go_back_to_the_name_they_came_from(self) -> None:
         keep, gone = await self.names()
         await self.note(gone, 1, "only on the monk", orphaned=500)  # no twin: moves whole
@@ -100,7 +102,8 @@ class MergeThenUndo(MemoryTest):
         batch = await self.merge(keep, gone)
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "UPDATE npc_notes SET body = body || ' and more' WHERE campaign_id = %s",
+                "UPDATE npc_notes SET body = body || ' and more', updated_at = 999"
+                " WHERE campaign_id = %s",
                 (self.c,),
             )
         await self.undo(batch)  # the undo itself is not refused
@@ -111,6 +114,55 @@ class MergeThenUndo(MemoryTest):
                 (keep, 2): ("on aldric\n\non the monk and more", None),
             },
         )
+
+    async def test_a_note_deleted_since_is_not_brought_back(self) -> None:
+        keep, gone = await self.names()
+        await self.note(gone, 1, "only on the monk")
+        batch = await self.merge(keep, gone)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM npc_notes WHERE campaign_id = %s", (self.c,))
+        await self.undo(batch)
+        self.assertEqual(await self.notes(), {})
+
+    async def test_no_note_words_are_kept_in_the_restore_record(self) -> None:
+        keep, gone = await self.names()
+        await self.note(keep, 1, "a private thought about aldric")
+        await self.note(gone, 1, "a private thought about the monk")
+        await self.merge(keep, gone)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT before::text AS t FROM merge_restores")
+            text = " ".join(r["t"] for r in await cur.fetchall())
+        self.assertTrue(text)
+        self.assertNotIn("private thought", text)
+
+    async def test_undoing_the_undo_merges_again_and_the_notes_and_sheet_follow(self) -> None:
+        keep, gone = await self.names()
+        await self.note(gone, 1, "only on the monk")
+        await self.note(keep, 2, "on aldric")
+        await self.note(gone, 2, "on the monk")
+        await self.sheet(gone)
+        merged = await self.merge(keep, gone)
+        first = await self.notes(), await self.sheets()
+        undone = await self.memory.undo(GUILD_A, self.c, merged)
+        assert undone.batch is not None
+        self.assertEqual(list(await self.sheets()), [gone])
+        await self.memory.undo(GUILD_A, self.c, undone.batch)  # redo
+        self.assertEqual((await self.notes(), await self.sheets()), first)
+
+    async def test_several_merges_in_one_batch_each_give_theirs_back(self) -> None:
+        keep, one = await self.names()
+        two = await self.add("Aldric of the Lower Quay", status=CONFIRMED)
+        await self.note(one, 1, "from one")
+        await self.note(two, 1, "from two")
+        await self.sheet(two)
+        written = await self.memory.merge_many(GUILD_A, self.c, keep, [one, two], source="dm")
+        assert written.batch is not None
+        self.assertEqual((await self.notes())[(keep, 1)][0], "from one\n\nfrom two")
+        await self.undo(written.batch)
+        self.assertEqual(
+            await self.notes(), {(one, 1): ("from one", None), (two, 1): ("from two", None)}
+        )
+        self.assertEqual(list(await self.sheets()), [two])
 
     async def test_a_note_too_long_to_join_loses_its_mark_again(self) -> None:
         keep, gone = await self.names()
@@ -163,7 +215,7 @@ class MergeThenUndo(MemoryTest):
         self.assertEqual(row["n"], 0)
 
 
-class MergeFoldsPerspectives(MergeThenUndo):
+class MergeFoldsPerspectives(MergeHelpers):
     async def perspective(self, entry: str) -> str:
         pid = new_id()
         async with self.db.guild(GUILD_A) as conn:
