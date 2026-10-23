@@ -89,6 +89,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.plot import answer_issue, plot_blocks, read_plot
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -701,6 +702,9 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
+        "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
         # Importing older sessions (#2105)
@@ -932,6 +936,36 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/recaps/{ref}/plot")
+    async def me_recap_plot(ref: str, signed: Signed) -> Any:
+        """PlotBot's check of this recap (#2122): its issues and the DM's answers, the accepted
+        versions, and whether Approve must wait. DMs only; anyone else gets `not_found`."""
+        session, _token = signed
+        try:
+            return await read_plot(db, session, ref, on=settings.plot_check_on)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/answer")
+    async def me_recap_plot_answer(ref: str, issue: str, signed: Signed, request: Request) -> Any:
+        """The DM's answer to one issue: `{"kind": "fix" | "changed" | "fine" | "leave",
+        "note"?: text}`. The updated issue. 409 `stale` when the text changed since the check."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        kind = body.get("kind") if isinstance(body, dict) else None
+        note = body.get("note", "") if isinstance(body, dict) else ""
+        if not isinstance(kind, str) or not isinstance(note, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/approve")
     async def me_recap_approve(ref: str, signed: Signed, request: Request) -> Any:
         """✅ Approve the text and pick what to make (#2083): `{"choice": "voice" | "music" |
@@ -947,6 +981,8 @@ def create_app(
         if not isinstance(choice, str) or not isinstance(post, bool):
             raise HTTPException(status_code=422, detail="bad_choice")
         try:
+            if await plot_blocks(db, session, ref, on=settings.plot_check_on):
+                raise RecapError("plot_open")  # PlotBot's issues need an answer first (#2122)
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),
                 enforce_plans=settings.enforce_plans,

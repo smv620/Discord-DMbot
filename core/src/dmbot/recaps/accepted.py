@@ -1,6 +1,6 @@
 """The recap texts a DM approved, kept as each session's summary in the campaign notes (#2122).
 
-When the DM approves a recap's text (the website's Approve, `dmbot_recap_approve`), the database's
+When the DM approves a recap's text (the website's Approve), the database's
 door writes that text here as the session's next version: never overwritten, and not repeated when
 the same text is approved again. PlotBot, the pre-session note, recall and the later plot checks
 read the newest version of each session (`AcceptedStore.newest`). Words only, per campaign and

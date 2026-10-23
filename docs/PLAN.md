@@ -4732,7 +4732,16 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     keeps at most 20 versions so its backup always restores; past that the newest is replaced). It is
     per campaign and server (row-level security), travels in the campaign's backup (`AcceptedSection`) and goes with
     the campaign. `AcceptedStore.newest` gives the newest version of each session, for PlotBot, the pre-session note,
-    recall and the later plot checks to read (wired as each is built). The plot check itself and its routes follow.
+    recall and the later plot checks to read (wired as each is built).
+  - *Built, part 2a (CloudDev, 2026-10-23, #2122): the issues and the Approve gate.* Migration 0210 adds
+    `plot_checks`, `plot_issues` and `plot_fine` (per campaign and server, row-level security) and two website
+    doors: `dmbot_plot_read` (state checking, ready or unavailable; the issues with their level, sentence and
+    quoted source; the approved versions) and `dmbot_plot_answer` (fix, changed, fine or leave, with the DM's
+    note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
+    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` while an issue has
+    no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default). The checker itself (part 2b)
+    and the chat (#2123) follow.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
