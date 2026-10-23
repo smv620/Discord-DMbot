@@ -144,7 +144,7 @@ async def build_me(
                 # next time anyone touches it, but has already ended.
                 offered = await conn.execute(
                     "SELECT o.id, o.campaign_id, c.name, o.to_user_id, o.from_name,"
-                    " o.to_name, o.created_at FROM campaign_handover_offers o"
+                    " o.to_name, o.created_at, o.via_email FROM campaign_handover_offers o"
                     " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
                     " WHERE o.guild_id = %(g)s AND o.status = 'open'"
                     "   AND o.created_at + %(days)s > %(now)s"
@@ -226,6 +226,10 @@ async def build_me(
                         # names were copied when the offer was made (migration 0022).
                         "personName": row["from_name"] if to_me else row["to_name"],
                         "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
+                        # Made by email (#2532): no name to show ("We've emailed the offer"),
+                        # and the owner is never told who it went to.
+                        "viaEmail": bool(row["via_email"]),
+                        "sentAt": _iso_time(row["created_at"]),
                     }
                 )
             for row in await agreed.fetchall():

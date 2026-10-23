@@ -107,6 +107,8 @@ class HandoverOffer:
     # ran out of days (#690).
     message_id: int | None = None
     end_told_at: int | None = None
+    # Made by email (#2532): to whoever opens its link on the website; `to_name` is empty.
+    via_email: bool = False
 
     @property
     def expires_at(self) -> int:

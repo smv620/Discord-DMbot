@@ -372,6 +372,10 @@ class CampaignStore:
         # Restoring makes the importer an owner, which takes a slot. Checked only when the
         # bot enforces plans (DMBOT_ENFORCE_PLANS, #437).
         self._restore_needs_slot = restore_needs_slot
+
+    @property
+    def db(self) -> Database:
+        return self._db
         self._sections: dict[str, ExportSection] = {}
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
@@ -1028,6 +1032,54 @@ class CampaignStore:
             if not delivered:
                 await offer_notify.send(conn, guild_id, offer.id)
             return offer
+
+    async def offer_handover_by_email(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        from_user_id: int,
+        now: int,
+        *,
+        from_name: str,
+        token_hash: str,
+    ) -> HandoverOffer:
+        """The owner offers the campaign by email (#2532): to whoever opens the one-use link
+        on the website and accepts, not to a Discord account. The offer holds only a SHA-256
+        of the link's token (`token_hash`) and no address. `to_user_id` is 0, which matches no
+        one, until the website's claim sets it. A new offer takes back the campaign's open
+        one, whichever way it was made. Raises CampaignError in plain words."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, guild_id, campaign_id)
+            campaign = await self._require(conn, guild_id, campaign_id)
+            if campaign.owner_user_id is None:
+                raise CampaignError(NO_OWNER_YET)
+            if campaign.owner_user_id != from_user_id:
+                raise CampaignError(NOT_THE_OWNER)
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'withdrawn', decided_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'open'",
+                (now, guild_id, campaign_id),
+            )
+            try:  # the index is the last word, should a writer ever skip the lock
+                cur = await conn.execute(
+                    "INSERT INTO campaign_handover_offers (guild_id, campaign_id, from_user_id,"
+                    " to_user_id, from_name, to_name, created_at, delivered_at, via_email,"
+                    " token_hash) VALUES (%s, %s, %s, 0, %s, '', %s, %s, true, %s) RETURNING *",
+                    (
+                        guild_id,
+                        campaign_id,
+                        from_user_id,
+                        _offer_name(from_name),
+                        now,
+                        now,
+                        token_hash,
+                    ),
+                )  # (delivered_at: nothing is sent in Discord for it)
+            except pg_errors.UniqueViolation as exc:
+                raise CampaignError(OFFER_WAITING) from exc
+            row = await cur.fetchone()
+            assert row is not None
+            return _to_offer(row)
 
     async def claim_delivery(self, guild_id: int, offer_id: int, now: int) -> HandoverOffer | None:
         """Claim an offer made on the website for a few minutes, just before the bot sends
@@ -1815,6 +1867,7 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         claimed_at=row_int(row, "claimed_at"),
         message_id=row_int(row, "message_id"),
         end_told_at=row_int(row, "end_told_at"),
+        via_email=bool(row.get("via_email", False)),
     )
 
 

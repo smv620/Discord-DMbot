@@ -13,21 +13,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from dmbot import hours
-from dmbot.campaigns import Campaign, CampaignError, CampaignStore
+from dmbot import handover_email, hours
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import HandoverOffer
-from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER, OFFER_WAITING
+from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
 from dmbot.dm_screen import handover, settings
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
     DeclineOfferButton,
     HandoverButton,
     NotNowButton,
-    PickNewOwner,
     TakeOnButton,
     WithdrawOfferButton,
 )
-from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import VoicePicker
 
 GUILD, OTHER_GUILD, OWNER, BUYER, OTHER = 111, 222, 7, 9, 8
@@ -171,147 +169,87 @@ class Words(unittest.TestCase):
 
 
 class Offering(unittest.IsolatedAsyncioTestCase):
-    async def test_only_the_owner_gets_the_picker(self) -> None:
-        it = interaction(OTHER)
-        await HandoverButton(CAMPAIGN_ID).callback(it)
-        answered_first(self, it)
-        self.assertEqual(said(it), NOT_THE_OWNER)
-        it = interaction(OWNER)
-        it.client.campaigns.get.return_value = campaign(owner=None)
-        await HandoverButton(CAMPAIGN_ID).callback(it)
-        self.assertEqual(said(it), NO_OWNER_YET)
-        it = interaction(OWNER)
-        it.client.campaigns.get.return_value = None
-        await HandoverButton(CAMPAIGN_ID).callback(it)
-        self.assertEqual(said(it), handover.ENDED_CAMPAIGN)
-        it = interaction(OWNER)
-        await HandoverButton(CAMPAIGN_ID).callback(it)
-        sent = it.followup.send.await_args
-        self.assertIsInstance(sent.kwargs["view"], PickNewOwner)
-        self.assertTrue(sent.kwargs["ephemeral"])
-        self.assertIn("Nothing changes until they accept", sent.args[0])
+    """Hand over by email (#2532): the button opens a form; the form's submit checks the owner and
+    offers by email. Discord has no member picker and sends no offer message any more."""
 
-    async def test_a_break_before_answering_still_says_so(self) -> None:
+    def form(self) -> handover.HandoverEmailForm:
+        form = handover.HandoverEmailForm(CAMPAIGN_ID)
+        form.email._value = "new.owner@example.com"
+        return form
+
+    def sent(self, outcome: str = "emailed") -> Any:
+        return patch(
+            "dmbot.dm_screen.handover.handover_email.offer_by_email",
+            AsyncMock(return_value=outcome),
+        )
+
+    async def test_the_button_opens_the_email_form_for_the_owner_only(self) -> None:
         it = interaction(OWNER)
-        it.response.defer.side_effect = RuntimeError("discord")
-        with self.assertLogs("dmbot.dm_screen.handover", "ERROR"):
+        it.response.send_modal = AsyncMock()
+        await HandoverButton(CAMPAIGN_ID).callback(it)
+        (form,) = it.response.send_modal.await_args.args
+        self.assertIsInstance(form, handover.HandoverEmailForm)
+        for who, got, reply in (
+            (OTHER, campaign(), NOT_THE_OWNER),
+            (OWNER, campaign(owner=None), NO_OWNER_YET),
+            (OWNER, None, handover.ENDED_CAMPAIGN),
+        ):
+            it = interaction(who)
+            it.client.campaigns.get.return_value = got
+            it.response.send_modal = AsyncMock()
             await HandoverButton(CAMPAIGN_ID).callback(it)
-        self.assertEqual(it.response.send_message.await_args.args[0], handover.FAILED)
+            it.response.send_modal.assert_not_awaited()
+            self.assertEqual(said(it), reply)
 
-    def picker(self, picked: Any) -> PickNewOwner:
-        view = PickNewOwner(campaign())
-        view.pick._values = [picked]  # what Discord fills in
-        return view
+    async def test_only_the_owner_can_send_the_form(self) -> None:
+        for who, got, reply in (
+            (OTHER, campaign(), NOT_THE_OWNER),
+            (OWNER, campaign(owner=None), NO_OWNER_YET),
+            (OWNER, None, handover.ENDED_CAMPAIGN),
+        ):
+            it = interaction(who)
+            it.client.campaigns.get.return_value = got
+            with self.sent() as offered:
+                await self.form().on_submit(it)
+            self.assertEqual(said(it), reply)
+            offered.assert_not_awaited()
 
-    def person(self, user_id: int, *, bot: bool = False) -> Any:
-        return MagicMock(id=user_id, bot=bot, display_name="Mirelle")
-
-    async def test_picking_someone_sends_them_the_offer(self) -> None:
+    async def test_the_owner_is_told_only_that_it_was_emailed(self) -> None:
         it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        await self.picker(self.person(BUYER))._picked(it)
-        call = it.client.campaigns.offer_handover.await_args
-        self.assertEqual(call.args[:4], (GUILD, CAMPAIGN_ID, OWNER, BUYER))
-        self.assertEqual(call.kwargs, {"from_name": f"Person {OWNER}", "to_name": "Mirelle"})
-        sent = it.member.send.await_args
-        self.assertIn(
-            "**Oskar** is asking you to pay for the campaign **Frost\\*maiden**", sent.args[0]
-        )
-        self.assertIn("Nothing changes unless you tap **Accept**", sent.args[0])
-        self.assertIn("see behind the DM screen (spoilers", sent.args[0])
-        self.assertIn("uses your plan's hours", sent.args[0])
+        with self.sent("emailed") as offered:
+            await self.form().on_submit(it)
+        answered_first(self, it)
+        kwargs = offered.await_args.kwargs
         self.assertEqual(
-            [type(i) for i in sent.kwargs["view"].children], [AcceptOfferButton, DeclineOfferButton]
+            (kwargs["owner_id"], kwargs["guild_id"], kwargs["raw_email"]),
+            (OWNER, GUILD, "new.owner@example.com"),
         )
-        self.assertEqual(sent.kwargs["allowed_mentions"], NO_PINGS)
-        done = it.edit_original_response.await_args.kwargs  # the picker itself becomes this
-        self.assertTrue(done["content"].startswith("Offer sent to **Mirelle**."))
-        self.assertIsNone(done["view"])
-        # Kept, so the buttons can come off when its days are up (#690).
-        it.client.campaigns.set_offer_message.assert_awaited_once_with(
-            GUILD, offer().id, it.member.send.return_value.id
-        )
+        text = said(it)
+        self.assertIn("We've emailed the offer", text)
+        for leak in ("account", "plan has", "Try It", "does not have"):
+            self.assertNotIn(leak, text)  # nothing about the address having an account or a plan
 
-    async def test_an_offer_whose_message_isnt_kept_is_still_sent(self) -> None:
+    async def test_every_other_outcome_has_its_own_plain_words(self) -> None:
+        for outcome, words in (
+            ("bad_email", handover_email.BAD_EMAIL),
+            ("too_soon", handover_email.TOO_SOON),
+            ("not_allowed", handover_email.NOT_ALLOWED),
+            ("email_failed", handover_email.FAILED),
+        ):
+            it = interaction(OWNER)
+            with self.sent(outcome):
+                await self.form().on_submit(it)
+            self.assertEqual(said(it), words)
+
+    async def test_a_break_still_says_so(self) -> None:
         it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        it.client.campaigns.set_offer_message.side_effect = RuntimeError("database down")
         with self.assertLogs("dmbot.dm_screen.handover", "ERROR"):
-            await self.picker(self.person(BUYER))._picked(it)
-        done = it.edit_original_response.await_args.kwargs
-        self.assertTrue(done["content"].startswith("Offer sent to **Mirelle**."))
+            await self.form().on_error(it, RuntimeError("discord"))
+        self.assertEqual(said(it), handover.FAILED)
 
-    async def test_an_offer_they_cant_get_is_taken_back(self) -> None:
-        it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        it.client.campaigns.withdraw_handover.return_value = "withdrawn"
-        it.member.send.side_effect = discord.Forbidden(MagicMock(status=403), "closed")
-        with self.assertLogs("dmbot.dm_screen.handover", "INFO"):
-            await self.picker(self.person(BUYER))._picked(it)
-        self.assertEqual(
-            it.client.campaigns.withdraw_handover.await_args.args[:3], (GUILD, OFFER_ID, OWNER)
-        )
-        self.assertIn("so the offer was taken back", shown(it))
-
-    async def test_an_offer_that_cant_be_taken_back_says_how(self) -> None:
-        it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        it.client.campaigns.withdraw_handover.side_effect = RuntimeError("db")
-        guild = it.guild
-        guild.get_member.return_value = None
-        guild.fetch_member.side_effect = discord.NotFound(MagicMock(status=404), "gone")
-        with self.assertLogs("dmbot.dm_screen.handover", "INFO"):
-            await self.picker(self.person(BUYER))._picked(it)
-        self.assertIn("Take it back yourself: ⚙️ Settings", shown(it))
-
-    async def test_a_bot_or_a_refusal_says_why(self) -> None:
-        it = interaction(OWNER)
-        await self.picker(self.person(99, bot=True))._picked(it)
-        self.assertEqual(said(it), handover.NOT_A_PERSON)
-        it = interaction(OWNER)
-        it.client.campaigns.offer_handover.side_effect = CampaignError(OFFER_WAITING)
-        await self.picker(self.person(BUYER))._picked(it)
-        self.assertEqual(said(it), OFFER_WAITING)
-        it.member.send.assert_not_awaited()
-
-    def test_a_waiting_offer_names_the_button_that_takes_it_back(self) -> None:
-        for text in (OFFER_WAITING, handover.OFFER_SENT, handover.UNREACHABLE_STUCK):
-            self.assertIn(f"**{handover.WITHDRAW_LABEL}**", text)
-        self.assertIn(handover.HANDOVER_LABEL, handover.UNREACHABLE)  # try again with it
-
-    async def test_an_offer_answered_meanwhile_is_not_called_taken_back(self) -> None:
-        # Answered on the website in the gap (#690): "gone", so not "taken back".
-        it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        it.client.campaigns.withdraw_handover.return_value = "gone"
-        it.member.send.side_effect = discord.Forbidden(MagicMock(status=403), "closed")
-        with self.assertLogs("dmbot.dm_screen.handover", "INFO"):
-            await self.picker(self.person(BUYER))._picked(it)
-        self.assertEqual(shown(it), handover.UNREACHABLE_ANSWERED.format(name="Mirelle"))
-
-    async def test_the_picker_keeps_its_message_to_clear_it_later(self) -> None:
-        it = interaction(OWNER)
-        sent = MagicMock()
-        it.followup.send = AsyncMock(return_value=sent)
-        await HandoverButton(CAMPAIGN_ID).callback(it)
-        kwargs = it.followup.send.await_args.kwargs
-        self.assertTrue(kwargs["wait"])
-        self.assertIs(kwargs["view"].message, sent)
-
-    async def test_the_picker_says_when_it_has_timed_out(self) -> None:
-        picker = PickNewOwner(campaign())
-        picker.message = MagicMock(edit=AsyncMock())
-        await picker.on_timeout()
-        picker.message.edit.assert_awaited_once_with(
-            content=handover.MENU_TIMED_OUT, view=None, allowed_mentions=NO_PINGS
-        )
-
-    async def test_a_message_that_cant_be_edited_is_said_anew(self) -> None:
-        it = interaction(OWNER)
-        it.client.campaigns.offer_handover.return_value = offer()
-        it.edit_original_response.side_effect = discord.HTTPException(MagicMock(status=500), "x")
-        await self.picker(self.person(BUYER))._picked(it)
-        self.assertTrue(said(it).startswith("Offer sent to **Mirelle**."))
+    async def test_the_card_for_an_offer_by_email_names_no_one(self) -> None:
+        by_email = dataclasses.replace(offer(), to_user_id=0, to_name="", via_email=True)
+        self.assertIn("Offered by email; waiting", handover.owner_line(campaign(), by_email))
 
 
 class TakingBack(unittest.IsolatedAsyncioTestCase):

@@ -278,11 +278,13 @@ class WebRole(DatabaseTest):
             tuple(columns.values()),
         )
 
-    async def test_the_website_cannot_create_offers_today(self) -> None:
+    async def test_the_website_cannot_mark_a_discord_offer_sent(self) -> None:
+        # #2532: the site may create offers now (by email), but only open ones, and only an
+        # email offer may arrive already delivered.
         session = await self.alice()
         with self.assertRaises(errors.InsufficientPrivilege):
             async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id)
+                await self._offer_insert(conn, ALICE.id, delivered_at=self.now)
 
     async def test_when_it_may_create_offers_it_cannot_mark_them_sent(self) -> None:
         # #728: the grant a future route needs is column-limited, and a restrictive rule backs it.
@@ -293,7 +295,7 @@ class WebRole(DatabaseTest):
         async with self.web.user(ALICE.id, session=session.id_hash) as conn:
             await self._offer_insert(conn, ALICE.id)
         # Columns outside the grant are refused outright.
-        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at", "status"):
+        for column in ("claimed_at", "message_id", "end_told_at", "status"):
             with self.assertRaises(errors.InsufficientPrivilege, msg=column):
                 async with self.web.user(ALICE.id, session=session.id_hash) as conn:
                     await self._offer_insert(conn, ALICE.id, **{column: 1})

@@ -30,11 +30,12 @@ import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 import discord
 
-from dmbot.campaigns import Campaign, CampaignError, CampaignStore
+from dmbot import handover_email
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
 from dmbot.dm_screen.messages import DM_CAMPAIGN_GONE, LOAD_FAILED
@@ -54,21 +55,11 @@ DECLINE_LABEL = "No thanks"
 TAKE_ON_LABEL = "Take it on"
 NOT_NOW_LABEL = "Not now"
 
-PICK = (
-    "🤝 Who should take over **{campaign}**? Nothing changes until they accept. They get a "
-    "private message, and if they say yes, the campaign uses their plan's hours instead of "
-    "yours. You stay one of its DMs."
-)
-PICK_PLACEHOLDER = "Pick who takes it over"
-NOT_A_PERSON = "That's a bot. Pick a person."
-OFFER_SENT = (
-    "Offer sent to **{name}**. Nothing changes until they accept (they have {days} days). "
-    "DMbot will send you a private message with their answer. To take it back: "
-    "⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
-)
-MENU_TIMED_OUT = (
-    "This menu timed out, so no offer was sent. To try again: ⚙️ Settings → "
-    "🗂️ Campaign management → 🤝 Hand over."
+OFFER_EMAILED = (
+    "📧 We've emailed the offer. The person who opens its link on the DMbot website, signs in "
+    "and accepts takes the campaign over (the link works for {days} days). Nothing changes "
+    "until then. DMbot will tell you privately when they accept, say no thanks, or the days "
+    "run out. To take it back: ⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
 )
 # Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
@@ -226,7 +217,8 @@ def owner_line(campaign: Campaign, offer: HandoverOffer | None) -> str:
         line = f"• **Owner:** <@{campaign.owner_user_id}>. This campaign uses their plan's hours."
     if offer is not None:
         until = discord.utils.format_dt(_at(offer.expires_at), "f")
-        line += f" Offered to **{md(offer.to_name)}**; waiting for an answer until {until}."
+        who = "by email" if offer.via_email else f"to **{md(offer.to_name)}**"
+        line += f" Offered {who}; waiting for an answer until {until}."
     return line
 
 
@@ -278,11 +270,12 @@ class HandoverButton(
             await _broke(interaction, "Hand over")
 
     async def _run(self, interaction: discord.Interaction) -> None:
+        # The form is this press's one answer (Discord allows three seconds): only a quick read of
+        # the campaign comes first. The owner is checked here, and again when it is sent in.
         guild = interaction.guild
         if guild is None:
             await _say(interaction, ENDED_CAMPAIGN)
             return
-        await interaction.response.defer(ephemeral=True, thinking=True)  # the database
         campaign = await _store(interaction).get(guild.id, self.campaign_id)
         if campaign is None:
             await _say(interaction, ENDED_CAMPAIGN)
@@ -291,98 +284,69 @@ class HandoverButton(
         elif campaign.owner_user_id != interaction.user.id:
             await _say(interaction, NOT_THE_OWNER)
         else:
-            picker = PickNewOwner(campaign)
-            picker.message = await interaction.followup.send(
-                PICK.format(campaign=md(campaign.name)),
-                view=picker,
-                ephemeral=True,
-                allowed_mentions=NO_PINGS,
-                wait=True,
-            )
+            await interaction.response.send_modal(HandoverEmailForm(self.campaign_id))
 
 
-class PickNewOwner(discord.ui.View):
-    """Who takes the campaign over: any member of the server, whatever their plan (the
-    owner never learns whether someone pays; Accept checks it). DMbot checks it can reach
-    them when it delivers the offer. A short-lived menu (not kept over a restart): press
-    🤝 Hand over again."""
+class HandoverEmailForm(discord.ui.Modal, title="Hand over by email"):
+    """Asks the owner for the new owner's email address (#2532). The offer is emailed; the person
+    accepts on the website, not in Discord. The owner is told only that it was emailed, never
+    whether the address has a DMbot account or a plan."""
 
-    def __init__(self, campaign: Campaign) -> None:
-        super().__init__(timeout=10 * 60)
-        self.campaign = campaign
-        self.message: discord.WebhookMessage | None = None  # to clear it when it times out
-        self.pick: discord.ui.UserSelect[PickNewOwner] = discord.ui.UserSelect(
-            placeholder=PICK_PLACEHOLDER, min_values=1, max_values=1
-        )
-        self.pick.callback = self._picked  # type: ignore[method-assign]
-        self.add_item(self.pick)
+    email: discord.ui.TextInput[HandoverEmailForm] = discord.ui.TextInput(
+        label="Their email address", placeholder="name@example.com", max_length=254, required=True
+    )
 
-    async def on_timeout(self) -> None:
-        """A menu past its time no longer answers: never leave it looking live."""
-        if self.message is not None:
-            with contextlib.suppress(discord.HTTPException):
-                await self.message.edit(
-                    content=MENU_TIMED_OUT, view=None, allowed_mentions=NO_PINGS
-                )
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=None)
+        self.campaign_id = campaign_id
 
-    async def on_error(
-        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
     ) -> None:
         log.error("Handing over a campaign failed", exc_info=error)
         with contextlib.suppress(discord.HTTPException):
             await _say(interaction, FAILED)
 
-    async def _picked(self, interaction: discord.Interaction) -> None:
-        picked = self.pick.values[0]
-        if picked.bot:
-            await _say(interaction, NOT_A_PERSON)
-            return
+    async def on_submit(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:
             await _say(interaction, NOT_HERE)
             return
-        await interaction.response.defer()  # this menu becomes the answer below
+        await interaction.response.defer(ephemeral=True, thinking=True)  # the database, the mail
+        bot: Any = interaction.client
         store = _store(interaction)
-        name = picked.display_name or picked.name
-        try:
-            offer = await store.offer_handover(
-                guild.id,
-                self.campaign.id,
-                interaction.user.id,
-                picked.id,
-                _now(),
-                from_name=interaction.user.display_name or interaction.user.name,
-                to_name=name,
-            )
-        except CampaignError as exc:
-            await _say(interaction, str(exc))
+        campaign = await store.get(guild.id, self.campaign_id)
+        if campaign is None:
+            await _say(interaction, ENDED_CAMPAIGN)
             return
-        self.stop()
-        message = await deliver_offer(guild, self.campaign, offer)
-        if message is not None:
-            text = OFFER_SENT.format(name=md(name), days=HANDOVER_DAYS)
-            try:  # so its buttons can be taken off when the offer's days are up
-                await store.set_offer_message(guild.id, offer.id, message.id)
-            except Exception:
-                log.exception("Couldn't save which message holds a hand-over offer")
-        else:
-            back: Literal["withdrawn", "gone", "failed"]
-            try:
-                back = await store.withdraw_handover(
-                    guild.id, offer.id, interaction.user.id, _now()
-                )
-            except Exception:
-                log.exception("Couldn't take back an offer that couldn't be delivered")
-                back = "failed"
-            # "gone": answered (on the website) or taken back in the meantime; not ours to
-            # call taken back.
-            template = {
-                "withdrawn": UNREACHABLE,
-                "gone": UNREACHABLE_ANSWERED,
-                "failed": UNREACHABLE_STUCK,
-            }[back]
-            text = template.format(name=md(name))
-        await _end_message(interaction, text)
+        if campaign.owner_user_id is None:
+            await _say(interaction, NO_OWNER_YET)
+            return
+        if campaign.owner_user_id != interaction.user.id:
+            await _say(interaction, NOT_THE_OWNER)
+            return
+        outcome = await handover_email.offer_by_email(
+            store.db,
+            store,
+            bot.mailer,
+            owner_id=interaction.user.id,
+            owner_name=interaction.user.display_name or interaction.user.name,
+            guild_id=guild.id,
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
+            server_name=guild.name,
+            raw_email=self.email.value,
+            site_url=bot.settings.site_url,
+            now=_now(),
+        )
+        text = {
+            "emailed": OFFER_EMAILED.format(days=HANDOVER_DAYS),
+            "bad_email": handover_email.BAD_EMAIL,
+            "too_soon": handover_email.TOO_SOON,
+            "not_allowed": handover_email.NOT_ALLOWED,
+            "email_failed": handover_email.FAILED,
+        }[outcome]
+        await _say(interaction, text)
 
 
 def offer_view(guild_id: int, offer_id: int) -> discord.ui.View:

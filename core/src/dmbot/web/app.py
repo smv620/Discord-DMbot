@@ -42,6 +42,7 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    handover_offer,
     imports,
     npc_pages,
     offers,
@@ -581,6 +582,7 @@ def create_app(
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
+    handover_limit = RateLimit(60, count=6)  # offers by email, a minute's worth, by account
 
     async def mail_change_link(user_id: int, new: str, token: str) -> bool:
         """Mail the confirm link to the NEW address. False if it could not be sent."""
@@ -667,6 +669,30 @@ def create_app(
         session, _token = signed
         await email_change.cancel(db, session.user_id)
         return Response(status_code=204)
+
+    @app.post("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """The owner offers the campaign to an email address (#2532): `{"email"}`. The answer is
+        "emailed" whatever the address is; it never says whether it has an account or a plan."""
+        session, _token = signed
+        taken = handover_limit.take(str(session.user_id))
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_offer.offer(
+            db,
+            session,
+            mailer,
+            ref,
+            (await small_json(request)).get("email"),
+            site_url=settings.site_url,
+            now=int(clock()),
+        )
+        if outcome is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        if outcome != "emailed":
+            status = {"bad_email": 422, "too_soon": 429, "not_allowed": 409, "email_failed": 502}
+            raise HTTPException(status_code=status[outcome], detail=outcome)
+        return {"status": "emailed"}
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:
