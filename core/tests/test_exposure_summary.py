@@ -21,6 +21,7 @@ from dmbot.ui.exposure_summary import (
     NOTHING,
     STUCK,
     RecantButton,
+    names_line,
     summary_text,
     summary_view,
 )
@@ -66,6 +67,29 @@ class Text(unittest.TestCase):
         self.assertEqual(first.custom_id, f"dmbot:xr:1:{CID}:{GUILD_A}")
         self.assertLessEqual(len(first.custom_id or ""), 100)
         self.assertEqual(first.label, "↩️ Recant 1")
+
+    def test_new_names_ride_in_the_same_message_with_their_own_button(self) -> None:
+        text = summary_text(["Auril (a name)"], 0, new_names=["Bryn", "Oskar"])
+        self.assertIn("🆕 **2 new names to check:** **Bryn**, **Oskar**", text)
+        view = summary_view([1], CID, GUILD_A, new_names=True)
+        check: Any = view.children[-1]
+        self.assertEqual(check.item.custom_id, f"dmbot:names:review:{CID}")
+        self.assertEqual(check.item.row, 2)
+        plain = summary_view([1], CID, GUILD_A)
+        self.assertEqual(len(plain.children), 1)  # no names, no extra button
+        self.assertNotIn("🆕", summary_text(["A"], 0))
+
+    def test_a_long_list_of_long_names_still_fits(self) -> None:
+        line = names_line(["N" * 300] * 9)
+        self.assertIn("and 4 more", line)
+        text = summary_text(
+            ["Name " + "x" * 400] * MAX_LISTED,
+            40,
+            campaign_name="C" * 200,
+            private=True,
+            new_names=["N" * 300] * 9,
+        )
+        self.assertLessEqual(len(text), 2000)
 
 
 def MESSAGE() -> Any:  # a posted message, as the bot keeps it
@@ -194,7 +218,9 @@ class StepBase(Base):
         )
 
     def table(self) -> Any:
-        return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=55)
+        return SimpleNamespace(
+            guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=55, new_names=[]
+        )
 
     async def waiting_secret(self) -> str:
         return await self.waiting_secret_named("Auril")
@@ -224,6 +250,33 @@ class TheStep(StepBase):
         (row,) = [r for r in [await self.store.one(GUILD_A, self.c, 1)] if r]
         self.assertEqual(row.status, "applied")
         self.assertIsNotNone(row.batch)
+
+    async def test_new_names_ride_along_and_are_told_once(self) -> None:
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        await DMBot.send_exposure_summary(bot, table)
+        text, view = bot.post_message.await_args.args[1:3]
+        self.assertIn("🆕 **1 new name to check:** **Bryn Shander**", text)
+        self.assertTrue(any(getattr(c, "item", c).row == 2 for c in view.children))
+        self.assertEqual(table.new_names, [])  # nobody hears them twice
+
+    async def test_new_names_wait_for_their_own_post_when_the_summary_cannot_go(self) -> None:
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c), posted=False)
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        await DMBot.send_exposure_summary(bot, table)
+        self.assertEqual(table.new_names, ["Bryn Shander"])  # the "new names" step posts them
+
+    async def test_without_a_secret_the_names_are_left_for_the_names_step(self) -> None:
+        bot = self.bot(campaign(id=self.c))
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        await DMBot.send_exposure_summary(bot, table)
+        bot.post_message.assert_not_awaited()
+        self.assertEqual(table.new_names, ["Bryn Shander"])
 
     async def test_when_it_cannot_be_sent_nothing_is_shown_and_it_waits(self) -> None:
         alias = await self.waiting_secret()

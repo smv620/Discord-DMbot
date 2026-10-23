@@ -827,6 +827,9 @@ class Table:
     # What was heard this session (speaker, text as heard), for the after-session scan
     # that suggests new names to the DM (#126). Kept in memory only, capped.
     heard: list[tuple[int, str]] = field(default_factory=list)
+    # The new names the after-session scan found (#2410): they ride in the secrets summary when
+    # there is one, and are posted on their own by the "new names" step when nothing carried them.
+    new_names: list[str] = field(default_factory=list)
     # Who answered to which name this session ("a name, then an answer", #1188); in memory
     # only, and nothing a speaker said stays once they stop being recorded.
     name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
@@ -2904,6 +2907,7 @@ class DMBot(commands.AutoShardedBot):
             # (replaces the secret-name question: the summary says what was shown, with Recant)
             ("secret exposures", lambda: self.record_exposures(table)),
             ("secret summary", lambda: self.send_exposure_summary(table)),
+            ("new names", lambda: self.post_new_names(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
@@ -9526,13 +9530,16 @@ class DMBot(commands.AutoShardedBot):
                     len(described) - len(listed),
                     campaign_name=campaign.name,
                     private=private,
+                    new_names=table.new_names,
                 )
 
             async def by_private_message(dm_ids: Iterable[int]) -> tuple[int, int]:
                 reached = closed = 0
                 for dm_id in sorted(dm_ids):
                     sent = await self.sidebar_send_dm(
-                        dm_id, message(True), summary_view(ids, cid, gid)
+                        dm_id,
+                        message(True),
+                        summary_view(ids, cid, gid, new_names=bool(table.new_names)),
                     )
                     reached += sent == "sent"
                     closed += sent == "forbidden"
@@ -9543,7 +9550,9 @@ class DMBot(commands.AutoShardedBot):
                 reached, closed = await by_private_message(campaign.dm_user_ids)
             else:
                 sent = await self.post_message(
-                    table.screen_channel_id, message(False), summary_view(ids, cid, gid)
+                    table.screen_channel_id,
+                    message(False),
+                    summary_view(ids, cid, gid, new_names=bool(table.new_names)),
                 )
                 if sent is not None:
                     # Asked again after the send: if the screen opened up meanwhile the message is
@@ -9560,6 +9569,7 @@ class DMBot(commands.AutoShardedBot):
                 if closed:  # nobody could be told because their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
+            table.new_names = []  # the message listed them: nobody is told twice
             shown = failed = 0
             for row, _ in listed:  # told: now show them, one change each
                 # Claimed first: a Recant pressed since the message went out has already taken the
@@ -10228,12 +10238,18 @@ class DMBot(commands.AutoShardedBot):
                 t.campaign_id == cid for t in self.tables.values()
             ):
                 self.lookup.drop([cid])  # the session's copy isn't needed any more
-            if added:
-                await self.post(
-                    table.screen_channel_id,
-                    after_session_text(added),
-                    view=review_view(cid),
-                )
+            table.new_names = list(added)  # told by the summary, or by the "new names" step
+
+    async def post_new_names(self, table: Table) -> None:
+        """After a session (#2410): the new names nobody has been told about yet (the secrets
+        summary tells them when it is sent, and then empties the list)."""
+        names, table.new_names = table.new_names, []
+        if names and table.campaign_id is not None:
+            await self.post(
+                table.screen_channel_id,
+                after_session_text(names),
+                view=review_view(table.campaign_id),
+            )
 
     async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord

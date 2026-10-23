@@ -25,11 +25,13 @@ from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.names import ReviewButton
 from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS
 
 log = logging.getLogger(__name__)
 
 MAX_LISTED = 10  # items the message lists (and buttons it carries); the rest wait for next time
+NAMES_LISTED = 5  # new names the message lists (as the separate post did)
 PER_ROW = 5  # Discord: five buttons to a row
 LABEL_MAX = 80  # characters of a name in the list
 GONE = "DMbot doesn't remember that one any more."
@@ -56,10 +58,12 @@ def summary_text(
     *,
     campaign_name: str = "",
     private: bool = False,
+    new_names: Sequence[str] = (),
 ) -> str:
     """The message. `items`: one plain line each, in order (a name, or two names and how they are
     tied); `waiting`: how many more there are than listed. Short and plain: what was said, that the
-    players can see it now, and what the button does."""
+    players can see it now, and what the button does. `new_names`: names DMbot heard for the first
+    time this session (the 📝 Check new names list rides here so the DM gets one message)."""
     where = (
         f" (campaign {discord.utils.escape_markdown(campaign_name)})"
         if private and campaign_name
@@ -73,9 +77,26 @@ def summary_text(
             "them until then."
         )
     lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
+    if new_names:
+        lines.append("")
+        lines.append(names_line(new_names))
     if private:
         lines.append(PRIVATE_NOTE)
     return "\n".join(lines)
+
+
+def names_line(names: Sequence[str]) -> str:
+    """The 🆕 list: up to five names and "and N more", like the separate post it replaces. The names
+    come from the transcript anyone in the server can read, so listing them spoils nothing."""
+    shown = ", ".join(
+        f"**{discord.utils.escape_markdown(_short(n))}**" for n in names[:NAMES_LISTED]
+    )
+    more = f" and {len(names) - NAMES_LISTED} more" if len(names) > NAMES_LISTED else ""
+    what = "new name" if len(names) == 1 else "new names"
+    return (
+        f"🆕 **{len(names)} {what} to check:** {shown}{more}. "
+        "Say which are in your game, so DMbot spells them right."
+    )
 
 
 class RecantButton(
@@ -173,11 +194,18 @@ class RecantButton(
         )
 
 
-def summary_view(exposure_ids: Sequence[int], campaign_id: str, guild_id: int) -> discord.ui.View:
-    """One ↩️ Recant button for each listed item, five to a row, numbered like the list."""
+def summary_view(
+    exposure_ids: Sequence[int], campaign_id: str, guild_id: int, *, new_names: bool = False
+) -> discord.ui.View:
+    """One ↩️ Recant button for each listed item, five to a row, numbered like the list; then the
+    📝 Check new names button on its own row when the message lists new names."""
     view = discord.ui.View(timeout=None)
     for n, exposure_id in enumerate(exposure_ids[:MAX_LISTED], 1):
         button = RecantButton(exposure_id, campaign_id, guild_id, n)
         button.item.row = (n - 1) // PER_ROW
         view.add_item(button)
+    if new_names:
+        check = ReviewButton(campaign_id)
+        check.item.row = 2  # after the (at most two) rows of Recant buttons
+        view.add_item(check)
     return view

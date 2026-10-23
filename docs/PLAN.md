@@ -1846,8 +1846,13 @@ names panel nor the speech-to-text hints can be a fixed list.
       messages closed), nothing is shown and the screen says so without a name. If showing one fails after
       the message went out, it is tried again once, and if it still fails the DMs are told privately, with
       no name, that some were not shown yet and will be after the next session. Recant on something changed
-      again since says so and leaves it. The new-names and new-connections lists, and the four connection
-      choices, are the next slices.
+      again since says so and leaves it. The new-connections list and the four connection choices are the
+      next slice.
+    - *Built, slice 3 (CloudDev, 2026-10-23, #2410):* the **🆕 new names** list rides in that same
+      message (up to five names and "and N more", with the **📝 Check new names** button on its own row),
+      so the DM gets one message after a session instead of two. It does not replace the check itself:
+      the button opens the same private check. When the session said no secrets, or the summary could not
+      be sent, the names go out on their own exactly as before, so a list is never lost to the summary.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.
