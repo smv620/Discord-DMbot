@@ -193,6 +193,10 @@ async def build_me(
                         # Whether importing older sessions works in its server (#2259), so the
                         # page shows the importer only where it does.
                         "importsOn": imports_for(guild.id),
+                        "serverReachable": True,
+                        # The same rule as Discord's Delete (#1608, #2556): the owner, or any
+                        # game master while the campaign has no owner.
+                        "canDelete": row["owner_user_id"] in (session.user_id, None),
                         **_facts_of(found_facts.get(str(row["id"]))),
                     }
                 )
@@ -211,6 +215,8 @@ async def build_me(
                         "status": "active",
                         "role": "player",
                         "importsOn": False,
+                        "serverReachable": True,
+                        "canDelete": False,
                         **_facts_of(fact),
                     }
                 )
@@ -259,6 +265,32 @@ async def build_me(
                         "installedByYou": installer == session.user_id,
                     }
                 )
+
+        # The owner's own campaigns in servers the session's list does not have (left, removed,
+        # the server gone, DMbot out of it): a card each, so they can still be seen and deleted
+        # (#2554). A door keyed by the account; the policy that limits the website to the
+        # session's servers is not widened.
+        cur = await conn.execute("SELECT dmbot_web_owned_campaigns() AS found")
+        owned_row = await cur.fetchone()
+        shown = {c["ref"] for c in campaigns}
+        for item in (owned_row["found"] if owned_row else None) or []:
+            ref = f"{item['guildId']}.{item['id']}"
+            if ref in shown:
+                continue
+            campaigns.append(
+                {
+                    "id": str(item["id"]),
+                    "ref": ref,
+                    "name": item["name"],
+                    "serverName": "",  # not known: the page says DMbot can't reach this server
+                    "lastPlayedAt": _iso_time(item["lastPlayedAt"]),
+                    "status": "active",
+                    "role": "owner",
+                    "importsOn": False,
+                    "serverReachable": False,
+                    "canDelete": True,
+                }
+            )
 
         # "Experience points": every minute DMbot has run for this account, all time, through the
         # one door the website's role has to the hours meter (#1228, #1231).

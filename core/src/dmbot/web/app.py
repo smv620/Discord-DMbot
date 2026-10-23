@@ -37,6 +37,7 @@ from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     all_names,
+    campaign_delete,
     campaign_settings,
     email_change,
     email_signin,
@@ -1265,6 +1266,28 @@ def create_app(
         "bad_value": (400, "bad_value"),
         "too_soon": (429, "too_soon"),
     }
+
+    delete_refusals = {
+        "not_found": (404, "not_found"),
+        "not_the_owner": (403, "not_the_owner"),
+        "session_running": (409, "session_running"),
+        "name_mismatch": (422, "name_mismatch"),
+    }
+
+    @app.post("/me/campaigns/{ref}/delete")
+    async def me_campaign_delete(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Delete the campaign, by its owner (#2554): the typed name, as Discord asks. Whether or
+        not DMbot can reach its server; Discord's channels stay, and the answer says so."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await campaign_delete.delete(db, session, ref, body, audio=recap_files)
+        except RecapError as err:
+            status, detail = delete_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/campaigns/{ref}/settings", status_code=202)
     async def me_campaign_setting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
