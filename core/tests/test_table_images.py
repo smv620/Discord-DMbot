@@ -14,6 +14,7 @@ from dmbot import images, table_chat
 from dmbot.ai import Image
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
+from dmbot.transcript.models import Line
 from tests import test_table_chat as chat
 from tests.test_table_chat import EXTRA, VOICE, message
 from tests.test_timebot import DM, GUILD_A, GUILD_B, NOON4, PLAYER, Clocks
@@ -152,8 +153,8 @@ class TableImages(chat.AtTheTableTyped):
         vision = self.vision
 
         async def deleting(system: str, text: str, **kw: Any) -> Any:
-            await self.bot.on_raw_message_delete(
-                cast(Any, SimpleNamespace(guild_id=GUILD_A, message_id=msg.id))
+            await self.deleted(
+                cast(Any, SimpleNamespace(cached_message=None, guild_id=GUILD_A, message_id=msg.id))
             )
             return await Vision.complete(vision, system, text, **kw)
 
@@ -252,6 +253,18 @@ class TableImages(chat.AtTheTableTyped):
 
     # ---- a picture of writing is answered in the chat (#2450, part 4) ----
 
+    async def settle(self) -> None:
+        """Let the background work the bot started finish (the reply look-ups are tracked)."""
+        await asyncio.gather(*list(self.bot._asking))
+
+    async def deleted(self, payload: Any) -> None:
+        await self.bot.on_raw_message_delete(payload)
+        await self.settle()
+
+    async def purged(self, payload: Any) -> None:
+        await self.bot.on_raw_bulk_message_delete(payload)
+        await self.settle()
+
     def say_into(self) -> AsyncMock:
         """The chat's replies are caught here instead of sent."""
         self.live.transcript_session_id = "a" * 32
@@ -284,12 +297,12 @@ class TableImages(chat.AtTheTableTyped):
         self.reads("text")
         msg = picture(channel=EXTRA)
         await self.hear(msg)
-        payload = SimpleNamespace(message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA)
-        await self.bot.on_raw_message_delete(cast(Any, payload))
+        payload = SimpleNamespace(
+            cached_message=None, message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA
+        )
+        await self.deleted(cast(Any, payload))
         reply.delete.assert_awaited_once()
-        await self.bot.on_raw_message_delete(
-            cast(Any, payload)
-        )  # (a second delete event finds nothing)
+        await self.deleted(cast(Any, payload))  # (a second delete event finds nothing)
         reply.delete.assert_awaited_once()
 
     async def test_a_purge_takes_the_replies_back_too(self) -> None:
@@ -300,11 +313,14 @@ class TableImages(chat.AtTheTableTyped):
         first, second = picture(channel=EXTRA), picture(channel=EXTRA)
         await self.hear(first)
         await self.hear(second)
-        await self.bot.on_raw_bulk_message_delete(
+        await self.purged(
             cast(
                 Any,
                 SimpleNamespace(
-                    message_ids={first.id, second.id}, guild_id=GUILD_A, channel_id=EXTRA
+                    cached_messages=[],
+                    message_ids={first.id, second.id},
+                    guild_id=GUILD_A,
+                    channel_id=EXTRA,
                 ),
             )
         )
@@ -339,8 +355,13 @@ class TableImages(chat.AtTheTableTyped):
         self.reads("text")
         msg = picture(channel=EXTRA)
         await self.hear(msg)
-        await self.bot.on_raw_message_delete(
-            cast(Any, SimpleNamespace(message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA))
+        await self.deleted(
+            cast(
+                Any,
+                SimpleNamespace(
+                    cached_message=None, message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA
+                ),
+            )
         )
         reply.delete.assert_awaited_once()  # (and nothing raised)
 
@@ -408,10 +429,12 @@ class TableImages(chat.AtTheTableTyped):
     async def delete_after_restart(self, chat: Any, picture_id: int = 500) -> None:
         self.bot._image_replies.clear()  # (a restart: nothing is remembered)
         self.in_channel(chat)
-        await self.bot.on_raw_message_delete(
+        await self.deleted(
             cast(
                 Any,
-                SimpleNamespace(message_id=picture_id, guild_id=GUILD_A, channel_id=chat.id),
+                SimpleNamespace(
+                    cached_message=None, message_id=picture_id, guild_id=GUILD_A, channel_id=chat.id
+                ),
             )
         )
 
@@ -440,8 +463,13 @@ class TableImages(chat.AtTheTableTyped):
         ours = self.mine(1000)
         chat = self.chat_of([ours])
         self.in_channel(chat)
-        await self.bot.on_raw_message_delete(
-            cast(Any, SimpleNamespace(message_id=1000, guild_id=GUILD_A, channel_id=chat.id))
+        await self.deleted(
+            cast(
+                Any,
+                SimpleNamespace(
+                    cached_message=None, message_id=1000, guild_id=GUILD_A, channel_id=chat.id
+                ),
+            )
         )
         ours.delete.assert_awaited_once()
 
@@ -450,10 +478,12 @@ class TableImages(chat.AtTheTableTyped):
         chat = self.chat_of([a, c, b])
         self.bot._image_replies.clear()
         self.in_channel(chat)
-        await self.bot.on_raw_bulk_message_delete(
+        await self.purged(
             cast(
                 Any,
-                SimpleNamespace(message_ids={600, 601}, guild_id=GUILD_A, channel_id=chat.id),
+                SimpleNamespace(
+                    cached_messages=[], message_ids={600, 601}, guild_id=GUILD_A, channel_id=chat.id
+                ),
             )
         )
         self.assertEqual(len(chat.scans), 1)
@@ -461,13 +491,72 @@ class TableImages(chat.AtTheTableTyped):
         b.delete.assert_awaited_once()
         c.delete.assert_not_awaited()
 
+    async def test_a_line_is_dropped_even_when_looking_for_the_reply_fails(self) -> None:
+        """The deleted message's unsaved line goes first, whatever the look-up does (#1118)."""
+        self.live.unsaved.add(Line(1, DM, "words", "words", typed=True, message_id=555))
+        chat = self.chat_of([], voice=False, channel_id=EXTRA)
+        self.in_channel(chat)
+        self.bot._image_replies.clear()
+        self.bot.campaigns.table_chat_channel_ids = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        payload = SimpleNamespace(
+            cached_message=None, message_id=555, guild_id=GUILD_A, channel_id=EXTRA
+        )
+        await self.deleted(cast(Any, payload))
+        self.assertEqual(self.live.unsaved.lines(), [])
+
+    async def test_a_chat_that_cannot_be_read_is_let_go_quietly(self) -> None:
+        import discord
+
+        chat = self.chat_of([], channel_id=VOICE)
+
+        def refuse(this: Any, **kw: Any) -> Any:
+            raise discord.Forbidden(cast(Any, SimpleNamespace(status=403, reason="no")), "no")
+
+        type(chat).history = refuse
+        with self.assertLogs("dmbot.bot", "INFO") as logged:
+            await self.delete_after_restart(chat)
+        self.assertTrue(any("could not be read" in line for line in logged.output))
+        self.assertFalse(any("500" in line for line in logged.output))  # nothing of the message
+
+    async def test_one_servers_limit_leaves_another_server_alone(self) -> None:
+        from dmbot import bot as bot_module
+
+        chat = self.chat_of([])
+        for n in range(bot_module.REPLY_SCANS_PER_MINUTE):
+            await self.delete_after_restart(chat, picture_id=800 + n)
+        other = SimpleNamespace(
+            cached_message=None, message_id=900, guild_id=GUILD_B, channel_id=chat.id
+        )
+        await self.deleted(cast(Any, other))  # another server: its own count
+        self.assertEqual(len(chat.scans), bot_module.REPLY_SCANS_PER_MINUTE + 1)
+
+    async def test_a_message_the_cache_knows_had_no_picture_costs_no_read(self) -> None:
+        chat = self.chat_of([])
+        self.in_channel(chat)
+        plain = SimpleNamespace(attachments=[])
+        gone = SimpleNamespace(cached_message=plain, message_id=1, guild_id=GUILD_A, channel_id=1)
+        await self.deleted(cast(Any, gone))
+        bulk = SimpleNamespace(
+            cached_messages=[SimpleNamespace(id=2, attachments=[])],
+            message_ids={2},
+            guild_id=GUILD_A,
+            channel_id=chat.id,
+        )
+        await self.purged(cast(Any, bulk))
+        self.assertEqual(chat.scans, [])
+
     async def test_a_remembered_reply_needs_no_reading_of_the_chat(self) -> None:
         ours = self.mine(500)
         self.bot._image_replies[500] = [ours]
         chat = self.chat_of([])
         self.in_channel(chat)
-        await self.bot.on_raw_message_delete(
-            cast(Any, SimpleNamespace(message_id=500, guild_id=GUILD_A, channel_id=chat.id))
+        await self.deleted(
+            cast(
+                Any,
+                SimpleNamespace(
+                    cached_message=None, message_id=500, guild_id=GUILD_A, channel_id=chat.id
+                ),
+            )
         )
         ours.delete.assert_awaited_once()
         self.assertEqual(chat.scans, [])

@@ -5524,21 +5524,35 @@ class DMBot(commands.AutoShardedBot):
         """Several typed messages deleted at once (a moderator's purge): the same as one."""
         for message_id in payload.message_ids:
             self._note_deleted(message_id)
-        await self._forget_image_replies(payload.message_ids, payload.guild_id, payload.channel_id)
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
-        if table is not None:
+        if table is not None:  # first: nothing awaited stands between a delete and its line going
             for message_id in payload.message_ids:
                 table.unsaved.drop_message(message_id)
+        # (a message the cache knows had no picture has no reply to look for)
+        plain = {m.id for m in payload.cached_messages if not m.attachments}
+        self._track(
+            self._forget_image_replies(
+                set(payload.message_ids) - plain, payload.guild_id, payload.channel_id
+            ),
+            "picture-replies",
+        )
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
         already saved stays in the raw transcript, as PLAN says. DMbot's reply about a picture
         goes with the picture."""
         self._note_deleted(payload.message_id)
-        await self._forget_image_replies([payload.message_id], payload.guild_id, payload.channel_id)
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
-        if table is not None:
+        if table is not None:  # first: nothing awaited stands between a delete and its line going
             table.unsaved.drop_message(payload.message_id)
+        cached = payload.cached_message
+        if cached is None or cached.attachments:  # (one the cache knows had no picture: no reply)
+            self._track(
+                self._forget_image_replies(
+                    [payload.message_id], payload.guild_id, payload.channel_id
+                ),
+                "picture-replies",
+            )
 
     def _note_deleted(self, message_id: int) -> None:
         """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""
