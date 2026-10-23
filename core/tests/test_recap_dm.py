@@ -63,7 +63,7 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=recaps,
-        settings=SimpleNamespace(site_url="https://site.example.com"),
+        settings=SimpleNamespace(site_url="https://site.example.com", plot_check_on=False),
         post_recaps=AsyncMock(),
         _recap_audio_files=AsyncMock(return_value=([], "")),
         user=SimpleNamespace(id=BOT_ID),
@@ -126,6 +126,18 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Want to change it first? Edit it here: https://site.example.com", text)
         self.assertTrue(all(len(part) <= 2000 for part in sent))
         bot.recaps.decide.assert_not_awaited()  # reading decides nothing
+
+    async def test_approve_waits_for_plotbots_open_points_and_says_where_to_answer(self) -> None:
+        button, bot, interaction = press("approve")
+        bot.settings.plot_check_on = True
+        bot.recap_approval_problems = AsyncMock(return_value=[])
+        bot.recaps.plot_open = AsyncMock(return_value=True)
+        await button.callback(interaction)
+        said = told(interaction)
+        self.assertIn("PlotBot has points", said)
+        self.assertIn("https://site.example.com", said)  # the recap page
+        self.assertIn("Leave it as is", said)  # the DM can always answer
+        bot.recaps.decide.assert_not_awaited()
 
     async def test_read_it_attaches_the_narration_to_the_last_message_when_there_is_some(
         self,

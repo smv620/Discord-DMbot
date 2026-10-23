@@ -11847,6 +11847,9 @@ PLOT_ISSUES = (
     -- recap before it is accepted"). A check is for one text of a recap (its hash); the issues it
     -- found belong to that text and to the DM alone. New tables, so no rows change and no backfill
     -- policy; rows go with their campaign.
+    -- (`plot_checks` is left out of campaign backups on purpose: it only says that a text was
+    -- checked and when, and a restored campaign is checked afresh. The issues and the "not a
+    -- problem" notes are backed up: they hold the DM's answers.)
     CREATE TABLE plot_checks (
         guild_id    BIGINT NOT NULL,
         campaign_id TEXT NOT NULL,

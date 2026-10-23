@@ -4743,6 +4743,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
     no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
     missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+    The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
+    refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
+    (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
+    checked and a restored campaign is checked afresh.
   - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot's recap loop runs `PlotRunner` (when
     `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
     hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
