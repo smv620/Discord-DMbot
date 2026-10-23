@@ -119,7 +119,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   ...(RECAP_SHARE_LIVE
     ? [
         {
-          text: "To share a posted recap, open it on the website and choose Make a link. Anyone who has the link can read the recap without signing in, even people outside your Discord server. Only a posted recap can be shared, never a draft.",
+          text: "To share a recap, open it on the website and choose Make a link. Anyone who has the link can read the recap without signing in, even people outside your Discord server. A recap can be shared once it is posted, or once you have approved it with Approve but don't post; a draft you have not approved is never shared.",
         },
         {
           text: "Treat the link like a password: anyone you give it to can pass it on. Choose Turn the link off, or Make a new link, whenever you like. The old link then stops opening the recap, but that can't take back what someone already read or saved.",

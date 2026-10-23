@@ -48,7 +48,7 @@ export function Improvement({ api }: { api: AccountApi }) {
 
   return (
     <section class="panel" aria-labelledby="improvement-heading">
-      <h2 id="improvement-heading">{text.heading}</h2>
+      <h3 id="improvement-heading">{text.heading}</h3>
       <p>
         <label>
           <input

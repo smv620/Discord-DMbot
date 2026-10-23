@@ -1,0 +1,20 @@
+---
+import TimelineIsland from "../../account/TimelineIsland";
+import { text } from "../../content/timeline";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Story timeline"
+  description="Your campaign, session by session, with its recaps and the names that came out."
+  noindex
+>
+  <div class="account">
+    <h1>{text.heading}</h1>
+    <TimelineIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your timeline. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

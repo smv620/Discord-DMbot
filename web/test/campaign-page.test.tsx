@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // A campaign's own page (#2416): the links a DM and a player see, a campaign nobody may open, the
 // My Campaigns list linking to it, the recap list narrowed to one campaign, and the way back.
-import { cleanup, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/content/import-words", async (original) => ({
@@ -12,6 +12,7 @@ vi.mock("../src/content/import-words", async (original) => ({
 
 import Account from "../src/account/Account";
 import { ApiError, httpApi } from "../src/account/api";
+import CampaignNav from "../src/account/CampaignNav";
 import CampaignPageView, { campaignRefFromPath } from "../src/account/CampaignPage";
 import { campaignHref } from "../src/account/campaignLinks";
 import { mockApi } from "../src/account/mock";
@@ -22,6 +23,7 @@ import Names from "../src/account/Names";
 import Npc from "../src/account/Npc";
 import Recaps, { campaignFromSearch } from "../src/account/Recaps";
 import Transcripts from "../src/account/Transcripts";
+import Timeline from "../src/account/Timeline";
 import Web from "../src/account/Web";
 import { campaignPage as w } from "../src/content/campaign-page";
 
@@ -41,50 +43,102 @@ describe("the address", () => {
 });
 
 describe("the page", () => {
-  it("gives a DM the DM's tools and the table's pages, each opened on this campaign", async () => {
+  const open = async (path: string, api = mockApi("table")) => {
     render(
       <div class="account">
         <h1>Campaign</h1>
-        <CampaignPageView api={mockApi("table")} path={DM} />
+        <CampaignPageView api={api} path={path} />
       </div>,
     );
-    await screen.findByRole("heading", { name: w.dmHeading });
+    await screen.findByRole("heading", { level: 2, name: w.groups.story });
+  };
+  const groups = () => screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+
+  it("gives a DM the four groups in order, each page opened on this campaign", async () => {
+    await open(DM);
     // The campaign's name is the page's heading and title, so the name is what a screen reader hears.
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("The Brynwater Crossing"));
     expect(document.title).toBe("The Brynwater Crossing · DMbot");
-    expect(screen.getByRole("link", { name: w.backToCampaigns }).getAttribute("href")).toBe("/account#campaigns");
+    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules, w.groups.settings]);
     expect(hrefs()).toEqual(
       expect.arrayContaining([
         "/account/recaps?campaign=100.cmp1",
+        "/account/web/100.cmp1",
         "/account/names/100.cmp1",
+        "/account/transcripts/100.cmp1",
         "/account/import/100.cmp1", // an import-enabled test server
         "/account/house-rules/100.cmp1", // read by the whole table
         "/account/homebrew/100.cmp1",
-        "/account/transcripts/100.cmp1",
-        "/account/web/100.cmp1",
+        "/account/sharing", // a DM can share rules
       ]),
     );
-    expect(screen.getByRole("heading", { name: w.dmHeading })).toBeTruthy();
+    // Words equal Discord's and the PLAN's (#2461 item 4).
+    for (const label of ["Recaps", "Story timeline", "Story graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
+      expect(screen.getByRole("link", { name: label }), label).toBeTruthy();
+    expect(screen.getByRole("link", { name: w.pages.timeline }).getAttribute("href")).toBe("/account/timeline/100.cmp1");
   });
 
-  it("gives a co-DM the same tools", async () => {
-    render(<CampaignPageView api={mockApi("table")} path="/account/campaigns/100.cmp3.cp-co" />);
-    await screen.findByRole("heading", { name: w.dmHeading });
+  it("shows the heading's facts and who you are to the campaign, when the account knows them", async () => {
+    await open(DM);
+    await screen.findByText("You run it");
+    expect(screen.getByLabelText(/The Brynwater Crossing/, { selector: "ul" })).toBeTruthy(); // the facts list
   });
 
-  it("fails closed: an unknown role gets no DM tools", async () => {
+  it("gives the game masters the Settings group: the current choices, and where to change each in Discord", async () => {
+    await open(DM);
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    for (const t of [w.visibility.peek, w.level.normal, w.retentionDays(90), w.gameMastersCount(2), w.pausedNo])
+      expect(within(section).getByText(t), t).toBeTruthy();
+    for (const key of Object.keys(w.paths) as (keyof typeof w.paths)[])
+      expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
+    // Every label is Discord's own name for it.
+    for (const label of Object.values(w.settingsLabels)) expect(within(section).getByText(label), label).toBeTruthy();
+    expect(within(section).queryAllByRole("button")).toEqual([]); // read-only until the bot can apply a change
+    expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
+  });
+
+  it("says retention is for ever when no days are set, and leaves a missing choice's value out", async () => {
+    const api = mockApi("table");
+    const read = api.campaignPage!.bind(api);
+    api.campaignPage = async (r) => {
+      const got = await read(r);
+      return { ...got, settings: { ...got.settings!, keepDays: null, paused: true } };
+    };
+    await open(DM, api);
+    expect(await screen.findByText(w.retentionForever)).toBeTruthy();
+    expect(screen.getByText(w.pausedYes)).toBeTruthy();
+    cleanup();
+    const old = mockApi("table");
+    const real = old.campaignPage!.bind(old);
+    old.campaignPage = async (r) => {
+      const { settings: _s, ...rest } = await real(r);
+      return rest;
+    };
+    await open(DM, old);
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    expect(within(section).queryByText(w.visibility.peek)).toBeNull();
+    expect(within(section).getAllByText(/^Do this in Discord:/).length).toBe(7); // the paths still show
+  });
+
+  it("gives a co-DM the same groups", async () => {
+    await open("/account/campaigns/100.cmp3.cp-co");
+    expect(groups()).toContain(w.groups.settings);
+  });
+
+  it("fails closed: an unknown role gets no DM tools and no Settings", async () => {
     const api = mockApi("table");
     const read = api.campaignPage!.bind(api);
     api.campaignPage = async (r) => ({ ...(await read(r)), role: "viewer" as never });
-    render(<CampaignPageView api={api} path={DM} />);
-    await screen.findByRole("heading", { name: w.tableHeading });
-    expect(screen.queryByRole("heading", { name: w.dmHeading })).toBeNull();
+    await open(DM, api);
+    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
+    expect(hrefs().some((h) => h?.startsWith("/account/recaps"))).toBe(false);
   });
 
-  it("gives a player only the table's pages", async () => {
-    render(<CampaignPageView api={mockApi("table")} path={PLAYER} />);
-    await screen.findByRole("heading", { name: w.tableHeading });
-    expect(screen.queryByRole("heading", { name: w.dmHeading })).toBeNull();
+  it("gives a player only the table's pages and no Settings", async () => {
+    await open(PLAYER);
+    expect(groups()).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
+    expect(screen.queryByRole("heading", { name: w.groups.settings })).toBeNull();
+    expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // not in the tabs either
     const all = hrefs();
     expect(all).toEqual(
       expect.arrayContaining([
@@ -92,9 +146,10 @@ describe("the page", () => {
         "/account/homebrew/100.cmp1.cp-player",
         "/account/transcripts/100.cmp1.cp-player",
         "/account/web/100.cmp1.cp-player",
+        "/account/timeline/100.cmp1.cp-player", // for the whole table
       ]),
     );
-    for (const dmPage of ["recaps", "names", "import"]) {
+    for (const dmPage of ["recaps", "names", "import", "sharing"]) {
       expect(all.some((h) => h?.startsWith(`/account/${dmPage}`))).toBe(false);
     }
   });
@@ -166,7 +221,7 @@ describe("the recap list", () => {
     await screen.findByText(w.onlyThisCampaign, { exact: false });
     expect(screen.getAllByRole("link", { name: /Open|open/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: w.showAllRecaps }).getAttribute("href")).toBe("/account/recaps");
-    expect(screen.getByRole("link", { name: w.backToThis }).getAttribute("href")).toBe(campaignHref(REFS));
+    expect((await screen.findByRole("link", { name: "The Brynwater Crossing" })).getAttribute("href")).toBe(campaignHref(REFS));
   });
 
   it("says a campaign has none, when none match", async () => {
@@ -193,63 +248,82 @@ describe("the recap list", () => {
   });
 });
 
-describe("the way back on every per-campaign page", () => {
-  const back = (name?: string) => screen.findByRole("link", { name: name ? w.backTo(name) : w.backToThis });
+describe("the breadcrumb and the four tabs on every campaign page (#2461)", () => {
   const REFC = "200000000000000001.cmp1";
-  const campaign = `/account/campaigns/${REFC}`;
-
-  it("is on the house rules, named", async () => {
-    render(<HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />);
-    const link = await screen.findAllByRole("link", { name: /^← / });
-    expect(link[0]!.getAttribute("href")).toBe(campaign);
+  const name = "The Brynwater Crossing";
+  const crumbs = () => within(screen.getByRole("navigation", { name: w.crumbsLabel }));
+  const tabs = () => within(screen.getByRole("navigation", { name: w.tabsLabel }));
+  it.each([
+    ["the house rules", () => <HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />, w.pages.houseRules, w.groups.rules],
+    ["the homebrew", () => <Homebrew api={mockApi("table")} path={`/account/homebrew/${REFC}`} />, w.pages.homebrew, w.groups.rules],
+    ["the transcripts", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />, w.pages.transcripts, w.groups.table],
+    ["a transcript", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />, w.pages.transcripts, w.groups.table],
+    ["the timeline", () => <Timeline api={mockApi("table")} path="/account/timeline/100.cmp1" />, w.pages.timeline, w.groups.story],
+    ["the story graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
+    ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.table],
+    ["the names", () => <Names api={mockApi("table")} path="/account/names/100.cmp1" />, w.pages.names, w.groups.story],
+    ["an NPC's page", () => <Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />, w.pages.names, w.groups.story],
+    ["a recap", () => <Recaps api={mockApi("table")} path="/account/recaps/200000000000000001.cmp1.1791000000" />, w.pages.recaps, w.groups.story],
+    ["the recaps of one campaign", () => <Recaps api={mockApi("table")} path="/account/recaps" search={`?campaign=${REFC}`} />, w.pages.recaps, w.groups.story],
+  ])("is on %s, with the right tab marked", async (_n, view, page, group) => {
+    render(view());
+    await screen.findByRole("navigation", { name: w.tabsLabel });
+    await waitFor(() => expect(crumbs().getByText(page).getAttribute("aria-current")).toBe("page"));
+    await waitFor(() => expect(tabs().getByRole("link", { name: w.groups.settings })).toBeTruthy());
+    const marked = tabs().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
+    expect(marked.map((a) => a.textContent)).toEqual([group]);
+    expect(crumbs().getByRole("link", { name: w.myAccount }).getAttribute("href")).toBe("/account");
+    expect(crumbs().getAllByRole("link").length).toBe(2); // My Account and the campaign; the page itself is not a link
   });
 
-  it("is on the homebrew, named", async () => {
-    render(<Homebrew api={mockApi("table")} path={`/account/homebrew/${REFC}`} />);
-    const link = await screen.findAllByRole("link", { name: /^← / });
-    expect(link[0]!.getAttribute("href")).toBe(campaign);
+  it("shows a player no Settings tab on any campaign page", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1.cp-player" page="transcripts" />);
+    await screen.findByRole("navigation", { name: w.tabsLabel });
+    await waitFor(() => expect(tabs().getAllByRole("link").length).toBeGreaterThan(0));
+    expect(tabs().queryByRole("link", { name: w.groups.settings })).toBeNull();
+    expect(tabs().getAllByRole("link").map((a) => a.textContent)).toEqual([w.groups.story, w.groups.table, w.groups.rules]);
   });
 
-  it("is on a campaign's transcript list and on a single transcript", async () => {
-    render(<Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />);
-    expect((await screen.findAllByRole("link", { name: /^← / }))[0]!.getAttribute("href")).toBe(campaign);
+  it("marks no tab on the campaign's own page, and names the campaign as the page", async () => {
+    render(<CampaignPageView api={mockApi("table")} path={DM} />);
+    await screen.findByRole("heading", { level: 2, name: w.groups.story });
+    expect(crumbs().getByText(name).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getAllByRole("link").some((a) => a.getAttribute("aria-current"))).toBe(false);
+  });
+
+  it("asks for the campaign once for two navs, and asks again after a failed read", async () => {
+    const api = mockApi("table");
+    render(
+      <>
+        <CampaignNav api={api} campaignRef="100.cmp1" page="transcripts" />
+        <CampaignNav api={api} campaignRef="100.cmp1" page="houseRules" />
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByRole("link", { name: w.groups.settings })).toHaveLength(2));
+    expect(api.calls.filter((c) => c === "campaignPage:100.cmp1")).toHaveLength(1);
     cleanup();
-    render(<Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />);
-    expect((await back()).getAttribute("href")).toBe(campaign);
+    const flaky = mockApi("table");
+    const real = flaky.campaignPage!.bind(flaky);
+    let first = true;
+    flaky.campaignPage = async (r) => {
+      if (first) {
+        first = false;
+        throw new ApiError("network");
+      }
+      return real(r);
+    };
+    render(<CampaignNav api={flaky} campaignRef="100.cmp1" page="transcripts" />);
+    await screen.findByRole("navigation", { name: w.tabsLabel });
+    expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // role unknown: fail closed
+    cleanup();
+    render(<CampaignNav api={flaky} campaignRef="100.cmp1" page="transcripts" />);
+    expect(await screen.findByRole("link", { name: w.groups.settings })).toBeTruthy(); // the failure was not kept
   });
 
-  it("is on the story map", async () => {
-    render(<Web api={mockApi("table")} path="/account/web/100.cmp1" />);
-    expect((await back()).getAttribute("href")).toBe("/account/campaigns/100.cmp1");
-  });
-
-  it("is on the import page", async () => {
-    render(<Import api={mockApi("table")} path="/account/import/100.cmp1" />);
-    expect((await back()).getAttribute("href")).toBe("/account/campaigns/100.cmp1");
-  });
-});
-
-describe("the way back", () => {
-  it("is on a campaign's names, named", async () => {
-    render(<Names api={mockApi("table")} path="/account/names/100.cmp1" />);
-    const back = await screen.findByRole("link", { name: w.backTo("The Brynwater Crossing") });
-    expect(back.getAttribute("href")).toBe("/account/campaigns/100.cmp1");
-  });
-
-  it("is on an NPC's page", async () => {
-    render(<Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />);
-    const back = await screen.findByRole("link", { name: w.backToThis });
-    expect(back.getAttribute("href")).toBe("/account/campaigns/100.cmp1");
-  });
-
-  it("is on a recap's page, named", async () => {
-    render(<Recaps api={mockApi("table")} path="/account/recaps/200000000000000001.cmp1.1791000000" />);
-    const back = await waitFor(() => {
-      const found = screen.getAllByRole("link").find((a) => a.getAttribute("href") === "/account/campaigns/200000000000000001.cmp1");
-      expect(found).toBeTruthy();
-      return found as HTMLElement;
-    });
-    expect(back.textContent).toMatch(/^← /);
+  it("the old '← campaign' back links are gone", async () => {
+    render(<HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />);
+    await screen.findByRole("navigation", { name: w.crumbsLabel });
+    expect(screen.queryAllByRole("link", { name: /^← / })).toEqual([]);
   });
 });
 

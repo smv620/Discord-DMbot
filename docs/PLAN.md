@@ -1160,7 +1160,11 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
   (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
   they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record.
+  the pause stays on the record. A paused person's **typed** question to DMbot is still answered
+  privately (typing to DMbot is deliberate), but nothing of it is written to any transcript or stored
+  (Supervisor, 2026-10-23, #2470). A pause has no lasting effect: it changes no stored consent or
+  choice, a restart while paused keeps the pause (it never starts recording someone who was told they
+  are off the record), and stopping during a pause ends it at once.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1825,6 +1829,19 @@ names panel nor the speech-to-text hints can be a fixed list.
     - **The same rule everywhere for players:** the graph, the NPC pages and the All names list show players
       revealed names and connections only. Code decides it, never the AI, and nothing unrevealed is sent to
       a player's browser.
+    - **How it is stored** (CloudDev, 2026-10-22, #2404 slice 2): a name is revealed when the players may
+      know it, which is the "Players don't know this one yet" switch (`hidden_from_players`, #2321) turned
+      off; names from ➕ Add a name, 📥 Add many and 📜 Upload backstory start with it on. A connection is
+      revealed when The party believes it (STORY_MEMORY section 9); `memory_relations.unrevealed` (default
+      off, so every connection that exists is revealed) keeps the party from believing a backstory
+      connection until the DM presses **👁️ Reveal to players** (both its names must be revealed first).
+      Every players' reader already looks at those two, so none changed. **Unrevealed is not secret for the
+      listeners** (Supervisor, 2026-10-22): the cleaner and the DM sidebar use an unrevealed name like any
+      other; only a 🤫 spelling or a clue only some know keeps the secret treatment. The recap may use an
+      unrevealed name only when the table said it in that session's lines (the recap writes what the party
+      knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
+      node and connection. Matching what is said at the table, and the after-session "Revealed at the
+      table" line, are the next slice.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
@@ -1864,6 +1881,15 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+
+  *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
+  all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
+  letters (spaces, hyphens and a leading the/a/an ignored), a letter or two apart (one up to 8 letters, two
+  beyond; never below 5 letters, never when a number or a one-letter last word differs, the linker's rule),
+  sound alike (names of 5 letters or more), or one inside the other as whole words ("Belleros" and
+  "Belleros the Elder"). "Not the same" is kept per pair in `name_not_same` (the DM's alone, not in backups,
+  gone with either name). 🔗 Merge several… sits on the Same as… screen, because the card's rows are full. The
+  website's door is the all-names action `merge-many {others[]}` on the kept name.
 - **The recap posting clock** (#2435, migration 0184). A recap job records `posting_since` (whole Unix seconds),
   `posting_step` (`check`, `post`, or `audio` while narration is made) and `posted_url` (the first message's
   Discord link). A database trigger starts the clock at `check` when the status becomes `posting` and stops
@@ -2034,11 +2060,11 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
-  - **Pronunciation in the list** (`Moric (MOR-ick) | NPC | Mo`): the bracket after a name is read as how to say
+  - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Tav`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
-    "a". Otherwise it's an aside, kept as an other name with the name in front: `Moric (the rogue)` gives
-    Moric, also called "Moric the rogue". A near miss asks the DM ("Is (the Rogue) how to say Moric?" [It's how
+    "a". Otherwise it's an aside, kept as an other name with the name in front: `Tavin (the rogue)` gives
+    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (the Rogue) how to say Tavin?" [It's how
     to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
   - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
   - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen
@@ -4099,11 +4125,11 @@ responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4.
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
-(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+(`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
 ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
 deployed but blocked (for example the account move, whose code goes to the payment email while
-payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+payments are off, #1096) is marked `held` in its file, with its reason. A PR that ships a
 feature people can see adds its entry, or a held one, in the same PR.
 
 **Session recaps** (Supervisor, 2026-10-15 and 2026-10-16; built in #1392, #1397, #1412, #1415,

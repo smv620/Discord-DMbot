@@ -190,6 +190,7 @@ AUDIENCE: dict[str, str] = {
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
+            "ui.name_card.UndoManyButton",
             "ui.name_card.UndoConnectionButton",
             "ui.name_card.UndoSpellingButton",
             "ui.name_card.FinishPastButton",
@@ -220,6 +221,9 @@ AUDIENCE: dict[str, str] = {
 CHECKED_ELSEWHERE: dict[str, list[str]] = {
     # The clock's store checks the DM in the same transaction as the change.
     "dm_screen.clock.ClockPicker": ["dmbot.timebot.store:ClockStore.pick"],
+    "ui.name_card.UndoManyButton": [
+        "dmbot.ui.names:_campaign_for"
+    ],  # the same press as UndoButton: its callback asks it
     "dm_screen.clock.ClockUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.CombatUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.SplitUndoButton": [

@@ -69,6 +69,37 @@ class TheCampaignPage(Base):
                 await read_campaign(self.web, self.session, ref)
             self.assertEqual(refused.exception.code, "not_found")
 
+    async def test_a_dm_gets_the_current_settings_and_a_player_gets_none(self) -> None:
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertEqual(
+            set(got["settings"]),
+            {"visibility", "level", "keepDays", "paused", "gameMasters"},
+        )
+        self.assertEqual(got["settings"]["gameMasters"], 1)
+        self.assertIn(got["settings"]["visibility"], ("private", "peek", "open"))
+        self.assertFalse(got["settings"]["paused"])
+        self.assertIsNone(got["settings"]["keepDays"])  # kept for ever until the DM sets a time
+        self.assertEqual(got["settings"]["level"], "normal")
+        # A player of "One" (Bob only runs "Two") gets none; he is made a co-DM just below.
+        bob = await self.session_of(BOB)
+        self.assertNotIn("settings", await read_campaign(self.web, bob, self.ref_of(self.one)))
+        self.assertIn("settings", await read_campaign(self.web, bob, self.ref_of(self.two)))
+        # A co-DM gets them too, and each value comes from its own column.
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET transcript_keep_days = 90, paused = TRUE,"
+                " dm_screen_level = 'quiet', dm_screen_visibility = 'private'"
+                " WHERE guild_id = %s AND id = %s",
+                (THURSDAY.id, self.one.id),
+            )
+        co = await read_campaign(self.web, bob, self.ref_of(self.one))
+        self.assertEqual(
+            co["settings"],
+            {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
+             "gameMasters": 2},
+        )  # fmt: skip
+
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
         got = await read_campaign(
             self.web, self.session, self.ref_of(self.one), imports_for=lambda g: g == THURSDAY.id
@@ -135,6 +166,13 @@ class TheCampaignRoute(Base):
                 "serverName": THURSDAY.name,
                 "role": "owner",
                 "importsOn": True,
+                "settings": {
+                    "visibility": "peek",
+                    "level": "normal",
+                    "keepDays": None,
+                    "paused": False,
+                    "gameMasters": 1,
+                },
             },
         )
 

@@ -12,7 +12,8 @@ import {
   type HouseRuleCampaign,
   type HouseRules,
 } from "./api";
-import BackToCampaign from "./BackToCampaign";
+import { sharingCard } from "../content/sharing";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign in the address: `/account/house-rules/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -89,6 +90,8 @@ export default function HouseRulesPage({ api, path }: { api: AccountApi; path: s
     <div class="stack">
       <p>
         <a href="/account">{text.account}</a>
+        {" · "}
+        <a href="/account/sharing">{sharingCard.link}</a>
       </p>
       {ref === null ? <Campaigns api={api} /> : <Rules api={api} campaignRef={ref} />}
     </div>
@@ -140,7 +143,7 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
           <p>
             <a href="/account/house-rules">{text.allCampaigns}</a>
           </p>
-          <BackToCampaign campaignRef={campaignRef} name={found.name} />
+          <CampaignNav api={api} campaignRef={campaignRef} page="houseRules" name={found.name} />
           <h2>{found.name}</h2>
           <p class="small">{text.leadOneCampaign}</p>
           {found.rules.length === 0 ? (
