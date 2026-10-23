@@ -165,10 +165,9 @@ class Opening(LinkBase):
         self.assertEqual((got.status_code, got.json()["error"]), (409, "ended"))
 
 
-class Enforced(LinkBase):
-    """With plans enforced (the go-live switch): a paid plan with room, nothing else."""
-
-    enforce_plans = True
+class Plans(LinkBase):
+    """Only a paid plan with room can receive a campaign handed over by email (PLAN), whether or
+    not the campaign cap is enforced."""
 
     async def test_no_plan_cannot_accept_and_the_page_says_why(self) -> None:
         token = await self.link()
@@ -194,3 +193,51 @@ class Enforced(LinkBase):
         token = await self.link()
         look = (await self.post(await self.bob(), "look", token=token)).json()
         self.assertEqual((look["canAccept"], look["why"]), (True, None))
+
+    async def test_an_accept_that_fails_gives_the_link_back_to_the_real_recipient(self) -> None:
+        from unittest.mock import patch
+
+        carol = await self.person(CAROL)  # (signing in makes the account)
+        self.addAsyncCleanup(carol.aclose)
+        await self.give_plan(BOB.id)
+        await self.give_plan(CAROL.id)
+        token = await self.link()
+        # Carol holds the link and passes every check, but the accept itself does not happen
+        # (say her room went between the check and the write): the link must not stay hers.
+        with patch.object(CampaignStore, "accept_handover", return_value="no_free_slot"):
+            got = await self.post(carol, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (402, "no_free_slot"))
+        self.assertEqual((await self.row())["to_user_id"], 0)
+        bob = await self.bob()
+        done = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual(done.status_code, 200, done.text)
+
+    async def test_two_people_accepting_at_once_make_one_owner(self) -> None:
+        import asyncio
+
+        bob, carol = await self.bob(), await self.person(CAROL)
+        self.addAsyncCleanup(carol.aclose)
+        await self.give_plan(BOB.id)
+        await self.give_plan(CAROL.id)
+        token = await self.link()
+        got = await asyncio.gather(
+            *[
+                self.post(who, "accept", token=token, serverId=str(THURSDAY.id))
+                for who in (bob, carol)
+            ]
+        )
+        self.assertEqual(sorted(g.status_code for g in got), [200, 409])
+        campaign = await CampaignStore(self.db).get(THURSDAY.id, self.campaign.id)
+        assert campaign is not None
+        self.assertIn(campaign.owner_user_id, (BOB.id, CAROL.id))
+
+    async def test_whoever_holds_the_link_can_say_no_thanks_and_it_ends_for_everyone(self) -> None:
+        # The emailed link is the recipient (that is what a one-use link is): a stranger who got
+        # it can end the offer, and the owner offers again.
+        token = await self.link()
+        carol = await self.person(CAROL)
+        self.addAsyncCleanup(carol.aclose)
+        self.assertEqual((await self.post(carol, "decline", token=token)).status_code, 200)
+        self.assertEqual(
+            (await self.post(await self.bob(), "look", token=token)).json(), {"status": "ended"}
+        )

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -259,16 +260,21 @@ class WebRole(DatabaseTest):
             await admin.close()
 
     async def _offer_insert(self, conn: Any, from_user: int, **extra: object) -> None:
-        """Insert an offer for Alice's campaign as the website's role would."""
+        """Insert an offer by email for Alice's campaign as the website's role would (#2532):
+        addressed to nobody, holding a link's hash, born delivered."""
         await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+        made = int(time.time())  # (the rule holds the time to the database's clock)
         columns = {
             "guild_id": THURSDAY.id,
             "campaign_id": self.mine.id,
             "from_user_id": from_user,
-            "to_user_id": OTHER_USER,
-            "created_at": self.now,
+            "to_user_id": 0,
+            "created_at": made,
+            "delivered_at": made,
             "from_name": "Alice",
-            "to_name": "Bob",
+            "to_name": "",
+            "via_email": True,
+            "token_hash": "a" * 64,
             **extra,
         }
         names = ", ".join(columns)
@@ -278,31 +284,37 @@ class WebRole(DatabaseTest):
             tuple(columns.values()),
         )
 
-    async def test_the_website_cannot_mark_a_discord_offer_sent(self) -> None:
-        # #2532: the site may create offers now (by email), but only open ones, and only an
-        # email offer may arrive already delivered.
-        session = await self.alice()
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id, delivered_at=self.now)
+    async def refused(self, session: Any, who: int = ALICE.id, **extra: object) -> None:
+        with self.assertRaises(errors.InsufficientPrivilege, msg=str(extra)):
+            async with self.web.user(who, session=session.id_hash) as conn:
+                await self._offer_insert(conn, who, **extra)
 
-    async def test_when_it_may_create_offers_it_cannot_mark_them_sent(self) -> None:
-        # #728: the grant a future route needs is column-limited, and a restrictive rule backs it.
+    async def test_the_default_grant_lets_the_owner_make_an_email_offer(self) -> None:
+        session = await self.alice()
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            await self._offer_insert(conn, ALICE.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM campaign_handover_offers")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)
+
+    async def test_the_owner_creates_an_offer_by_email_and_nothing_else(self) -> None:
+        # The grant is column-limited and a restrictive rule backs it (#728, #2532).
         columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
         await self._grant(f"INSERT ({columns})")
         session = await self.alice()
-        # Her own, open, unsent offer goes in.
         async with self.web.user(ALICE.id, session=session.id_hash) as conn:
             await self._offer_insert(conn, ALICE.id)
-        # Columns outside the grant are refused outright.
-        for column in ("claimed_at", "message_id", "end_told_at", "status"):
-            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
-                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                    await self._offer_insert(conn, ALICE.id, **{column: 1})
-        # Someone else's name as the sender is refused by the rule.
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, OTHER_USER)
+        for column in ("claimed_at", "message_id", "end_told_at", "status"):  # no grant
+            await self.refused(session, **{column: 1})
+        await self.refused(session, who=ALICE.id, from_user_id=OTHER_USER)  # not hers to name
+
+    async def test_a_discord_offer_cannot_come_from_the_website(self) -> None:
+        # PLAN point 6: no new Discord offers; the bot would send a person buttons for one.
+        await self._grant("INSERT")
+        session = await self.alice()
+        await self.refused(session, via_email=False, token_hash=None, to_user_id=OTHER_USER,
+                           delivered_at=None)  # fmt: skip
+        await self.refused(session, via_email=False, to_user_id=0)
 
     async def test_an_offer_can_only_be_made_on_a_campaign_the_sender_owns(self) -> None:
         # #2532: anyone in the server could otherwise write themselves an offer and accept it.
@@ -311,40 +323,31 @@ class WebRole(DatabaseTest):
         bobs = await CampaignStore(self.db, clock=lambda: self.now).create(
             THURSDAY.id, "Not hers", OTHER_USER
         )
-        session = await self.alice()
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id, campaign_id=bobs.id, to_user_id=ALICE.id)
+        await self.refused(await self.alice(), campaign_id=bobs.id, to_user_id=ALICE.id)
+        await self.refused(await self.alice(), campaign_id=bobs.id)
 
     async def test_an_email_offer_holds_no_one_and_carries_a_link_hash(self) -> None:
         columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
         await self._grant(f"INSERT ({columns})")
         session = await self.alice()
-        good = {"via_email": True, "token_hash": "a" * 64, "to_user_id": 0}
-        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-            await self._offer_insert(conn, ALICE.id, delivered_at=self.now, **good)
+        now = int(time.time())
         for bad in (
-            {**good, "to_user_id": ALICE.id},  # already addressed to someone
-            {**good, "token_hash": None},  # no link
-            {"via_email": False, "token_hash": "b" * 64},  # a Discord offer with a link
-            {**good, "delivered_at": self.now + 1},  # "delivered" at some other time
+            {"to_user_id": ALICE.id},  # already addressed to someone
+            {"token_hash": None},  # no link
+            {"delivered_at": now + 1},  # "delivered" at some other time
+            {"delivered_at": None},
+            {"created_at": now + 10_000_000, "delivered_at": now + 10_000_000},  # never expires
+            {"created_at": now - 100_000, "delivered_at": now - 100_000},  # born expired
         ):
-            with self.assertRaises(errors.InsufficientPrivilege, msg=str(bad)):
-                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                    await self._offer_insert(conn, ALICE.id, **{"delivered_at": self.now, **bad})
+            await self.refused(session, **bad)
 
     async def test_a_wider_grant_is_still_held_by_the_rule(self) -> None:
-        # If someone granted INSERT on the whole table by mistake, marking an offer sent is
-        # still refused by the restrictive rule (#728).
+        # If someone granted INSERT on the whole table by mistake, the rule still holds (#728).
         await self._grant("INSERT")
         session = await self.alice()
-        for column in ("delivered_at", "claimed_at", "message_id", "end_told_at"):
-            with self.assertRaises(errors.InsufficientPrivilege, msg=column):
-                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                    await self._offer_insert(conn, ALICE.id, **{column: 1})
-        with self.assertRaises(errors.InsufficientPrivilege):
-            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
-                await self._offer_insert(conn, ALICE.id, status="accepted")
+        for column in ("claimed_at", "message_id", "end_told_at"):
+            await self.refused(session, **{column: 1})
+        await self.refused(session, status="accepted")
 
     async def test_its_limits_apply_to_it_and_never_to_the_bot(self) -> None:
         async with self.db.unscoped() as conn:

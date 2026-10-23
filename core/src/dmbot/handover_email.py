@@ -52,7 +52,7 @@ def hash_token(token: str) -> str:
 
 
 def email_text(*, owner: str, campaign: str, server: str, link: str) -> tuple[str, str]:
-    """(subject, body) of the offer. Plain steps, in the order PLAN lists them. Nothing in it says
+    """(subject, body) of the offer: PLAN's numbered steps, in its order. Nothing in it says
     whether the address already has a DMbot account. The owner's name is a display name anyone can
     choose, so it is quoted and never the first words of the message."""
     subject = f'{owner} offers you the DMbot campaign "{campaign}"'
@@ -61,13 +61,18 @@ def email_text(*, owner: str, campaign: str, server: str, link: str) -> tuple[st
         f'to offer you the D&D campaign "{campaign}" on DMbot. DMbot listens to a D&D table and '
         "privately helps the Dungeon Master.\n\n"
         f"To take it over, open this link within {LINK_DAYS} days:\n\n{link}\n\n"
-        "What happens:\n"
-        "1. Sign in to the DMbot website (with Discord or your email).\n"
-        "2. Press Accept, and choose where the campaign runs. The campaign uses your DMbot "
-        "plan's hours, and you become one of its Dungeon Masters. You need a paid plan with room "
-        "for one more campaign; the free Try It plan can't take one. If you need a plan, pick "
-        f"one first: the link keeps working for {LINK_DAYS} days.\n"
-        "3. Start a session as usual with /dmbot start.\n\n"
+        "What to do:\n"
+        "1. Sign in to the DMbot website, with Discord or with your email address.\n"
+        "2. You need a paid DMbot plan with a free campaign slot. The free Try It plan can't "
+        "receive a campaign. If you don't have a plan yet, choose one first; the link keeps "
+        f"working for {LINK_DAYS} days.\n"
+        "3. Press Accept, and choose where the campaign runs: the Discord server it runs on now, "
+        "or another server of yours (the page can add DMbot to a server that doesn't have it "
+        "yet). The campaign then uses your plan's hours, and the person who offered it stays one "
+        "of its DMs.\n"
+        "4. If you play on a server where DMbot already runs this campaign, your Discord account "
+        "simply becomes its DM there. Nothing needs installing.\n"
+        "5. Then start a session as usual with /dmbot start.\n\n"
         "The link works once. Not expecting this? Ignore this email and nothing changes: the "
         "campaign stays with its owner."
     )

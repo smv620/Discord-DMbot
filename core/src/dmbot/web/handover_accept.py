@@ -12,13 +12,16 @@ This slice moves a campaign only within the server it runs on now; another serve
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Literal
 
 from dmbot import campaign_cap
-from dmbot.campaigns.store import CampaignStore, plan_works
+from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.web.sessions import Session, hash_token
+
+log = logging.getLogger(__name__)
 
 Why = Literal["no_plan", "no_slot", "owner"]
 Outcome = Literal["accepted", "declined", "ended", "no_plan", "no_slot", "owner", "bad_server"]
@@ -58,19 +61,34 @@ async def _why_not(
     return None if verdict == "ok" else verdict
 
 
+async def _release(db: Database, session: Session, link: tuple[int, int, str]) -> None:
+    """Give a claim back after an accept that did not happen, so the link still works for the
+    person it was for. Best effort: the claim's holder can also simply try again."""
+    guild_id, offer_id, secret = link
+    try:
+        async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
+            await conn.execute(
+                "SELECT dmbot_handover_release(%s, %s, %s)",
+                (guild_id, offer_id, hash_token(secret)),
+            )
+    except Exception:  # the type only: an error can quote a row
+        log.warning("A hand-over claim could not be given back")
+
+
 async def look(
     db: Database, session: Session, raw: object, *, now: int, enforce_plans: bool = False
 ) -> dict[str, Any]:
     """What the page shows. Changes nothing. `{"status": "ended"}` for every link that opens
-    nothing now."""
+    nothing now. (`enforce_plans` only decides the campaign cap's source in the store; the paid
+    plan rule of a hand-over by email holds either way.)"""
     link = parse_link(raw)
     offer = None if link is None else await _open(db, session, link, claim=False)
     if link is None or offer is None:
         return ENDED
     guild_id = link[0]
-    why = await _why_not(db, session, guild_id, offer, now=now) if enforce_plans else None
-    if why is None and offer["from_user_id"] == session.user_id:
-        why = "owner"
+    why = await _why_not(db, session, guild_id, offer, now=now)
+    # The session's server list is a snapshot from sign-in (not a live check that the person is
+    # still in the server), as for every other answer on the website (web/offers.py).
     mine = next((g for g in session.guilds if g.id == guild_id), None)
     server = {"id": str(guild_id), "name": mine.name if mine else ""}
     return {
@@ -87,11 +105,11 @@ async def look(
     }
 
 
-def _store(db: Database, session: Session, now: int, enforce_plans: bool) -> CampaignStore:
+def _store(db: Database, session: Session, now: int) -> CampaignStore:
     return CampaignStore(
         db.as_person(session.user_id, session.id_hash),
         clock=lambda: now,
-        has_free_slot=campaign_cap.has_paid_room_for_one_more if enforce_plans else plan_works,
+        has_free_slot=campaign_cap.has_paid_room_for_one_more,
     )
 
 
@@ -104,7 +122,11 @@ async def accept(
     now: int,
     enforce_plans: bool = False,
 ) -> tuple[Outcome, str | None]:
-    """Accept as the signed-in account. (outcome, the campaign's address when accepted.)"""
+    """Accept as the signed-in account. (outcome, the campaign's address when accepted.)
+
+    The order keeps the link usable for the person it was meant for: everything that can be
+    checked is checked before the link is claimed, and if the accept still does not happen (a
+    race on the person's room, the campaign changing hands) the claim is given back."""
     link = parse_link(raw)
     if link is None:
         return "ended", None
@@ -114,27 +136,32 @@ async def accept(
     offer = await _open(db, session, link, claim=False)
     if offer is None:
         return "ended", None
-    if enforce_plans:
-        why = await _why_not(db, session, guild_id, offer, now=now)
-        if why is not None:
-            return why, None
-    elif offer["from_user_id"] == session.user_id:
-        return "owner", None
+    why = await _why_not(db, session, guild_id, offer, now=now)
+    if why is not None:
+        return why, None
     if await _open(db, session, link, claim=True) is None:
         return "ended", None
-    result = await _store(db, session, now, enforce_plans).accept_handover(
-        guild_id, offer_id, session.user_id, now, announce=True
-    )
+    try:
+        result = await _store(db, session, now).accept_handover(
+            guild_id, offer_id, session.user_id, now, announce=True
+        )
+    except BaseException:
+        await _release(db, session, link)
+        raise
     if result == "accepted":
         return "accepted", f"{guild_id}.{offer['campaign_id']}"
+    await _release(db, session, link)
     return ("no_slot" if result == "no_free_slot" else "ended"), None
 
 
 async def decline(
     db: Database, session: Session, raw: object, *, now: int, enforce_plans: bool = False
 ) -> Outcome:
-    """Say no thanks. Only a person in the server can record it (the website's rights are held to
-    the session's servers); anyone else just leaves it: the offer ends by itself after 7 days."""
+    """Say no thanks. Whoever holds the link is its recipient (that is what an emailed one-use
+    link is), so they can end the offer; the owner is told "The person you emailed" unless the
+    person has signed in with a name. Only a person in the server can record it (the website's
+    rights are held to the session's servers); anyone else just leaves it: the offer ends by
+    itself after 7 days."""
     link = parse_link(raw)
     if link is None:
         return "ended"
@@ -146,7 +173,7 @@ async def decline(
         return "declined"
     if await _open(db, session, link, claim=True) is None:
         return "ended"
-    result = await _store(db, session, now, enforce_plans).decline_handover(
+    result = await _store(db, session, now).decline_handover(
         guild_id, offer_id, session.user_id, now, announce=True
     )
     return "declined" if result == "declined" else "ended"

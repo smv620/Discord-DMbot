@@ -1353,28 +1353,27 @@ WEB_ROLE_RECAP_POLICY = """
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
-    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
-    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
-    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
-    -- from the website is the signed-in person's own, still open, and not marked as sent,
-    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
-    -- bot's check that the person is still in the server would be skipped.
+    -- Creating an offer (#728, #690 follow-up; #2532). The website's role may INSERT only the
+    -- columns in OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in owner's own, by email, still open, and not claimed or
+    -- announced. Otherwise the site could write itself an offer on someone else's campaign.
     DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
     CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
-        WITH CHECK ((delivered_at IS NULL OR (via_email AND delivered_at = created_at))
+        WITH CHECK (via_email AND token_hash IS NOT NULL AND to_user_id = 0
+                    -- an offer from the website is only ever by email (#2532): a Discord offer
+                    -- would be sent to a person as buttons, which PLAN retires; it is born
+                    -- delivered, because the bot has no Discord message to send for it
+                    AND delivered_at = created_at
+                    AND created_at BETWEEN dmbot_now() - 300 AND dmbot_now() + 300
                     AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
                     AND from_user_id = dmbot_current_user()
-                    -- only the campaign's own owner can offer it (#2532): without this, anyone
-                    -- in the server could write themselves an offer and then accept it
+                    -- only the campaign's own owner can offer it: without this, anyone in the
+                    -- server could write themselves an offer and then accept it
                     AND EXISTS (SELECT 1 FROM campaigns c
                                 WHERE c.guild_id = campaign_handover_offers.guild_id
                                   AND c.id = campaign_handover_offers.campaign_id
-                                  AND c.owner_user_id = campaign_handover_offers.from_user_id)
-                    -- an email offer belongs to nobody until its link is claimed, and carries
-                    -- its link's hash; a Discord offer has neither
-                    AND (NOT via_email OR to_user_id = 0)
-                    AND ((token_hash IS NOT NULL) = via_email));
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id));
 """
 
 ACCESS_GRANTS = (
@@ -3154,6 +3153,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # How many hand-over emails a person sent today, for the limit of five (#2532).
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
     ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
+    ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11801,7 +11801,7 @@ HANDOVER_CLAIM = """
             FROM campaign_handover_offers f
             JOIN campaigns c ON c.guild_id = f.guild_id AND c.id = f.campaign_id
             WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
-              AND f.status = 'open' AND f.created_at + 604800 > extract(epoch FROM now())::BIGINT
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
               AND (f.to_user_id = 0 OR f.to_user_id = me)
               AND c.owner_user_id = f.from_user_id
             FOR UPDATE OF f;
@@ -11828,6 +11828,32 @@ HANDOVER_CLAIM = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    -- Gives a claim back (#2532): an accept that fails after the link was claimed (no room any
+    -- more, the campaign changed hands) must not leave the link dead for the person it was for.
+    -- Only the person who holds the claim, only on an offer still open and still unanswered.
+    CREATE FUNCTION dmbot_handover_release(g BIGINT, o BIGINT, p_hash TEXT) RETURNS VOID
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL THEN
+            RETURN;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers SET to_user_id = 0, to_name = ''
+            WHERE guild_id = g AND id = o AND via_email AND token_hash = p_hash
+              AND status = 'open' AND to_user_id = me;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT) FROM PUBLIC;
 """
 
 MIGRATIONS: tuple[Migration, ...] = (

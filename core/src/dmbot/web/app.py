@@ -669,19 +669,13 @@ def create_app(
         log.info("An email change was confirmed by user %s", session.user_id)
         return {"address": new}
 
-    @app.delete("/me/campaigns/{ref}/handover")
-    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
-        """The owner takes back the campaign's open offer (#2532)."""
-        session, _token = signed
-        if not await handover_offer.withdraw(db, session, ref, now=int(clock())):
-            raise HTTPException(status_code=404, detail="not_found")
-        return {"status": "withdrawn"}
-
     @app.post("/me/handover/look")
     async def me_handover_look(signed: Signed, request: Request) -> dict[str, Any]:
         """What a hand-over link offers (#2532): `{"token"}`. Changes nothing; every link that
         opens nothing now answers `{"status": "ended"}`."""
         session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
         if handover_open_limit.take(str(session.user_id)) != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         return await handover_accept.look(
@@ -696,6 +690,8 @@ def create_app(
     async def me_handover_accept(signed: Signed, request: Request) -> dict[str, str]:
         """Accept: `{"token", "serverId"}`. Ownership moves to the signed-in DMbot account."""
         session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
         if handover_open_limit.take(str(session.user_id)) != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         body = await small_json(request)
@@ -723,6 +719,8 @@ def create_app(
     async def me_handover_decline(signed: Signed, request: Request) -> dict[str, str]:
         """No thanks: `{"token"}`."""
         session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
         if handover_open_limit.take(str(session.user_id)) != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         outcome = await handover_accept.decline(
@@ -747,6 +745,8 @@ def create_app(
         """The owner offers the campaign to an email address (#2532): `{"email"}`. The answer is
         "emailed" whatever the address is; it never says whether it has an account or a plan."""
         session, _token = signed
+        if not settings.handover_email_on:  # off until the accept page is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
         taken = handover_limit.take(str(session.user_id))
         if taken != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
@@ -765,6 +765,16 @@ def create_app(
             status = {"bad_email": 422, "too_soon": 429, "not_allowed": 409, "email_failed": 502}
             raise HTTPException(status_code=status[outcome], detail=outcome)
         return {"status": "emailed"}
+
+    @app.delete("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
+        """The owner takes back the campaign's open offer (#2532)."""
+        session, _token = signed
+        if not settings.handover_email_on or not await handover_offer.withdraw(
+            db, session, ref, now=int(clock())
+        ):
+            raise HTTPException(status_code=404, detail="not_found")
+        return {"status": "withdrawn"}
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:
