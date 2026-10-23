@@ -12108,6 +12108,9 @@ PLOT_CHAT = (
         IF txt IS NULL OR char_length(btrim(txt)) = 0 OR char_length(txt) > 1000 THEN
             RETURN jsonb_build_object('status', 'bad_text');
         END IF;
+        -- A talk is kept for thirty days; older words of this campaign go here.
+        DELETE FROM plot_chat m
+            WHERE m.guild_id = g AND m.campaign_id = c AND m.created_at < now_s - 2592000;
         SELECT * INTO job FROM recap_jobs
             WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
         IF NOT FOUND THEN

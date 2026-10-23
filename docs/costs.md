@@ -306,3 +306,9 @@ characters each), so about 10,000 to 25,000 input tokens late in a long campaign
 a campaign in an hour, and a check that never finished is tried at most 3 times. The chat about each
 issue (#2123) is counted separately. Not measured on a live campaign yet; the feature is off
 (`DMBOT_PLOT_CHECK=0`) until it is.
+
+## PlotBot's talk about an issue (#2123)
+One careful-tier call for each message the DM sends about an issue: the issue, the recap (at most 3,000
+characters), the earlier turns (at most 8, 500 characters each) and at most 12 campaign entries, so about 2,000 to
+3,500 input tokens, and at most 700 output tokens. A talk has at most 15 messages from a DM on an issue, one at a time. A
+request to invent story makes no call. Not measured on a live campaign yet; off with `DMBOT_PLOT_CHECK=0`.

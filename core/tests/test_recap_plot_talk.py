@@ -1,0 +1,163 @@
+"""The bot's answer to the DM's talk about an issue (#2123): the waiting message is claimed, one
+call is made, the answer is written as a second row with its proposals, and nothing is saved to the
+campaign. The AI is a stand-in; the memory store is the real one."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+from typing import Any
+
+from dmbot.memory.models import CONFIRMED
+from dmbot.memory.store import MemoryStore
+from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
+from tests.test_recap_plot import PlotBase
+from tests.test_recap_web import NOW
+from tests.test_web_api import THURSDAY
+
+
+class Ai:
+    def __init__(self, reply: str, *, refused: bool = False) -> None:
+        self.reply, self.refused, self.calls, self.sent = reply, refused, 0, ""
+
+    async def complete(self, system: str, text: str, **kw: Any) -> Any:
+        self.calls += 1
+        self.sent = text
+        return SimpleNamespace(text=self.reply, refused=self.refused, cut=False)
+
+
+def good(*proposals: Any, reply: str = "That would be a change in the story.") -> str:
+    return json.dumps({"reply": reply, "proposals": list(proposals)})
+
+
+class Answering(PlotBase):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.checked()
+        self.issue_id = await self.issue("a1")
+        self.talk = TalkStore(self.db)
+        self.memory = MemoryStore(self.db)
+        self.ulfgar = await self.memory.add_entity(
+            THURSDAY.id, self.one.id, type="character", name="Ulfgar", source="dm", status=CONFIRMED
+        )
+        await self.memory.set_condition(
+            THURSDAY.id, self.one.id, self.ulfgar.value.id, "dead", source="dm"
+        )
+
+    def runner(self, ai: Ai | None) -> TalkRunner:
+        return TalkRunner(self.talk, self.memory, ai)
+
+    async def say(self, text: str = "Ulfgar came back as a ghost.") -> None:
+        sent = await self.client.post(self.url(), json={"text": text})
+        self.assertEqual(sent.status_code, 200, sent.text)
+
+    def url(self, tail: str = "chat") -> str:
+        return f"/me/recaps/{self.ref}/plot/{self.issue_id}/{tail}"
+
+    async def messages(self) -> list[dict[str, Any]]:
+        return list((await self.client.get(self.url())).json()["messages"])
+
+    async def test_the_message_is_answered_and_the_page_reads_it(self) -> None:
+        await self.say()
+        ai = Ai(good({"entry": 1, "condition": "alive"}))
+        self.assertEqual(await self.runner(ai).round(THURSDAY.id), 1)
+        dm, bot = await self.messages()
+        self.assertEqual((dm["role"], dm["state"]), ("dm", "done"))
+        self.assertEqual((bot["role"], bot["state"]), ("bot", "done"))
+        [p] = bot["proposals"]
+        self.assertEqual((p["label"], p["state"]), ("Ulfgar: alive", "open"))
+        self.assertIn("Press Save", bot["text"])
+
+    async def test_the_call_is_given_the_issue_the_recap_and_the_entry_it_is_about(self) -> None:
+        await self.say()
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertIn("Ulfgar spoke.", ai.sent)  # the issue's sentence
+        self.assertIn("Ulfgar (character), now dead", ai.sent)  # the entry and what it is now
+        self.assertIn("Ulfgar came back as a ghost.", ai.sent)  # the DM's words
+
+    async def test_nothing_is_saved_to_the_campaign_by_a_proposal(self) -> None:
+        await self.say()
+        await self.runner(Ai(good({"entry": 1, "condition": "alive"}))).round(THURSDAY.id)
+        held = await self.memory.states(THURSDAY.id, self.one.id)
+        self.assertEqual(held[self.ulfgar.value.id].condition, "dead")  # unchanged until Save
+
+    async def test_a_request_to_invent_story_gets_the_plain_no_and_no_call(self) -> None:
+        await self.say("Invent a reason Ulfgar is alive.")
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertEqual(ai.calls, 0)
+        bot = (await self.messages())[-1]
+        self.assertIn("only retells what happened at your table", bot["text"])
+
+    async def test_a_quotation_from_anywhere_else_fails_the_answer(self) -> None:
+        await self.say()
+        ai = Ai(good(reply='A player said "Gorrak swung the axe at dawn" earlier.'))
+        await self.runner(ai).round(THURSDAY.id)
+        [dm] = await self.messages()
+        self.assertEqual((dm["state"], dm["error"]), ("failed", "bad_answer"))
+
+    async def test_an_answer_that_cannot_be_used_or_a_refusal_fails_the_message(self) -> None:
+        for ai, code in ((Ai("not json"), "bad_answer"), (Ai(good(), refused=True), "no_answer")):
+            await self.say()
+            await self.runner(ai).round(THURSDAY.id)
+            [dm] = await self.messages()
+            self.assertEqual((dm["state"], dm["error"]), ("failed", code))
+            async with self.db.guild(THURSDAY.id) as conn:
+                await conn.execute("DELETE FROM plot_chat")
+        self.assertEqual((await self.client.get(self.url())).status_code, 200)
+
+    async def test_with_no_ai_the_message_fails_and_the_dm_can_go_on(self) -> None:
+        await self.say()
+        await self.runner(None).round(THURSDAY.id)
+        [dm] = await self.messages()
+        self.assertEqual((dm["state"], dm["error"]), ("failed", "unavailable"))
+        await self.say("Are you there?")  # not stuck behind the failed one
+
+    async def test_a_call_that_hangs_fails_the_message(self) -> None:
+        from unittest.mock import patch
+
+        class Hangs(Ai):
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                await asyncio.sleep(60)
+
+        await self.say()
+        with patch("dmbot.recaps.plot_talk_run.CALL_TIMEOUT_S", 0.05):
+            await self.runner(Hangs("")).round(THURSDAY.id)
+        [dm] = await self.messages()
+        self.assertEqual((dm["state"], dm["error"]), ("failed", "failed"))
+
+    async def test_a_changed_recap_fails_the_message_as_stale(self) -> None:
+        await self.say()
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="A different recap.")
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertEqual(ai.calls, 0)
+        [dm] = await self.messages()
+        self.assertEqual((dm["state"], dm["error"]), ("failed", "stale"))
+
+    async def test_a_claim_taken_back_by_another_worker_writes_nothing(self) -> None:
+        await self.say()
+        first = await self.talk.claim_next(THURSDAY.id)
+        assert first is not None
+        late = TalkStore(self.db, clock=lambda: NOW * 0 + 4_000_000_000)  # long after the claim
+        second = await late.claim_next(THURSDAY.id)
+        assert second is not None
+        from dmbot.memory.plot_talk import Answer
+
+        self.assertFalse(await self.talk.finish(THURSDAY.id, first, Answer("late")))
+        self.assertTrue(await late.finish(THURSDAY.id, second, Answer("on time")))
+        self.assertEqual([m["role"] for m in await self.messages()], ["dm", "bot"])
+
+    async def test_only_the_talk_of_this_dm_and_issue_is_shown_to_the_call(self) -> None:
+        await self.say("First point.")
+        await self.runner(Ai(good())).round(THURSDAY.id)
+        await self.say("Second point.")
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertIn("First point.", ai.sent)  # the earlier turn is history
+        self.assertIn("That would be a change in the story.", ai.sent)
+
+    async def test_nothing_else_waiting_means_nothing_is_done(self) -> None:
+        self.assertEqual(await self.runner(Ai(good())).round(THURSDAY.id), 0)

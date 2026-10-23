@@ -326,6 +326,7 @@ from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.plot import PlotRunner, PlotStore
 from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
+from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.significance import Memory
@@ -599,6 +600,7 @@ SUMMARY_PARTIAL = (
     "yet, so they are still secret. DMbot will try again after the next session."
 )
 RECAP_ROUND_S = 60
+PLOT_TALK_ROUND_S = 5  # how often the DM's messages to PlotBot are looked for (#2123)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
 IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
@@ -1389,6 +1391,20 @@ class DMBot(commands.AutoShardedBot):
             if settings.plot_check_on and self.ai_client and recaps is not None
             else None
         )
+        # The DM's talk with PlotBot about an issue (#2123): the page queues the DM's words, this
+        # answers them. Same switch as the checks.
+        self.plot_talk: TalkRunner | None = (
+            TalkRunner(
+                TalkStore(recaps.db),
+                memory,
+                self.ai_client.tier(FEATURE_TIERS[Feature.PLOT_TALK], Feature.PLOT_TALK),
+            )
+            if settings.plot_check_on
+            and self.ai_client
+            and recaps is not None
+            and memory is not None
+            else None
+        )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
         self.recap_audio_files = AudioFiles(settings.data_dir / "recap-audio")
@@ -1693,6 +1709,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._plot_loop(), "plot-checks")]
                 if self.plot_runner is not None
+                else []
+            ),
+            *(
+                [self._watched(self._plot_talk_loop(), "plot-talk")]
+                if self.plot_talk is not None
                 else []
             ),
             *(
@@ -10995,6 +11016,25 @@ class DMBot(commands.AutoShardedBot):
                     await self.plot_runner.round(guild.id)
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Plot checks failed for a server: %s", type(exc).__name__)
+
+    async def run_plot_talk(self) -> None:
+        """One round of answers to the DM's messages about plot issues (#2123)."""
+        if self.plot_talk is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                with log_context(guild_id=guild.id):
+                    await self.plot_talk.round(guild.id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Plot talk failed for a server: %s", type(exc).__name__)
+
+    async def _plot_talk_loop(self) -> None:
+        """Every few seconds (a DM is waiting for the answer), in its own task so a slow check
+        never holds an answer up and a slow answer never holds a recap job up."""
+        await asyncio.sleep(30)
+        while True:
+            await self.run_plot_talk()
+            await asyncio.sleep(PLOT_TALK_ROUND_S)
 
     async def _plot_loop(self) -> None:
         """Every minute: PlotBot's checks of ready recaps (#2122). Its own task, because a check
