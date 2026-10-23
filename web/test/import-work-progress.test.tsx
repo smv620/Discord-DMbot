@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ImportProgress, JobProgress } from "../src/account/api";
 import { ApiError } from "../src/account/api";
-import Import from "../src/account/Import";
+import Import, { WATCH_LIMIT_MS } from "../src/account/Import";
 import { mockApi } from "../src/account/mock";
 import { importPage as w } from "../src/content/import-words";
 import { workWords as ww } from "../src/content/work-progress";
@@ -89,8 +89,9 @@ describe("the whole import's progress", () => {
   });
 
   it("says a stalled import has had no change, and what to do", async () => {
-    await importing([answer(job({ state: "stalled", updatedAt: now() - 190 }), { state: "stalled" })]);
-    expect(await screen.findByText(ww.stalled(ww.duration(190)))).toBeTruthy();
+    await importing([answer(job({ state: "stalled", updatedAt: now() - 190 }), { progress: job({ stage: "cleaning", state: "stalled" }) })]);
+    expect(await screen.findByText(ww.stalled)).toBeTruthy();
+    expect(screen.getByText(ww.quietFor(ww.duration(190)), { exact: false })).toBeTruthy();
     expect(screen.getByText(w.stalledDo)).toBeTruthy();
     expect(screen.getByText(new RegExp(w.sessionStalled))).toBeTruthy();
   });
@@ -143,6 +144,9 @@ describe("the whole import's progress", () => {
     await importing([answer(job()), new ApiError("not-found")]);
     expect(await screen.findByText(w.gone, undefined, { timeout: 8000 })).toBeTruthy();
     expect(screen.getByText(w.stage.cleaning!)).toBeTruthy();
+    // the last answer stays, but no clock keeps running beside "no longer listed"
+    expect(screen.queryByText(/Running for|Last progress/)).toBeNull();
+    expect(screen.getByText(ww.stoppedLooking)).toBeTruthy();
   }, 15_000);
 
   it("keeps the old count line when the API sends no progress object", async () => {
@@ -155,5 +159,60 @@ describe("the whole import's progress", () => {
     await importing([answer(job())]);
     await screen.findByText(w.stage.cleaning!);
     expect(document.body.textContent).not.toContain("Cerric: hello"); // the file's words are never on the page
+  });
+});
+
+describe("how often the page asks (fake timers)", () => {
+  /** Opens the page, then runs the clock; `answers` is what the API says on each ask (the last one stays). */
+  async function watching(answers: ImportProgress[]) {
+    const api = mockApi("table");
+    let asks = 0;
+    api.importProgress = async () => answers[Math.min(asks++, answers.length - 1)]!;
+    api.importStart = async () => ({ importId: "x", sessions: [], estimate: { sessions: 1, fastCalls: 1 } });
+    live.on = true;
+    vi.useFakeTimers({ shouldAdvanceTime: true }); // (real time still moves the clock, so waiting for the page works)
+    render(<Import api={api} path="/account/import/100.cmp1" />);
+    const input = screen.getByLabelText(w.pickLabel, { selector: "input" }) as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [s1], configurable: true });
+    fireEvent.change(input);
+    fireEvent.click(screen.getByRole("button", { name: w.preview }));
+    fireEvent.click(await screen.findByRole("button", { name: w.checkButton }));
+    await screen.findByText(/^Checked:/);
+    fireEvent.click(screen.getByRole("button", { name: w.importButton }));
+    await screen.findByText(w.progressHeading);
+    return { asks: () => asks };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("asks less and less often while nothing moves, up to every 30 seconds", async () => {
+    const stuck = answer(job({ state: "stalled", updatedAt: 1000 }), { progress: job({ state: "stalled", updatedAt: 1000 }) });
+    const { asks } = await watching([stuck]);
+    const before = asks();
+    await vi.advanceTimersByTimeAsync(10 * 60_000); // ten minutes of a stall
+    const calls = asks() - before;
+    expect(calls).toBeLessThan(30); // a steady 3 s would make 200
+    expect(calls).toBeGreaterThan(10);
+  });
+
+  it("asks quickly again as soon as something moves", async () => {
+    const stuck = answer(job({ updatedAt: 1000 }));
+    const moving = (n: number) => answer(job({ done: n, updatedAt: 1000 + n }));
+    const run = Array.from({ length: 40 }, (_, i) => moving(i + 1));
+    const { asks } = await watching([stuck, stuck, ...run]);
+    const before = asks();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asks() - before).toBeGreaterThanOrEqual(12); // about every 3 s once it moves (the slow pace would be ~4)
+  });
+
+  it("stops looking after the watch limit and offers Check again", async () => {
+    const { asks } = await watching([answer(job({ state: "stalled", updatedAt: 1000 }))]);
+    await vi.advanceTimersByTimeAsync(WATCH_LIMIT_MS + 120_000);
+    expect(screen.getByText(w.stoppedWatching)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.checkAgain })).toBeTruthy();
+    expect(screen.queryByText(/Running for/)).toBeNull(); // the clock stopped with it
+    const stopped = asks();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(asks()).toBe(stopped);
   });
 });

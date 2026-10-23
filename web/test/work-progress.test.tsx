@@ -95,7 +95,8 @@ describe("a running job", () => {
 describe("a stalled job", () => {
   it("says there has been no change for a while, that DMbot may be stuck, and what to do", () => {
     render(<WorkProgress stage="Working" startedAt={T0 - 400} updatedAt={T0 - 190} state="stalled" />);
-    expect(screen.getByText(w.stalled(w.duration(190)))).toBeTruthy();
+    expect(screen.getByText(w.stalled)).toBeTruthy();
+    expect(screen.getByText(w.quietFor(w.duration(190)), { exact: false })).toBeTruthy();
     expect(screen.getByText(w.stalledDo)).toBeTruthy();
   });
 
@@ -120,6 +121,22 @@ describe("a failed job", () => {
     expect(screen.getByText(w.failedDo)).toBeTruthy();
     expect(screen.queryByText(w.running(w.duration(100)), { exact: false })).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("a job the page has stopped looking at", () => {
+  it("shows no running clock, stops ticking, and says it stopped checking", () => {
+    render(<WorkProgress stage="Working" startedAt={T0 - 400} updatedAt={T0 - 5} state="running" frozen />);
+    expect(screen.queryByText(/Running for|Last progress/)).toBeNull();
+    expect(screen.getByText(w.stoppedLooking)).toBeTruthy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a stall with no times says so without a made-up length", () => {
+    render(<WorkProgress stage="Working" state="stalled" />);
+    expect(screen.getByText(w.stalled)).toBeTruthy();
+    expect(screen.queryByText(/Quiet for/)).toBeNull();
+    expect(screen.queryByText(/0 sec/)).toBeNull();
   });
 });
 

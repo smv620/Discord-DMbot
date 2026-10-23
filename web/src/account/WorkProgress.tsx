@@ -25,13 +25,16 @@ export interface WorkProgressProps {
   state: "running" | "stalled" | "failed" | "done";
   /** Waiting for the person (not for DMbot): the stage says so, and no clock or bar runs. */
   waiting?: boolean | undefined;
+  /** The page has stopped looking (the job is gone, or a look failed): no clock runs and none is shown, so a
+   * "Running for 14 min" never sits beside a note that says the job is gone. */
+  frozen?: boolean | undefined;
   /** Plain words on a failure, from the API. */
   reason?: string | null | undefined;
   /** What to do next, when the page knows better than the general words. */
   whatToDo?: string | undefined;
 }
 
-export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, reason, whatToDo }: WorkProgressProps) {
+export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, frozen, reason, whatToDo }: WorkProgressProps) {
   // The server's clock now, kept as its gap from this browser's clock when the answer arrived.
   const gap = useRef(0);
   const lastServerNow = useRef<number | null | undefined>(undefined);
@@ -40,7 +43,7 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
     lastServerNow.current = serverNow;
     gap.current = serverNow - Date.now() / 1000;
   }
-  const ticking = (state === "running" || state === "stalled") && !waiting;
+  const ticking = (state === "running" || state === "stalled") && !waiting && !frozen;
   useEffect(() => {
     if (!ticking) return;
     const timer = setInterval(() => redraw((n) => n + 1), 5000); // (the times change in 5 s steps, then minutes)
@@ -57,7 +60,11 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
       {/* Only the stage is read out when it changes; the count is beside it, not in the live region, so a
           screen reader does not repeat the whole line at every step (the bar carries the count). */}
       <p>
-        <strong role={state === "failed" ? "alert" : "status"}>{state === "failed" ? words.failed : state === "done" ? words.done : stage}</strong>
+        {state === "failed" ? (
+          <strong role="alert">{words.failed}</strong>
+        ) : (
+          <strong role="status">{state === "done" ? words.done : stage}</strong>
+        )}
         {hasCount && state !== "failed" && !waiting && <span> {words.progress(done as number, total as number, unit)}</span>}
       </p>
       {hasCount && (state === "running" || state === "stalled") && !waiting && <progress max={total as number} value={Math.min(done as number, total as number)} aria-label={words.barLabel(stage)} />}
@@ -69,12 +76,15 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
       )}
       {state === "stalled" && (
         <>
-          <p class="note" role="status">
-            {words.stalled(since === null ? words.duration(0) : words.duration(since))}
+          <p class="note">
+            <span role="status">{words.stalled}</span>
+            {/* (the length of the quiet is outside the live region: it changes every minute) */}
+            {since !== null && !frozen && <span> {words.quietFor(words.duration(since))}</span>}
           </p>
           <p class="small">{whatToDo ?? words.stalledDo}</p>
         </>
       )}
+      {frozen && state !== "done" && state !== "failed" && <p class="small muted">{words.stoppedLooking}</p>}
       {ticking && (
         <p class="small muted">
           {elapsed !== null && <span>{words.running(elapsed)} </span>}

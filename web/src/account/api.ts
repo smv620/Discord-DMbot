@@ -679,7 +679,7 @@ export interface ImportPlan {
    * counts nothing else. */
   sessions: { file: string; date: string; order: number; writeRecap?: true }[];
 }
-export type ImportState = "waiting" | "working" | "done" | "failed" | "running" | "stalled"; // (`running` and `stalled` from the job progress shape, #2564)
+export type ImportState = "waiting" | "working" | "done" | "failed";
 /** How far a job has got, the same shape wherever a job is shown (#2564; CloudDev). Times are Unix seconds on
  * the server's clock; `stalled` is the server's word, worked out per stage; only counts and codes. */
 export interface JobProgress {
@@ -726,9 +726,9 @@ export interface ImportProgress {
     state: ImportState;
     reason: string | null;
     stage?: ImportStage;
-    /** When this session's work started and last moved forward (#2564), Unix seconds. */
-    startedAt?: number | null;
-    updatedAt?: number | null;
+    /** This session's own progress in the shared job shape (#2564), nested because the session's `state`
+     * above keeps its old words. Missing from an API older than that. */
+    progress?: JobProgress;
     /** This session's own recap (its address is `/account/recaps/<recap>`), sent for the stages that
      * have a recap or a held one; null otherwise, missing from an API older than #2240. */
     recap?: string | null;

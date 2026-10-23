@@ -189,6 +189,7 @@ export const importPage = {
   stalledDo: "Your files are safe, and you can leave and come back. If nothing moves in 5 more minutes, import the files that aren't done again, one at a time.",
   failedDo: "Import the files again, one at a time. Nothing already imported is lost.",
   sessionStalled: "Not moving for a while. Try this one again, one at a time.",
+  stoppedWatching: "We stopped checking after a long time with nothing new. Your files are safe. Press Check again to look once more.",
   gone: "This import is no longer listed. It may have finished. Check Transcripts to see what was imported.",
   waitingForNames: (n: number): string =>
     n > 0

@@ -39,6 +39,11 @@ const POLL_MS = 3000;
 /** While every unfinished session is only waiting for the DM's answers about names, nothing on the
  * page changes until they answer, so ask once a minute instead (#2230). */
 const SLOW_POLL_MS = 60_000;
+/** While nothing moves (the same `updatedAt`, or a stall) the page asks less often: 3 s, 6, 12, 24, up to 30 s,
+ * and again quickly as soon as something moves. */
+const IDLE_POLL_MAX_MS = 30_000;
+/** After this long with the import still open the page stops looking and offers "Check again". */
+export const WATCH_LIMIT_MS = 45 * 60_000;
 
 type Session = ImportProgress["sessions"][number];
 
@@ -168,6 +173,8 @@ export default function Import({
   const [pollTries, setPollTries] = useState(0);
   // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
   const lastUpdated = useRef(0);
+  const idleLooks = useRef(0); // looks in a row where nothing moved forward
+  const watchStart = useRef(0);
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -249,21 +256,27 @@ export default function Import({
     if (!importId || !ref || !api.importProgress) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    watchStart.current = Date.now();
+    idleLooks.current = 0;
     const tick = async (): Promise<void> => {
       try {
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
         const stamp = next.import?.updatedAt;
-        if (typeof stamp === "number" && stamp < lastUpdated.current) {
-          timer = setTimeout(() => void tick(), POLL_MS); // an older answer: keep what is shown, ask again
-          return;
-        }
-        if (typeof stamp === "number") lastUpdated.current = stamp;
-        setProgress(next);
+        const older = typeof stamp === "number" && stamp < lastUpdated.current;
+        const moved = typeof stamp === "number" ? stamp > lastUpdated.current : true;
+        if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
+        if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
+        idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
         const open = next.sessions.filter((s) => !isFinal(s));
         if (open.length > 0) {
+          if (Date.now() - watchStart.current > WATCH_LIMIT_MS) {
+            setProblem(words.stoppedWatching); // the page stops here; "Check again" starts it afresh
+            return;
+          }
           const onlyNames = open.every((s) => s.stage === "waiting_for_names");
-          timer = setTimeout(() => void tick(), onlyNames ? SLOW_POLL_MS : POLL_MS);
+          const wait = onlyNames ? SLOW_POLL_MS : Math.min(POLL_MS * 2 ** idleLooks.current, IDLE_POLL_MAX_MS);
+          timer = setTimeout(() => void tick(), wait);
         }
       } catch (error) {
         if (!live) return;
@@ -638,6 +651,8 @@ export default function Import({
             serverNow={progress.import.serverNow}
             state={shownState(progress.import, progress.sessions)}
             waiting={progress.import.stage === "waiting_for_names"}
+            frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
+            // (the server's stall words are not shown: the page has its own; its failure reason is a fixed phrase)
             reason={progress.import.reason}
             whatToDo={shownState(progress.import, progress.sessions) === "failed" ? words.failedDo : words.stalledDo}
           />
@@ -659,7 +674,7 @@ export default function Import({
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
-                {s.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
+                {s.progress?.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
               {s.stage === "waiting_for_names" && (
                 <a

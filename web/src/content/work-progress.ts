@@ -13,7 +13,11 @@ export const workWords = {
   lastChange: (ago: string): string => `Last progress ${ago} ago.`,
   justNow: "Last progress just now.",
   noChangeYet: "Hasn't moved forward yet.",
-  stalled: (ago: string): string => `Nothing new for ${ago}. It may just be slow.`,
+  // Said once when a stall starts (a live region); how long it has been quiet is beside it, not in it.
+  stalled: "Nothing new for a while. It may just be slow.",
+  quietFor: (ago: string): string => `Quiet for ${ago}.`,
+  /** The page stopped looking (it is gone, or an error): no clock runs, and what was last seen stays. */
+  stoppedLooking: "The page has stopped checking.",
   /** Said after a stall when the page has nothing more specific to say. */
   stalledDo: "You can leave this page and come back. If nothing moves in 5 more minutes, try again. Still stuck? Ask on the Help page.",
   failed: "That didn't work.",
