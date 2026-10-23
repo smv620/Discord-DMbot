@@ -288,6 +288,35 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
     expect(tabs().getAllByRole("link").some((a) => a.getAttribute("aria-current"))).toBe(false);
   });
 
+  it("asks for the campaign once for two navs, and asks again after a failed read", async () => {
+    const api = mockApi("table");
+    render(
+      <>
+        <CampaignNav api={api} campaignRef="100.cmp1" page="transcripts" />
+        <CampaignNav api={api} campaignRef="100.cmp1" page="houseRules" />
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByRole("link", { name: w.groups.settings })).toHaveLength(2));
+    expect(api.calls.filter((c) => c === "campaignPage:100.cmp1")).toHaveLength(1);
+    cleanup();
+    const flaky = mockApi("table");
+    const real = flaky.campaignPage!.bind(flaky);
+    let first = true;
+    flaky.campaignPage = async (r) => {
+      if (first) {
+        first = false;
+        throw new ApiError("network");
+      }
+      return real(r);
+    };
+    render(<CampaignNav api={flaky} campaignRef="100.cmp1" page="transcripts" />);
+    await screen.findByRole("navigation", { name: w.tabsLabel });
+    expect(screen.queryByRole("link", { name: w.groups.settings })).toBeNull(); // role unknown: fail closed
+    cleanup();
+    render(<CampaignNav api={flaky} campaignRef="100.cmp1" page="transcripts" />);
+    expect(await screen.findByRole("link", { name: w.groups.settings })).toBeTruthy(); // the failure was not kept
+  });
+
   it("the old '← campaign' back links are gone", async () => {
     render(<HouseRules api={mockApi("table")} path={`/account/house-rules/${REFC}`} />);
     await screen.findByRole("navigation", { name: w.crumbsLabel });

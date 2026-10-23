@@ -34,17 +34,23 @@ const GROUP_OF: Record<CampaignPageKey, CampaignGroup | null> = {
   homebrew: "rules",
 };
 
-// One read of the campaign's page per campaign, shared by every part of a page that asks (the page
-// itself and its nav), so opening a page does not ask twice.
+// One read of the campaign's page per campaign, kept for this page load and shared by the navs that
+// ask, so a page with two of them does not ask twice. (The campaign's own page reads for itself,
+// because it must tell "not found" from "down"; this one only wants the role and the name.)
 const reads = new WeakMap<AccountApi, Map<string, Promise<CampaignPage | null>>>();
 
-function readCampaign(api: AccountApi, ref: string): Promise<CampaignPage | null> {
+export function readCampaign(api: AccountApi, ref: string): Promise<CampaignPage | null> {
   if (!api.campaignPage) return Promise.resolve(null);
   let byRef = reads.get(api);
   if (!byRef) reads.set(api, (byRef = new Map()));
   let found = byRef.get(ref);
   if (!found) {
-    found = api.campaignPage(ref).catch(() => null);
+    // A failed read is not kept, so the next page (or a retry) asks again instead of showing no
+    // Settings tab for good.
+    found = api.campaignPage(ref).catch(() => {
+      byRef.delete(ref);
+      return null;
+    });
     byRef.set(ref, found);
   }
   return found;
@@ -101,7 +107,7 @@ export default function CampaignNav({
         <ul class="tabs">
           {tabs.map((group) => (
             <li key={group}>
-              <a href={`${home}#${group}`} aria-current={here === group ? "true" : undefined}>
+              <a href={`${home}#${group}`} aria-current={here === group ? "page" : undefined}>
                 {words.groups[group]}
               </a>
             </li>

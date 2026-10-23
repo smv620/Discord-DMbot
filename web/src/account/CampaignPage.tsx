@@ -169,6 +169,7 @@ function SettingsGroup({ page }: { page: CampaignPage }) {
             <span class="campaign-name">{words.settingsLabels[key]}</span>
             {value !== null && <span class="block">{value}</span>}
             <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
+            {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
         ))}
       </ul>
