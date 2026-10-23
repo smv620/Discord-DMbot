@@ -122,6 +122,7 @@ class Waiting:
     started_ms: int
     text: str
     seconds: float = 0.0  # how long it was said (for the live marker)
+    typed: bool = False  # typed in the table's chat (#2447): its key can match a spoken line's
 
 
 @dataclass(slots=True)

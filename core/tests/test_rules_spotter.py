@@ -9,6 +9,7 @@ import unittest
 
 from dmbot.rules import index
 from dmbot.rules.spotter import EVERYDAY, HEARD_WINDOW_MAX, Spotter
+from tests import speed
 
 
 def spotter(target: str = "2024", fallback: str = "2014") -> Spotter:
@@ -205,7 +206,7 @@ class Speed(unittest.TestCase):
         for _ in range(200):
             sp.find(line)
         self.assertLess(
-            (time.perf_counter() - started) / 200, 0.05
+            (time.perf_counter() - started) / 200, speed.allowed(0.05)
         )  # far above ~0.3 ms: CI can be slow
         self.assertLess(len(sp.by_first), 5000)
 

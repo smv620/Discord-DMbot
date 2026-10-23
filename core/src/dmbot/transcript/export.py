@@ -51,8 +51,8 @@ DMBOT_NAME = "DMbot"
 TABLE_Q_NAME = "Table Q"  # a player's question to DMbot (#1187), apart from the DM's sidebar
 TYPED_TAG = "(typed)"
 TYPED_NOTE = (
-    "(typed) lines were typed in the table's chat, not said. They are left out of the Cleaned "
-    "version."
+    "(typed) lines were typed in the table's chat, not said. In the Cleaned version, DMbot leaves "
+    "out chat that is clearly not about the game."
 )
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. A person marked "
@@ -124,19 +124,25 @@ def distinct_names(names: Mapping[int, str | None]) -> dict[int, Label]:
     return out
 
 
+def _hidden_typing(line: Line) -> bool:
+    """Typed chat clearly not about the game: left out of the Cleaned version, as talk like it is
+    (#2447, item 6)."""
+    return line.typed and line.topic == OFF_TOPIC
+
+
 def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     """The people a file of this version names, in the order each first speaks in it. DMbot's own
-    answers are not a person; the cleaned version leaves out typed chat and sidebar lines, so
-    someone who only typed or asked DMbot is not listed there (a gap in the numbers or a
-    "(2)" would hint at a hidden person). One order for the website and the Discord download, so
-    a person has the same label in both."""
+    answers are not a person; the cleaned version leaves out sidebar lines and typing clearly not
+    about the game, so someone who only asked DMbot, or whose typing was all hidden, is not
+    listed there (a gap in the numbers or a "(2)" would hint at a hidden person). One order for
+    the website and the Discord download, so a person has the same label in both."""
     order: list[int] = []
     for line in sorted(lines, key=lambda x: x.started_ms):
         if line.sidebar == OFF_RECORD:
             continue  # a gap's marker is not someone speaking
         if line.sidebar and line.sidebar not in QUESTION_KINDS:
             continue
-        if version == CLEANED and (line.sidebar or line.typed):
+        if version == CLEANED and (line.sidebar or _hidden_typing(line)):
             continue
         if line.user_id not in order:
             order.append(line.user_id)
@@ -310,11 +316,13 @@ def render(
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
-    # Typed chat (#1118) is only in the as-heard version, tagged "(typed)"; the cleaned one is
-    # what was said.
+    # Typed chat (#1118) is in both versions, tagged "(typed)"; the cleaned one leaves out typing
+    # clearly not about the game, as it does talk (#2447, item 6).
     typed_lines = [line for line in everything if line.typed and not line.sidebar]
     table_lines = [line for line in everything if not line.sidebar and not line.typed]
-    shown_typed = typed_lines if version == AS_HEARD else []
+    shown_typed = (
+        typed_lines if version == AS_HEARD else [x for x in typed_lines if not _hidden_typing(x)]
+    )
     shown_sidebar = (
         [line for line in everything if line.sidebar and line.sidebar != OFF_RECORD]
         if version == AS_HEARD
@@ -357,7 +365,7 @@ def render(
         timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}"))
     for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
-        said = " ".join(line.heard.split())
+        said = " ".join((line.text if version == CLEANED else line.heard).split())
         who = label(
             when,
             person(line.user_id),
@@ -387,7 +395,7 @@ def render(
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
         *([SIDEBAR_NOTE] if shown_sidebar else []),
-        *([TYPED_NOTE] if shown_typed else []),
+        *([TYPED_NOTE] if typed_lines else []),  # (also when the Cleaned one hides them all)
     ]
     if running:
         header.append(

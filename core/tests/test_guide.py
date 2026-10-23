@@ -20,6 +20,7 @@ from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.story_plan import PlanStore
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.ui import guide as ui
+from tests import speed
 from tests import test_story_watch as base
 from tests.test_adventure import press
 from tests.test_memory_store import DM, GUILD_A, GUILD_B
@@ -600,4 +601,4 @@ class Speed(Setup):
         print(f"\nGuide me on {len(read)} entries and 20 links: {took * 1000:.1f} ms")
         self.assertEqual(len(read), 440)
         self.assertIsNotNone(guide.chapter)
-        self.assertLess(took, 0.5)
+        self.assertLess(took, speed.allowed(0.5))

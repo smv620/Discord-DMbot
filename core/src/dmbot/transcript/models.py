@@ -101,8 +101,8 @@ class Line:
     # NARRATING, or the confirmed, non-secret name of an NPC the DM was voicing. Never a
     # secret name: whatever sets it checks (the transcript is open to the whole server).
     entity: str = ""
-    # Typed in the table's chat rather than said (#1118): only in the as-heard transcript,
-    # tagged "(typed)", never the cleaned one.
+    # Typed in the table's chat rather than said (#1118): tagged "(typed)", in both versions; the
+    # cleaned one leaves out typing the off-topic filter labelled off_topic (#2447).
     typed: bool = False
     # The Discord message a typed line came from, so deleting it takes the line back while it
     # is still unsaved (#1118). 0 for speech. Never stored.
@@ -183,13 +183,15 @@ class TranscriptBuffer:
                 return True
         return False
 
-    def set_topic(self, user_id: int, started_ms: int, topic: str) -> bool:
-        """A waiting line's topic, from the off-topic filter (#52); True if it was here."""
+    def set_topic(self, user_id: int, started_ms: int, topic: str, *, typed: bool = False) -> bool:
+        """A waiting line's topic, from the off-topic filter (#52); True if it was here. `typed`:
+        a typed line and a spoken one of the same person can share a millisecond (#2447)."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (
-                user_id,
-                started_ms,
-            ) and not waiting.sidebar:
+            if (
+                (waiting.user_id, waiting.started_ms) == (user_id, started_ms)
+                and not waiting.sidebar
+                and waiting.typed == typed
+            ):
                 self._waiting[i] = replace(waiting, topic=topic)
                 return True
         return False

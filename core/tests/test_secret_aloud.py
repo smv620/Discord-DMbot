@@ -13,7 +13,7 @@ from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.secret_aloud import (
     MAX_ASKED,
     SecretName,
-    players_lines,
+    said_lines,
     secret_names,
     spoken,
 )
@@ -97,7 +97,7 @@ class WhoseWords(unittest.TestCase):
             line(PLAYER, "off topic Auril", topic="off_topic"),
             line(PLAYER, ""),
         ]
-        self.assertEqual(players_lines(lines, players={PLAYER}), ["Auril", "off topic Auril"])
+        self.assertEqual(said_lines(lines, people={PLAYER}), ["Auril", "off topic Auril"])
 
 
 class Reading(MemoryTest):
@@ -593,5 +593,5 @@ class PossessiveAndHiddenLines(unittest.TestCase):
 
     def test_an_off_topic_line_and_the_as_heard_words_are_read(self) -> None:
         line = Line(1, 5, "we saw auril", "we saw Oriel", topic="off_topic")
-        got = players_lines([line], players={5})
+        got = said_lines([line], people={5})
         self.assertEqual(got, ["we saw Oriel", "we saw auril"])
