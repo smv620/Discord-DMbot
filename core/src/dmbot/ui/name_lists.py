@@ -608,7 +608,7 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
         return
     # Prose is in it. Each line is decided on its own: a line with a `|`, and a bare line that is a
     # name (not a sentence), are list lines and go in now; the sentences are read as campaign
-    # lore, in order, so a connection's quote is still there to be found. A bare "Moric" beside
+    # lore, in order, so a connection's quote is still there to be found. A bare "Tavin" beside
     # a sentence is a name for anyone to add, so it must not wait on the DM-only lore read.
     strict = [row for row in rows if not _is_content(row) or "|" in row or not _sentence(row)]
     lore = "\n".join(row for row in rows if _is_content(row) and "|" not in row and _sentence(row))

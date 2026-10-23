@@ -85,12 +85,12 @@ NOT INCLUDED
 
 Example 2. Input (a list of names, no relationships):
 <document>
-Moric (the rogue) | NPC
+Tavin (the rogue) | NPC
 Ka'zeth (kah-ZETH) | NPC
 </document>
 Output:
 NAMES
-- Moric | person | other names: the rogue | quote: "Moric (the rogue)"
+- Tavin | person | other names: the rogue | quote: "Tavin (the rogue)"
 - Ka'zeth | person | said: kah-ZETH | quote: "Ka'zeth (kah-ZETH)"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
@@ -347,9 +347,14 @@ async def _shape(
     halved and shaped again (a few times); a one-line slice still cut is reported as cut."""
     model = str(getattr(ai, "model", ""))
     room = min(SHAPE_ROOM, max_output(model) if model else SHAPE_ROOM)
-    reply = await _call(
-        gate, ai, shape_instructions(own), shape_request(names, links), room, bg.schema(own)
-    )
+    try:
+        reply = await _call(
+            gate, ai, shape_instructions(own), shape_request(names, links), room, bg.schema(own)
+        )
+    except AIError:  # this slice is lost, not the read: the rest is shaped and shown, as cut
+        stats.shape_cut += 1
+        log.info("Lore read: pass 2 failed for a slice of %d line(s)", len(names) + len(links))
+        return [], [], True
     stats.shape_calls += 1
     if not reply.cut:
         return (

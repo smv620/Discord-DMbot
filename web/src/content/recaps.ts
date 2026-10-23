@@ -71,6 +71,17 @@ export const text = {
   // it stays up through the short gaps between tries, until the recap is ready or has failed.
   waitingForCheck:
     "📜 Your recap is written and waiting for one last check. DMbot will finish it as soon as it can.",
+  // A draft DMbot couldn't check for 3 days (#2297): the DM reads it before it goes anywhere.
+  uncheckedHeading: "DMbot couldn't check this recap",
+  uncheckedLead:
+    "Nothing is shared. Any highlighted sentences are ones DMbot would have double-checked.",
+  uncheckedMark: "Check:",
+  uncheckedUse: "Open it for editing",
+  uncheckedUsing: "Opening it…",
+  uncheckedAfter: "It stays a draft. You can edit it, then approve it.",
+  uncheckedKeepTrying: "DMbot keeps trying to finish the check.",
+  uncheckedOpened: "Opened. You can edit it now.",
+  uncheckedFailed: "Couldn't open the draft. Press the button again in a minute.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or leave it.",
@@ -105,8 +116,23 @@ export const text = {
   busy: "Working…",
   noTriesLeft:
     "You have tried twice. You can still edit it or approve it.",
-  posting:
-    "Sent. DMbot will check it once more, then post it. Check back here to see if it posted.",
+  posting: "Getting it ready for Discord…",
+  /** The step the bot is on (`postingStep`), said plainly. */
+  step: {
+    check: "Checking it once more",
+    post: "Posting to your table",
+    audio: "Nothing is posted until you say so.",
+  },
+  /** Said after a minute and a half with no end: the work is on DMbot's side, so leaving is fine. */
+  slow: "This is taking longer than usual. You can leave this page; DMbot keeps going.",
+  /** Said while the audio is being made (nothing is posted until the DM says so). */
+  audioMaking: "Making the audio…",
+  /** The running time's label (the clock is not in a live region, so it is not read out each second). */
+  clockLabel: "Time so far",
+  postedLink: "Open it in Discord",
+  /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
+  postFailed:
+    "DMbot couldn't confirm this recap was posted. Look at your table's channel in Discord before you try again. The recap is still saved here as a draft; approve it again to post it.",
   posted: "This recap was posted to your table.",
   dropped:
     "You chose not to post this recap. It stays here, and nobody else sees it.",

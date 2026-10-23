@@ -11083,7 +11083,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
     ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
-    ("0192_link_pin_action", LINK_PIN_ACTION),  # the website pins a connection (#2447)
+    ("0193_link_pin_action", LINK_PIN_ACTION),  # the website pins a connection (#2447)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

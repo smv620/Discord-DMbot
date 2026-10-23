@@ -2039,7 +2039,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     format, never adding. Code then checks every quote against the original text. DMbot never says "no names
     found" when an answer was cut short.
     *Built (#2454, migration 0191, `memory/lore_read.py`):* pass 1's room is about an eighth as many tokens as the
-    text has characters (at least 3,000, at most 16,000 and never above the model's own output limit in
+    text has characters (at least 3,000, at most 8,000 and never above the model's own output limit in
     `ai.MAX_OUTPUT_TOKENS`); a cut answer is asked for again with twice the room, and one still cut is continued
     from the list so far (up to 3 follow-ups). Pass 2 shapes the list 50 lines at a time and halves a slice whose
     answer is cut. Pass 1's prompt carries two worked examples (a constant, `EXAMPLES`, pinned by a test); a rumour
