@@ -4726,10 +4726,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
     check leans on the earlier accepted recaps. It grows more useful as memory fills.
   - *Built, part 1 (CloudDev, 2026-10-23, #2122): the accepted versions.* When the DM approves a recap's text
-    (the website's Approve), the approval door (`dmbot_recap_approve`, migration 0209) also writes that text to
+    (the website's Approve), the approval (the website's door `dmbot_recap_approve` and the Discord button, both through
+    `dmbot_recap_keep_version`, migration 0209) also writes that text to
     `recap_accepted` as the session's next version: session, version, hash, title, text, who and when. The same text
     approved again adds nothing, a changed text is the next version, and an old version is never overwritten (a session
-    keeps at most 20 versions so its backup always restores; past that the newest is replaced). It is
+    keeps version 1 and the 19 newest, so its backup always restores; at the limit the oldest after
+    version 1 is dropped to make room, a stored version is never rewritten, and numbers only go up; Supervisor, 2026-10-23). It is
     per campaign and server (row-level security), travels in the campaign's backup (`AcceptedSection`) and goes with
     the campaign. `AcceptedStore.newest` gives the newest version of each session, for PlotBot, the pre-session note,
     recall and the later plot checks to read (wired as each is built).

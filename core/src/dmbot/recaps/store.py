@@ -530,7 +530,15 @@ class RecapStore:
                 f"UPDATE recap_jobs SET {sets}" + where,
                 (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
-            return bool(cur.rowcount)
+            if not cur.rowcount:
+                return False
+            # The approved text becomes the session's next accepted version (#2122), the same
+            # statement-for-statement as the website's door, in this transaction.
+            await conn.execute(
+                "SELECT dmbot_recap_keep_version(%s, %s, %s, %s, %s)",
+                (guild_id, campaign_id, session_at, user_id, int(self._now())),
+            )
+            return True
 
     async def respell(
         self,

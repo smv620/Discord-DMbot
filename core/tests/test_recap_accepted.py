@@ -9,7 +9,7 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.consent import TERMS_VERSION
-from dmbot.recaps.accepted import AcceptedSection, AcceptedStore
+from dmbot.recaps.accepted import VERSIONS_PER_SESSION, AcceptedSection, AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.web.recaps import approve_recap
 from tests import recap_fixtures as fx
@@ -143,19 +143,34 @@ class Accepting(Base):
         self.assertEqual(await self.accepted.newest(THURSDAY.id, self.one.id), [])
         self.assertEqual(await self.accepted.newest(THURSDAY.id, self.two.id), [])
 
-    async def test_a_session_keeps_twenty_versions_and_then_replaces_the_newest(self) -> None:
-        from dmbot.recaps.accepted import VERSIONS_PER_SESSION
-
-        for n in range(VERSIONS_PER_SESSION + 3):
+    async def test_a_session_keeps_the_first_and_the_nineteen_newest(self) -> None:
+        for n in range(25):
             await self.edit(f"Version {n}.")
             await self.approve()
         versions = await self.accepted.versions(THURSDAY.id, self.one.id, 100)
         self.assertEqual(len(versions), VERSIONS_PER_SESSION)
-        self.assertEqual(versions[0].summary, "Version 0.")  # the first is never lost
-        self.assertEqual(versions[-1].summary, f"Version {VERSIONS_PER_SESSION + 2}.")
+        # the first is never lost, nothing stored is rewritten, numbers only go up
+        self.assertEqual([v.version for v in versions], [1, *range(7, 26)])
+        self.assertEqual([v.summary for v in versions][:2], ["Version 0.", "Version 6."])
+        self.assertEqual(versions[-1].summary, "Version 24.")
         async with self.db.guild(THURSDAY.id) as conn:  # and the backup of it restores
             dumped = await AcceptedSection().dump(conn, THURSDAY.id, self.one.id)
         AcceptedSection().check(dumped)
+
+    async def test_the_discord_button_keeps_versions_the_same_way(self) -> None:
+        job = await self.state(self.one.id)
+        digest = text_hash(job.title, job.summary)
+        ok = await self.store.approve(
+            THURSDAY.id, self.one.id, 100, ALICE.id, "text", expected=digest
+        )
+        self.assertTrue(ok)
+        [a] = await self.accepted.versions(THURSDAY.id, self.one.id, 100)
+        self.assertEqual((a.version, a.text_hash, a.accepted_by), (1, digest, ALICE.id))
+        stale = await self.store.approve(
+            THURSDAY.id, self.one.id, 100, ALICE.id, "text", expected="0" * 64
+        )
+        self.assertFalse(stale)  # a refused approval keeps nothing
+        self.assertEqual(len(await self.accepted.versions(THURSDAY.id, self.one.id, 100)), 1)
 
     async def test_it_restores_through_the_campaign_backup(self) -> None:
         self.campaigns.register_section(AcceptedSection())
@@ -183,6 +198,12 @@ class Checking(unittest.TestCase):
             "accepted_at": 5,
         }
 
+    def test_more_than_twenty_versions_of_one_session_are_refused(self) -> None:
+        rows = [{**self.good(), "version": n} for n in range(1, 22)]
+        with self.assertRaises(CampaignError):
+            AcceptedSection().check(rows)
+        AcceptedSection().check(rows[:20])
+
     def test_a_good_row_is_read(self) -> None:
         [a] = AcceptedSection().check([self.good()])
         self.assertEqual((a.session_at, a.version, a.accepted_by), (100, 1, 7))
@@ -198,7 +219,7 @@ class Checking(unittest.TestCase):
             {**good, "version": True},
             {**good, "text_hash": "short"},
             {**good, "text_hash": "b" * 64},  # not the text's own hash
-            {**good, "version": 21},  # more than a session keeps
+            {**good, "version": 2**31},  # past what the column holds
             {**good, "title": ""},
             {**good, "summary": "x" * 6001},
             {**good, "accepted_by": "-1"},

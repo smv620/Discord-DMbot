@@ -1,11 +1,12 @@
 """The recap texts a DM approved, kept as each session's summary in the campaign notes (#2122).
 
-When the DM approves a recap's text (the website's Approve), the database's
-door writes that text here as the session's next version: never overwritten, and not repeated when
-the same text is approved again. PlotBot, the pre-session note, recall and the later plot checks
-read the newest version of each session (`AcceptedStore.newest`). Words only, per campaign and
-isolated by row-level security; it goes in the campaign's backup (`AcceptedSection`) and with the
-campaign when it is deleted. Nothing here is shown to players or on a shared link.
+When the DM approves a recap's text (the website's Approve or the Discord button), the database
+writes that text here as the session's next version: never overwritten, and not repeated when the
+same text is approved again. A session keeps version 1 and the 19 newest. PlotBot, the pre-session
+note, recall and the later plot checks read the newest version of each session
+(`AcceptedStore.newest`). Words only, per campaign and isolated by row-level security; it goes in
+the campaign's backup (`AcceptedSection`) and with the campaign when it is deleted. Nothing here is
+shown to players or on a shared link.
 """
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.recaps.approval import text_hash
 
-VERSIONS_PER_SESSION = 20  # the approval door keeps this many of a session (migration 0209)
+VERSIONS_PER_SESSION = 20  # a session keeps this many: version 1 and the 19 newest (0209)
+INT32_MAX = 2**31 - 1  # version numbers only go up, so the number itself is not capped at 20
 MAX_VERSIONS = 5000  # in one campaign's backup: 250 sessions at the most each can hold
 INT64_MAX = 2**63 - 1
 DAMAGED = (
@@ -111,6 +113,7 @@ class AcceptedSection:
             raise CampaignError(DAMAGED)
         out: list[Accepted] = []
         seen: set[tuple[int, int]] = set()
+        per_session: dict[int, int] = {}
         for row in rows:
             if not isinstance(row, dict) or set(row) != self._KEYS:
                 raise CampaignError(DAMAGED)
@@ -123,7 +126,7 @@ class AcceptedSection:
                 or (at, version) in seen
                 or not (isinstance(by, str) and by.isascii() and by.isdigit())
                 or not 0 < int(by) <= INT64_MAX
-                or not 1 <= version <= VERSIONS_PER_SESSION
+                or not 1 <= version <= INT32_MAX
             ):
                 raise CampaignError(DAMAGED)
             for key, limit in (("title", 120), ("summary", 6000)):
@@ -134,6 +137,9 @@ class AcceptedSection:
             if digest != text_hash(row["title"], row["summary"]):
                 raise CampaignError(DAMAGED)
             seen.add((at, version))
+            per_session[at] = per_session.get(at, 0) + 1
+            if per_session[at] > VERSIONS_PER_SESSION:
+                raise CampaignError(DAMAGED)
             out.append(Accepted(at, version, digest, row["title"], row["summary"], int(by), stamp))
         return out
 

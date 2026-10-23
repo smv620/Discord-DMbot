@@ -11712,9 +11712,8 @@ MAP_NOTES = """
 
 
 def _approve_with_versions() -> str:
-    """`dmbot_recap_approve` (RECAP_APPROVAL) as it was, plus a new version in `recap_accepted`
-    when the approved text is not the newest accepted one (#2122). Taken from the earlier
-    migration's text, so the two cannot drift apart."""
+    """`dmbot_recap_approve` (RECAP_APPROVAL) as it was, plus a call to `dmbot_recap_keep_version`
+    (#2122). Taken from the earlier migration's text, so the two cannot drift apart."""
     start = RECAP_APPROVAL.index("    CREATE FUNCTION dmbot_recap_approve(")
     end = RECAP_APPROVAL.index("    $fn$;", start) + len("    $fn$;")
     body = RECAP_APPROVAL[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
@@ -11722,30 +11721,11 @@ def _approve_with_versions() -> str:
     keep = "        RETURN 'approved';\n    END"
     if declared not in body or keep not in body:  # (an earlier migration's text moved)
         raise RuntimeError("dmbot_recap_approve changed: the version step needs a new anchor")
-    body = body.replace(
-        declared, declared + "        last_hash TEXT;\n        last_version INT;\n", 1
-    )
     return body.replace(
         keep,
-        "        -- The text the DM approved becomes the session's summary in the campaign\n"
-        "        -- notes: a new version unless it is the newest one again. Never overwritten.\n"
-        "        SELECT a.text_hash, a.version INTO last_hash, last_version FROM recap_accepted a\n"
-        "            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_\n"
-        "            ORDER BY a.version DESC LIMIT 1;\n"
-        "        IF FOUND AND last_hash <> expected AND last_version >= 20 THEN\n"
-        "            -- a session keeps at most 20 versions, so a backup always restores: past\n"
-        "            -- that the newest is replaced by the text approved now\n"
-        "            UPDATE recap_accepted SET text_hash = expected, title = job.title,\n"
-        "                summary = job.summary, accepted_by = dmbot_current_user(),\n"
-        "                accepted_at = now_s\n"
-        "                WHERE guild_id = g AND campaign_id = c AND session_at = at_\n"
-        "                AND version = last_version;\n"
-        "        ELSIF NOT FOUND OR last_hash <> expected THEN\n"
-        "            INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version,\n"
-        "                text_hash, title, summary, accepted_by, accepted_at)\n"
-        "            VALUES (g, c, at_, COALESCE(last_version, 0) + 1, expected, job.title,\n"
-        "                job.summary, dmbot_current_user(), now_s);\n"
-        "        END IF;\n" + keep,
+        "        -- The text the DM approved becomes the session's summary in the campaign notes.\n"
+        "        PERFORM dmbot_recap_keep_version(g, c, at_, dmbot_current_user(), now_s);\n"
+        + keep,
         1,
     )
 
@@ -11773,6 +11753,56 @@ RECAP_ACCEPTED = (
     );
     """
     + _isolate("recap_accepted")
+    + """
+    -- Keeps the job's current text as the session's next accepted version, unless it is the newest
+    -- one again. One place for both ways of approving (the website's door and the Discord button).
+    -- A session keeps version 1 and the 19 newest; at the limit the oldest after version 1 goes
+    -- to make room. A stored version is never rewritten, and version numbers only go up.
+    CREATE FUNCTION dmbot_recap_keep_version(g BIGINT, c TEXT, at_ BIGINT, by BIGINT, now_s BIGINT)
+    RETURNS VOID LANGUAGE plpgsql AS $fn$
+    DECLARE
+        job RECORD;
+        h TEXT;
+        last_hash TEXT;
+        last_version INT;
+        total INT;
+    BEGIN
+        SELECT r.title, r.summary INTO job FROM recap_jobs r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_;
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+        h := encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex');
+        SELECT a.text_hash, a.version INTO last_hash, last_version FROM recap_accepted a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_
+            ORDER BY a.version DESC LIMIT 1;
+        IF FOUND AND last_hash = h THEN
+            RETURN;
+        END IF;
+        SELECT count(*) INTO total FROM recap_accepted a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_;
+        IF total >= 20 THEN
+            DELETE FROM recap_accepted WHERE guild_id = g AND campaign_id = c
+                AND session_at = at_ AND version = (SELECT min(a.version) FROM recap_accepted a
+                    WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_
+                    AND a.version > 1);
+        END IF;
+        INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version, text_hash, title,
+            summary, accepted_by, accepted_at)
+        VALUES (g, c, at_, COALESCE(last_version, 0) + 1, h, job.title, job.summary, by, now_s);
+    END
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_recap_keep_version(BIGINT, TEXT, BIGINT, BIGINT, BIGINT)
+        FROM PUBLIC;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_keep_version(BIGINT, TEXT, BIGINT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
     + _approve_with_versions()
     + """
     DO $do$
