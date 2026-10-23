@@ -46,6 +46,21 @@ class TheShape(unittest.TestCase):
         done = one("recap_ready", NOW, reason="leftover")
         self.assertEqual((done["state"], done["reason"]), ("done", None))
 
+    def test_a_job_waiting_to_be_taken_stalls_only_after_an_hour(self) -> None:
+        hours_ago = NOW - 30 * 60
+        self.assertEqual(one("cleaning", hours_ago, queued=True)["state"], "running")
+        self.assertEqual(one("cleaning", hours_ago)["state"], "stalled")
+        self.assertEqual(one("cleaning", NOW - 3601, queued=True)["state"], "stalled")
+
+    def test_a_recap_that_was_held_or_declined_is_an_end_not_a_stall(self) -> None:
+        got = one("recap_not_written", 1000)
+        self.assertEqual(got["state"], "done")
+        whole = pg.whole([got, one("done", NOW)], now=NOW)
+        self.assertEqual((whole["stage"], whole["state"]), ("done", "done"))
+
+    def test_updated_never_goes_after_now(self) -> None:
+        self.assertEqual(one("cleaning", NOW + 50)["updatedAt"], NOW)
+
     def test_updated_never_goes_before_started(self) -> None:
         self.assertEqual(one("cleaning", 0)["updatedAt"], 1000)
 

@@ -2,9 +2,11 @@
 
 A job (an import, a recap, a hand-over move) reports `stage` (a code, never prose), `done` of
 `total` where that is known, when it began (`startedAt`), the last time it moved forward
-(`updatedAt`), and a `state`: running, stalled, failed or done. A failed job says why in plain
-words. "Stalled" is worked out when the job is read, from the time since `updatedAt` and that
-stage's limit below, so the limits live here on the server and the website only shows `state`.
+(`updatedAt`), and a `state`: running, stalled, failed or done. A failed or stalled job says why in
+a short code (`reason`: the codes the jobs already store, plus "stalled" and "recap_failed"), which
+the page puts into words. "Stalled" is worked out when the job is read, from the time since
+`updatedAt` and that stage's limit below, so the limits live here on the server and the website
+only shows `state`.
 A job that has stalled can still move: its next step turns it back to running.
 
 Counts, codes and fixed words only: nothing from a document or a transcript is ever put in.
@@ -28,7 +30,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "waiting_for_names": None,  # waiting for the DM's answers
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
-    "recap_not_written": 10 * 60,
+    "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "recap_ready": None,
     "recap_failed": None,
     "done": None,
@@ -37,13 +39,17 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
 # The stages that end a job, with the state each one means.
 ENDS: Final[Mapping[str, str]] = {
     "done": DONE,
+    "recap_not_written": DONE,
     "recap_ready": DONE,
     "failed": FAILED,
     "recap_failed": FAILED,
 }
-# What a stalled job and a failed recap say, in plain words.
-STALLED_REASON: Final = "Nothing has moved for a while."
-RECAP_FAILED_REASON: Final = "The recap could not be written."
+# What a stalled job and a failed recap say (codes, like the reasons the jobs store).
+STALLED_REASON: Final = "stalled"
+RECAP_FAILED_REASON: Final = "recap_failed"
+# A job still waiting to be taken (the bot works a few at a time, or is stopped) stalls only after
+# this long, not after its stage's limit.
+QUEUED_STALL_S: Final = 60 * 60
 # What each count measures, for the stages that have one.
 UNITS: Final[Mapping[str, str]] = {"cleaning": "lines"}
 
@@ -58,11 +64,16 @@ def shape(
     total: int | None = None,
     unit: str | None = None,
     reason: str | None = None,
+    queued: bool = False,
 ) -> dict[str, Any]:
-    """One job's progress. `updated_at` never goes before `started_at`."""
-    updated_at = max(updated_at, started_at)
+    """One job's progress. `updated_at` never goes before `started_at` nor after `now` (the times
+    come from the database's clock and `now` from the server's, which can differ a little).
+    `queued`: not taken yet, so it waits its turn for up to `QUEUED_STALL_S` before it stalls."""
+    updated_at = min(max(updated_at, started_at), max(now, started_at))
     state = ENDS.get(stage, RUNNING)
     limit = STALL_AFTER_S.get(stage)
+    if queued and limit is not None:
+        limit = max(limit, QUEUED_STALL_S)
     if state == RUNNING and limit is not None and now - updated_at > limit:
         state = STALLED
         reason = reason or STALLED_REASON

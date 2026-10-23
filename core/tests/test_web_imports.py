@@ -16,6 +16,7 @@ import httpx
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
 from dmbot.transcript import import_link
+from dmbot.transcript.import_job import ImportStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import recaps as web_recaps
@@ -1196,7 +1197,14 @@ class TheProgress(WithImports):
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
                     "recap": None,
-                    "progress": got["sessions"][0]["progress"],
+                    "progress": {
+                        "stage": "cleaning",
+                        "startedAt": got["sessions"][0]["progress"]["startedAt"],
+                        "updatedAt": got["sessions"][0]["progress"]["updatedAt"],
+                        "serverNow": got["import"]["serverNow"],
+                        "state": "running",
+                        "reason": None,
+                    },
                 }
             ],
         )
@@ -1315,13 +1323,63 @@ class TheProgress(WithImports):
         waiting = (await self.stage(imp))["progress"]
         self.assertEqual((waiting["stage"], waiting["state"]), ("waiting_for_names", "running"))
 
-    async def test_nothing_from_the_file_is_in_the_progress(self) -> None:
+    async def test_the_progress_is_exactly_codes_counts_and_times(self) -> None:
         imp, _, _ = await self.one_import(False)
+        await self.set_import(state="failed", reason="names_failed", step_total=5, step_done=2)
         got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
-        text = json.dumps([got["import"], got["sessions"][0]["progress"]])
-        for line_word in ("Craig", "Cerric"):
-            self.assertNotIn(line_word, text)
-        self.assertNotIn("a.txt", text)
+        part, whole = got["sessions"][0]["progress"], got["import"]
+        self.assertEqual(
+            sorted(part), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertEqual(
+            (part["stage"], part["state"], part["reason"]), ("failed", "failed", "names_failed")
+        )
+        self.assertEqual(
+            sorted(whole),
+            [
+                "done",
+                "reason",
+                "serverNow",
+                "stage",
+                "startedAt",
+                "state",
+                "total",
+                "unit",
+                "updatedAt",
+            ],
+        )
+        for value in (*part.values(), *whole.values()):
+            self.assertIsInstance(value, str | int | None)
+
+    async def test_the_trigger_stamps_steps_and_retaken_claims_not_idle_updates(
+        self,
+    ) -> None:
+        await self.one_import(False)
+        await self.set_import(updated_at=5)
+        await self.set_import(file_name="a.txt")  # nothing a step watches changed
+        self.assertEqual(await self.moved(), 5)
+        await self.set_import(step_done=3)
+        first = await self.moved()
+        self.assertGreater(first, 5)
+        await self.set_import(updated_at=5)
+        store = ImportStore(self.db)
+        await self.set_import(state="working", claimed_at=1)
+        await self.set_import(updated_at=5)
+        await store.resume(THURSDAY.id, older_than_s=0)  # working -> waiting
+        self.assertGreater(await self.moved(), 5)
+        await self.set_import(updated_at=5)
+        self.assertTrue(await store.claim(THURSDAY.id, await self.session_id()))
+        self.assertGreater(await self.moved(), 5)
+
+    async def moved(self) -> int:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT updated_at FROM session_imports")
+            return int((await cur.fetchone() or {})["updated_at"])
+
+    async def session_id(self) -> str:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT session_id FROM session_imports")
+            return str((await cur.fetchone() or {})["session_id"])
 
     async def listed_ref(self, at: int) -> str | None:
         """The reference the recap list gives for the session at `at` (a held recap included)."""

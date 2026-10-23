@@ -742,6 +742,7 @@ def _shape_of(s: dict[str, Any], now: int) -> dict[str, Any]:
         total=int(s["stepTotal"]) if cleaning else None,
         unit=progress_shape.UNITS.get(stage),
         reason=s["reason"] or None,
+        queued=s["state"] == "waiting",
     )
 
 
