@@ -36,7 +36,10 @@ NEW = "new.owner@example.org"
 OTHER_NEW = "someone.else@example.com"
 
 
-class Offering(DatabaseTest):
+class OfferBase(DatabaseTest):
+    enforce_plans = False
+    email_on = True
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -60,7 +63,11 @@ class Offering(DatabaseTest):
             for name, group in LIMITS.items()
         }
         self.app = create_app(
-            settings(link_token_secret=LINK_SECRET),
+            settings(
+                link_token_secret=LINK_SECRET,
+                enforce_plans=self.enforce_plans,
+                handover_email_on=self.email_on,
+            ),
             self.web,
             FakeDiscord(),
             payments=FakeProvider(b"h" * 32, SITE),
@@ -103,10 +110,16 @@ class Offering(DatabaseTest):
             return [dict(r) for r in await cur.fetchall()]
 
     def token_of(self, link: str) -> str:
+        """What the page sends: the link's whole fragment, `<server>-<offer>-<secret>`."""
         found = re.search(r"/handover#([\w-]+)$", link)
         assert found is not None, link
         return found.group(1)
 
+    def secret_of(self, link: str) -> str:
+        return self.token_of(link).split("-", 2)[2]
+
+
+class Offering(OfferBase):
     async def test_the_offer_is_emailed_and_the_owner_is_told_only_that(self) -> None:
         got = await self.offer()
         self.assertEqual((got.status_code, got.json()), (200, {"status": "emailed"}))
@@ -120,7 +133,7 @@ class Offering(DatabaseTest):
     async def test_the_offer_holds_a_hash_of_the_token_and_no_address(self) -> None:
         await self.offer()
         [row] = await self.offers()
-        token = self.token_of(self.transport.sent[0][1])
+        token = self.secret_of(self.transport.sent[0][1])
         self.assertEqual(row["token_hash"], hashlib.sha256(token.encode()).hexdigest())
         self.assertEqual((row["via_email"], row["to_user_id"], row["to_name"]), (True, 0, ""))
         self.assertEqual((row["status"], row["from_user_id"]), ("open", ALICE.id))
@@ -148,7 +161,9 @@ class Offering(DatabaseTest):
         )  # (a different campaign: the day's count is the owner's)
         self.assertEqual((sixth.status_code, sixth.json()["error"]), (429, "too_soon"))
         self.assertEqual(len(self.transport.sent), handover_email.OFFERS_PER_DAY)
-        self.now += handover_email.DAY_S + 3600  # the next day (the log stamps with real time)
+        async with self.db.unscoped() as conn:  # the next day (the log stamps with real time)
+            await conn.execute("UPDATE sent_emails SET sent_at = sent_at - %s", (2 * 86400,))
+        self.now += 120  # (past the per-minute limit; the offer's time must stay near real time)
         self.assertEqual((await self.offer("late@example.org")).status_code, 200)
 
     async def test_a_bad_address_is_refused_and_nothing_is_offered(self) -> None:
@@ -193,9 +208,68 @@ class Offering(DatabaseTest):
             server="Thursday Table",
             link=f"{SITE}/handover#x",
         )
-        for step in ("Sign in", "paid plan", "Try It", "Accept", "/dmbot start", "7 days"):
+        for step in (
+            "Sign in", "paid DMbot plan", "Try It", "Accept", "another server of yours",
+            "DMbot to a server", "simply becomes its DM there", "/dmbot start", "7 days",
+            "stays one of its DMs", "plan's hours",
+        ):  # fmt: skip
             self.assertIn(step, body)
-        self.assertIn("plan's hours", body)  # what it costs the new owner
+        self.assertNotIn("one of its Dungeon Masters", body)
         self.assertTrue(body.startswith("The person named"))  # a chosen name is never first
         self.assertNotIn("account already", body.lower())
         self.assertIn("Belleros", subject)
+
+
+class Switched(OfferBase):
+    """With DMBOT_HANDOVER_EMAIL off (the default) nothing is offered and nothing is sent."""
+
+    email_on = False
+
+    async def test_the_routes_answer_404_and_no_email_goes(self) -> None:
+        got = await self.offer()
+        self.assertEqual(got.status_code, 404)
+        self.assertEqual(await self.offers(), [])
+        self.assertEqual(self.transport.sent, [])
+        taken = await self.alice.delete(f"/me/campaigns/{self.ref}/handover")
+        self.assertEqual(taken.status_code, 404)
+
+
+class Showing(OfferBase):
+    async def handover_of(self, client: httpx.AsyncClient) -> Any:
+        me = (await client.get("/me")).json()
+        [card] = [c for c in me["campaigns"] if c["ref"] == self.ref]
+        return card["handover"]
+
+    async def test_the_account_page_shows_the_offer_without_the_address_and_it_can_be_taken_back(
+        self,
+    ) -> None:
+        self.assertIsNone(await self.handover_of(self.alice))
+        await self.offer()
+        shown = await self.handover_of(self.alice)
+        self.assertEqual(set(shown), {"sentAt", "expiresAt"})
+        self.assertNotIn(NEW, str((await self.alice.get("/me")).text))
+        taken = await self.alice.delete(f"/me/campaigns/{self.ref}/handover")
+        self.assertEqual((taken.status_code, taken.json()), (200, {"status": "withdrawn"}))
+        self.assertIsNone(await self.handover_of(self.alice))
+        [row] = await self.offers()
+        self.assertEqual(row["status"], "withdrawn")
+
+    async def test_only_the_owner_can_take_an_offer_back(self) -> None:
+        await self.offer()
+        bob = await self.person(BOB)
+        self.addAsyncCleanup(bob.aclose)
+        refused = await bob.delete(f"/me/campaigns/{self.ref}/handover")
+        self.assertEqual(refused.status_code, 404)
+        self.assertIsNotNone(await self.handover_of(self.alice))
+        nothing = await self.alice.delete(f"/me/campaigns/{THURSDAY.id}.{'0' * 32}/handover")
+        self.assertEqual(nothing.status_code, 404)
+
+    async def test_an_address_with_an_account_gets_the_same_answer_as_an_unknown_one(self) -> None:
+        # The owner must not be able to learn whether an address has a DMbot account (#437).
+        known = await self.offer(BOB.email or "")
+        unknown = await self.offer("nobody.here@example.net")
+        self.assertEqual((known.status_code, known.json()), (unknown.status_code, unknown.json()))
+        rows = await self.offers()
+        self.assertEqual([r["status"] for r in rows], ["withdrawn", "open"])
+        self.assertEqual({(r["via_email"], r["to_user_id"], r["to_name"]) for r in rows},
+                         {(True, 0, "")})  # fmt: skip

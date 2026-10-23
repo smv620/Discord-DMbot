@@ -539,6 +539,20 @@ class Decisions(Harness):
         )
         self.assertEqual(guild.buyer.sent, [])
 
+    async def test_an_expired_email_offer_tells_the_owner_in_plans_words(self) -> None:
+        # #2532: no name to show, and the campaign never moved.
+        guild = self.guilds[GUILD]
+        by_email = replace(offer(), via_email=True, to_user_id=0, to_name="", delivered_at=NOW)
+        await site_offers._tell_expired(guild, by_email, self.store.campaign)  # type: ignore[arg-type]
+        [text] = guild.owner.sent
+        self.assertEqual(
+            text,
+            handover.TOLD_EXPIRED_EMAIL.format(campaign="Frost\\*maiden", days=HANDOVER_DAYS),
+        )
+        self.assertNotIn("****", text)
+        self.assertIn("didn't answer", text)
+        self.assertEqual((guild.buyer.sent, guild.buyer.edits), ([], []))
+
     async def test_declined_tells_the_owner(self) -> None:
         self.decided("declined")
         await self.decide_quietly(GUILD, 1)

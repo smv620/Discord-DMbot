@@ -55,3 +55,20 @@ async def offer(
         site_url=site_url,
         now=now,
     )
+
+
+async def withdraw(db: Database, session: Session, ref: str, *, now: int) -> bool:
+    """The owner takes the campaign's open offer back (`DELETE /me/campaigns/{ref}/handover`).
+    False when there is nothing of theirs to take back, the same as "not found"."""
+    match = _REF.fullmatch(ref)
+    if match is None:
+        return False
+    guild_id, campaign_id = int(match[1]), match[2]
+    if all(g.id != guild_id for g in session.guilds):
+        return False
+    store = CampaignStore(db.as_person(session.user_id, session.id_hash), clock=lambda: now)
+    offer = await store.open_offer(guild_id, campaign_id, now)
+    if offer is None or offer.from_user_id != session.user_id:
+        return False
+    # (no `announce`: an email offer has no Discord message to change and nobody to tell)
+    return await store.withdraw_handover(guild_id, offer.id, session.user_id, now) == "withdrawn"

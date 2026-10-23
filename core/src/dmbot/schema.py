@@ -1353,28 +1353,27 @@ WEB_ROLE_RECAP_POLICY = """
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
-    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
-    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
-    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
-    -- from the website is the signed-in person's own, still open, and not marked as sent,
-    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
-    -- bot's check that the person is still in the server would be skipped.
+    -- Creating an offer (#728, #690 follow-up; #2532). The website's role may INSERT only the
+    -- columns in OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in owner's own, by email, still open, and not claimed or
+    -- announced. Otherwise the site could write itself an offer on someone else's campaign.
     DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
     CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
-        WITH CHECK ((delivered_at IS NULL OR (via_email AND delivered_at = created_at))
+        WITH CHECK (via_email AND token_hash IS NOT NULL AND to_user_id = 0
+                    -- an offer from the website is only ever by email (#2532): a Discord offer
+                    -- would be sent to a person as buttons, which PLAN retires; it is born
+                    -- delivered, because the bot has no Discord message to send for it
+                    AND delivered_at = created_at
+                    AND created_at BETWEEN dmbot_now() - 300 AND dmbot_now() + 300
                     AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
                     AND from_user_id = dmbot_current_user()
-                    -- only the campaign's own owner can offer it (#2532): without this, anyone
-                    -- in the server could write themselves an offer and then accept it
+                    -- only the campaign's own owner can offer it: without this, anyone in the
+                    -- server could write themselves an offer and then accept it
                     AND EXISTS (SELECT 1 FROM campaigns c
                                 WHERE c.guild_id = campaign_handover_offers.guild_id
                                   AND c.id = campaign_handover_offers.campaign_id
-                                  AND c.owner_user_id = campaign_handover_offers.from_user_id)
-                    -- an email offer belongs to nobody until its link is claimed, and carries
-                    -- its link's hash; a Discord offer has neither
-                    AND (NOT via_email OR to_user_id = 0)
-                    AND ((token_hash IS NOT NULL) = via_email));
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id));
 """
 
 ACCESS_GRANTS = (

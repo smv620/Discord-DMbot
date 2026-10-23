@@ -118,6 +118,7 @@ async def build_me(
     incoming: list[dict[str, Any]] = []
     recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
+    emailed: dict[str, dict[str, str]] = {}  # campaign ref -> its open offer by email (#2532)
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
 
@@ -216,6 +217,12 @@ async def build_me(
                 )
             for row in await offered.fetchall():
                 to_me = row["to_user_id"] == session.user_id
+                if row["via_email"] and not to_me:
+                    # Never the address (it is not stored); the page offers Take it back.
+                    emailed[f"{guild.id}.{row['campaign_id']}"] = {
+                        "sentAt": _iso_time(row["created_at"]),
+                        "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
+                    }
                 (incoming if to_me else outgoing).append(
                     {
                         "id": offer_ref(guild.id, row["id"]),
@@ -308,6 +315,9 @@ async def build_me(
 
     # The account's stored DMbot ID, kept for life (a move to a new Discord account keeps it).
     account_number = await dmbot_id(db, session.user_id)
+
+    for card in campaigns:  # (only the owner's own card can carry an offer)
+        card["handover"] = emailed.get(card["ref"]) if card["role"] == "owner" else None
 
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},

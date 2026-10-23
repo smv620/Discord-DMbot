@@ -677,6 +677,8 @@ def create_app(
         """The owner offers the campaign to an email address (#2532): `{"email"}`. The answer is
         "emailed" whatever the address is; it never says whether it has an account or a plan."""
         session, _token = signed
+        if not settings.handover_email_on:  # off until the accept page is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
         taken = handover_limit.take(str(session.user_id))
         if taken != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
@@ -695,6 +697,16 @@ def create_app(
             status = {"bad_email": 422, "too_soon": 429, "not_allowed": 409, "email_failed": 502}
             raise HTTPException(status_code=status[outcome], detail=outcome)
         return {"status": "emailed"}
+
+    @app.delete("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
+        """The owner takes back the campaign's open offer (#2532)."""
+        session, _token = signed
+        if not settings.handover_email_on or not await handover_offer.withdraw(
+            db, session, ref, now=int(clock())
+        ):
+            raise HTTPException(status_code=404, detail="not_found")
+        return {"status": "withdrawn"}
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:
