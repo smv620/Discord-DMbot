@@ -32,12 +32,14 @@ log = logging.getLogger(__name__)
 HEADING = "Text in this image:"
 NOT_YOURS = "Only the person who posted this, or your DM, can fix it."
 NOT_THERE = "I can't find that line yet. Try again in a minute."
+NOT_HERE = "I can't do that here. Try it in your campaign's server."
 NOT_TEXT = "That line has no words to fix."
-STOPPED = "DMbot isn't reading pictures from that person any more, so nothing was changed."
-SECRET = "That would put a secret name in the transcript, so nothing was changed."
+STOPPED = "That player turned off picture reading, so nothing was changed."
+# (the same words for anyone, so a refusal never tells a player that a secret name exists)
+SECRET = "I can't put that in the transcript, so nothing was changed. Try different words, or ask your DM."
 SAME = "That is what it already says."
-CHANGED = "That line has changed since you opened this, so nothing was changed."
-NOT_WRITTEN = "I couldn't change the line. Try again in a moment."
+CHANGED = "That line changed since you opened this. Press ✏️ Fix again."
+NOT_WRITTEN = "I couldn't save that. Try again in a moment."
 DONE = "✅ Fixed. The transcript says what you wrote."
 UNDO_HERE = "Made a mistake? Press Undo in ✏️ Name fixes to check."
 MODAL_TITLE = "Fix the words in this picture"
@@ -75,7 +77,7 @@ class FixTextButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot, guild = _bot(interaction), interaction.guild
         if guild is None or bot.transcripts is None:
-            await _tell(interaction, NOT_THERE)
+            await _tell(interaction, NOT_HERE)
             return
         who = interaction.user.id
         if who != self.user_id and not await _is_dm(bot, guild.id, self.session_id, who):
@@ -145,7 +147,7 @@ async def submit(
     bot, guild = _bot(interaction), interaction.guild
     await interaction.response.defer(ephemeral=True, thinking=False)
     if guild is None or bot.transcripts is None:
-        await _tell(interaction, NOT_THERE)
+        await _tell(interaction, NOT_HERE)
         return
     who = interaction.user.id
     session = await bot.transcripts.session(guild.id, session_id)
