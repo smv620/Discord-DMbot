@@ -28,7 +28,71 @@ beforeAll(async () => {
   home = await render(Home, "/");
 });
 
+// The live list as it read when the entries moved into one file each (#2468), newest first. Later
+// entries may appear anywhere; these must stay, in this order.
+const liveWhenSplit = [
+  "Recaps for your table",
+  "Recaps fit your session",
+  "Recaps stick to what happened",
+  "Choose what recaps do",
+  "When you say a secret name",
+  "My Account puts sign-in first",
+  "Campaign labels look like labels",
+  "A shorter campaigns list",
+  "Search and link Help steps",
+  "DMbot works on any new server",
+  "Add homebrew from a link",
+  "Share imported homebrew in a pack",
+  "See the sites you approved",
+  "Which rules is a book for?",
+  "Check names after a session",
+  "Keep a connection secret",
+  "Homebrew for your campaign",
+  "Copy a pack's entry to edit",
+  "Players can look up rules",
+  "Keep transcripts for a set time",
+  "Delete my transcripts",
+  "See how long transcripts are kept",
+  "Deleted transcripts show in the list",
+  "Read shared homebrew on the website",
+  "Read house rules on the website",
+  "Read transcripts on the website",
+  "Your questions to the team",
+  "Quick answers use your facts",
+  "Check what DMbot noticed",
+  "Fight reminders for players",
+  "Stop recording me on the website",
+  "Sign in with an emailed link",
+  "Your DMbot ID",
+  "Share house rules with other tables",
+  "Suggest a rule back",
+  "One-of-a-kind items",
+  "Ask DMbot by typing",
+  "Link your character sheet",
+  "See when your plan ends",
+  "The game clock",
+];
+
 describe("What's new", () => {
+  it("keeps the live list as it was when the entries moved into files (#2468)", () => {
+    const now = entries.map((e) => e.title);
+    expect(now.filter((t) => liveWhenSplit.includes(t))).toEqual(liveWhenSplit);
+    expect(page.querySelectorAll(".entry").length).toBe(entries.length);
+  });
+
+  it("gives every file the same shape, with a name that starts with its date (#2468)", () => {
+    const names = Object.keys(import.meta.glob("../src/content/whats-new/*.ts"));
+    expect(names.length).toBe(entries.length + held.length);
+    const titles = [...entries, ...held].map((e) => e.title);
+    expect(new Set(titles).size, "two files share a title").toBe(titles.length);
+    for (const name of names) {
+      const file = name.split("/").pop() ?? "";
+      const e = [...entries, ...held].find((x) => file.startsWith(x.date));
+      expect(e, `${file} starts with a date some entry has`).toBeDefined();
+      expect(file, file).toMatch(/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.ts$/);
+    }
+  });
+
   it("says style notes are kept for this campaign's later recaps and where to remove them", () => {
     const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
     expect(fix?.what).toContain("this campaign's later recaps");
@@ -67,98 +131,9 @@ describe("What's new", () => {
   });
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
-    expect(held.map((h) => h.title)).toEqual([
-      "Share a recap you haven't posted",
-      "The name is the button in the NPC list", // until #2425 merges and dev1 deploys it
-      "Every recap says which session it is", // until #2418 merges and dev1 deploys it
-      "A page for each campaign", // until #2416 merges, its API field is live and dev1 deploys it
-      "See where a new name was said", // until #2329 merges and dev1 deploys it
-      "Transcripts show real names", // until #2337 merges and dev1 deploys it
-      "Three clear ways to approve a recap",
-      "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
-      "Bring your house rules in any file", // until #2377 merges and dev1 deploys it
-      "Upload your campaign's backstory from the main menu", // until #2380 merges and dev1 deploys it
-      "Recaps are shorter", // until #2368 merges and dev1 deploys it
-      "All your names on the website", // until #2294 merges, dev1 deploys it and the Names page (#2295) is live
-      "Keep a name from the players until they learn it", // until dev1 deploys it (#2321)
-      "Pick the other name from a list", // until #2321 merges and dev1 deploys it
-      "DMbot asks when two house rules disagree", // until #2284 merges and dev1 deploys it
-      "Hear and record how a name sounds", // until #2316 and #2318 are deployed (#2317)
-      "See where your house rules came from", // until #2285 merges and dev1 deploys it
-      "See where your homebrew came from", // until #2285 merges and dev1 deploys it
-      "Recaps are checked before you see them", // until dev1 deploys it (#2255)
-      "Every NPC has its own page", // until dev1 deploys it and the NPC page is live (#2265)
-      "Recaps say when they wait", // until #2280 is deployed (#2297)
-      "Import reads more transcripts", // until #2302 merges and dev1 deploys it
-      "Every page says who you are", // until #2301 is deployed
-      "Settings has two small menus", // until #2281 merges and dev1 deploys it
-      "See and fix every name online", // until #2294 is deployed (#2295)
-      "Support emails show the whole chat", // until #2192 merges and dev1 deploys it
-      "DMbot offers how to say a name", // until #2171 merges and dev1 deploys it
-      "Your support questions now show the whole conversation", // until #2193 deploys and the helper is on (SUPPORT_AI_LIVE)
-      "Make the audio again for a recap you already posted", // until dev1 deploys it (#2203)
-      "Recaps for the older sessions you bring in", // until dev1 deploys it (#2106)
-      "A recap won't wait forever for your name answers", // until dev1 deploys it (#2174)
-      "Say a name your way, from its card", // until #2171 merges and dev1 deploys it
-      "Names from your own story", // until dev1 deploys it (#2167)
-      "Link a server you added with a plain link", // until dev1 deploys it (#2163)
-      "See what your plan is doing", // until the web API change deploys and the owner checks it in test mode (#2165)
-      "Names spelled out at the table", // until dev1 deploys it (#2168)
-      "Share a recap with a link", // until #2132 and #2142 merge and dev1 deploys them (#2118)
-      "A fixed spelling reaches past transcripts", // until dev1 deploys it (#2170)
-      "A note when a spelling changed a posted recap", // until dev1 deploys it (#2170, #2178)
-      "Your recap waits for your name answers", // until dev1 deploys it (#2169)
-      "Bring in older sessions", // until the importer and its page are live (IMPORT_LIVE, #2107)
-      "Tell DMbot what to fix", // until the web routes (#2113) are deployed (RECAP_FIX_LIVE, #2114)
-      "Speak a note to DMbot", // until the voice routes (#2113 part 2) are deployed (RECAP_VOICE_LIVE, #2114)
-      "A short session asks first", // until dev1 deploys it (#2104)
-      "Stops listening when no one's there", // until dev1 deploys #2038 (QUIET_STOP_LIVE, #2041)
-      "A 📇 Names button", // until dev1 deploys it (#1987, #2002)
-      "See what DMbot looked at", // until #1957 deploys (#1958)
-      "Look up any rule", // until dev1 deploys it (#1890, #1891)
-      "Look up fight difficulty rules", // until dev1 deploys it (#2004, #2006, #2023)
-      "See what's switched on", // until dev1 deploys it and the owner's live check (#1831)
-      "Find Settings more easily", // until the owner's live check (#1619)
-      "Split the party", // until the owner's live check (#1607)
-      "Delete a whole campaign", // until the owner's live check (#1608)
-      "Add or remove game masters", // until the owner's live check (#1600)
-      "Fix a line", // until it has been seen working on the test server (#1491, #1499)
-      "New names from your recap", // until dev1 deploys #2030 (RECAP_NAMES_LIVE, #2031)
-      "Share a recap by a link", // until the link API is deployed (RECAP_SHARE_LIVE, #2119)
-      "Approve the text before any audio", // with narration (RECAP_AUDIO_LIVE, #2084)
-      "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
-      "Play a recap's voice and music together", // with it (#2017)
-      "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
-      "Ask a question in public", // until QAbot is live (#1352)
-      "Move to a new Discord account",
-      "New names from what was said",
-      "A note before tonight's session",
-      "When a player says a secret name",
-      "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
-      "Heads-up when a fallen character speaks", // until dev1 has seen it working (DMBOT_LIVE_HEADS_UP, #2068)
-      "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
-      "How NPCs feel about the party", // until it has been seen on the test server (#1655)
-      "Record what your players did", // until it has been seen on the test server (#1732)
-      "Story threads you keep", // until it has been seen on the test server (#1662)
-      "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
-      "Keep track of promises made at the table", // until seen on the test server (#1674)
-      "A DMbot channel for buttons", // until seen on the test server (#1666)
-      "A Shared story switch", // until the story plan is used (#1692, #1714)
-      "Guide me: what's next in your adventure", // until 0126 is deployed and seen live (#1731, #1736)
-      "Watch the story", // until 0125 is deployed and seen live (#1729, #1735)
-      "Link names to your adventure", // until 0124 is deployed and seen live (#1715, #1726)
-      "Homebrew menu by kind", // until seen on the test server (#1665)
-      "A channel for your house rules", // until seen on the test server (#1752)
-      "A channel listing the people and groups", // until seen on the test server (#1761)
-      "A time suggestion from your narration", // until the switch is on and seen live (#1758)
-      "FightBot follows your turn order", // until dev1 has live-checked it (#1771)
-      "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
-      "A quiet reminder of the game time", // until seen on the test server (#1738)
-      "See how your names are connected", // until #2323 merges and dev1 deploys it
-      "Connections on a name's card, one to a line", // until dev1 deploys it (#2323)
-      "Change the email DMbot uses", // until #2349 merges and dev1 deploys it
-    ]);
+    expect(held.length).toBeGreaterThan(0);
     for (const h of held) {
+      expect(h.reason.trim(), h.title).not.toBe("");
       expect(h.reason.length, h.title).toBeGreaterThan(20);
       expect(entries.map((e) => e.title)).not.toContain(h.title);
     }

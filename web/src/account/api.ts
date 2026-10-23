@@ -269,6 +269,15 @@ export interface Recap {
   /** Written, and waiting for the checks to be able to run (#2280, #2297). While `working` is also
    * true, the page says so in one steady line instead of "still writing". Missing from an older API. */
   waitingForCheck?: boolean;
+  /** While the recap is going out or its audio is being made (#2419): when the work started on the
+   * server (Unix seconds), the step it is on, and the server's own clock now, so the page's running
+   * clock is right whatever the browser's clock says and resumes after a reload. Missing from an
+   * API or bot that doesn't record them yet. */
+  postingSince?: number | null;
+  postingStep?: "check" | "post" | "audio" | null;
+  serverNow?: number;
+  /** The posted message's link in Discord, when the bot kept it. */
+  postedUrl?: string | null;
   /** Notes from the checks about a recap that still had things they were unsure of: the DM's copy
    * only, never posted or in a shared link (#2280). Missing from an older API. */
   criticNotes?: string[];
