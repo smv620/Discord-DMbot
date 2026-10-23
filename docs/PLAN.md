@@ -3246,6 +3246,11 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     button's ID holds the session, the poster and the line's moment, so it works after a restart. A line not saved
     yet says "try again in a minute". A picture's line is kept apart from the same person's speech at the same moment:
     a speech fix never touches it and a picture fix never touches speech.
+    *Deleting the picture (#2522):* the reply is sent as a Discord reply to the picture, so it carries a reference to it.
+    A delete or a purge removes the reply: from memory (the newest 200 replies) at once, and otherwise (after a restart,
+    or past the 200) by reading the 50 messages after the picture, in a channel that is read as table chat (a voice
+    channel's chat, or a campaign's extra channel), for DMbot's own message that references it. Another bot's or a
+    person's message is never touched, and a server's chat is read at most 10 times a minute for this.
   - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
     that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
     yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
