@@ -133,6 +133,8 @@ export const webPage = {
     "not-allowed": "Only this campaign's DM can change names and connections.",
     "not-found": "That is gone. The web is up to date now.",
     "needs-confirm": "Press Yes, remove it to confirm.",
+    // The bot may still make the change later, so this never says nothing happened.
+    "still-waiting": "DMbot hasn't finished that yet. It may still happen. Reload this page to check before trying again.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
