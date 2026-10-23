@@ -101,12 +101,14 @@ async def settle(bot: Any, campaign: Any, alias_id: str) -> None:
     if exposures is None:
         return
     # The session running now, if the answer comes during it (its exposure is recorded at the end)
+    # (Any answer, "keep it secret" too, settles it for the rest of the session on purpose: the DM
+    # was asked and decided, so the summary does not ask again.)
     table = getattr(bot, "tables", {}).get(campaign.guild_id)
-    running = table is not None and table.campaign_id == campaign.id
+    session_at: int | None = None
+    if table is not None and table.campaign_id == campaign.id:
+        session_at = table.started_at or None
     try:
-        await exposures.settle_alias(
-            campaign.guild_id, campaign.id, alias_id, table.started_at or None if running else None
-        )
+        await exposures.settle_alias(campaign.guild_id, campaign.id, alias_id, session_at)
     except Exception as exc:  # bookkeeping must never cost the DM their answer
         # (the error's text can carry a name, so only its type is logged)
         log.warning("Couldn't settle a secret exposure: %s", type(exc).__name__)
