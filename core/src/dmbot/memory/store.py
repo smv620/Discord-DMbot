@@ -18,7 +18,15 @@ import asyncio
 import dataclasses
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -3973,13 +3981,22 @@ class MemoryStore:
     # ---- undo -------------------------------------------------------------------------
 
     async def undo(
-        self, guild_id: int, campaign_id: str, batch: int, *, source: str = "undo"
+        self,
+        guild_id: int,
+        campaign_id: str,
+        batch: int,
+        *,
+        source: str = "undo",
+        after: Callable[[Changes], Awaitable[None]] | None = None,
     ) -> Written[None]:
         """Reverse one operation (see `undo_batch`). Returns the undo's own batch, which
-        can be undone in turn to redo."""
+        can be undone in turn to redo. `after` runs in the same write once the batch is reversed
+        (a question the answer had closed is opened again, #2410): all of it happens, or none."""
         try:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
+                if after is not None:
+                    await after(w)
                 return Written(None, w.batch)
         except TooLateToUndo:
             raise TooLateToUndo(self._too_late()) from None

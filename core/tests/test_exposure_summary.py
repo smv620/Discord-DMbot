@@ -281,6 +281,23 @@ class TheStep(StepBase):
         self.assertIn(f"dmbot:names:recap:{GUILD_A}:{self.c}", ids)
         self.assertNotIn(f"dmbot:names:review:{self.c}", ids)
 
+    async def test_a_co_dm_who_could_not_be_reached_still_gets_the_names_from_the_names_step(
+        self,
+    ) -> None:
+        await self.waiting_secret()
+        two = campaign(id=self.c, dm_screen_visibility="open", dm_user_ids=frozenset({7, 8}))
+        bot = self.bot(two)
+        sent = {7: "sent", 8: "forbidden"}
+        bot.sidebar_send_dm = AsyncMock(side_effect=lambda dm_id, *a: sent[dm_id])
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        await DMBot.send_exposure_summary(bot, table)
+        self.assertEqual(table.new_names, ["Bryn Shander"])  # the names step posts them
+        await self.waiting_secret_named("Mira")  # another one to tell, now to every DM
+        bot.sidebar_send_dm = AsyncMock(return_value="sent")
+        await DMBot.send_exposure_summary(bot, table)
+        self.assertEqual(table.new_names, [])  # every DM was reached: told once
+
     async def test_the_count_of_things_to_check_rides_on_the_screen_message(self) -> None:
         await self.waiting_secret()
         bot = self.bot(campaign(id=self.c))

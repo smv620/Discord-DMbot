@@ -255,11 +255,16 @@ class ClaimsReview(_Menu):
         if campaign is None or memory is None or batch is None or claim is None:
             return
         try:
-            await memory.undo(campaign.guild_id, campaign.id, batch, source=DM)
+            await memory.undo(
+                campaign.guild_id,
+                campaign.id,
+                batch,
+                source=DM,
+                after=lambda w: ClaimStore.reopen_in(w, claim_id),
+            )
         except (MemoryRuleError, TooLateToUndo) as exc:
             await _tell(interaction, str(exc) or GONE)
             return
-        await ClaimStore(memory).reopen(campaign.guild_id, campaign.id, claim_id)
         del self.undoable[claim_id]
         self.answered[claim_id] = f"↩️ Taken back: {statement(claim)}. DMbot will ask again."
         lookup = getattr(_bot(interaction), "lookup", None)

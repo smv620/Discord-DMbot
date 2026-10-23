@@ -931,17 +931,16 @@ class ClaimStore:
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
-    async def reopen(self, guild_id: int, campaign_id: str, claim_id: str) -> None:
+    @staticmethod
+    async def reopen_in(w: Changes, claim_id: str) -> None:
         """The DM took its answer back (↩️ Undo on a remembered fact, #2410): the fact is gone, so
-        the question waits again. The claims are not in the change log, so this puts it back."""
-        async with self._store._write(guild_id, campaign_id, DM) as w:
-            row = await w.get(CLAIMS, claim_id)
-            if row is not None and row["status"] == CLAIM_CONFIRMED:
-                await w.update(
-                    CLAIMS,
-                    claim_id,
-                    {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None},
-                )
+        the question waits again. The claims are not in the change log, so the undo's own write
+        (`MemoryStore.undo(after=...)`) puts it back, and a failure rolls both back."""
+        row = await w.get(CLAIMS, claim_id)
+        if row is not None and row["status"] == CLAIM_CONFIRMED:
+            await w.update(
+                CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
+            )
 
     async def confirm(
         self,

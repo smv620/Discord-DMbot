@@ -9581,7 +9581,10 @@ class DMBot(commands.AutoShardedBot):
                 if closed:  # nobody could be told because their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
-            table.new_names = []  # the message listed them: nobody is told twice
+            if on_screen or reached >= len(campaign.dm_user_ids):
+                # Told: the screen has it, or every DM got it. A co-DM whose private messages are
+                # closed has not heard, so then the "new names" step still posts them.
+                table.new_names = []
             if on_screen:
                 table.claims_waiting = 0  # the screen message carried the count
             shown = failed = 0
