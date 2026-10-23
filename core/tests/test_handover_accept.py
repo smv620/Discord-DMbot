@@ -8,13 +8,10 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-import psycopg
 
 from dmbot.campaigns import CampaignStore
-from dmbot.schema import WEB_ROLE
 from dmbot.web import grants, sessions
 from dmbot.web.discord import DiscordUser
-from tests.pg import SUPERUSER_URL
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, GORRAK, QUILLON, THURSDAY
@@ -353,16 +350,6 @@ class Moving(LinkBase):
         patcher = patch("dmbot.web.handover_accept.MOVES_ARE_RUN", True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        # The move door is not granted to the website until the bot's move exists (C2): the test
-        # grants it itself, as a build that has the mover will.
-        admin = await psycopg.AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
-        try:
-            await admin.execute(
-                f"GRANT EXECUTE ON FUNCTION {self.schema}.dmbot_handover_request_move"
-                f"(BIGINT, BIGINT, TEXT, TEXT, BIGINT) TO {WEB_ROLE}"
-            )
-        finally:
-            await admin.close()
         await self.give_plan(BOB.id)
         async with self.db.guild(QUILLON.id) as conn:  # DMbot is installed in Quillon's Corner
             await conn.execute(
@@ -496,3 +483,23 @@ class Moving(LinkBase):
             (row["status"], row["to_user_id"], row["move_to_guild_id"]),
             ("open", BOB.id, QUILLON.id),
         )
+
+    async def test_end_to_end_the_wish_becomes_a_campaign_in_the_other_server(self) -> None:
+        """The page asks (202 moving), the bot's mover moves it, and the new owner's account page
+        shows the campaign in the other server while the old server has nothing left."""
+        from dmbot.campaigns.moves import HandoverMover
+
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual(got.status_code, 202)
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        mover = HandoverMover(store, clock=lambda: self.now)
+        [offer_id] = await mover.waiting(THURSDAY.id)
+        self.assertEqual(await mover.move(THURSDAY.id, offer_id), "moved")
+        me = (await bob.get("/me")).json()
+        mine = [c for c in me["campaigns"] if c["role"] == "owner"]
+        self.assertEqual(
+            [(c["name"], c["serverName"]) for c in mine], [("Frostmaiden", "Quillon's Corner")]
+        )
+        self.assertEqual(await store.get(THURSDAY.id, self.campaign.id), None)

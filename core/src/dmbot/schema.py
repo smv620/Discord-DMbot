@@ -3154,7 +3154,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
     ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
     ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
-    # dmbot_handover_request_move (#2532, slice C) is granted when the bot's move exists (C2).
+    (
+        "dmbot_handover_request_move",
+        "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
+    ),  # #2532, slice C (granted now that the bot's move exists)
     ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11961,12 +11964,16 @@ HANDOVER_MOVE = """
         changed INTEGER;
     BEGIN
         IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
-           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
-            RETURN false;
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;  -- (the caller connects scoped to the campaign's server, like every door)
         END IF;
         IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
             RETURN false;
         END IF;
+        -- Whether DMbot is installed in the target is a fact of the TARGET server, whose rows are
+        -- visible only when scoped to it: so the door looks there for this one read and comes
+        -- straight back. It reads nothing else there.
         PERFORM set_config('dmbot.guild_id', p_target::text, true);
         SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
             INTO ready;
