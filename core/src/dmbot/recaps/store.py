@@ -494,20 +494,26 @@ class RecapStore:
         choice: str,
         *,
         expected: str,
+        post: bool = False,
     ) -> bool:
         """The DM approved the text as it is now and picked what to make (#2083). Records who and
         when, and the hash of the text, and for any choice but text queues the audio. `expected`:
         the hash (`approval.text_hash`) of the text whose cues, names and consent were just
         checked; if the text has changed since, nothing is approved. False: not allowed now (not
         ready, already decided, a different text, or its audio is under way). Audio made from
-        older text may be made again. The caller has checked the DM."""
-        if choice not in CHOICES:
+        older text may be made again. The caller has checked the DM.
+        `post` (#2420, "Approve and post text only"): hand the recap to the bot to post in the same
+        statement, as the website does, so a refusal leaves nothing approved and half-posted. Only
+        for a text-only choice: audio is made and reviewed before anything is posted."""
+        if choice not in CHOICES or (post and choice != TEXT):
             raise ValueError(choice)
         queue = choice != TEXT
         now_hash = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
         sets = f"approved_by = %s, approved_at = %s, approved_hash = {now_hash}, audio_choice = %s"
         if queue:
             sets += ", audio = 'queued', audio_tries = 0, audio_next_at = 0, audio_error = ''"
+        if post:
+            sets += ", status = 'posting'"
         # Nothing is approved over audio that is queued or being made, text only included: the
         # spend so far would be lost and the caps dodged.
         where = (

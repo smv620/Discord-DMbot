@@ -4523,6 +4523,17 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     and the step it's on (the last check, then posting). It updates by itself until it ends: "Posted to your
     table" with a link to the message in Discord, or what went wrong and what to do next. Leaving and coming
     back shows the same clock, counted from when it started.
+  - *Built on Discord (CloudDev, 2026-10-23, #2420):* a new recap line on the DM screen has the same three
+    buttons in the page's words (**✅ Approve and post text only**, **🎙️ Approve and make audio to review**,
+    **📋 Approve but don't post**), **📝 Review the recap** (the link to that recap's page, or **Read it** with
+    no website address) and **Share a recap**. They go through the same store move as the page
+    (`RecapStore.approve`, which takes `post` to approve and hand it to the bot in one statement), so a
+    recap approved on either shows as approved on the other. The audio button asks voice-over, music or
+    both (text only is the other two buttons); where audio can't be made it is greyed and the line says
+    why ("not set up" is specific; the plan and the month's allowance say "isn't available for this
+    campaign right now", because every DM sees the line and a co-DM is never told the owner's plan).
+    "Not this one" is no longer offered on a new line; it still answers on a line already sent. Cue
+    problems, secret names and who is recorded are checked on every press, as before.
 - **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
   page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
   number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21

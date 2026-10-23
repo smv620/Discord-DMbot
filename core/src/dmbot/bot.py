@@ -461,7 +461,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
-from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
+from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
@@ -2600,15 +2600,23 @@ class DMBot(commands.AutoShardedBot):
                 campaign = await self.campaigns.get(gid, cid)
                 if campaign is None or not campaign.recaps_text:
                     return
+                why = await self.recap_audio_why(gid, cid)
                 for session_at, title in await self.recaps.waiting_drafts(gid, cid):
                     if self.tables.get(gid) is not table:
                         return  # the session ended meanwhile
                     shown = discord.utils.escape_markdown(title)
+                    site = self.settings.site_url
                     await self.post(
                         table.screen_channel_id,
                         f"📜 Last session's recap is still waiting: **{shown}**. "
-                        "Nothing has gone to the players.",
-                        view=ready_view(cid, session_at, self.settings.site_url),
+                        "Nothing has gone to the players." + (f"\n{AUDIO_WHY[why]}" if why else ""),
+                        view=ready_view(
+                            cid,
+                            session_at,
+                            site,
+                            page_link(site, gid, cid, session_at) if site else "",
+                            audio_off=bool(why),
+                        ),
                         remember=("recap", cid, session_at),
                     )
             except Exception:
@@ -9044,6 +9052,26 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't tell whether spoken recaps are part of the plan")
         return PlanFacts(text, audio, how)
 
+    async def recap_audio_why(self, gid: int, cid: str) -> str:
+        """Why audio can't be made for this campaign's recaps now (#2420), for the greyed button:
+        "not_set_up" (this server has no narration, or the DM switched it off), "unavailable" (the
+        plan has none, or the month's is used up: a co-DM is never told the owner's plan, #1470),
+        or "" when it can be made. The audio step checks all of it again before any paid call."""
+        if not self.settings.recap_audio_on:
+            return "not_set_up"
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not campaign.recaps_audio:
+            return "not_set_up"
+        if not await self.plan_allows("recap_audio", gid, campaign, fail_open=False):
+            return "unavailable"
+        try:
+            if await self._recap_allowance(gid, cid, audio=True) is not None:
+                return "unavailable"
+        except Exception:  # not told: the button stays off rather than promise what may not come
+            log.exception("Recap: couldn't read the audio allowance")
+            return "unavailable"
+        return ""
+
     async def recap_audio_allowed(self, gid: int, cid: str, job: Job) -> bool:
         campaign = await self.campaigns.get(gid, cid)
         return campaign is not None and await self.plan_allows(
@@ -9098,10 +9126,15 @@ class DMBot(commands.AutoShardedBot):
         )
         if campaign is not None and campaign.dm_screen_channel_id is not None:
             if job.state == "ready":
+                why = await self.recap_audio_why(
+                    gid, cid
+                )  # the audio button, greyed with its reason
                 await self.post(
                     campaign.dm_screen_channel_id,
-                    ready_text(job.title, link),
-                    view=ready_view(cid, job.session_at, self.settings.site_url),
+                    ready_text(job.title, link, AUDIO_WHY[why] if why else ""),
+                    view=ready_view(
+                        cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)
+                    ),
                     remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:
