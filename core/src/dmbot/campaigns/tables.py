@@ -72,7 +72,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "plan_nodes": _PLAN_READ,
     "plan_links": _PLAN_READ,
     "adventure_reads": _PLAN_READ,
-    "adventure_chunks": "the text is carried; chunks are cut again (PLAN:166, #1698)",
+    "adventure_chunks": "the adventure's text is never in a backup, only its list "
+    "(PLAN:167-170, #1698)",
     "plan_position": _PLAN_LIKE,
     "plan_divergences": _PLAN_LIKE,
     "plan_same_as": _PLAN_LIKE,
