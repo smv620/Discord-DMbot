@@ -1160,7 +1160,11 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
   (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
   they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record.
+  the pause stays on the record. A paused person's **typed** question to DMbot is still answered
+  privately (typing to DMbot is deliberate), but nothing of it is written to any transcript or stored
+  (Supervisor, 2026-10-23, #2470). A pause has no lasting effect: it changes no stored consent or
+  choice, a restart while paused keeps the pause (it never starts recording someone who was told they
+  are off the record), and stopping during a pause ends it at once.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -4088,11 +4092,11 @@ responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4.
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
-(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+(`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
 ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
 deployed but blocked (for example the account move, whose code goes to the payment email while
-payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+payments are off, #1096) is marked `held` in its file, with its reason. A PR that ships a
 feature people can see adds its entry, or a held one, in the same PR.
 
 **Session recaps** (Supervisor, 2026-10-15 and 2026-10-16; built in #1392, #1397, #1412, #1415,
