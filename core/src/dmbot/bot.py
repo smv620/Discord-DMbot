@@ -420,6 +420,7 @@ from dmbot.ui.dmbot_commands import _failed, dmbot_group
 from dmbot.ui.exposure_summary import (
     MAX_LISTED,
     RecantButton,
+    SeenButton,
     summary_text,
     summary_view,
 )
@@ -1559,6 +1560,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
+        self.add_dynamic_items(SeenButton)  # 👍 Got it: the mark of every summary variant
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(

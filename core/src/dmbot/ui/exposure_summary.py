@@ -21,6 +21,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
@@ -31,7 +32,6 @@ from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS
 
 log = logging.getLogger(__name__)
 
-MESSAGE_MAX = 2000  # Discord's limit for a message
 MAX_LISTED = 10  # items the message lists (and buttons it carries); the rest wait for next time
 NAMES_LISTED = 5  # new names the message lists (as the separate post did)
 PER_ROW = 5  # Discord: five buttons to a row
@@ -247,6 +247,54 @@ class RecantButton(
         )
 
 
+class SeenButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:xs:(?P<campaign>[0-9a-f]{32}):(?P<guild>[0-9]{1,20})",
+):
+    """ "👍 Got it" on every variant of the summary (#2410). It does one small thing, taking itself
+    and the other buttons off, and it carries the summary's mark: a message with no ↩️ Recant on it
+    (only new names or things to check) is still found after a restart, and pulled back if the DM
+    screen opens up to players, because the words of what was said are in it."""
+
+    def __init__(self, campaign_id: str, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="👍 Got it",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:xs:{campaign_id}:{guild_id}",
+                row=3,  # after the Recant rows and the check buttons
+            )
+        )
+        self.campaign_id, self.guild_id = campaign_id, guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SeenButton:
+        return cls(match["campaign"], int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.defer()
+        bot = _bot(interaction)
+        here = interaction.guild.id if interaction.guild is not None else self.guild_id
+        campaign = (
+            await bot.campaigns.get(self.guild_id, self.campaign_id)
+            if here == self.guild_id
+            else None
+        )
+        if campaign is None:
+            await _tell(interaction, NO_CAMPAIGN)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, NOT_YOURS)
+            return
+        view = discord.ui.View.from_message(interaction.message, timeout=None)  # type: ignore[arg-type]
+        view.remove_item(
+            next(c for c in view.children if getattr(c, "custom_id", "") == self.item.custom_id)
+        )
+        await interaction.edit_original_response(view=view, allowed_mentions=NO_PINGS)
+
+
 def summary_view(
     exposure_ids: Sequence[int],
     campaign_id: str,
@@ -272,4 +320,5 @@ def summary_view(
         check_claims = ClaimsReviewButton(campaign_id)
         check_claims.item.row = 2
         view.add_item(check_claims)
+    view.add_item(SeenButton(campaign_id, guild_id))  # the mark every variant carries
     return view

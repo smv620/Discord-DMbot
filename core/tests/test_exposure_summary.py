@@ -58,7 +58,8 @@ class Text(unittest.TestCase):
 
     def test_one_button_for_each_item_five_to_a_row_and_no_more_than_the_cap(self) -> None:
         view = summary_view(list(range(1, 15)), CID, GUILD_A)
-        self.assertEqual(len(view.children), MAX_LISTED)
+        self.assertEqual(len(view.children), MAX_LISTED + 1)  # and the mark every variant has
+        self.assertEqual(view.children[-1].item.custom_id, f"dmbot:xs:{CID}:{GUILD_A}")  # type: ignore[attr-defined]
         rows = [c.item.row for c in view.children if isinstance(c, RecantButton)]
         self.assertEqual((rows.count(0), rows.count(1)), (5, 5))
         first = view.children[0]
@@ -72,13 +73,17 @@ class Text(unittest.TestCase):
         text = summary_text(["Auril (a name)"], 0, new_names=["Bryn", "Oskar"])
         self.assertIn("🆕 **2 new names to check:** **Bryn**, **Oskar**", text)
         view = summary_view([1], CID, GUILD_A, new_names=True)
-        check: Any = view.children[-1]
+        check: Any = next(
+            c
+            for c in view.children
+            if c.item.custom_id.startswith("dmbot:names:review:")  # type: ignore[attr-defined]
+        )
         self.assertEqual(check.item.custom_id, f"dmbot:names:review:{CID}")
         self.assertEqual(check.item.row, 2)
-        private: Any = summary_view([1], CID, GUILD_A, new_names=True, private=True).children[-1]
+        private: Any = summary_view([1], CID, GUILD_A, new_names=True, private=True).children[-2]
         self.assertEqual(private.item.custom_id, f"dmbot:names:recap:{GUILD_A}:{CID}")
         plain = summary_view([1], CID, GUILD_A)
-        self.assertEqual(len(plain.children), 1)  # no names, no extra button
+        self.assertEqual(len(plain.children), 2)  # a Recant and the mark; no names button
         self.assertNotIn("🆕", summary_text(["A"], 0))
 
     def test_things_to_check_are_spelled_out_for_the_dm_and_dropped_if_too_long(self) -> None:
@@ -364,7 +369,7 @@ class TheStep(StepBase):
         self.assertIn("…and 1 more in the check.", text)
         self.assertEqual(table.new_names, [])
         self.assertEqual((table.claims_waiting, table.claim_preview), (0, []))
-        self.assertEqual(len(view.children), 2)  # the two check buttons, no Recant
+        self.assertEqual(len(view.children), 3)  # the two check buttons and the mark, no Recant
 
     async def test_with_nothing_to_tell_nothing_is_sent(self) -> None:
         bot = self.bot(campaign(id=self.c))
@@ -544,6 +549,24 @@ class Recanting(StepBase):
         row = await self.store.one(GUILD_A, self.c, 1)
         assert row is not None
         return bot, alias, row
+
+    async def test_the_got_it_button_is_for_the_dm_alone_and_takes_itself_off(self) -> None:
+        from dmbot.ui.exposure_summary import SeenButton
+
+        bot = self.bot(campaign(id=self.c))
+        button = SeenButton(self.c, GUILD_A)
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(label="👍 Got it", custom_id=button.item.custom_id))
+        view.add_item(discord.ui.Button(label="other", custom_id="dmbot:other"))
+        stranger = self.interaction(bot, user=99)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await button.callback(stranger)
+        stranger.edit_original_response.assert_not_awaited()
+        self.assertEqual(len(view.children), 2)  # a stranger changes nothing
+        dm = self.interaction(bot)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await button.callback(dm)
+        self.assertEqual([c.label for c in view.children], ["other"])  # type: ignore[attr-defined]
 
     async def test_recant_hides_exactly_that_one_again_and_closes_the_button(self) -> None:
         bot, alias, row = await self.shown()
