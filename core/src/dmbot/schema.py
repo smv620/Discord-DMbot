@@ -11584,6 +11584,19 @@ SECRET_EXPOSURES = f"""
         WHERE kind = 'connection';
     """ + _isolate("secret_exposures")
 
+EXPOSURE_SUMMARY = """
+    -- The after-session summary applies what a session gave away (#2410, slice 2): an exposure
+    -- becomes 'applied' (the secret was shown to the players, in the change-log batch kept here so
+    -- Recant can undo exactly that) or 'recanted' (the DM took it back). New states and a column
+    -- with no default needed: no row changes. 'applying' is a row claimed while its secret is being
+    -- shown, so a Recant pressed meanwhile cannot slip between the claim and the showing.
+    ALTER TABLE secret_exposures ADD COLUMN batch BIGINT;
+    ALTER TABLE secret_exposures ADD COLUMN claimed_at BIGINT;
+    ALTER TABLE secret_exposures DROP CONSTRAINT secret_exposures_status_check;
+    ALTER TABLE secret_exposures ADD CONSTRAINT secret_exposures_status_check
+        CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11807,6 +11820,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
+    ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
