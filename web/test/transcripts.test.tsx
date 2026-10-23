@@ -153,7 +153,8 @@ describe("reading a session", () => {
 
   it("shows each line as the export wrote it, nothing added", async () => {
     page(mockApi("table"), `/account/transcripts/${REF}/2`);
-    const lines = (await screen.findAllByRole("listitem")).map((li) => li.textContent);
+    await screen.findByText("[0:00:12] (Speaker 1) {Cerric}: We cross the river at dusk.");
+    const lines = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(lines).toContain("[0:00:12] (Speaker 1) {Cerric}: We cross the river at dusk.");
   });
 

@@ -364,6 +364,30 @@ class SaveAndResume(SessionTests):
     def screen_posts(self) -> list[str]:
         return [t for cid, t in self.posts if cid == SCREEN]
 
+    async def test_a_pause_is_saved_with_the_session_and_a_restart_keeps_it(self) -> None:
+        """Off the record (#2466): after a restart the person is still not recorded, before their
+        audio is let in, and a stop or a new session clears it."""
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        await self.start()
+        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        done = await self.bot.pause_recording(GUILD, PLAYER, 15)
+        assert done.ok
+        saved = await self.sessions.get(GUILD)
+        assert saved is not None
+        self.assertEqual(list(saved.paused["people"]), [str(PLAYER)])
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertFalse(bot.consent.has_consent(GUILD, PLAYER))  # still off the record
+        self.assertTrue(bot.consent.has_consent(GUILD, DM))
+        allowlists = [json.loads(m)["userIds"] for m in self.ears.sent if '"allowlist"' in m]
+        self.assertNotIn(str(PLAYER), allowlists[0])  # the first list ears gets leaves them out
+        self.assertIn(str(DM), allowlists[0])
+        await self.sessions.save(saved)  # a new session in its place starts with no pauses
+        again = await self.sessions.get(GUILD)
+        assert again is not None
+        self.assertEqual(again.paused, {})
+
     async def test_start_saves_and_stop_forgets(self) -> None:
         await self.start()
         saved = await self.sessions.get(GUILD)
@@ -691,7 +715,8 @@ class SaveAndResume(SessionTests):
         await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         (ids,) = [ids for text, ids in views if "listening again" in text]
         cid = self.campaign.id
-        self.assertEqual(ids, [f"dmbot:stop:{cid}"])  # Settings moved to the DM Bot channel (#1666)
+        # Settings moved to the DM Bot channel (#1666); the table pause is the other control (#2466)
+        self.assertEqual(ids, [f"dmbot:tablepause:{cid}", f"dmbot:stop:{cid}"])
 
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1167,7 +1192,8 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        (button,) = call.args[2].children  # only the in-game control (Settings moved, #1666)
+        pause, button = call.args[2].children  # the in-game controls (Settings moved, #1666)
+        self.assertEqual(pause.custom_id, f"dmbot:tablepause:{self.campaign.id}")  # #2466
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)

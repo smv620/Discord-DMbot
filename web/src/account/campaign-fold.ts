@@ -24,7 +24,11 @@ export function foldCampaigns(
   offeredIds: ReadonlySet<string>,
   limit: number = SHOWN_AT_FIRST,
 ): { first: Campaign[]; older: Campaign[] } {
-  const sorted = byRecentlyPlayed(campaigns);
+  // The campaigns you run come before the ones you only play in, so a busy player's table never
+  // pushes your own campaign (and its hand-over) behind the button (#2460).
+  const run = byRecentlyPlayed(campaigns.filter((c) => c.role !== "player"));
+  const played = byRecentlyPlayed(campaigns.filter((c) => c.role === "player"));
+  const sorted = [...run, ...played];
   const needsYou = (c: Campaign): boolean => c.status === "paused" || offeredIds.has(c.id);
   const newest = new Set(sorted.slice(0, limit).map((c) => c.id));
   const first = sorted.filter((c) => newest.has(c.id) || needsYou(c));

@@ -42,14 +42,23 @@ export interface Campaign {
   /** ISO date and time of the last session, or null if never played. */
   lastPlayedAt: string | null;
   status: "active" | "paused";
-  /** "owner": uses your hours. "co-dm": you help run it. */
-  role: "owner" | "co-dm";
+  /** "owner": uses your hours. "co-dm": you help run it. "player": you play in it (#2460). */
+  role: "owner" | "co-dm" | "player";
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
   /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
    * from an API older than that: the campaign is then not linked. */
   ref?: string;
+  /** The facts on the card (#2460), each left out when there is none: DMbot is listening there
+   * now, the sessions played, hours played (two decimals), player characters claimed, NPCs the
+   * person may see, and when the campaign was started (ISO). Missing from an older API. */
+  live?: boolean;
+  sessions?: number;
+  hoursPlayed?: number;
+  players?: number;
+  npcs?: number;
+  startedAt?: string;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -60,6 +69,32 @@ export interface CampaignPage {
   /** "owner" and "co-dm" are the campaign's DMs; "player" is anyone else in its server. */
   role: "owner" | "co-dm" | "player";
   importsOn?: boolean;
+  /** The campaign's current choices, for its game masters only (#2461). */
+  settings?: CampaignSettings;
+}
+
+/** One of the three choices a game master can change on the Settings tab (#2484). */
+export type CampaignSettingName = "visibility" | "level" | "retention";
+
+/** Where a choice sent to the bot stands. `error` is the bot's word when it failed (`needs_confirm`,
+ * `refused` with Discord's words in `note`, `not_allowed`, `not_found`, `bad_value`, `failed`); `note`
+ * is what Discord would say about it. */
+export interface CampaignSettingAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  setting: CampaignSettingName;
+  value: string;
+  note: string;
+}
+
+/** What ⚙️ Settings holds for a campaign today. */
+export interface CampaignSettings {
+  visibility: "private" | "peek" | "open";
+  level: "quiet" | "normal" | "chatty";
+  /** How long transcripts are kept (30, 90 or 365 days), or null for ever. */
+  keepDays: number | null;
+  paused: boolean;
+  gameMasters: number;
 }
 
 /** A Discord server you manage. */
@@ -330,8 +365,8 @@ export type ShareAction = "on" | "off" | "new";
 export interface PublicRecap {
   title: string;
   text: string;
-  /** Unix seconds. */
-  postedAt: number;
+  /** Unix seconds; null for a recap the DM approved and shared without posting it (#2419). */
+  postedAt: number | null;
   /** Only the kinds that exist; each is a full address that needs no sign-in. */
   audio: { voice?: string; music?: string };
   /** When it was played (Unix seconds), which session it was and how long it ran (#2418). Left out
@@ -697,6 +732,53 @@ export interface HouseRules {
   sets: HouseRuleSet[];
 }
 
+/** A house-rules set or homebrew pack a campaign publishes (#2460). `hasCode`: a share code is on
+ * (the code itself is read in Discord, never here). */
+export interface SharedRuleSet {
+  kind: "house-rules" | "homebrew";
+  name: string;
+  version: number;
+  shared: boolean;
+  hasCode: boolean;
+}
+
+/** A set or pack a campaign uses from another table. `updating` is false for one that stopped being
+ * shared: its last version stays, marked "no longer updated". */
+export interface FollowedRuleSet {
+  kind: "house-rules" | "homebrew";
+  name: string;
+  publisher: string;
+  version: number;
+  updating: boolean;
+}
+
+/** One campaign you run that shares or uses rules. `ref` is `<server>.<campaign>`. */
+export interface SharedRulesCampaign {
+  ref: string;
+  name: string;
+  serverName: string;
+  publishes: SharedRuleSet[];
+  follows: FollowedRuleSet[];
+}
+
+/** One session on the Story timeline (#2462): its number, when it started and ended (Unix seconds),
+ * its recap if one is approved (a player sees posted ones only; `ref` is its page, for a game master
+ * only) and the names shown to the players at the table that session. */
+export interface TimelineSession {
+  number: number;
+  startedAt: number;
+  endedAt: number | null;
+  recap: { title: string; posted: boolean; ref: string | null } | null;
+  revealed: string[];
+}
+
+export interface Timeline {
+  ref: string;
+  name: string;
+  /** Oldest first. */
+  sessions: TimelineSession[];
+}
+
 /** A campaign with homebrew in one of the person's servers (#1525).
  * `ref` is `<server>.<campaign>`. */
 export interface HomebrewCampaign {
@@ -784,6 +866,9 @@ export interface WebLink {
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
   belief?: WebBelief;
+  /** The DM pinned it as 100% truth (#2448, API #2447). Sent to a DM in the full view only; the page
+   * also drops it for anyone else. */
+  pinned?: boolean;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -835,6 +920,7 @@ export type WebLinkChange =
   | { action: "add"; a: string; b: string; words: string; secret: boolean }
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
+  | { action: "pin"; id: string; pinned: boolean }
   | { action: "remove"; id: string; confirm: true };
 
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
@@ -853,6 +939,9 @@ export interface NameRow {
   secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
   npcId: string | null;
+  /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
+   * from an API that doesn't send it. */
+  mentions?: number;
 }
 
 export interface NameKind {
@@ -894,6 +983,9 @@ export type NameChange =
   | { action: "hide"; hidden: boolean }
   | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
+  // Several names into the one the request is about (the kept name, whose id is in the path): one
+  // change, one Undo, all or nothing (#2427, the contract CloudDev wrote on #2426).
+  | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
 /** What the bot says about a queued name change (#2294). */
@@ -1010,8 +1102,10 @@ export type ApiErrorKind =
   | "bad-mapping" // the speaker choices don't fit the files (#2107)
   | "bad-date" // a session's date is not a date (#2107)
   | "no-lines-kept" // every line of a file would be dropped (#2107)
-  | "not-posted" // only a posted recap can have a public link (#2118)
+  | "not-posted" // only a posted or approved recap can have a public link (#2118, #2119)
   | "bad-action" // not one of on, off or new (#2118)
+  | "bad-setting" // a campaign setting the site does not change (#2484)
+  | "bad-value" // a choice Discord does not offer for it (#2484)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1149,9 +1243,23 @@ export interface AccountApi {
     number: number,
     version: TranscriptVersion,
   ): Promise<Blob>;
+  /** Send one settings choice to the bot (#2484): the answer to poll. A shorter transcript limit
+   * deletes old sessions, so it goes with `confirm: true` once the game master has said yes. */
+  setCampaignSetting?(
+    campaignRef: string,
+    choice: { setting: CampaignSettingName; value: string; confirm?: boolean },
+  ): Promise<string>;
+  /** Where a choice sent with `setCampaignSetting` stands. */
+  campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
+  /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
+   * older API. */
+  timeline?(campaignRef: string): Promise<Timeline>;
   /** The campaigns with house rules in the person's servers, for anyone in them (#1521). Missing
    * from an API older than that. */
   houseRuleCampaigns?(): Promise<HouseRuleCampaign[]>;
+  /** The sets and packs your campaigns share and use (#2460), for the campaigns you run. Missing
+   * from an older API. */
+  sharedRules?(): Promise<SharedRulesCampaign[]>;
   /** A campaign's house rules and the sets it follows. `campaignRef` is `<server>.<campaign>`. */
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
@@ -1330,6 +1438,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_lines_kept: "no-lines-kept",
   not_posted: "not-posted",
   bad_action: "bad-action",
+  bad_setting: "bad-setting",
+  bad_value: "bad-value",
 };
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
@@ -1558,6 +1668,27 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    setCampaignSetting: async (campaignRef, choice) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
+          setting: choice.setting,
+          value: choice.value,
+          ...(choice.confirm ? { confirm: true } : {}),
+        })) as { answer: string }
+      ).answer,
+    campaignSettingAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/settings/answers/${encodeURIComponent(answer)}`,
+      )) as CampaignSettingAnswer,
+    timeline: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/timeline`,
+      )) as Timeline,
+    sharedRules: async () =>
+      ((await call("GET", "/me/shared-rules")) as { campaigns: SharedRulesCampaign[] })
+        .campaigns,
     houseRuleCampaigns: async () =>
       (
         (await call("GET", "/me/house-rules")) as {
