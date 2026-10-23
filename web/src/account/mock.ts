@@ -568,6 +568,9 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  let failedMove = false; // the move asked for failed: the offer is open again with the reason
+  let moveState: "none" | "moving" | "failing" = "none"; // a campaign the bot is moving: `look` says ended meanwhile (#2550)
+  let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
   const myEmail: MyEmail = {
     address: "dm@example.com",
     source: scenario === "table" ? "payment" : "signin",
@@ -1580,6 +1583,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async me() {
       calls.push("me");
       await reachable();
+      if (movedIn > 0) {
+        movedIn -= 1;
+        if (movedIn === 0 && me) {
+          me = { ...me, campaigns: [...me.campaigns, { id: "cmp-silver", ref: "s2.cmp9", name: "The Silver Hall", serverName: "Sunday Table", lastPlayedAt: null, status: "active", role: "owner" }] };
+        }
+      }
       return me;
     },
     signInUrl: () => "#demo-sign-in",
@@ -1626,7 +1635,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      if (moveState === "moving") return { status: "ended" };
+      if (moveState === "failing") {
+        // The first look after accepting still says ended; the next shows the move did not happen.
+        moveState = "none";
+        failedMove = true;
+        return { status: "ended" };
+      }
       const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      // `shares` can't move to another server; `failed` has a move that did not happen last time (#2550).
       return {
         status: "open",
         campaign: { name: "The Silver Hall" },
@@ -1634,11 +1651,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         server: { id: "s1", name: "Friday Night Dice" },
         canAccept: why === null,
         why,
-        servers: [
-          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
-          { id: "s2", name: "Sunday Table", current: false, botIn: true },
-          { id: "s3", name: "New Server", current: false, botIn: false },
-        ],
+        servers:
+          token === "greyonly"
+            ? // not in the server it runs on, and every other one is out too
+              [{ id: "s2", name: "Sunday Table", current: false, botIn: true, why: "shares_rules" }]
+            : [
+                { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+                { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "shares_rules" : null },
+                { id: "s3", name: "New Server", current: false, botIn: false },
+              ],
+        moveFailed: token === "failed" || failedMove ? "A session is running. Try again after it ends." : null,
       };
     },
     async handoverAccept(token, serverId) {
@@ -1647,6 +1669,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       if (token === "gone-after") throw new ApiError("ended");
       if (serverId === "s3") throw new ApiError("bad-server");
+      if (token === "shares" && serverId !== "s1") throw new ApiError("shares-rules");
+      // Another server than where it runs: the bot moves it, and it appears under the person's campaigns.
+      if (serverId !== "s1") {
+        if (token === "movefail") moveState = "failing";
+        else {
+          moveState = "moving";
+          movedIn = 2; // it shows up on the second look
+        }
+        return { moving: true };
+      }
       return { campaignRef: "s1.cmp1" };
     },
     async handoverDecline(token) {
