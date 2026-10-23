@@ -26,6 +26,11 @@ class ReviewTextTest(unittest.TestCase):
         self.assertIn("Is this a name in your game?", text)
         self.assertNotIn("Also heard", text)
 
+    def test_the_sentence_around_a_name_from_the_dms_text_is_shown_when_held(self) -> None:
+        text = ui.suggestion_text(suggested("Greyfen"), 1, context="The abbot of Greyfen waits.")
+        self.assertIn("Around it in your text: \u201cThe abbot of Greyfen waits.\u201d", text)
+        self.assertNotIn("Around it", ui.suggestion_text(suggested("Greyfen"), 1))
+
     def test_two_rows_so_a_phone_never_cuts_the_labels(self) -> None:
         view = ui.SuggestionReview("c" * 32, ["a" * 32])
         view.match = Match("b" * 32, "Hrothgar")

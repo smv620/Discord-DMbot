@@ -1032,6 +1032,7 @@ def suggestion_text(
     spelled: bool = False,
     fix_to: str = "",
     places: str = "",
+    context: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1060,7 +1061,9 @@ def suggestion_text(
     )  # the note is the spelling: shown once, in the question
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
-    return f"📝 **{_md(entity.name)}**{heard}{where}{others}{read}\n{question}{more}"
+    # The sentence around a name read from the DM's text, held in memory since the reading (#2561).
+    around = f"\nAround it in your text: \u201c{_md(context)}\u201d" if context else ""
+    return f"📝 **{_md(entity.name)}**{heard}{where}{around}{others}{read}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -1165,7 +1168,14 @@ class SuggestionReview(_Menu):
             fix_to=self.fix_to,
             kind=self.known_kind,
             places=self.places.text(),
+            context=self._context(interaction, campaign, entity),
         )
+
+    @staticmethod
+    def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
+        """The sentence around this name in the DM's text, while it is still held (#2561)."""
+        held = getattr(interaction.client, "lore_context", None)
+        return held.get(campaign.guild_id, entity.id) if held is not None else ""
 
     async def _places(
         self,
