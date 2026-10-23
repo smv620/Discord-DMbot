@@ -28,7 +28,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
@@ -385,18 +385,45 @@ async def _shape(
     return found, joined, cut
 
 
+def line_name(line: str) -> str:
+    """The name a pass-1 name line is about: "- Mira Voss | person | ..." gives "Mira Voss"."""
+    return line.lstrip("-* ").split("|", 1)[0].strip()
+
+
+def line_ends(line: str) -> tuple[str, str] | None:
+    """The two ends of a pass-1 relationship line: "- A — works for — B | quote: ..." gives
+    ("A", "B"). None for a line that does not have that shape."""
+    parts = line.lstrip("-* ").split("|", 1)[0].split("—")
+    if len(parts) != 3:
+        return None
+    return parts[0].strip(), parts[2].strip()
+
+
 async def read_lore(
     read_ai: Any,
     shape_ai: Any,
     text: str,
     own: Mapping[str, str],
     gate: AbstractAsyncContextManager[Any],
+    *,
+    skip_name: Callable[[str], bool] | None = None,
+    skip_pair: Callable[[str, str], bool] | None = None,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
-    names, keeps what the campaign can hold and shows the DM every suggestion."""
+    names, keeps what the campaign can hold and shows the DM every suggestion.
+
+    `skip_name` and `skip_pair` say what the campaign already has (a name's spelling; two names
+    that are already connected): those lines are dropped before pass 2, so a second run of a
+    long background shapes only the rest instead of the same first slices again."""
     stats = Stats()
     started = time.monotonic()
     listed, cut = await read_list(read_ai, text, own, gate, stats)
+    if skip_name is not None:
+        listed.names = [n for n in listed.names if not skip_name(line_name(n))]
+    if skip_pair is not None:
+        listed.links = [
+            x for x in listed.links if not ((e := line_ends(x)) is not None and skip_pair(*e))
+        ]
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
     by = SHAPE_LINES
@@ -411,13 +438,16 @@ async def read_lore(
         asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats)) for a, b in slices
     ]
     left = max(0.0, LORE_TIME_LIMIT_S - (time.monotonic() - started))
-    if tasks:
-        _, pending = await asyncio.wait(tasks, timeout=left)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-            cut = True
+    pending: set[asyncio.Future[Any]] = set()
+    try:
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=left)
+    finally:  # also when the caller is cancelled: no shaping call is left running
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    cut = cut or bool(pending)
     for task in tasks:
         if task.cancelled():
             continue
