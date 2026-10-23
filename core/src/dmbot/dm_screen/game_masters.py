@@ -101,6 +101,7 @@ def _store(interaction: discord.Interaction) -> CampaignStore:
     return store
 
 
+LOOKUP_S = 1.5  # how long the card waits for Discord to name its game masters
 LEFT = "someone who left the server"
 UNREACHABLE = "a game master"  # Discord could not be asked: no claim either way (#2556)
 
@@ -118,13 +119,21 @@ async def _one_name(guild: discord.Guild, user_id: int) -> str:
 
 
 async def names_of(guild: discord.Guild | None, user_ids: Iterable[int]) -> dict[int, str]:
-    """Display names for the card, the cache first and then Discord, all at once. A game master
-    is called "someone who left the server" only when Discord answers that they did."""
+    """Display names for the card, the cache first and then Discord, all at once and within
+    `LOOKUP_S` in all (the button must answer inside Discord's three seconds). A game master is
+    called "someone who left the server" only when Discord answers that they did; a name that
+    does not come back in time, or fails for any other reason, is "a game master"."""
     ids = sorted(set(user_ids))
     if guild is None:
         return {uid: UNREACHABLE for uid in ids}
-    found = await asyncio.gather(*(_one_name(guild, uid) for uid in ids))
-    return dict(zip(ids, found, strict=True))
+    found = await asyncio.gather(
+        *(asyncio.wait_for(_one_name(guild, uid), LOOKUP_S) for uid in ids),
+        return_exceptions=True,
+    )
+    return {
+        uid: name if isinstance(name, str) else UNREACHABLE
+        for uid, name in zip(ids, found, strict=True)
+    }
 
 
 def card_text(campaign: Campaign, names: Mapping[int, str]) -> str:
@@ -348,6 +357,7 @@ class RemovePicker(discord.ui.View):
     def __init__(self, campaign: Campaign, names: Mapping[int, str]) -> None:
         super().__init__(timeout=10 * 60)
         self.campaign_id = campaign.id
+        self.names = dict(names)  # the ones the list was built with, reused when one is picked
         options = [
             discord.SelectOption(
                 label=(
@@ -375,19 +385,18 @@ class RemovePicker(discord.ui.View):
         found = await _a_dm(interaction, self.campaign_id)
         if found is None:
             return
-        campaign, guild = found
+        campaign, _guild = found
         user_id = int(self.pick.values[0])
         if user_id not in campaign.dm_user_ids:
             await _say(interaction, GONE_FROM_LIST)
             return
         if user_id == campaign.owner_user_id:
-            names = await names_of(guild, [user_id])
-            await _say(interaction, plan_holder_words(user_id, interaction.user.id, names))
+            await _say(interaction, plan_holder_words(user_id, interaction.user.id, self.names))
             return
         if len(campaign.dm_user_ids) <= 1:
             await _say(interaction, LAST_ONE)
             return
-        name = (await names_of(guild, [user_id]))[user_id]
+        name = self.names.get(user_id, UNREACHABLE)
         text = CONFIRM_SELF if user_id == interaction.user.id else CONFIRM.format(name=md(name))
         self.stop()
         await interaction.response.edit_message(
@@ -427,9 +436,7 @@ class ConfirmRemove(discord.ui.View):
             changed = await _store(interaction).remove_dm(guild.id, campaign.id, self.user_id)
         except CampaignError as exc:
             text = (
-                plan_holder_words(
-                    self.user_id, interaction.user.id, await names_of(guild, [self.user_id])
-                )
+                plan_holder_words(self.user_id, interaction.user.id, {self.user_id: self.name})
                 if str(exc) == OWNER_STAYS
                 else str(exc)  # (the last game master, or a campaign that is gone)
             )

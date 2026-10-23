@@ -99,7 +99,8 @@ class DeleteButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:delcampaign:{_ID}",
 ):
-    """🗑 Delete this campaign: the warning, for the plan holder only."""
+    """🗑 Delete this campaign: the warning, for whoever may delete it (the owner, or any game
+    master when the campaign has no owner)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -232,7 +233,7 @@ async def delete_now(interaction: discord.Interaction, campaign_id: str, typed: 
             await _tell(interaction, FAILED)
             return False
     with log_context(guild_id=guild.id, campaign_id=campaign.id):
-        log.info("A campaign was deleted by its plan holder")
+        log.info("A campaign was deleted by a game master")
     # After the delete went through, from the row as it was before it (the channel ids went
     # with the row). The campaign is gone either way: a failure here only leaves a channel.
     try:

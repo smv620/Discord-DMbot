@@ -6,11 +6,13 @@ the DM screen's access re-applied, and a running table's DM set following at onc
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import discord
 
 from dmbot.audio.segmenter import Segmenter
@@ -409,6 +411,36 @@ class Names(unittest.IsolatedAsyncioTestCase):
         fetch = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=500), "down"))
         names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5])
         self.assertEqual(names, {5: "a game master"})
+
+    async def test_a_lookup_that_never_answers_gives_a_game_master_within_the_limit(self) -> None:
+        async def hangs(uid: int) -> Any:
+            await asyncio.Event().wait()
+
+        started = time.monotonic()
+        with patch.object(gm, "LOOKUP_S", 0.05):
+            names = await gm.names_of(self.guild(cached={}, fetch=hangs), [5])
+        self.assertEqual(names, {5: "a game master"})
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    async def test_a_network_error_is_a_game_master_not_a_failed_card(self) -> None:
+        fetch = AsyncMock(side_effect=aiohttp.ClientError("reset"))
+        self.assertEqual(
+            await gm.names_of(self.guild(cached={}, fetch=fetch), [5]), {5: "a game master"}
+        )
+        fetch = AsyncMock(side_effect=TimeoutError())
+        self.assertEqual(
+            await gm.names_of(self.guild(cached={}, fetch=fetch), [5]), {5: "a game master"}
+        )
+
+    async def test_one_slow_name_does_not_cost_the_others(self) -> None:
+        async def fetch(uid: int) -> Any:
+            if uid == 6:
+                await asyncio.Event().wait()
+            return SimpleNamespace(display_name=f"DM{uid}")
+
+        with patch.object(gm, "LOOKUP_S", 0.05):
+            names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5, 6])
+        self.assertEqual(names, {5: "DM5", 6: "a game master"})
 
     async def test_no_server_at_all_is_a_game_master_too(self) -> None:
         self.assertEqual(await gm.names_of(None, [5]), {5: "a game master"})
