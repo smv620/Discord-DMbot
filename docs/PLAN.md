@@ -1146,6 +1146,21 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
   the owner's legal review found that acceptable (2026-10-08). The warning still stays
   short and one-time, and the menu button is on every reminder.
+- **Off the record** (owner question, decided by Supervisor 2026-10-23, #2466): a person can step off
+  the record for a while without stopping. **A button is the main way.** **⏸️ Pause recording me** in the
+  🗂️ Menu (and on the per-session reminder) takes 5 minutes, 15 minutes, or until ▶️ Resume. It needs no
+  warning because it ends by itself, and it always ends with the listening session. A paused person is
+  off ears' allowlist, exactly like someone who never agreed: nothing of theirs is captured, decoded,
+  transcribed or stored, and core re-checks the pause after every async step as it does consent. The
+  DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
+  minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
+  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
+  DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
+  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
+  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
+  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
+  the pause stays on the record.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
