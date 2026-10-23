@@ -52,6 +52,7 @@ function fileFor(url) {
   }
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
   if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
+  if (/^\/account\/timeline\/[^/]+$/.test(path)) path = "/account/timeline";
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
@@ -178,6 +179,8 @@ const pages = [
     await page.getByRole("button", { name: /Check what will be kept/ }).click();
     await page.getByText(/^Checked:/).first().waitFor();
   }],
+  ["shared rules: what a campaign shares and uses", "/account/sharing?demo=table"],
+  ["timeline: sessions with recaps and reveals", "/account/timeline/100.cmp1?demo=table"],
   ["names: the list", "/account/names/100.cmp1?demo=table"],
   ["names: a name open to change", "/account/names/100.cmp1?demo=table", async (page) => {
     // The longest name's row, so a long unbroken name is measured; open its editor, search for a
@@ -188,6 +191,13 @@ const pages = [
     await page.getByRole("radio").first().waitFor();
     await page.getByRole("button", { name: "Remove this name" }).click();
     await page.getByRole("button", { name: "Yes, remove it" }).waitFor();
+  }],
+  ["names: two ticked, and which to keep", "/account/names/100.cmp1?demo=table", async (page) => {
+    // Two names of different kinds, so the question, its warning and the confirmation are all there.
+    await page.getByLabel("Select Mira Voss").check();
+    await page.getByLabel("Select Brynwater Crossing").check();
+    await page.getByRole("button", { name: /Merge selected/ }).click();
+    await page.getByRole("button", { name: "Yes, merge them" }).waitFor();
   }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
