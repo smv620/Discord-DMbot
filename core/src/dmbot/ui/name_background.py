@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -345,7 +346,15 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(read_ai, ai, self.upload.text, own, AI_AT_ONCE)
+            read = await lore_read.read_lore(
+                read_ai,
+                ai,
+                self.upload.text,
+                own,
+                AI_AT_ONCE,
+                skip_name=lambda name: name_key(name) in known,
+                skip_pair=await connected_pairs(memory, campaign),
+            )
             found = bg.merge(
                 [read.names],
                 known,
@@ -536,6 +545,27 @@ async def queue_links(
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
     return int(await store.add(campaign.guild_id, campaign.id, rows)) if rows else 0
+
+
+async def connected_pairs(memory: MemoryStore, campaign: Campaign) -> Callable[[str, str], bool]:
+    """Whether two names of the campaign are already connected (by any connection, either way
+    round): a second run of the same background leaves those lines out before they are shaped, so
+    it reaches the part the first run did not (#2453)."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    have = {
+        frozenset((r.subject_id, r.object_id))
+        for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+    }
+
+    def entry(name: str) -> str | None:
+        ids = {e.entity_id for e in lookup.by_key.get(name_key(name), ()) if not e.person}
+        return next(iter(ids)) if len(ids) == 1 else None
+
+    def connected(a: str, b: str) -> bool:
+        x, y = entry(a), entry(b)
+        return x is not None and y is not None and frozenset((x, y)) in have
+
+    return connected
 
 
 async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:

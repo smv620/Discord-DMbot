@@ -279,6 +279,37 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(done.cut)
         self.assertGreaterEqual(len(done.names), 1)  # the first slice was kept, not thrown away
 
+    async def test_a_second_run_shapes_only_what_the_campaign_does_not_have_yet(self) -> None:
+        """#2453: names and connections the first run stored are dropped before pass 2, so a long
+        background's second run reaches the rest instead of the same first slices."""
+        fake = ai([Reply(LIST, False)])
+        have = {"brother aldric", "greyfen abbey"}
+        done = await lr.read_lore(
+            fake,
+            fake,
+            TEXT,
+            {},
+            Gate(),
+            skip_name=lambda name: name.casefold() in have,
+            skip_pair=lambda a, b: {a, b} == {"Brother Aldric", "Greyfen Abbey"},
+        )
+        shaped = [c.args[1] for c in fake.complete.await_args_list if c.kwargs.get("schema")]
+        seen = "\n".join(shaped)
+        self.assertNotIn("- Brother Aldric |", seen)
+        self.assertNotIn("- Greyfen Abbey |", seen)
+        self.assertNotIn("Brother Aldric — leads — Greyfen Abbey", seen)
+        self.assertEqual({n.name for n in done.names}, {"Ashen Hand", "Mira"})
+        # (the fake answers a link by its first end alone; what matters is what it was given)
+        self.assertIn(("Mira", "Brother Aldric"), {(c.a, c.b) for c in done.links})
+
+    def test_the_two_ends_and_the_name_are_read_from_a_list_line(self) -> None:
+        self.assertEqual(lr.line_name('- Mira | person | quote: "x"'), "Mira")
+        self.assertEqual(
+            lr.line_ends('- Mira — is related to (niece of) — Brother Aldric | quote: "x"'),
+            ("Mira", "Brother Aldric"),
+        )
+        self.assertIsNone(lr.line_ends("- not a link line"))
+
     async def test_a_catch_all_label_that_is_not_in_the_quote_is_dropped(self) -> None:
         rows = [
             {**LINK_ROWS[1], "words": "secretly bribes the guild"},
