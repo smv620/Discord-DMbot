@@ -8,8 +8,10 @@ picture.
 
 Per campaign and isolated (CLAUDE.md: campaign isolation); deleted with the campaign; in its backup
 (`MapNotesSection`); and deleted with the poster's lines when they delete their own words
-(`TranscriptStore.delete_person_lines`), because they are that person's picture put into words. A
-campaign keeps at most `KEEP` notes: the oldest goes when another is saved.
+(`TranscriptStore.delete_person`), because they are that person's picture put into words. A
+campaign keeps at most `KEEP` notes: the oldest goes when another is saved. Stopping being
+recorded does not delete them, as it does not delete transcript lines; a backup taken earlier still
+holds them, with the poster's Discord id, like the transcripts in it.
 """
 
 from __future__ import annotations
@@ -53,10 +55,6 @@ class MapNote:
     places: tuple[Place, ...]
 
 
-def _places_json(places: tuple[Place, ...]) -> str:
-    return json.dumps([{"name": p.name, "where": p.where} for p in places])
-
-
 class MapNoteStore:
     """A campaign's map descriptions."""
 
@@ -69,7 +67,21 @@ class MapNoteStore:
         The oldest note goes when the campaign is over `KEEP`. One transaction."""
         if read.kind != "map" or not (read.places or read.layout):
             return False
+        # The same rules a backup is checked by, so what is kept can always be restored.
+        alt = read.alt.strip() or "A map."
+        places = [
+            {"name": p.name.strip()[:PLACE_NAME_MAX], "where": p.where[:PLACE_WHERE_MAX]}
+            for p in read.places[:PLACES_MAX]
+            if p.name.strip()
+        ]
+        if not places and not read.layout.strip():
+            return False
         async with self._db.guild(guild_id) as conn:
+            # One add at a time per campaign, so the cap below is exact.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"map_notes:{guild_id}:{campaign_id}",),
+            )
             await conn.execute(
                 "INSERT INTO map_notes (guild_id, campaign_id, user_id, made_at, alt, layout,"
                 " places) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
@@ -78,9 +90,9 @@ class MapNoteStore:
                     campaign_id,
                     user_id,
                     int(self._clock()),
-                    read.alt,
-                    read.layout,
-                    _places_json(read.places),
+                    alt[:ALT_MAX],
+                    read.layout[:LAYOUT_MAX],
+                    json.dumps(places),
                 ),
             )
             await conn.execute(
@@ -193,6 +205,8 @@ class MapNotesSection:
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        # Either the rows `check` already returned (the store checks in a worker thread before
+        # the transaction opens), or a raw list, checked here.
         checked = (
             rows
             if isinstance(rows, list) and rows and all(isinstance(r, _Checked) for r in rows)

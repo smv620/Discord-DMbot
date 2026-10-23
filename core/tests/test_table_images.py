@@ -111,6 +111,26 @@ class TableImages(chat.AtTheTableTyped):
         self.assertTrue(line.text.startswith("a map: "))  # the transcript says it is a map
         self.assertNotIn("Harrowmere", line.text)  # and carries no more than the short description
 
+    async def test_a_poster_who_stops_after_the_reading_but_before_the_write_leaves_no_note(
+        self,
+    ) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        desk = self.make_desk(vision=MapVision())
+        self.bot.image_desk = desk
+        agreed = {"yes": True}
+        real_describe = desk.describe
+
+        async def describe_then_stop(*args: Any) -> Any:
+            got = await real_describe(*args)
+            agreed["yes"] = False  # they pressed Stop as the reading finished
+            return got
+
+        desk.describe = describe_then_stop  # type: ignore[method-assign,assignment]
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+        self.assertEqual(self.lines(), [])
+
     async def test_a_picture_that_is_not_a_map_keeps_no_map_note(self) -> None:
         self.bot.map_notes = MapNoteStore(self.db)
         await self.hear(picture())

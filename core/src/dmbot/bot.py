@@ -5274,12 +5274,19 @@ class DMBot(commands.AutoShardedBot):
         if not still_ok():
             return
         if self.map_notes is not None:
-            for read in reads:
-                if read is not None and read.kind == images.MAP:
+            # Under the save lock, as "delete my past transcripts" takes it, and with the consent
+            # asked once more right before, so a note can't be written after its poster deleted.
+            async with table.save_lock:
+                for read in reads:
+                    if read is None or read.kind != images.MAP or not still_ok():
+                        continue
                     try:
                         await self.map_notes.add(gid, cid, user_id, read)
-                    except Exception:  # the transcript line matters more than the note
-                        log.exception("Table image: couldn't keep a map's description")
+                    except Exception as exc:  # the transcript line matters more than the note
+                        log.warning(
+                            "Table image: couldn't keep a map's description (%s)",
+                            type(exc).__name__,
+                        )
         for n, read in enumerate(reads):
             self._deliver_typed(
                 table,

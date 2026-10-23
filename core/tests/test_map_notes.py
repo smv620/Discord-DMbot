@@ -93,6 +93,50 @@ class Kept(DatabaseTest):
         self.assertIn("Theirs", left.alt)
         self.assertEqual(len(await self.store.notes(GUILD_B, self.far.id)), 1)  # another server
 
+    async def test_edge_values_are_kept_in_a_form_a_backup_can_restore(self) -> None:
+        odd = Read(
+            images.MAP,
+            "   ",  # the AI said nothing useful for the short description
+            "",
+            (Place("  ", "nowhere"), Place("Harrowmere", ""), Place("Old Mill", "x" * 5000)),
+            "",
+        )
+        self.assertTrue(await self.store.add(GUILD_A, self.one.id, ME, odd))
+        backup = await self.campaigns.export(GUILD_A, self.one.id)
+        await self.campaigns.delete(GUILD_A, self.one.id)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        [note] = await self.store.notes(GUILD_B, restored.id)
+        self.assertEqual(note.alt, "A map.")
+        self.assertEqual([p.name for p in note.places], ["Harrowmere", "Old Mill"])
+
+    async def test_a_map_with_only_blank_places_and_no_layout_is_not_kept(self) -> None:
+        blank = Read(images.MAP, "A map.", "", (Place("  ", "x"),), "  ")
+        self.assertFalse(await self.store.add(GUILD_A, self.one.id, ME, blank))
+
+    async def test_adds_at_once_keep_the_cap_exact(self) -> None:
+        import asyncio
+
+        await asyncio.gather(
+            *(self.store.add(GUILD_A, self.one.id, ME, a_map(f"T{n}")) for n in range(KEEP + 6))
+        )
+        self.assertEqual(len(await self.store.notes(GUILD_A, self.one.id)), KEEP)
+
+    async def test_one_poster_and_one_message_can_keep_several_maps(self) -> None:
+        for name in ("Alpha", "Beta", "Gamma"):
+            await self.store.add(GUILD_A, self.one.id, ME, a_map(name))
+        self.assertEqual(len(await self.store.notes(GUILD_A, self.one.id)), 3)
+
+    async def test_a_hostile_backup_section_is_refused_and_nothing_is_written(self) -> None:
+        backup = await self.campaigns.export(GUILD_A, self.one.id)
+        backup = copy.deepcopy(backup)
+        sections = backup.get("sections", backup)
+        sections["map_notes"] = [{"by": "0", "at": 1, "alt": "x", "layout": "", "places": []}]
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_B, backup, DM)
+        async with self.db.guild(GUILD_B) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM map_notes")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
     async def test_they_travel_in_a_backup(self) -> None:
         await self.store.add(GUILD_A, self.one.id, ME, a_map("Alpha"))
         await self.store.add(GUILD_A, self.one.id, FRIEND, a_map("Beta"))
