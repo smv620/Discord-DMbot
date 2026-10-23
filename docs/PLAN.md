@@ -1868,6 +1868,15 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+
+  *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
+  all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
+  letters (spaces, hyphens and a leading the/a/an ignored), a letter or two apart (one up to 8 letters, two
+  beyond; never below 5 letters, never when a number or a one-letter last word differs, the linker's rule),
+  sound alike (names of 5 letters or more), or one inside the other as whole words ("Belleros" and
+  "Belleros the Elder"). "Not the same" is kept per pair in `name_not_same` (the DM's alone, not in backups,
+  gone with either name). 🔗 Merge several… sits on the Same as… screen, because the card's rows are full. The
+  website's door is the all-names action `merge-many {others[]}` on the kept name.
 - **The recap posting clock** (#2435, migration 0184). A recap job records `posting_since` (whole Unix seconds),
   `posting_step` (`check`, `post`, or `audio` while narration is made) and `posted_url` (the first message's
   Discord link). A database trigger starts the clock at `check` when the status becomes `posting` and stops
