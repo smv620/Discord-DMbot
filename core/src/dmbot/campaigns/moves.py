@@ -18,8 +18,8 @@ importance:
   belong to the voices that were recorded. Channels do not carry over; the new owner picks them
   with `/dmbot start`.
 - **Not yet:** a campaign that published a shared rule set is not moved (the set's rows are keyed
-  to the old server and other tables follow it). The offer opens again with that reason, until the
-  set can travel too.
+  to the old server and other tables follow it, and stopping the sharing would strand them). The
+  offer opens again with that reason, until the set can travel too with its followers kept.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ LEASE_S = 600  # a move that did not finish in this long is taken up again
 Result = Literal["moved", "reopened", "skipped"]
 
 SHARES_RULES = (
-    "This campaign shares a set of house rules with other tables, and a shared set can't move "
-    "between servers yet. Stop sharing it first, then offer the campaign again."
+    "This campaign shares a rule set, so it can't move to another server yet. It can still be "
+    "handed over on this server."
 )
 CHANGED_HANDS = "The campaign changed hands while the move was waiting."
 COPY_FAILED = "DMbot couldn't make a complete copy in the other server."
