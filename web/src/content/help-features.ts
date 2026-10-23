@@ -28,6 +28,11 @@ export const featureSteps: FeatureStep[] = [
     text: "On My Account, each campaign is a card. Tap its name to open its page. 🟢 Listening now means a session is running. The card also says your part: You run it, You help run it or You play in it. It shows sessions, hours, players, NPCs and when it started and was last played. Anything DMbot doesn't know yet is left out.",
   },
   {
+    audience: "account",
+    whatsNew: "Use more than one Discord account",
+    text: "On My Account, Your Discord accounts shows every Discord account that belongs to your DMbot account. To add one, sign in with it; you never type a number. Your plan and campaigns then work from any of them. You can remove one whenever you like, except the one you're using now and your last. Each Discord account decides for itself whether it is recorded. A Discord account that runs its own campaigns or has its own plan can't be added until those are handed over.",
+  },
+  {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
     text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
