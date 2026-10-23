@@ -542,7 +542,11 @@ async def decide(
             cur = await conn.execute(
                 "UPDATE recap_jobs SET status = 'posting' "
                 + where
-                + " AND state = 'ready' AND status = 'draft'",
+                + " AND state = 'ready' AND status = 'draft'"
+                # Only the text the DM approved: an edit between the read above and this statement
+                # (or since the approval) posts nothing. The page's role may read the hash.
+                + " AND approved_hash = encode(sha256(convert_to(title || E'\\n' || summary,"
+                " 'UTF8')), 'hex')",
                 args,
             )
         elif action == "drop":
