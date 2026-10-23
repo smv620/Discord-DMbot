@@ -114,13 +114,14 @@ class PlotStore:
         calls: int,
     ) -> int:
         """Write the findings and mark the check done, in one step, but only if the recap's text is
-        still the one that was checked (an edit meanwhile makes the answer about old words).
+        still the one that was checked (an edit meanwhile makes the answer about old words) and the
+        recap is still a draft (one just approved or posted is not written onto).
         Returns how many issues were written."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                f" AND session_at = %s AND {_HASH} = %s",
+                f" AND session_at = %s AND status = 'draft' AND {_HASH} = %s",
                 (guild_id, campaign_id, session_at, digest),
             )
             same = await cur.fetchone() is not None
@@ -204,7 +205,8 @@ class PlotRunner:
             earlier = [
                 pc.Earlier(a.session_at, a.title, a.summary)
                 for a in reversed(await self._accepted.newest(guild_id, campaign_id))
-                if a.session_at != session_at
+                if a.session_at
+                < session_at  # only what came before: a later session is not history
             ]
             if not sentences or not earlier or self._ai is None:
                 # Nothing to compare with (or no AI): checked, nothing found; no call is made.

@@ -214,3 +214,25 @@ class Running(PlotBase):
             await self.runner(Hangs()).round(THURSDAY.id)
         [check] = await self.rows("plot_checks")
         self.assertEqual(check["state"], "failed")
+
+    async def test_only_recaps_before_this_one_are_history(self) -> None:
+        await self.earlier(at=50)
+        await self.earlier("Ulfgar rose again in a later session.", at=500)  # after session 100
+        ai = Ai()
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertIn("fell in the vault", ai.sent)
+        self.assertNotIn("rose again", ai.sent)
+
+    async def test_nothing_is_written_onto_a_recap_that_was_just_approved(self) -> None:
+        await self.earlier()
+        digest = await self.hash_of()
+        await self.plots.begin(THURSDAY.id, self.one.id, 100, digest)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting' WHERE campaign_id = %s", (self.one.id,)
+            )
+        parsed = parse(Ai(self.finding()).reply, self.sentences(), [Earlier(50, "T", FELL)]) or []
+        self.assertEqual(
+            await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1), 0
+        )
+        self.assertEqual(await self.rows("plot_issues"), [])
