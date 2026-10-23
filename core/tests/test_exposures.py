@@ -223,7 +223,8 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
             {"campaign_id": None},
         ):
             bot = self.bot([line(PLAYER, "Auril Mira Rook")])
-            await DMBot.record_exposures(bot, SimpleNamespace(**{**vars(table), **change}))
+            stand_in: Any = SimpleNamespace(**{**vars(table), **change})
+            await DMBot.record_exposures(bot, stand_in)
             bot.exposures.record.assert_not_awaited()
         bot = self.bot([line(PLAYER, "Auril")])
         with (
