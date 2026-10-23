@@ -19,6 +19,7 @@ from tests.test_table_chat import EXTRA, VOICE, message
 from tests.test_timebot import DM, GUILD_A, GUILD_B, NOON4, PLAYER, Clocks
 
 PNG = Image("image/png", b"\x89PNG\r\n\x1a\nxx")
+BOT_ID = 9001
 LINK = "https://cdn.discordapp.com/attachments/1/2/map.png"
 
 
@@ -255,7 +256,7 @@ class TableImages(chat.AtTheTableTyped):
         """The chat's replies are caught here instead of sent."""
         self.live.transcript_session_id = "a" * 32
         said = AsyncMock(return_value=object())
-        self.bot.post_message = said  # type: ignore[method-assign]
+        self.bot._post_reply = said  # type: ignore[method-assign]
         return said
 
     def reads(self, kind: str) -> None:
@@ -264,11 +265,12 @@ class TableImages(chat.AtTheTableTyped):
     async def test_a_picture_of_text_is_answered_in_the_chat_it_was_posted_in(self) -> None:
         said = self.say_into()
         self.reads("text")
-        await self.hear(picture(channel=EXTRA))
+        msg = picture(channel=EXTRA)
+        await self.hear(msg)
         said.assert_awaited_once()
         assert said.await_args is not None
-        channel, text, view = said.await_args.args
-        self.assertEqual(channel, EXTRA)
+        channel, to_message, text, view = said.await_args.args
+        self.assertEqual((channel, to_message), (EXTRA, msg.id))  # a reply to the picture
         self.assertEqual(text, "Text in this image:\n> The key is under the stone.")
         [button] = view.children
         [line] = self.lines()
@@ -282,7 +284,7 @@ class TableImages(chat.AtTheTableTyped):
         self.reads("text")
         msg = picture(channel=EXTRA)
         await self.hear(msg)
-        payload = SimpleNamespace(message_id=msg.id, guild_id=GUILD_A)
+        payload = SimpleNamespace(message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA)
         await self.bot.on_raw_message_delete(cast(Any, payload))
         reply.delete.assert_awaited_once()
         await self.bot.on_raw_message_delete(
@@ -299,7 +301,12 @@ class TableImages(chat.AtTheTableTyped):
         await self.hear(first)
         await self.hear(second)
         await self.bot.on_raw_bulk_message_delete(
-            cast(Any, SimpleNamespace(message_ids={first.id, second.id}, guild_id=GUILD_A))
+            cast(
+                Any,
+                SimpleNamespace(
+                    message_ids={first.id, second.id}, guild_id=GUILD_A, channel_id=EXTRA
+                ),
+            )
         )
         self.assertEqual(reply.delete.await_count, 2)
 
@@ -333,7 +340,7 @@ class TableImages(chat.AtTheTableTyped):
         msg = picture(channel=EXTRA)
         await self.hear(msg)
         await self.bot.on_raw_message_delete(
-            cast(Any, SimpleNamespace(message_id=msg.id, guild_id=GUILD_A))
+            cast(Any, SimpleNamespace(message_id=msg.id, guild_id=GUILD_A, channel_id=EXTRA))
         )
         reply.delete.assert_awaited_once()  # (and nothing raised)
 
@@ -362,6 +369,153 @@ class TableImages(chat.AtTheTableTyped):
         self.bot.consent.has_consent = lambda guild_id, user_id: user_id != PLAYER  # type: ignore[method-assign]
         await self.hear(picture(author=PLAYER))
         said.assert_not_awaited()
+
+    # ---- a deleted picture takes its reply back even after a restart (#2522) ----
+
+    def chat_of(self, found: list[Any], *, voice: bool = True, channel_id: int = VOICE) -> Any:
+        """A channel whose messages after the picture are `found`; the reads are counted."""
+        import discord
+
+        scans: list[dict[str, Any]] = []
+
+        def history(this: Any, **kw: Any) -> Any:
+            scans.append(kw)
+
+            async def walk() -> Any:
+                for item in found:
+                    yield item
+
+            return walk()
+
+        base: type = discord.VoiceChannel if voice else discord.abc.Messageable
+        chat: Any = object.__new__(type("Chat", (base,), {"history": history}))
+        chat.id = channel_id
+        chat.scans = scans
+        return chat
+
+    def in_channel(self, chat: Any) -> None:
+        """DMbot sees this channel, and has a user of its own (the test bot never logged in)."""
+        cast(Any, self.bot).get_channel = lambda _id: chat
+        patcher = patch.object(type(self.bot), "user", SimpleNamespace(id=BOT_ID))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def mine(self, reference: int | None, *, author: int | None = None) -> Any:
+        ref = None if reference is None else SimpleNamespace(message_id=reference)
+        me = BOT_ID if author is None else author
+        return SimpleNamespace(author=SimpleNamespace(id=me), reference=ref, delete=AsyncMock())
+
+    async def delete_after_restart(self, chat: Any, picture_id: int = 500) -> None:
+        self.bot._image_replies.clear()  # (a restart: nothing is remembered)
+        self.in_channel(chat)
+        await self.bot.on_raw_message_delete(
+            cast(
+                Any,
+                SimpleNamespace(message_id=picture_id, guild_id=GUILD_A, channel_id=chat.id),
+            )
+        )
+
+    async def test_after_a_restart_a_delete_still_removes_the_reply_that_references_it(
+        self,
+    ) -> None:
+        ours = self.mine(500)
+        theirs = self.mine(500, author=999)  # a person's reply to the same picture
+        other_bot = self.mine(500, author=998)
+        elsewhere = self.mine(501)  # ours, but to another message
+        plain = self.mine(None)  # ours, not a reply
+        chat = self.chat_of([theirs, other_bot, elsewhere, plain, ours])
+        await self.delete_after_restart(chat)
+        ours.delete.assert_awaited_once()
+        for untouched in (theirs, other_bot, elsewhere, plain):
+            untouched.delete.assert_not_awaited()  # only DMbot's own reply to it is touched
+        self.assertEqual(chat.scans[0]["limit"], 50)  # a short stretch after the picture
+
+    async def test_past_the_cap_a_delete_still_removes_the_reply(self) -> None:
+        from dmbot import bot as bot_module
+
+        for n in range(bot_module.IMAGE_REPLIES_KEPT + 1):
+            self.bot._image_replies[1000 + n] = [self.mine(1000 + n)]
+        # (the newest are kept, so the very first picture's reply is no longer remembered)
+        self.bot._image_replies.pop(1000, None)
+        ours = self.mine(1000)
+        chat = self.chat_of([ours])
+        self.in_channel(chat)
+        await self.bot.on_raw_message_delete(
+            cast(Any, SimpleNamespace(message_id=1000, guild_id=GUILD_A, channel_id=chat.id))
+        )
+        ours.delete.assert_awaited_once()
+
+    async def test_a_purge_reads_the_chat_once_for_all_of_them(self) -> None:
+        a, b, c = self.mine(600), self.mine(601), self.mine(777)
+        chat = self.chat_of([a, c, b])
+        self.bot._image_replies.clear()
+        self.in_channel(chat)
+        await self.bot.on_raw_bulk_message_delete(
+            cast(
+                Any,
+                SimpleNamespace(message_ids={600, 601}, guild_id=GUILD_A, channel_id=chat.id),
+            )
+        )
+        self.assertEqual(len(chat.scans), 1)
+        a.delete.assert_awaited_once()
+        b.delete.assert_awaited_once()
+        c.delete.assert_not_awaited()
+
+    async def test_a_remembered_reply_needs_no_reading_of_the_chat(self) -> None:
+        ours = self.mine(500)
+        self.bot._image_replies[500] = [ours]
+        chat = self.chat_of([])
+        self.in_channel(chat)
+        await self.bot.on_raw_message_delete(
+            cast(Any, SimpleNamespace(message_id=500, guild_id=GUILD_A, channel_id=chat.id))
+        )
+        ours.delete.assert_awaited_once()
+        self.assertEqual(chat.scans, [])
+
+    async def test_a_channel_that_is_not_read_as_table_chat_is_never_read(self) -> None:
+        chat = self.chat_of([self.mine(500)], voice=False, channel_id=424242)
+        await self.delete_after_restart(chat)
+        self.assertEqual(chat.scans, [])  # (not a voice channel, nor any campaign's extra chat)
+
+    async def test_the_extra_table_chat_channel_is_read(self) -> None:
+        ours = self.mine(500)
+        chat = self.chat_of([ours], voice=False, channel_id=EXTRA)
+        await self.a_campaign_reads(EXTRA)
+        await self.delete_after_restart(chat)
+        ours.delete.assert_awaited_once()
+
+    async def a_campaign_reads(self, channel_id: int) -> None:
+        self.bot.campaigns.table_chat_channel_ids = AsyncMock(  # type: ignore[method-assign]
+            return_value=frozenset({channel_id})
+        )
+
+    async def test_reading_the_chat_for_replies_is_limited_per_minute(self) -> None:
+        from dmbot import bot as bot_module
+
+        chat = self.chat_of([])
+        for n in range(bot_module.REPLY_SCANS_PER_MINUTE + 5):
+            await self.delete_after_restart(chat, picture_id=700 + n)
+        self.assertEqual(len(chat.scans), bot_module.REPLY_SCANS_PER_MINUTE)
+
+    async def test_the_reply_is_sent_as_a_reply_that_still_posts_if_the_picture_is_gone(
+        self,
+    ) -> None:
+        import discord
+
+        sent: list[dict[str, Any]] = []
+
+        class Chat(discord.abc.Messageable):
+            async def _get_channel(self) -> Any:
+                return self
+
+            async def send(self, text: str, **kw: Any) -> Any:  # type: ignore[override]
+                sent.append(kw)
+                return SimpleNamespace()
+
+        cast(Any, self.bot).get_channel = lambda _id: Chat()
+        await self.bot._post_reply(EXTRA, 500, "words", cast(Any, SimpleNamespace()))
+        ref = sent[0]["reference"]
+        self.assertEqual((ref.message_id, ref.fail_if_not_exists), (500, False))
 
 
 class TheDay(Clocks):
