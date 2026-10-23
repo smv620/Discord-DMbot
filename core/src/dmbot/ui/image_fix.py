@@ -36,7 +36,10 @@ NOT_HERE = "I can't do that here. Try it in your campaign's server."
 NOT_TEXT = "That line has no words to fix."
 STOPPED = "That player turned off picture reading, so nothing was changed."
 # (the same words for anyone, so a refusal never tells a player that a secret name exists)
-SECRET = "I can't put that in the transcript, so nothing was changed. Try different words, or ask your DM."
+SECRET = (
+    "I can't put that in the transcript, so nothing was changed. "
+    "Try different words, or ask your DM."
+)
 SAME = "That is what it already says."
 CHANGED = "That line changed since you opened this. Press ✏️ Fix again."
 NOT_WRITTEN = "I couldn't save that. Try again in a moment."
