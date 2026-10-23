@@ -11552,6 +11552,38 @@ STORY_TIMELINE = """
 """
 
 
+SECRET_EXPOSURES = f"""
+    -- Secrets said or typed at the table, waiting for the DM to be told (#2410, docs/PLAN.md,
+    -- "Secrets said out loud are revealed too, and the DM can recant"). One row for each secret
+    -- name or secret connection found in a session's recorded table talk. Recorded and not
+    -- applied: nothing becomes known to the players here, and the summary that tells the DM
+    -- applies it later. Holds which secret and how often, never a line or who said it. A name is
+    -- kept as its spelling key, a connection as the connection's id. 'settled' once the DM
+    -- answered it another way. Transient state, so it is left out of backups.
+    CREATE TABLE secret_exposures (
+        {_memory_scope()}
+        id                 BIGSERIAL,
+        session_started_at BIGINT NOT NULL,
+        kind               TEXT NOT NULL CHECK (kind IN ('name', 'connection')),
+        spelling           TEXT CHECK (spelling IS NULL OR char_length(spelling) BETWEEN 1 AND 400),
+        relation_id        TEXT,
+        times              INTEGER NOT NULL CHECK (times > 0),
+        status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'settled')),
+        created_at         BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK ((kind = 'name' AND spelling IS NOT NULL AND relation_id IS NULL)
+            OR (kind = 'connection' AND relation_id IS NOT NULL AND spelling IS NULL)),
+        FOREIGN KEY (guild_id, campaign_id, relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX secret_exposures_name
+        ON secret_exposures (guild_id, campaign_id, session_started_at, spelling)
+        WHERE kind = 'name';
+    CREATE UNIQUE INDEX secret_exposures_connection
+        ON secret_exposures (guild_id, campaign_id, session_started_at, relation_id)
+        WHERE kind = 'connection';
+    """ + _isolate("secret_exposures")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11774,11 +11806,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
+    ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "secret_exposures",
     "merge_restores",
     "transcript_respells",
     "test_voice_consent",
