@@ -3153,7 +3153,7 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     and length caps (a description of at most 400 characters, a picture of text's words up to 1,500, at most 40
     places), the check that an attachment link is Discord's own file host over https (`cdn.discordapp.com`,
     `media.discordapp.net`, no look-alikes, no sign-in part), and the guarded fetch (`fetch(..., images=True)`:
-    pictures only, redirects kept to Discord's hosts) up to **5 MB, the most the AI service takes** (the plan said
+    pictures only, redirects kept to Discord's hosts) up to **3,932,160 bytes (about 3.75 MB): the AI service takes 5 MB once the image is base64-encoded, which adds a third** (the plan said
     about 10 MB; a larger image is refused in plain words and noted as not described), with the type taken from the file's first bytes
     and not from its name. `read` makes one fast call for the description; a map is read again by the careful
     model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript

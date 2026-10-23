@@ -7,6 +7,7 @@ import json
 import unittest
 from typing import Any
 
+from dmbot import fetch as fetching
 from dmbot import images
 from dmbot.ai import AIError, AIOutOfFunds, Image, Reply
 from dmbot.images import ImageError, Place, Read
@@ -133,9 +134,6 @@ class Describing(unittest.TestCase):
         assert got is not None
         self.assertEqual(got.alt, "Aletter with a seal.")
 
-    def test_the_size_limit_is_what_the_ai_service_takes(self) -> None:
-        self.assertEqual(images.MAX_BYTES, 5 * 1024 * 1024)
-
     def test_a_maps_places_are_kept_cleaned_and_capped(self) -> None:
         raw = json.dumps(
             {
@@ -246,3 +244,66 @@ class Reading(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Fetching(unittest.IsolatedAsyncioTestCase):
+    """`fetch_image` with the guarded fetch replaced: what it asks for and what it refuses."""
+
+    LINK = "https://cdn.discordapp.com/attachments/1/2/map.png"
+
+    def got(self, data: bytes) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(data=data)
+
+    async def test_a_picture_comes_back_with_its_type_from_its_bytes(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        with patch.object(fetching, "fetch", AsyncMock(return_value=self.got(PNG))) as f:
+            image = await images.fetch_image(self.LINK)
+        self.assertEqual((image.media_type, image.data), ("image/png", PNG))
+        assert f.await_args is not None
+        kwargs = f.await_args.kwargs
+        self.assertEqual(kwargs["max_bytes"], images.MAX_BYTES)
+        self.assertEqual(kwargs["stay_on"], images.CDN_HOSTS)
+        self.assertTrue(kwargs["images"])
+
+    async def test_bytes_that_are_not_a_picture_are_refused_whatever_the_host_said(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        with (
+            patch.object(fetching, "fetch", AsyncMock(return_value=self.got(b"<html>"))),
+            self.assertRaises(ImageError),
+        ):
+            await images.fetch_image(self.LINK)
+
+    async def test_a_link_the_fetch_refuses_is_an_image_error_without_the_link_in_it(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        failing = AsyncMock(side_effect=fetching.LinkError("secret-link-words"))
+        with patch.object(fetching, "fetch", failing), self.assertRaises(ImageError) as got:
+            await images.fetch_image(self.LINK + "?hm=token")
+        self.assertNotIn("token", str(got.exception))
+        self.assertNotIn("secret-link-words", str(got.exception))
+
+    async def test_a_link_to_anywhere_else_is_refused_before_any_fetch(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        fetch = AsyncMock(return_value=self.got(PNG))
+        with patch.object(fetching, "fetch", fetch):
+            for link in ("https://example.com/a.png", "http://cdn.discordapp.com/a.png", "x"):
+                with self.subTest(link), self.assertRaises(ImageError):
+                    await images.fetch_image(link)
+        fetch.assert_not_awaited()
+
+
+class TheSizeLimit(unittest.TestCase):
+    def test_an_image_at_the_cap_is_at_most_the_services_5_mb_once_encoded(self) -> None:
+        import base64
+
+        self.assertEqual(images.MAX_BYTES, 3_932_160)
+        encoded = base64.standard_b64encode(b"\0" * images.MAX_BYTES)
+        self.assertLessEqual(len(encoded), 5 * 1024 * 1024)
+        self.assertEqual(len(encoded), 5_242_880)
+        over = base64.standard_b64encode(b"\0" * (images.MAX_BYTES + 3))
+        self.assertGreater(len(over), 5 * 1024 * 1024)  # one step more would not fit

@@ -31,9 +31,12 @@ log = logging.getLogger(__name__)
 
 # Discord's own file hosts, and nothing else: a link in a message to anywhere else is never opened.
 CDN_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
-# The AI service takes an image up to 5 MB, so that is the most fetched: a larger one is refused
-# here, in plain words, and never reaches it as an error that looks like an outage.
-MAX_BYTES = 5 * 1024 * 1024
+# The AI service takes an image up to 5 MB *after* it is base64-encoded (4 bytes sent for every 3),
+# so the most fetched is three quarters of that: 3,932,160 bytes encode to exactly 5,242,880. A
+# larger one is refused here, in plain words, and never reaches the service as an error that looks
+# like an outage.
+ENCODED_MAX = 5 * 1024 * 1024
+MAX_BYTES = ENCODED_MAX // 4 * 3
 MAX_PER_MESSAGE = 4
 
 PICTURE, MAP, TEXT = "picture", "map", "text"
