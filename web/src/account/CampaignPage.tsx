@@ -105,6 +105,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   type Link = [href: string, label: string, note: string];
   const story: Link[] = [];
   if (isDm && RECAPS_LIVE) story.push([`/account/recaps?campaign=${e}`, words.pages.recaps, words.pageNotes.recaps]);
+  story.push([`/account/timeline/${e}`, words.pages.timeline, words.pageNotes.timeline]);
   story.push([`/account/web/${e}`, words.pages.graph, words.pageNotes.graph]);
   if (isDm) story.push([`/account/names/${e}`, words.pages.names, words.pageNotes.names]);
   const table: Link[] = [[`/account/transcripts/${e}`, words.pages.transcripts, words.pageNotes.transcripts]];

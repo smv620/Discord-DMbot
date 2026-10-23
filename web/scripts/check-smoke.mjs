@@ -43,6 +43,7 @@ function fileFor(url) {
   }
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
   if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
+  if (/^\/account\/timeline\/[^/]+$/.test(path)) path = "/account/timeline";
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
@@ -152,6 +153,13 @@ await visit("House rules: campaigns, a campaign's rules and its followed set", "
   });
   await step("the followed set", () => seen(page, "Red Table house rules, v4"));
   await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
+});
+
+await visit("Story timeline: sessions in order, with the recap and what came out", "/account/timeline/100.cmp1", async (page) => {
+  await page.getByRole("heading", { level: 1, name: "Story timeline" }).waitFor();
+  await step("session 1", () => seen(page, "Session 1"));
+  await step("its recap", () => seen(page, "The river crossing"));
+  await step("what came out at the table", () => seen(page, "Ferryman Odo, Hollow Mill"));
 });
 
 await visit("Shared rules: what a campaign shares and uses", "/account/sharing", async (page) => {

@@ -58,6 +58,7 @@ export const campaignPage = {
   },
   pageNotes: {
     recaps: "Read, edit and post session recaps.",
+    timeline: "Every session in order, with its recap and the names that came out.",
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
     transcripts: "Read and download what was said. Everyone in the server can read these.",

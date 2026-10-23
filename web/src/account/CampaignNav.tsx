@@ -16,6 +16,7 @@ export type CampaignGroup = "story" | "table" | "rules" | "settings";
 export type CampaignPageKey =
   | "campaign"
   | "recaps"
+  | "timeline"
   | "graph"
   | "names"
   | "transcripts"
@@ -26,6 +27,7 @@ export type CampaignPageKey =
 const GROUP_OF: Record<CampaignPageKey, CampaignGroup | null> = {
   campaign: null,
   recaps: "story",
+  timeline: "story",
   graph: "story",
   names: "story",
   transcripts: "table",

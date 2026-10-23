@@ -747,6 +747,24 @@ export interface SharedRulesCampaign {
   follows: FollowedRuleSet[];
 }
 
+/** One session on the Story timeline (#2462): its number, when it started and ended (Unix seconds),
+ * its recap if one is approved (a player sees posted ones only; `ref` is its page, for a game master
+ * only) and the names shown to the players at the table that session. */
+export interface TimelineSession {
+  number: number;
+  startedAt: number;
+  endedAt: number | null;
+  recap: { title: string; posted: boolean; ref: string | null } | null;
+  revealed: string[];
+}
+
+export interface Timeline {
+  ref: string;
+  name: string;
+  /** Oldest first. */
+  sessions: TimelineSession[];
+}
+
 /** A campaign with homebrew in one of the person's servers (#1525).
  * `ref` is `<server>.<campaign>`. */
 export interface HomebrewCampaign {
@@ -1203,6 +1221,9 @@ export interface AccountApi {
     number: number,
     version: TranscriptVersion,
   ): Promise<Blob>;
+  /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
+   * older API. */
+  timeline?(campaignRef: string): Promise<Timeline>;
   /** The campaigns with house rules in the person's servers, for anyone in them (#1521). Missing
    * from an API older than that. */
   houseRuleCampaigns?(): Promise<HouseRuleCampaign[]>;
@@ -1615,6 +1636,11 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    timeline: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/timeline`,
+      )) as Timeline,
     sharedRules: async () =>
       ((await call("GET", "/me/shared-rules")) as { campaigns: SharedRulesCampaign[] })
         .campaigns,
