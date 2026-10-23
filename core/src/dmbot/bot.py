@@ -528,6 +528,8 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+REPLY_SCANS_PER_MINUTE = 10  # reads of a chat to find a deleted picture's reply, per server
+REPLY_SCAN_LIMIT = 50  # messages after the picture that are read for it
 IMAGE_REPLIES_KEPT = 200  # pictures whose reply is remembered, so a delete can take it back
 DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
@@ -1431,6 +1433,8 @@ class DMBot(commands.AutoShardedBot):
         # the "Text in this image" replies by the picture's message, so deleting the picture takes
         # its words out of the chat too (#2450); the newest few, in memory only
         self._image_replies: dict[int, list[discord.Message]] = {}
+        self._reply_scans: dict[int, list[float]] = {}  # when each server's chat was last read
+        self._chat_channels: dict[int, tuple[float, frozenset[int]]] = {}
         self.map_notes: MapNoteStore | None = None  # set where the database is known (#2450)
         self.image_desk: ImageDesk | None = (
             ImageDesk(
@@ -5383,8 +5387,9 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_image_consent(table.guild_id, user_id)
         ):
             return
-        sent = await self.post_message(
+        sent = await self._post_reply(
             channel_id,
+            message_id,
             image_fix.reply_text(read.text),
             image_fix.fix_view(session_id, user_id, started_ms),
         )
@@ -5397,6 +5402,29 @@ class DMBot(commands.AutoShardedBot):
         while len(self._image_replies) > IMAGE_REPLIES_KEPT:  # the oldest picture's go first
             del self._image_replies[next(iter(self._image_replies))]
 
+    async def _post_reply(
+        self, channel_id: int, to_message_id: int, text: str, view: discord.ui.View
+    ) -> discord.Message | None:
+        """Answer a message with a Discord reply, so the answer carries a reference to it and a
+        delete can find it again after a restart (#2522). It still posts if that message is
+        already gone. None (and logged) if it could not be posted."""
+        channel = self.get_channel(channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            log.warning("Could not post to channel %s: channel not found", channel_id)
+            return None
+        try:
+            if not to_message_id:
+                return await channel.send(text, allowed_mentions=NO_PINGS, view=view)
+            reference = discord.MessageReference(
+                message_id=to_message_id, channel_id=channel_id, fail_if_not_exists=False
+            )
+            return await channel.send(
+                text, allowed_mentions=NO_PINGS, view=view, reference=reference
+            )
+        except discord.HTTPException as exc:
+            log.warning("Could not post to channel %s: %s", channel_id, exc)
+            return None
+
     async def _delete_reply(self, reply: discord.Message) -> None:
         """Take one of DMbot's own replies back. Never raises (it may be gone already)."""
         try:
@@ -5404,12 +5432,70 @@ class DMBot(commands.AutoShardedBot):
         except discord.HTTPException:
             log.info("Table image: a reply could not be deleted")
 
-    async def _forget_image_replies(self, message_ids: Iterable[int]) -> None:
+    async def _forget_image_replies(
+        self, message_ids: Collection[int], guild_id: int | None = None, channel_id: int = 0
+    ) -> None:
         """Pictures were deleted: so are the words DMbot said about them (#2450). A deleted
-        picture leaves nothing in the chat, as it leaves nothing in the unsaved transcript."""
+        picture leaves nothing in the chat, as it leaves nothing in the unsaved transcript. A reply
+        remembered in memory goes at once; for the rest (after a restart, or past the newest
+        `IMAGE_REPLIES_KEPT`) the chat just after the picture is read for DMbot's own reply that
+        references it (#2522)."""
+        missing = set()
         for message_id in message_ids:
-            for reply in self._image_replies.pop(message_id, []):
+            replies = self._image_replies.pop(message_id, [])
+            for reply in replies:
                 await self._delete_reply(reply)
+            if not replies:
+                missing.add(message_id)
+        if missing and guild_id is not None and channel_id:
+            await self._delete_referencing_replies(guild_id, channel_id, missing)
+
+    async def _delete_referencing_replies(
+        self, guild_id: int, channel_id: int, message_ids: set[int]
+    ) -> None:
+        """Look through the next messages of a table chat for DMbot's own replies to these
+        (deleted) messages, and delete them. Only DMbot's own messages are ever touched, only in a
+        channel that is read as table chat, and at most `REPLY_SCANS_PER_MINUTE` times a minute for
+        a server, since most deleted messages have no reply."""
+        channel = self.get_channel(channel_id)
+        if self.user is None or not isinstance(channel, discord.abc.Messageable):
+            return
+        if not await self._is_table_chat_channel(guild_id, channel):
+            return
+        now = time.monotonic()
+        recent = [t for t in self._reply_scans.get(guild_id, []) if now - t < 60]
+        if len(recent) >= REPLY_SCANS_PER_MINUTE:
+            self._reply_scans[guild_id] = recent
+            return
+        self._reply_scans[guild_id] = [*recent, now]
+        try:
+            async for found in channel.history(
+                limit=REPLY_SCAN_LIMIT, after=discord.Object(id=min(message_ids))
+            ):
+                ref = found.reference
+                if (
+                    found.author.id == self.user.id
+                    and ref is not None
+                    and ref.message_id in message_ids
+                ):
+                    await self._delete_reply(found)
+        except discord.HTTPException:
+            log.info("Table image: the chat could not be read for a reply to a deleted picture")
+
+    async def _is_table_chat_channel(self, guild_id: int, channel: discord.abc.Messageable) -> bool:
+        """Is this a channel DMbot reads as table chat: a voice channel's own chat, or the extra
+        channel a campaign picked. The extra channels are kept for a minute."""
+        if isinstance(channel, discord.VoiceChannel | discord.StageChannel):
+            return True
+        now = time.monotonic()
+        cached = self._chat_channels.get(guild_id)
+        if cached is None or cached[0] < now:
+            cached = (
+                now + CHAT_BLOCKED_TTL_S,
+                await self.campaigns.table_chat_channel_ids(guild_id),
+            )
+            self._chat_channels[guild_id] = cached
+        return getattr(channel, "id", 0) in cached[1]
 
     def _deliver_typed(
         self,
@@ -5496,7 +5582,14 @@ class DMBot(commands.AutoShardedBot):
         if self.map_notes is not None and payload.guild_id is not None:
             for message_id in payload.message_ids:
                 await self._forget_map_notes(payload.guild_id, message_id)
-        await self._forget_image_replies(payload.message_ids)  # last: it reads the chat
+        # last: it reads the chat (a message the cache knows had no picture has no reply to find)
+        plain = {m.id for m in payload.cached_messages if not m.attachments}
+        self._track(
+            self._forget_image_replies(
+                set(payload.message_ids) - plain, payload.guild_id, payload.channel_id
+            ),
+            "picture-replies",
+        )
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
@@ -5508,7 +5601,14 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.drop_message(payload.message_id)
         if self.map_notes is not None and payload.guild_id is not None:
             await self._forget_map_notes(payload.guild_id, payload.message_id)
-        await self._forget_image_replies([payload.message_id])  # last: it reads the chat
+        cached = payload.cached_message  # last: the reply look-up reads the chat
+        if cached is None or cached.attachments:  # (one the cache knows had no picture: no reply)
+            self._track(
+                self._forget_image_replies(
+                    [payload.message_id], payload.guild_id, payload.channel_id
+                ),
+                "picture-replies",
+            )
 
     async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
         """A deleted picture takes the map notes made from it (#2450)."""
