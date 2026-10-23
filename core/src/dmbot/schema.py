@@ -11857,6 +11857,12 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+c    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+c
 HANDOVER_EMAIL = """
     -- Hand-over by email (#2532, docs/PLAN.md, "Hand-over by email"): an offer is no longer made to
     -- a Discord account but sent to an email address, and the person who opens its one-use link
@@ -12129,7 +12135,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
-    ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
+c    ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
