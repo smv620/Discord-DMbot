@@ -1194,12 +1194,12 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
-  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
    * address is: the page never learns whether it has an account or a plan. */
   offerHandover?(ref: string, email: string): Promise<void>;
   /** Take the open offer back. */
   takeBackHandover?(ref: string): Promise<void>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
   handoverDecline?(token: string): Promise<void>;

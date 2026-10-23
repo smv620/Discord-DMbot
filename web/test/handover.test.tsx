@@ -152,7 +152,7 @@ describe("the hand-over accept page", () => {
     expect(await screen.findByText(w.ended)).toBeTruthy();
   });
 
-  it("says why a server was refused and stays on the page", async () => {
+  it("says why the plan has no free slot (no-free-slot) and stays on the page", async () => {
     await open("#open");
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
     const api = mockApi("table");
@@ -165,6 +165,55 @@ describe("the hand-over accept page", () => {
     fireEvent.click(screen.getByRole("button", { name: w.accept }));
     expect(await screen.findByText(w.problem["no-free-slot"] as string)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.accept })).toBeTruthy();
+  });
+
+  it("says why DMbot can't run it on a server (bad-server) and stays on the page", async () => {
+    const api = mockApi("table");
+    api.handoverAccept = async () => {
+      throw new ApiError("bad-server");
+    };
+    await open("#open", api);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.problem["bad-server"] as string)).toBeTruthy();
+  });
+
+  it("shows the sign-in view, not 'try again', when the session ends during accept", async () => {
+    const api = mockApi("table");
+    api.handoverAccept = async () => {
+      throw new ApiError("signed-out");
+    };
+    await open("#open", api);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByRole("link", { name: w.signInDiscord })).toBeTruthy();
+    expect(sessionStorage.getItem("dmbot:handover")).toBe("open"); // the code is kept for after
+  });
+
+  it("forgets the code for your own campaign, so My Account stops waiting for it", async () => {
+    await open("#own");
+    await screen.findByText(w.why.owner as string);
+    expect(sessionStorage.getItem("dmbot:handover")).toBeNull();
+  });
+
+  it("says 'Nothing needs installing' in the server step when the person can accept", async () => {
+    await open("#open");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    const fieldset = screen.getByRole("group", { name: w.whereHeading }) as HTMLElement;
+    expect(within(fieldset).getByText(/Nothing needs installing\./)).toBeTruthy();
+    expect(within(fieldset).getByText(/your Discord account simply becomes its DM there/)).toBeTruthy();
+  });
+
+  it("links to My Account when the plan has no free slot", async () => {
+    const api = mockApi("table");
+    const real = api.handoverLook!;
+    api.handoverLook = async (t) => {
+      const look = await real(t);
+      return look.status === "open" ? { ...look, canAccept: false, why: "no_slot" as const } : look;
+    };
+    await open("#open", api);
+    expect((await screen.findByRole("link", { name: w.myAccount })).getAttribute("href")).toBe("/account");
+    expect(screen.getByText(w.linkKept)).toBeTruthy();
   });
 
   it("asks to sign in when signed out, and keeps the code for after", async () => {
@@ -266,6 +315,44 @@ describe("the owner's side: hand over by email", () => {
     render(<Account api={mockApi("table")} go={vi.fn()} search="" />);
     await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(screen.queryByRole("button", { name: /Hand over by email/ })).toBeNull();
+  });
+
+  it("replaces the old Discord Hand over button (the open offer and its Withdraw stay)", async () => {
+    live.on = true;
+    render(<Account api={mockApi("offers")} go={vi.fn()} search="" />);
+    const ashen = (await screen.findByRole("link", { name: "Ashen Crown" })).closest("li") as HTMLElement;
+    expect(within(ashen).queryByRole("button", { name: "Hand over" })).toBeNull();
+    expect(within(ashen).getByRole("button", { name: "Take back offer" })).toBeTruthy();
+    expect(within(ashen).getByRole("button", { name: /Hand over by email/ })).toBeTruthy();
+  });
+
+  it("is not offered on a Try It account", async () => {
+    live.on = true;
+    render(<Account api={mockApi("try-it")} go={vi.fn()} search="" />);
+    await screen.findByRole("heading", { name: /My Account/ });
+    expect(screen.queryByRole("button", { name: /Hand over by email/ })).toBeNull();
+  });
+
+  it("checks the address lightly first, so a slip does not use one of the day's offers", async () => {
+    const { api, row } = await card();
+    fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "nobody" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    expect(await within(row).findByText(o.problem["bad-email"] as string)).toBeTruthy();
+    expect(calls(api, "offerHandover")).toHaveLength(0);
+  });
+
+  it("sends to someone else, which takes back the open offer", async () => {
+    const { api, row } = await card();
+    fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "first@example.com" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    fireEvent.click(await screen.findByRole("button", { name: o.sendElsewhere }));
+    expect(screen.getByText(o.replaces)).toBeTruthy();
+    fireEvent.input(screen.getByLabelText(o.label), { target: { value: "second@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: o.send }));
+    await waitFor(() => expect(calls(api, "offerHandover")).toHaveLength(2));
+    expect(calls(api, "offerHandover")[1]).toContain("second@example.com");
   });
 
   it("is offered on a campaign you own, and not on one you only help run", async () => {

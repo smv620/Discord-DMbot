@@ -1036,6 +1036,7 @@ function CampaignsSection({ me }: { me: Me }) {
             <CampaignRow
               key={c.id}
               campaign={c}
+              tryIt={me.plan?.id === "try-it"}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
               onWithdrawn={async (person) => {
                 setDone(text.withdrawn(person));
@@ -1074,6 +1075,7 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  tryIt = false,
 }: {
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
@@ -1081,6 +1083,8 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** A Try It account: a Try It campaign can't be handed over (#2534). */
+  tryIt?: boolean;
 }) {
   const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
@@ -1123,10 +1127,10 @@ function CampaignRow({
           </div>
         </>
       )}
-      {HANDOVER_LIVE && campaign.role === "owner" && campaign.ref && api.offerHandover && api.takeBackHandover && (
+      {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
         <EmailHandover campaign={campaign} refId={campaign.ref} />
       )}
-      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
+      {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
@@ -1139,7 +1143,7 @@ function CampaignRow({
           {text.handOver}
         </ActionButton>
       )}
-      {people !== null && (
+      {!HANDOVER_LIVE && people !== null && (
         <form
           id={formId}
           class="handover"
@@ -1246,7 +1250,7 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
       <p class="small" role="status" tabIndex={-1} ref={saidRef}>
         {open ? words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt)) : said}
       </p>
-      {open ? (
+      {open && !asking ? (
         <>
           <p class="muted small">{words.elsewhere}</p>
           <ActionButton
@@ -1264,6 +1268,16 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
           >
             {words.takeBack}
           </ActionButton>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setAsking(true);
+              keepFocus(() => emailRef.current);
+            }}
+          >
+            {words.sendElsewhere}
+          </button>
         </>
       ) : asking ? (
         <form
@@ -1273,6 +1287,8 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
             event.preventDefault();
             if (email.trim() === "") return;
             void run(async () => {
+              // A light check first, so an obvious slip doesn't use one of the day's five offers.
+              if (!/^\S+@\S+\.\S+$/.test(email.trim())) throw new ApiError("bad-email");
               await api.offerHandover!(refId, email.trim());
               setAsking(false);
               setEmail("");
@@ -1303,6 +1319,7 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
               />
             </label>
             <p class="muted small">{words.note}</p>
+            {open && <p class="muted small">{words.replaces}</p>}
           </fieldset>
           <div class="row">
             <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>

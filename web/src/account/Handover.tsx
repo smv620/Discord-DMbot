@@ -90,12 +90,16 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
           setView({ kind: "ended" });
           return;
         }
+        // Your own campaign: nothing to accept, so the kept code is forgotten (My Account stops waiting).
+        if (look.why === "owner") forgetHandoverToken();
         setServer(look.servers.find((s) => s.current && s.botIn)?.id ?? look.servers.find((s) => s.botIn)?.id ?? null);
         setView({ kind: "open", look });
       } catch (error) {
         setView(error instanceof ApiError && error.kind === "signed-out" ? { kind: "signed-out" } : { kind: "down" });
       }
     })();
+    // Runs again only for a new API or "Try again": `hash` is read once (the code leaves the address bar), and
+    // the other values it uses are refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, tryNo]);
 
@@ -105,6 +109,11 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
 
   const fail = (error: unknown) => {
     const kind = error instanceof ApiError ? error.kind : "server";
+    if (kind === "signed-out" || kind === "sign-in-again") {
+      setView({ kind: "signed-out" }); // the session ended meanwhile: sign in again, the code is kept
+      keepFocus(() => headRef.current);
+      return;
+    }
     if (kind === "ended") {
       forgetHandoverToken();
       setView({ kind: "ended" });
@@ -242,6 +251,11 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                 </p>
               )}
               {look.why !== "owner" && <p class="muted small">{words.linkKept}</p>}
+              {look.why === "no_slot" && (
+                <p>
+                  <a href="/account">{words.myAccount}</a>
+                </p>
+              )}
               {look.why !== "owner" && (
                 <p>
                   <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
