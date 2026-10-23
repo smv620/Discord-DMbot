@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -24,8 +24,9 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
+from dmbot.memory import lore_read
 from dmbot.memory.backstory_links import NewLink, Waiting
-from dmbot.memory.link_words import connection_words
+from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
@@ -46,7 +47,6 @@ from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     AI_READS_PER_DAY,
-    AI_TIME_LIMIT_S,
     LINK_MAX,
     NO_AI_FOR_DOCUMENTS,
     PASTE_MAX,
@@ -72,8 +72,12 @@ ONLY_DMS = "Only a DM of this campaign can do that."
 QUOTE_SHOWN = 200  # a long quote must not push the buttons off a phone
 MAX_BULK_BUTTONS = 4
 CUT_NOTE = (
-    "\nLong text: DMbot may have missed some names or connections. Reading it in smaller parts "
-    "finds more."
+    "\nPart of this text couldn't be read in time, so some names or connections may be missing. "
+    "Run the same background again to get the rest: names already found are skipped."
+)
+CUT_NOTHING = (
+    "🤖 DMbot ran out of time reading {label}, so it has nothing to show yet. "
+    "Nothing was added. Run it again in a minute."
 )
 CONNECTIONS_NOTE = (
     '\n📜 {count} connection{s} found too (like "A is the boss of B"). You\'ll be asked about '
@@ -91,7 +95,7 @@ def rights_text() -> str:
 
 
 async def open_background(interaction: discord.Interaction, campaign_id: str) -> None:
-    """📜 Upload backstory (the Main Menu's button, and 📝 Names > From my story): the menu to
+    """📜 Upload campaign lore (the Main Menu's button, and 📝 Names > Add many): the menu to
     paste, upload or link it. For the campaign's DMs, checked here on every press."""
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
@@ -101,7 +105,7 @@ async def open_background(interaction: discord.Interaction, campaign_id: str) ->
         return
     await _send(
         interaction,
-        "📜 **Upload backstory.** Paste it, upload a file, or paste a link. DMbot suggests the "
+        "📜 **Upload campaign lore.** Paste it, upload a file, or paste a link. DMbot suggests the "
         "names in it and how they connect; you keep what's right.\n"
         f"{rights_text()}",
         BackgroundMenu(campaign_id),
@@ -228,8 +232,9 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         interaction,
         f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
         "allowance. Nothing is added until you say yes.\n"
-        "DMbot's AI reads it and suggests names (people, places, groups, gods…). You check each "
-        "one in 📝 Check new names.\n"
+        "DMbot's AI reads it and suggests names (people, places, groups, gods…) and the "
+        "connections your text states, each with its line from the text. You check each one: "
+        "the names in 📝 Check new names, then the connections.\n"
         f"{rights_text()}",
         BackgroundOffer(campaign.id, upload),
     )
@@ -300,23 +305,30 @@ class BackgroundOffer(_Menu):
             known = await memory.known_keys(guild, campaign.id)
 
             own = await own_kinds(memory, campaign)
-            spent = [0]  # retries so far: a reading has a small budget of them
-
-            async def one(piece: str) -> Piece:
-                return await read_piece(ai, piece, own, spent)
-
-            async with asyncio.timeout(AI_TIME_LIMIT_S):
-                both = await asyncio.gather(*(one(p) for p in bg.pieces(self.upload.text)))
+            # Two passes (#2454): the careful model reads the whole text into a plain list, the
+            # fast model shapes it, and the code checks every name and quote against the text.
+            read_ai = getattr(bot, "background_read_ai", None)
+            if read_ai is None:  # never for a real bot: said once so a misconfiguration shows
+                log.warning("No careful-model reader for lore: pass 1 uses the fast model")
+                read_ai = ai
+            # (The read keeps its own deadline and returns what it shaped, marked cut.)
+            read = await lore_read.read_lore(
+                read_ai,
+                ai,
+                self.upload.text,
+                own,
+                AI_AT_ONCE,
+                skip_name=lambda name: name_key(name) in known,
+                skip_pair=await connected_pairs(memory, campaign),
+            )
             found = bg.merge(
-                [p.names for p in both],
+                [read.names],
                 known,
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
             stored = await store(memory, campaign, found)
-            queued = await queue_links(
-                bot, memory, campaign, found, [p.links for p in both], set(own)
-            )
-            cut = any(p.cut for p in both)
+            queued = await queue_links(bot, memory, campaign, found, [read.links], set(own))
+            cut = read.cut
             log.info(
                 "Background read: %d names and %d connections suggested%s",
                 sum(map(len, stored.values())),
@@ -327,12 +339,6 @@ class BackgroundOffer(_Menu):
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
-        except TimeoutError:
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Reading took too long. Nothing was added. Split the background into "
-                    "smaller parts and try again."
-                )
         except Exception:
             log.exception("Reading a background with the AI failed")
             with contextlib.suppress(discord.HTTPException):
@@ -409,9 +415,13 @@ async def summary(
 ) -> None:
     total = sum(map(len, stored.values()))
     if not total:
+        # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
         await interaction.edit_original_response(
-            content=f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
-            + (CUT_NOTE if cut else ""),
+            content=(
+                CUT_NOTHING.format(label=_md(label))
+                if cut
+                else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
+            ),
             allowed_mentions=NO_PINGS,
         )
         if queued:  # the names were all known already: the connections may be ready
@@ -444,49 +454,13 @@ async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
     """The campaign's own relationships (key → how it reads), offered to the AI beside the
     built-in kinds, at most MAX_OWN_KINDS."""
     onto = await memory.ontology(campaign.guild_id, campaign.id)
-    taken = set(bg.CONNECTIONS.values())
+    taken = {*bg.CONNECTIONS.values(), bg.OTHER}
     own = {
         p.key: p.label
         for p in onto.predicates.values()
         if not p.core and p.status == ACTIVE and p.key not in taken
     }
     return dict(sorted(own.items())[: bg.MAX_OWN_KINDS])
-
-
-@dataclass(frozen=True, slots=True)
-class Piece:
-    names: list[bg.Found]
-    links: list[bg.Connection]
-    cut: bool  # the answer was cut off, even after the second try
-
-
-RETRIES_PER_READING = 4  # cut answers asked for again; more than this and the rest stay as cut
-
-
-async def read_piece(ai: Any, piece: str, own: dict[str, str], spent: list[int]) -> Piece:
-    """One piece of the text read, with room sized from the piece. An answer cut off is asked for
-    once more with twice the room while the reading's retry budget lasts; one still cut is read as
-    far as it goes and the DM is told it may be missing some."""
-    room = bg.room_for(piece)
-    reply = None
-    for attempt in range(2):
-        async with AI_AT_ONCE:
-            reply = await ai.complete(
-                bg.instructions(own),
-                bg.request(piece),
-                max_tokens=min(room * (2**attempt), bg.RETRY_MAX),
-                schema=bg.schema(own),
-            )
-        if not reply.cut or spent[0] >= RETRIES_PER_READING:
-            break
-        if attempt == 0:
-            spent[0] += 1
-    assert reply is not None
-    return Piece(
-        bg.read_answer(reply.text, piece),
-        bg.read_connections(reply.text, piece, set(own)),
-        bool(reply.cut),
-    )
 
 
 async def queue_links(
@@ -528,11 +502,32 @@ async def queue_links(
 
     kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
     return int(await store.add(campaign.guild_id, campaign.id, rows)) if rows else 0
+
+
+async def connected_pairs(memory: MemoryStore, campaign: Campaign) -> Callable[[str, str], bool]:
+    """Whether two names of the campaign are already connected (by any connection, either way
+    round): a second run of the same background leaves those lines out before they are shaped, so
+    it reaches the part the first run did not (#2453)."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    have = {
+        frozenset((r.subject_id, r.object_id))
+        for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+    }
+
+    def entry(name: str) -> str | None:
+        ids = {e.entity_id for e in lookup.by_key.get(name_key(name), ()) if not e.person}
+        return next(iter(ids)) if len(ids) == 1 else None
+
+    def connected(a: str, b: str) -> bool:
+        x, y = entry(a), entry(b)
+        return x is not None and y is not None and frozenset((x, y)) in have
+
+    return connected
 
 
 async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
@@ -632,7 +627,7 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = connection_words(c.predicate)
+        how = link_words(c.predicate, c.detail)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -704,6 +699,7 @@ class ConnectionOffer(_Menu):
                 await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
+                    detail=c.detail,
                     unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
                 )  # fmt: skip
             except MemoryRuleError:

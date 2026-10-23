@@ -20,10 +20,8 @@ from typing import Any, cast
 import discord
 
 from dmbot import fetch
-from dmbot.ai import AIError, Reply, TierClient
 from dmbot.campaigns import Campaign
-from dmbot.campaigns.models import NAMES_LIST, CampaignError, fingerprint
-from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
@@ -40,22 +38,17 @@ from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     TYPES_HELP,
     DocumentError,
-    chunks,
-    clean_reply,
     decode_text,
-    instructions,
     kind_of_file,
-    merge_lists,
-    request_text,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
+    MAX_WORDS,
     OutName,
     OutPerson,
     Parsed,
-    header,
     parse,
     render_files,
     template,
@@ -335,9 +328,10 @@ def format_help(*, secrets: bool) -> str:
     return (
         "📥 **Add many names at once.** Paste a list, paste a link, or upload a file (PDF, "
         "Word, text or web page).\n"
-        "A list written like the template is added straight away. For anything else, "
-        "DMbot's AI finds the names and shows you the list first: nothing is added until "
-        "you press **Add these names**.\n"
+        "A list written like the template is added straight away. For anything else (a "
+        "document, or lines that are prose), a DM can have DMbot's AI read it as campaign lore: "
+        "it suggests the names and the connections your text states, and nothing is added "
+        "until you say yes.\n"
         f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
         "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, event, "
         "other. Names with no kind wait in 📝 Check new names.\n"
@@ -359,7 +353,7 @@ class AddMany(_Menu):
         # On its own row, so four buttons never get squeezed on a phone.
         self.add_item(_Button(self._template, label="📄 Get the template", style=grey, row=1))
         self.add_item(
-            _Button(self._background, label="📜 From my story", style=grey, row=1)
+            _Button(self._background, label="📜 Upload campaign lore", style=grey, row=1)
         )  # (#2167)
 
     async def _paste(self, interaction: discord.Interaction) -> None:
@@ -491,7 +485,10 @@ async def take_link(interaction: discord.Interaction, campaign_id: str, link: st
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    if _bot(interaction).ai is None:
+    if interaction.user.id not in campaign.dm_user_ids:  # the lore read is the DM's: fetch nothing
+        await _tell(interaction, "Only a DM of this campaign can add names from a link.")
+        return
+    if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
     if campaign.guild_id in _link_busy:
@@ -573,17 +570,32 @@ _ai_busy: set[int] = set()  # servers with an AI read running
 _ai_reads: dict[tuple[int, str], int] = {}  # (server, day) → reads
 
 
+AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
+
+
 async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
-    """A list DMbot can read all of is added straight away. Anything else (a document, or
-    a list with any line that doesn't fit) goes to the AI, which writes the list for the
-    DM to check first (owner's decision, 2026-10-06)."""
+    """One process for whatever arrives (#2447, owner 2026-10-22): the lines of a strict names list
+    (`name (pronunciation) | kind | other names`) are added straight away, with no AI. Anything
+    else, a document or the lines that are prose, goes through the campaign-lore read
+    (`name_background.offer`): the names and the connections the text states, each with its quote,
+    for the DM to check. Nothing the AI says is added without the DM's press."""
+    # (imported here: name_background imports this module)
+    from dmbot.ui.name_background import offer
+
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    parsed = None
-    if not upload.document:
-        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
+    if upload.document:  # a document is prose, never read as a names list (#264)
+        await offer(interaction, campaign.id, upload)
+        return
+    rows = upload.text.splitlines()
+    # A bare line (no `|`) that reads as a sentence makes the upload lore. Without one, every line
+    # is a list line, even a wrong one: the list's own answer says why a line wasn't added (a
+    # spell, a monster, too many parts), instead of an AI read.
+    prose = [row for row in rows if _is_content(row) and "|" not in row and _sentence(row)]
+    if not prose:
         secrets_ok = sees_secrets(campaign, interaction.user.id)
+        # Pure CPU, up to a fraction of a second on a full file: off the event loop.
         parsed = await asyncio.to_thread(parse, upload.text, secrets=secrets_ok)
         if not parsed.lines and not parsed.refused and not parsed.people:
             await _tell(
@@ -592,256 +604,28 @@ async def take_list(interaction: discord.Interaction, campaign_id: str, upload: 
                 "skipped. Put one name per line and try again.",
             )
             return
-        # Every line fits, or the only problem is secret names from someone who may not
-        # add them (the AI must never turn those into names everyone sees). A list with
-        # players or DMs in it never goes to the AI: it holds Discord ids (#1559).
-        if parsed.people or all(why.startswith(ONLY_DM_SECRETS) for _, why in parsed.refused):
-            await import_list(interaction, campaign.id, upload.text)
-            return
-    if _bot(interaction).ai is None:
-        if upload.document:
-            await _tell(interaction, NO_AI_FOR_DOCUMENTS)
-        else:
-            await import_list(interaction, campaign.id, upload.text)  # what fits, and why not
+        await import_list(interaction, campaign.id, upload.text)
         return
-    fits = len(parsed.lines) if parsed else 0
-    await _send(
-        interaction,
-        _ai_offer_text(upload, parsed),
-        AIOffer(campaign.id, upload, fits, fits > len(parsed.refused) if parsed else False),
-    )
+    # Prose is in it. Each line is decided on its own: a line with a `|`, and a bare line that is a
+    # name (not a sentence), are list lines and go in now; the sentences are read as campaign
+    # lore, in order, so a connection's quote is still there to be found. A bare "Tavin" beside
+    # a sentence is a name for anyone to add, so it must not wait on the DM-only lore read.
+    strict = [row for row in rows if not _is_content(row) or "|" in row or not _sentence(row)]
+    lore = "\n".join(row for row in rows if _is_content(row) and "|" not in row and _sentence(row))
+    if any(_is_content(row) for row in strict):
+        await import_list(interaction, campaign.id, "\n".join(strict))
+    await offer(interaction, campaign.id, Upload(lore, upload.label))
 
 
-def _ai_offer_text(upload: Upload, parsed: Parsed | None) -> str:
-    rights = (
-        "**Pressing 🤖 Find names confirms you have the right to use this material.** DMbot "
-        "doesn't check this. Its text goes to Anthropic (an AI company) to be read."
-    )
-    if parsed is None:
-        return (
-            f"📄 **Find the names in {_md(upload.label)}?** DMbot's AI reads it and makes a "
-            f"list for you to check. Nothing is added until you say so.\n{rights}"
-        )
-    bad = len(parsed.refused)
-    shown = "; ".join(f"line {n}: {why}" for n, why in parsed.refused[:2])
-    more = " …" if bad > 2 else ""
-    return (
-        f"📄 **{bad} line{'' if bad == 1 else 's'} in {_md(upload.label)} "
-        f"{'doesn' if bad == 1 else 'don'}'t fit** ({shown}{more}). DMbot's AI can read the "
-        "whole list and make a clean one for you to check first"
-        + (f". Or add just the {len(parsed.lines)} that fit." if parsed.lines else ".")
-        + f"\n{rights}"
-    )
+def _is_content(row: str) -> bool:
+    return bool(row.strip()) and not row.lstrip().startswith("#")
 
 
-class AIOffer(_Menu):
-    def __init__(self, campaign_id: str, upload: Upload, fits: int, fits_first: bool) -> None:
-        super().__init__()
-        self.campaign_id = campaign_id
-        self.upload = upload
-        blue, grey = discord.ButtonStyle.primary, discord.ButtonStyle.secondary
-        self.add_item(
-            _Button(
-                self._read,
-                label="🤖 Find names",  # the message says what pressing it confirms
-                style=grey if fits_first else blue,
-            )
-        )
-        if fits:
-            self.add_item(
-                _Button(
-                    self._as_is,
-                    label=f"Add the {fits} that fit",
-                    style=blue if fits_first else grey,
-                )
-            )
-        self.add_item(_Button(self._cancel, label="Cancel", style=grey))
-
-    async def _read(self, interaction: discord.Interaction) -> None:
-        # Answer Discord first (#88, #351): the plan check below is a database read with a
-        # limit of its own, and the three seconds Discord gives are not ours to spend. Every
-        # reply after this is a private follow-up or an edit of this message.
-        await interaction.response.defer()
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None:
-            return
-        ai = _bot(interaction).ai
-        if ai is None:
-            await _tell(interaction, "DMbot's AI was switched off. Nothing was added.")
-            return
-        # The one place the AI spends tokens on a names list: the campaign's owner's plan
-        # has to allow it (#437 part 3). The menu stays, so "Add the lines that fit" works.
-        refused = await _bot(interaction).plan_gate(
-            "ai", campaign.guild_id, campaign, interaction.user.id
-        )
-        if refused is not None:
-            await _tell(interaction, refused)
-            return
-        guild = campaign.guild_id
-        day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-        if guild in _ai_busy:
-            await _tell(interaction, "DMbot is already reading a document for this server. "
-                        "Try again when it's done.")  # fmt: skip
-            return
-        if _ai_reads.get((guild, day), 0) >= AI_READS_PER_DAY:
-            await _tell(interaction, "This server has used today's document reads. Try "
-                        "again tomorrow, or use the template.")  # fmt: skip
-            return
-        self.stop()
-        _ai_busy.add(guild)
-        for old in [k for k in _ai_reads if k[1] != day]:
-            del _ai_reads[old]  # only today counts
-        _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
-        try:
-            await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for "
-                "a long document.",
-                view=None,
-                allowed_mentions=NO_PINGS,
-            )
-            # The IP rule (CLAUDE.md): who confirmed the right to use it, and when. The
-            # file's name stays out of the log and the record (it may hold names); a
-            # fingerprint tells documents apart.
-            document = fingerprint(self.upload.text)
-            # A lasting record, kept with the campaign (#252). Before the AI reads
-            # anything: if it can't be saved, nothing is read (and nothing is logged as
-            # confirmed, so the log and the record agree).
-            await _bot(interaction).campaigns.record_confirmation(
-                guild, campaign.id, interaction.user.id, NAMES_LIST, document
-            )
-            log.info(
-                "Shared material confirmed for AI reading: user=%s campaign=%s doc=%s",
-                interaction.user.id,
-                campaign.id,
-                document[:12],
-            )
-            secrets = sees_secrets(campaign, interaction.user.id)
-            async with asyncio.timeout(AI_TIME_LIMIT_S):
-                listed, cut = await ai_names_list(ai, self.upload.text, secrets=secrets)
-            await show_ai_list(interaction, campaign, self.upload, listed, cut, secrets=secrets)
-        except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(content=str(exc))
-        except TimeoutError:
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Reading took too long. Nothing was added. Split the document into "
-                    "smaller parts and try again."
-                )
-        except Exception:
-            log.exception("Reading a document with the AI failed")
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Something went wrong. Nothing was added. Try again later."
-                )
-        finally:
-            _ai_busy.discard(guild)
-
-    async def _as_is(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Adding the lines that fit…", view=None, allowed_mentions=NO_PINGS
-        )
-        await import_list(interaction, self.campaign_id, self.upload.text)
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Cancelled. Nothing was sent or added.", view=None
-        )
-
-
-AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all servers
-
-
-async def ai_names_list(ai: TierClient, text: str, *, secrets: bool) -> tuple[str, bool]:
-    """The AI's names list for a document (pieces read side by side, merged so each name
-    appears once), and whether any answer was cut off."""
-    system = instructions(secrets=secrets)
-
-    async def one(piece: str) -> Reply:
-        async with AI_AT_ONCE:
-            return await ai.complete(system, request_text(piece))
-
-    replies = await asyncio.gather(*(one(piece) for piece in chunks(text)))
-    merged = merge_lists([clean_reply(r.text) for r in replies])
-    return merged, any(r.cut for r in replies)
-
-
-PREVIEW_LINES = 15
-
-
-async def show_ai_list(
-    interaction: discord.Interaction,
-    campaign: Campaign,
-    upload: Upload,
-    listed: str,
-    cut: bool,
-    *,
-    secrets: bool,
-) -> None:
-    """The AI's list, in full as a file and the start in the message, with Add and Cancel.
-    Nothing is saved until the DM presses Add."""
-    parsed = parse(listed, secrets=secrets, people=False)  # (no player rows from an AI, #1559)
-    if not parsed.lines:
-        await interaction.edit_original_response(
-            content=f"🤖 DMbot's AI found no names in {_md(upload.label)}. Nothing was added."
-        )
-        return
-    lines = [line for line in listed.splitlines() if line.strip()]
-    shown = "\n".join(logic.shorten(line, 90) for line in lines[:PREVIEW_LINES]).replace("`", "'")
-    extra = len(lines) - PREVIEW_LINES
-    count = len(parsed.lines)
-    hidden = sum(1 for line in parsed.lines if line.secrets)
-    notes = []
-    if hidden:
-        notes.append(f"Includes {hidden} with secret names (only you see them).")
-    if cut:
-        notes.append("The document was long, so the list may be missing some names.")
-    text = (
-        f"🤖 **DMbot's AI found {count} name{'' if count == 1 else 's'} in "
-        f"{_md(upload.label)}.** It only lists names written there, but it can miss some or "
-        "get a kind wrong. Nothing is added until you press **Add these names**. To change "
-        f"many, edit the attached file and add it with {UPLOAD}; or add them and fix "
-        "single names on their cards (or **Undo**)."
-        + (" " + " ".join(notes) if notes else "")
-        + f"\n```\n{shown}\n```"
-        + (f"… and {extra} more in the file." if extra > 0 else "")
-    )
-    body = (
-        header(secrets=secrets)
-        + f"###\n### Made by DMbot's AI from {' '.join(upload.label.split())}. Check it, then "
-        "add it with Add many > Upload a file.\n" + "\n".join(lines) + "\n"
-    )
-    view = AIPreview(campaign.id, listed, count)
-    await interaction.edit_original_response(
-        content=fit_message(text),
-        attachments=[_file(body, f"names-from-{_slug(upload.label)}.txt")],
-        view=view,
-        allowed_mentions=NO_PINGS,
-    )
-    view.origin = interaction
-
-
-class AIPreview(_Menu):
-    def __init__(self, campaign_id: str, listed: str, count: int) -> None:
-        super().__init__()
-        self.campaign_id = campaign_id
-        self.listed = listed
-        label = f"✅ Add these {count} names" if count != 1 else "✅ Add this name"
-        self.add_item(_Button(self._add, label=label, style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
-
-    async def _add(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(view=None)
-        await import_list(interaction, self.campaign_id, self.listed, people=False)
-
-    async def _cancel(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        await interaction.response.edit_message(
-            content="Cancelled. Nothing was added.", view=None, attachments=[]
-        )
+def _sentence(row: str) -> bool:
+    """A bare line that reads as prose, not as a name: too many words for a name, or it ends the
+    way a sentence does."""
+    text = row.strip()
+    return len(text.split()) > MAX_WORDS or text.endswith((".", "!", "?"))
 
 
 async def import_list(

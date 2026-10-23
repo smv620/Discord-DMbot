@@ -84,17 +84,29 @@ describe("the page", () => {
     expect(screen.getByLabelText(/The Brynwater Crossing/, { selector: "ul" })).toBeTruthy(); // the facts list
   });
 
-  it("gives the game masters the Settings group: the current choices, and where to change each in Discord", async () => {
+  it("gives the game masters the Settings group: three controls, and where to do the rest in Discord", async () => {
     await open(DM);
     const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
-    for (const t of [w.visibility.peek, w.level.normal, w.retentionDays(90), w.gameMastersCount(2), w.pausedNo])
-      expect(within(section).getByText(t), t).toBeTruthy();
-    for (const key of Object.keys(w.paths) as (keyof typeof w.paths)[])
+    // The three the site can change are buttons with the current choice pressed (#2484).
+    for (const [name, value] of [["visibility", "peek"], ["level", "normal"], ["retention", "90"]] as const) {
+      const group = within(section).getByRole("group", { name: w.controls[name] });
+      for (const [v, text] of w.options[name]!) expect(within(group).getByRole("button", { name: text }).getAttribute("aria-pressed")).toBe(String(v === value));
+    }
+    expect(within(section).getByText(w.gameMastersCount(2))).toBeTruthy();
+    expect(within(section).getByText(w.pausedNo)).toBeTruthy();
+    // Game masters, hand over, pause and delete stay in Discord, and the owner sees all of them.
+    for (const key of ["gameMasters", "handOver", "pause", "delete"] as const)
       expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
-    // Every label is Discord's own name for it.
-    for (const label of Object.values(w.settingsLabels)) expect(within(section).getByText(label), label).toBeTruthy();
-    expect(within(section).queryAllByRole("button")).toEqual([]); // read-only until the bot can apply a change
+    for (const key of ["gameMasters", "handOver", "pause", "delete"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
     expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
+  });
+
+  it("shows a co-DM the controls but not the owner's Discord steps", async () => {
+    await open("/account/campaigns/100.cmp3.cp-co");
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    expect(within(section).getByRole("button", { name: "🔔 Normal" })).toBeTruthy();
+    for (const key of ["handOver", "pause", "delete"] as const) expect(within(section).queryByText(w.doThisInDiscord(w.paths[key])), key).toBeNull();
+    expect(within(section).getByText(w.ownerOnlyNote)).toBeTruthy();
   });
 
   it("says retention is for ever when no days are set, and leaves a missing choice's value out", async () => {
@@ -105,7 +117,8 @@ describe("the page", () => {
       return { ...got, settings: { ...got.settings!, keepDays: null, paused: true } };
     };
     await open(DM, api);
-    expect(await screen.findByText(w.retentionForever)).toBeTruthy();
+    const keep = await screen.findByRole("button", { name: w.retentionForever });
+    expect(keep.getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText(w.pausedYes)).toBeTruthy();
     cleanup();
     const old = mockApi("table");
@@ -116,8 +129,8 @@ describe("the page", () => {
     };
     await open(DM, old);
     const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
-    expect(within(section).queryByText(w.visibility.peek)).toBeNull();
-    expect(within(section).getAllByText(/^Do this in Discord:/).length).toBe(7); // the paths still show
+    expect(within(section).queryByRole("button")).toBeNull(); // nothing to show or change without the choices
+    expect(within(section).getAllByText(/^Do this in Discord:/).length).toBe(4); // the paths still show
   });
 
   it("gives a co-DM the same groups", async () => {

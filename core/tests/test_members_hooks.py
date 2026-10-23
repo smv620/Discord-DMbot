@@ -51,7 +51,9 @@ class TheStop(unittest.IsolatedAsyncioTestCase):
             order.append("forget")
 
         return SimpleNamespace(
-            consent=SimpleNamespace(has_consent=lambda *_: True, revoke=revoke),
+            consent=SimpleNamespace(
+                has_consent=lambda *_: True, agreed_now=lambda *_: True, revoke=revoke
+            ),
             stop_recording=MagicMock(),
             _tell_dm_about_consent=MagicMock(),
             push_allowlist=AsyncMock(),
