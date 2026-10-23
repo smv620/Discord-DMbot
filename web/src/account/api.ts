@@ -59,6 +59,9 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -153,6 +156,41 @@ export interface RecapAudio {
   canBuy: boolean;
 }
 
+/** One server a person could take a handed-over campaign to (#2534; core #2532). */
+export interface HandoverServer {
+  id: string;
+  name: string;
+  /** Where the campaign runs now. */
+  current: boolean;
+  /** False: DMbot has to be added to it first. */
+  botIn: boolean;
+}
+
+/** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
+ * alike, so the page can't tell anyone which. */
+export type HandoverLook =
+  | { status: "ended" }
+  | {
+      status: "open";
+      campaign: { name: string };
+      from: { name: string };
+      server: { id: string; name: string };
+      canAccept: boolean;
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      servers: HandoverServer[];
+    };
+
+/** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
+ * Discord number; the page shows `name` only. */
+export interface DiscordAccount {
+  key: string;
+  name: string;
+  /** The one signed in right now. */
+  current: boolean;
+  /** False for the last one. */
+  canRemove: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -160,6 +198,8 @@ export interface Me {
   access?: Access;
   campaigns: Campaign[];
   servers: Server[];
+  /** The Discord accounts on this DMbot account (#2534). Missing from an API older than #2533. */
+  discordAccounts?: DiscordAccount[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
@@ -547,6 +587,54 @@ export interface NameCheck {
   answering: boolean;
   error: string;
 }
+/** The Plot check of a recap (#2124; core #2122, #2123): PlotBot's questions, shown to the DM only. */
+export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
+export interface PlotIssue {
+  id: string;
+  kind: string;
+  level: "possible" | "probable" | "likely";
+  /** The recap sentence's number, and its words. */
+  sentence: number;
+  sentenceText: string;
+  reason: string;
+  /** `session` is the earlier recap's title ("" when none). */
+  source: { text: string; session: string };
+  answer: { kind: PlotAnswerKind; note?: string } | null;
+}
+export interface PlotCheck {
+  /** `unavailable`: the check can't run (switched off, or the bot didn't pick it up); it never holds Approve. */
+  state: "checking" | "ready" | "unavailable";
+  /** As of this read; the page also counts the questions it has seen answered. */
+  approveBlocked: boolean;
+  version: number;
+  /** A fingerprint of the words that were checked. */
+  textHash: string;
+  issues: PlotIssue[];
+  /** Earlier approved versions. `acceptedBy` is an account number: the page never shows it. */
+  versions: { version: number; acceptedBy: string; acceptedAt: number }[];
+}
+/** A change PlotBot suggests keeping; nothing is saved unless the DM presses Save. */
+export interface PlotProposal {
+  id: string;
+  kind: string;
+  label: string;
+  /** Plain words for why a Save failed (state `failed`). */
+  error?: string;
+  /** `saving`: Save was pressed and the bot is making the change. */
+  state: "open" | "saving" | "saved" | "declined" | "failed";
+}
+/** One message of the DM's talk with PlotBot about one question (#2123). A DM message is `waiting` or
+ * `working` until the bot has answered it, and `failed` with a short code when it could not. */
+export interface PlotMessage {
+  id: string;
+  role: "dm" | "bot";
+  text: string;
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  proposals: PlotProposal[];
+  at: number;
+}
+
 export interface NameCheckList {
   names: NameCheck[];
   /** The known names an answer can say a name is the same as. */
@@ -1145,6 +1233,13 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "bad-answer" // the Plot check's answer was not one it takes (#2122)
+  | "stale" // the recap changed since its Plot check (#2122)
+  | "plot-open" // Approve waits for the Plot check's open questions (#2122)
+  | "ended" // a hand-over offer that has ended (#2534)
+  | "owner-offer" // the person is the campaign's own owner (#2534)
+  | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1187,6 +1282,19 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  handoverLook?(token: string): Promise<HandoverLook>;
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  handoverDecline?(token: string): Promise<void>;
+  /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
+  addDiscordUrl?(): string;
+  /** Take one Discord account off this DMbot account; never the last (#2534). */
+  removeDiscordAccount?(key: string): Promise<void>;
   /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
    * Missing from an API older than that. */
   myEmail?(): Promise<MyEmail>;
@@ -1336,6 +1444,15 @@ export interface AccountApi {
    * the DM kept. Missing from an API older than #2113. */
   /** The recap's new names to check, and the choices for answering them (#2114 part 3). */
   nameChecks?(ref: string): Promise<NameCheckList>;
+  /** The Plot check (#2124). Missing from an API older than #2122. */
+  plotCheck?(ref: string): Promise<PlotCheck>;
+  answerPlotIssue?(ref: string, issue: string, answer: { kind: PlotAnswerKind; note?: string }): Promise<PlotIssue>;
+  /** The DM's message about one question: queued for PlotBot, who answers a little later. */
+  plotChatSend?(ref: string, issue: string, text: string): Promise<void>;
+  /** The talk about one question, oldest first; ask again while a message is waiting. */
+  plotChat?(ref: string, issue: string): Promise<PlotMessage[]>;
+  /** Save or decline a suggested note; saving also answers the issue "the story changed". */
+  decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1429,6 +1546,13 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  bad_answer: "bad-answer",
+  stale: "stale",
+  plot_open: "plot-open",
+  ended: "ended",
+  owner: "owner-offer",
+  bad_server: "bad-server",
+  last_account: "last-account",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1621,6 +1745,22 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
+    },
+    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
+    handoverAccept: async (token, serverId) =>
+      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverDecline: async (token) => {
+      await call("POST", "/me/handover/decline", { token });
+    },
+    addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
+    removeDiscordAccount: async (key) => {
+      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
@@ -1865,6 +2005,27 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    plotCheck: async (ref) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot`)) as PlotCheck,
+    answerPlotIssue: async (ref, issue, answer) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/answer`,
+        answer,
+      )) as PlotIssue,
+    plotChatSend: async (ref, issue, text) => {
+      await call("POST", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`, { text });
+    },
+    plotChat: async (ref, issue) =>
+      ((await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`)) as {
+        messages: PlotMessage[];
+      }).messages,
+    decidePlotProposal: async (ref, issue, proposal, action) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/proposals/${encodeURIComponent(proposal)}`,
+        { action },
+      )) as PlotProposal,
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
     answerNameCheck: async (ref, id, answer) => {

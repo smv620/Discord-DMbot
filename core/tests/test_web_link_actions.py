@@ -91,6 +91,65 @@ class TheEdits(Editing):
         log = await self.log_since(before)
         self.assertTrue(log and all(r["source"] == "dm" for r in log))
 
+    async def stored(self, a: str, b: str) -> list[Any]:
+        data = await self.memory.relations(self.g, self.one.id, entity_id=a)
+        return [
+            r for r in data if r.predicate == "kin_of" and {r.subject_id, r.object_id} == {a, b}
+        ]
+
+    async def test_family_words_keep_their_role_and_the_reverse_wording_swaps_the_names(
+        self,
+    ) -> None:
+        """#2457: "is the niece of" stores Mira -> Rook; "has a niece" typed on Rook's card stores
+        Far Hall -> Rook; the first name is the niece whatever the ids sort like."""
+        first = await self.add_link(self.mira, self.rook, "is the niece of")
+        await self.apply_all()
+        [row] = await self.stored(self.mira, self.rook)
+        self.assertEqual((row.subject_id, row.detail), (self.mira, "niece"))
+        edge = self.edge_of(await self.poll(first), self.mira, self.rook)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        self.assertEqual(link["back"], "has a niece")
+        self.assertEqual(link["direction"], "a-b" if edge["a"] == self.mira else "b-a")
+        second = await self.add_link(self.rook, self.hall, "has a niece")
+        await self.apply_all()
+        [row] = await self.stored(self.rook, self.hall)
+        self.assertEqual((row.subject_id, row.object_id), (self.hall, self.rook))
+        edge = self.edge_of(await self.poll(second), self.rook, self.hall)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        self.assertEqual(link["direction"], "a-b" if edge["a"] == self.hall else "b-a")
+
+    async def test_typing_the_role_over_an_old_row_that_says_the_word_gives_it_a_direction(
+        self,
+    ) -> None:
+        """#2509: the website's door. An older plain "niece" row, then "is the niece of" (the name
+        the link is filed under is the niece) and "has a niece" (the other end is)."""
+        old = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "kin_of", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", detail="niece",
+        )  # fmt: skip
+        link = old.value[0]
+        self.assertFalse(link.directional)
+        answer = await self.edit(link.id, action="words", words="is the niece of")
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        [row] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(row.directional)
+        self.assertEqual((row.subject_id, row.object_id), (link.subject_id, link.object_id))
+        # now the other end is the niece: "has a niece" said over the connection
+        answer = await self.edit(row.id, action="words", words="has a niece")
+        await self.apply_all()
+        [again] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(again.directional)
+        self.assertEqual((again.subject_id, again.object_id), (row.object_id, row.subject_id))
+
     async def test_changing_the_words_replaces_the_connection_and_undo_takes_it_back(self) -> None:
         link = self.links["mira-keep"]
         before = await self.memory.version(self.g, self.one.id)

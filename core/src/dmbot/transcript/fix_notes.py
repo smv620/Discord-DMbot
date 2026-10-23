@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.models import name_key
-from dmbot.transcript.cleaner import Fix
+from dmbot.transcript.cleaner import IMAGE_EDIT, Fix
 
 SHOWN = 10  # lines in the message (the newest); older ones are no longer undoable here
 ANSWERS_KEPT = 20  # answers (a batch is one answer, with the earlier lines it wrote, #127) whose
@@ -58,6 +58,7 @@ class Note:
     fixes: tuple[Fix, ...]  # every fix made in that line
     index: int  # which of them this note is about
     undone: bool = False
+    by: int = 0  # who made the fix when a person did (a picture's words, #2450); 0: the bot
 
     @property
     def fix(self) -> Fix:
@@ -136,15 +137,18 @@ class FixNotes:
     count: int = 0  # numbers handed out this session
     answers: list[Answer] = field(default_factory=list)  # oldest first
 
-    def add(self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...]) -> list[Note]:
-        """A note for each unsure fix in this line (none for sure ones)."""
+    def add(
+        self, speaker: int, started_ms: int, heard: str, fixes: tuple[Fix, ...], by: int = 0
+    ) -> list[Note]:
+        """A note for each unsure fix in this line (none for sure ones). `by`: the person who made
+        the fix, when one did."""
         added = []
         for i, fix in enumerate(fixes):
             if fix.sure:
                 continue
             self.count += 1
             added.append(
-                Note(secrets.token_hex(4), self.count, speaker, started_ms, heard, fixes, i)
+                Note(secrets.token_hex(4), self.count, speaker, started_ms, heard, fixes, i, by=by)
             )
         self.notes.extend(added)
         self._trim()
@@ -228,6 +232,21 @@ class FixNotes:
         """Whether any fix note or answer is already on this line (so it isn't written again)."""
         line = (speaker, started_ms)
         return any(n.line == line for n in self.notes) or any(a.line == line for a in self.answers)
+
+    def picture_edits(
+        self, speaker: int, started_ms: int, fixer: int, fixer_is_dm: bool
+    ) -> list[Note] | None:
+        """The earlier corrections of a picture's words on this line that this person may replace
+        (#2450): a DM may replace any, the poster only their own. None: the line holds something
+        that is not theirs to replace (a name fix, an answer, or a correction by someone else), so
+        nothing is written. An empty list: no earlier correction."""
+        line = (speaker, started_ms)
+        on = [n for n in self.notes if n.line == line]
+        if any(a.line == line for a in self.answers) or any(n.fix.how != IMAGE_EDIT for n in on):
+            return None
+        if not fixer_is_dm and any(n.by != fixer for n in on):
+            return None
+        return on
 
     def take_back(self, batch: int) -> Answer | None:
         """Its Undo was pressed: the answer no longer fixes its line (returned, so the

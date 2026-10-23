@@ -176,14 +176,15 @@ class TranscriptBuffer:
         """The lines waiting now (a copy), for a re-check of the session after an answer."""
         return list(self._waiting)
 
-    def relabel(self, user_id: int, started_ms: int, text: str) -> bool:
+    def relabel(self, user_id: int, started_ms: int, text: str, *, image: bool = False) -> bool:
         """A waiting line's cleaned words changed (an Undo or an answer, #296, #503);
-        True if it was here."""
+        True if it was here. `image`: the line is a described picture (#2450), not speech."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (
-                user_id,
-                started_ms,
-            ) and not waiting.sidebar:
+            if (
+                (waiting.user_id, waiting.started_ms) == (user_id, started_ms)
+                and not waiting.sidebar
+                and waiting.image == image
+            ):
                 self._waiting[i] = replace(waiting, text=text)
                 return True
         return False

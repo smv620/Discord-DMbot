@@ -28,6 +28,16 @@ export const featureSteps: FeatureStep[] = [
     text: "On My Account, each campaign is a card. Tap its name to open its page. 🟢 Listening now means a session is running. The card also says your part: You run it, You help run it or You play in it. It shows sessions, hours, players, NPCs and when it started and was last played. Anything DMbot doesn't know yet is left out.",
   },
   {
+    audience: "account",
+    whatsNew: "Receive a campaign by email",
+    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on (if you play on a server where DMbot already runs this campaign, your Discord account simply becomes its DM there), then take the campaign, or say no thanks. If you take it, it moves to your account, its play time comes out of your hours, and the DM who offered it stays on as a co-DM. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the DM to hand the campaign over again.",
+  },
+  {
+    audience: "account",
+    whatsNew: "Use more than one Discord account",
+    text: "On My Account, Your Discord accounts shows every Discord account that belongs to your DMbot account. To add one, sign in with it; you never type a number. Your plan and campaigns then work from any of them. You can remove one whenever you like, except the one you're using now and your last. Each Discord account decides for itself whether it is recorded. A Discord account that runs its own campaigns or has its own plan can't be added until those are handed over.",
+  },
+  {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
     text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
@@ -67,6 +77,11 @@ export const featureSteps: FeatureStep[] = [
     audience: "gameMaster",
     whatsNew: "Check a recap's new names online",
     text: "Under a recap on the website, Names to check lists the new names DMbot was not sure about. For each one, say what it is, that it is a name you already have, how it is spelled, or that it is not a name. You can also explain it in a few words. It does the same as the new names list in Discord, so answering in one place answers both. DMbot never decides what a name is.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Plot check on a recap",
+    text: "Before you approve a recap, its page can show a Plot check: things that don't seem to match your earlier sessions, with the recap's sentence and the earlier note beside it. For each one you can fix the recap (that adds the words to the box under Tell DMbot what to fix), talk it through (DMbot may suggest a note, and it is kept only if you say Save), say it is not a problem, or leave it as it is. Approve opens when every question has an answer. DMbot only asks. You decide, and only you see these questions.",
   },
   {
     audience: "player",

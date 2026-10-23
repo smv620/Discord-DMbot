@@ -41,7 +41,7 @@ import type {
   MyNpcNote,
   NpcPage,
 } from "./api";
-import { ApiError } from "./api";
+import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -234,6 +234,10 @@ export function scenarioMe(scenario: Scenario): Me | null {
     servers,
     recording,
     dmbotId: "1P0Z4F6N2K9",
+    discordAccounts: [
+      { key: "d1", name: "Mira (main)", current: true, canRemove: true },
+      { key: "d2", name: "Mira on the phone", current: false, canRemove: true },
+    ],
     experiencePoints: 1245,
     canMove: false,
     canSupport: false,
@@ -709,6 +713,36 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // and is gone on the one after, as the bot's queue would. `Garrick` answers with a failure.
   const nameLooks = new Map<string, number>();
   const nameFailed = new Set<string>();
+  // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
+  const plotText = new Map<string, string>();
+  const plotLooks = new Map<string, number>();
+  const plotIssues = new Map<string, PlotIssue[]>();
+  const plotTalk = new Map<string, PlotMessage[]>(); // the talk about each question
+  const plotAnswerIn = new Map<string, number>(); // looks left before PlotBot answers
+  const plotWontSave = new Set<string>(); // notes whose Save fails (a message with "nosave" in it)
+  const plotSavingSeen = new Set<string>(); // notes that have been read once as "saving"
+  const seedPlot = (): PlotIssue[] => [
+    {
+      id: "i1",
+      kind: "dead_acts",
+      level: "likely",
+      sentence: 1,
+      sentenceText: "Ulfgar opened the gate.",
+      reason: "Ulfgar died in session 6.",
+      source: { text: "Ulfgar fell to the ghoul at the bridge.", session: "The Bridge at Dusk" },
+      answer: null,
+    },
+    {
+      id: "i2",
+      kind: "item_twice",
+      level: "probable",
+      sentence: 2,
+      sentenceText: "Mara kept the silver key.",
+      reason: "The silver key was last with Brannoch.",
+      source: { text: "Brannoch pocketed the silver key.", session: "The Silver Key" },
+      answer: null,
+    },
+  ];
   const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   // A recap asked to try again is "being made" for one more read, then ready (the real API takes
@@ -1486,6 +1520,126 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         ],
       };
     },
+    // The Plot check (#2124; core #2122, #2123): two questions the first time; a recap whose text changed
+    // shows "checking" for one look, then the new question list. A DM's message is "waiting" for one look,
+    // then PlotBot's answer is there with a suggested note; Save reads "saving" for one look, then "saved".
+    async plotCheck(ref) {
+      calls.push(`plotCheck:${ref}`);
+      await reachable();
+      signedIn();
+      const r = await find(ref);
+      const seen = plotText.get(ref);
+      if (seen !== undefined && seen !== r.text) {
+        plotText.set(ref, r.text);
+        plotIssues.delete(ref);
+        plotLooks.set(ref, 0);
+      }
+      if (seen === undefined) plotText.set(ref, r.text);
+      const looks = plotLooks.get(ref);
+      if (looks !== undefined && looks < 1) {
+        plotLooks.set(ref, looks + 1);
+        return { state: "checking" as const, approveBlocked: true, version: 2, textHash: "h", issues: [], versions: [] };
+      }
+      const issues = plotIssues.get(ref) ?? seedPlot();
+      plotIssues.set(ref, issues);
+      return {
+        state: "ready" as const,
+        approveBlocked: issues.some((i) => i.answer === null),
+        version: 2,
+        textHash: "h",
+        issues: issues.map((i) => ({ ...i })),
+        versions: [{ version: 1, acceptedBy: "100000000000000001", acceptedAt: 1790000000 }],
+      };
+    },
+    async answerPlotIssue(ref, issue, answer) {
+      calls.push(`answerPlotIssue:${ref}:${issue}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      if (!found) throw new ApiError("not-found");
+      found.answer = answer.note ? { kind: answer.kind, note: answer.note } : { kind: answer.kind };
+      return { ...found };
+    },
+    async plotChatSend(ref, issue, text) {
+      calls.push(`plotChatSend:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      if (!(plotIssues.get(ref) ?? []).some((i) => i.id === issue)) throw new ApiError("not-found");
+      if (text.trim() === "" || text.length > 1000) throw new ApiError("bad-text");
+      const key = `${ref}:${issue}`;
+      const talk = plotTalk.get(key) ?? [];
+      if (talk.some((m) => m.role === "dm" && m.state === "waiting")) throw new ApiError("slow-down");
+      if (talk.filter((m) => m.role === "dm").length >= 15) throw new ApiError("too-soon");
+      plotTalk.set(key, [...talk, { id: `m${talk.length}`, role: "dm", text, state: "waiting", error: "", proposals: [], at: 1790000000 + talk.length }]);
+      plotAnswerIn.set(key, 1); // PlotBot's answer shows on the next look
+    },
+    async plotChat(ref, issue) {
+      calls.push(`plotChat:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      const key = `${ref}:${issue}`;
+      let talk = plotTalk.get(key) ?? [];
+      const left = plotAnswerIn.get(key);
+      if (left !== undefined) {
+        if (left > 0) plotAnswerIn.set(key, left - 1);
+        else {
+          plotAnswerIn.delete(key);
+          // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
+          const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
+          if (asked.some((m) => /nosave/.test(m.text))) plotWontSave.add(`p${talk.length}`);
+          talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
+          if (asked.length > 0 && !/fail/.test(asked[0]!.text))
+            talk = [
+              ...talk,
+              {
+                id: `b${talk.length}`,
+                role: "bot",
+                text: "Thanks. If Ulfgar is alive again from session 7, I can suggest a note. You decide.",
+                state: "done",
+                error: "",
+                proposals: [{ id: `p${talk.length}`, kind: "condition", label: "Ulfgar: alive again from session 7", state: "open" }],
+                at: 1790000100 + talk.length,
+              },
+            ];
+        }
+      }
+      // A note being saved reads "saving" on the first look and "saved" on the one after.
+      talk = talk.map((m) => ({
+        ...m,
+        proposals: m.proposals.map((p) => {
+          if (p.state !== "saving") return p;
+          const seen = plotSavingSeen.has(p.id);
+          plotSavingSeen.add(p.id);
+          if (!seen) return p;
+          return plotWontSave.has(p.id)
+            ? { ...p, state: "failed" as const, error: "Ulfgar's note changed while it was being saved, so nothing was changed." }
+            : { ...p, state: "saved" as const };
+        }),
+      }));
+      plotTalk.set(key, talk);
+      return talk.map((m) => ({ ...m, proposals: m.proposals.map((p) => ({ ...p })) }));
+    },
+    async decidePlotProposal(ref, issue, proposal, action) {
+      calls.push(`decidePlotProposal:${ref}:${issue}:${proposal}:${action}`);
+      await reachable();
+      signedIn();
+      const key = `${ref}:${issue}`;
+      let found: PlotProposal | undefined;
+      plotTalk.set(
+        key,
+        (plotTalk.get(key) ?? []).map((m) => ({
+          ...m,
+          proposals: m.proposals.map((p) => {
+            if (p.id !== proposal) return p;
+            if (p.state !== "open") throw new ApiError("not-allowed");
+            found = { ...p, state: action === "save" ? "saving" : "declined" };
+            return found;
+          }),
+        })),
+      );
+      if (!found) throw new ApiError("not-found");
+      return found;
+    },
     async answerNameCheck(ref, id, answer) {
       calls.push(`answerNameCheck:${ref}:${id.slice(0, 1)}:${JSON.stringify(answer)}`);
       await reachable();
@@ -1635,6 +1789,74 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`email-use:${token}`);
       if (token !== "good-link") throw new ApiError("bad-link");
       me = scenarioMe("table");
+    },
+    // The owner's side of a hand-over by email (#2534): one open offer per campaign, and an answer that
+    // never says anything about the address. `bad` is not an address; `many@example.com` is over the limit.
+    async offerHandover(ref, email) {
+      calls.push(`offerHandover:${ref}:${email}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiError("bad-email");
+      if (email.startsWith("many@")) throw new ApiError("too-soon");
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      const open = { sentAt: "2026-10-23T12:00:00Z", expiresAt: "2026-10-30T12:00:00Z" };
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: open } : x)) };
+    },
+    async takeBackHandover(ref) {
+      calls.push(`takeBackHandover:${ref}`);
+      await reachable();
+      signedIn();
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: null } : x)) };
+    },
+    // The hand-over accept page (#2534). Tokens: `open` (can accept), `no-plan`, `try-it`, `own`, `late`
+    // (ended); `gone-after` looks open and ends before accepting.
+    async handoverLook(token) {
+      calls.push(`handoverLook:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      return {
+        status: "open",
+        campaign: { name: "The Silver Hall" },
+        from: { name: "Mira" },
+        server: { id: "s1", name: "Friday Night Dice" },
+        canAccept: why === null,
+        why,
+        servers: [
+          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+          { id: "s2", name: "Sunday Table", current: false, botIn: true },
+          { id: "s3", name: "New Server", current: false, botIn: false },
+        ],
+      };
+    },
+    async handoverAccept(token, serverId) {
+      calls.push(`handoverAccept:${token}:${serverId}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+      if (serverId === "s3") throw new ApiError("bad-server");
+      return { campaignRef: "s1.cmp1" };
+    },
+    async handoverDecline(token) {
+      calls.push(`handoverDecline:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+    },
+    addDiscordUrl: () => "#demo-add-discord",
+    async removeDiscordAccount(key) {
+      calls.push(`removeDiscordAccount:${key}`);
+      await reachable();
+      signedIn();
+      const list = me?.discordAccounts ?? [];
+      const found = list.find((a) => a.key === key);
+      if (!found) throw new ApiError("not-found");
+      if (list.length <= 1) throw new ApiError("last-account");
+      const left = list.filter((a) => a.key !== key);
+      me = { ...me!, discordAccounts: left.map((a) => ({ ...a, canRemove: left.length > 1 })) };
     },
     async getMoveCode() {
       calls.push("move-code");

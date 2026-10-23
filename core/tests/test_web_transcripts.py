@@ -327,6 +327,33 @@ class Transcripts(Base):
         self.assertIn("long rest", joined)
         self.assertIn("skipped", joined)  # the off-topic run is a note with how long it lasted
 
+    async def test_a_picture_line_is_tagged_image_not_typed_in_both_versions(self) -> None:
+        # A line that describes a picture posted in the table chat (#2450, #2507): the bot's file
+        # says "(image)", so the website's reading page does too, never "(typed)".
+        sid = await self.store_t.open_session(THURSDAY.id, self.one.id, START + 200_000)
+        base = (START + 200_000) * 1000
+        await self.store_t.add_lines(
+            THURSDAY.id,
+            sid,
+            [
+                Line(base + 1000, BOB.id, "Kazeth draws his sword", "Ka'zeth draws his sword"),
+                Line(base + 2000, BOB.id, "a map of the keep", "a map of the keep",
+                     typed=True, image=True),
+                Line(base + 3000, BOB.id, "we take a long rest", "we take a long rest",
+                     typed=True),
+            ],
+        )  # fmt: skip
+        await self.store_t.end_session(THURSDAY.id, sid, START + 203_000)
+        number = 3
+        for version in ("heard", "cleaned"):
+            shown = await read(self.web, self.carol, self.cref, number, version)
+            map_line = next(x for x in shown["lines"] if "a map of the keep" in x)
+            rest_line = next(x for x in shown["lines"] if "long rest" in x)
+            self.assertIn("(image)", map_line, version)
+            self.assertNotIn("(typed)", map_line, version)
+            self.assertIn("(typed)", rest_line, version)
+            self.assertNotIn("(image)", rest_line, version)
+
     async def test_it_says_the_names_are_numbered_and_shows_nobodys_discord_id(self) -> None:
         shown = await read(self.web, self.carol, self.cref, 2, "heard")
         self.assertEqual(shown["notes"][-1], transcripts.NAMES_NOTE)

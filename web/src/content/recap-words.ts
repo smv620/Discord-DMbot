@@ -35,6 +35,11 @@ export const RECAP_VOICE_LIVE = false;
 // needs the web API's names-to-check routes deployed and seen to work. It moves with the What's new
 // entry "Check a recap's new names online" and can only be true with RECAPS_LIVE.
 export const RECAP_NAME_CHECKS_LIVE = false;
+// PLOT_CHECK_LIVE is the "Plot check" panel on the recap page (#2124; core #2122, #2123): PlotBot's
+// questions about a recap, the chat to talk one through, and Approve waiting until each has an answer.
+// It needs those routes deployed and seen to work. It moves with the What's new entry "Plot check on a
+// recap" and can only be true with RECAPS_LIVE.
+export const PLOT_CHECK_LIVE = false;
 // RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
 // link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
