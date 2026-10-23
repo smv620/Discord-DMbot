@@ -11231,14 +11231,23 @@ class DMBot(commands.AutoShardedBot):
 
     async def _sweep_deleted_campaign_audio(self) -> None:
         """A campaign deleted on the website leaves its audio on the disk: that container mounts
-        the volume read-only (#2554), so the bot removes it here. If no server lists a campaign
-        the sweep does nothing, so a failed read can never wipe the audio."""
+        the volume read-only (#2554), so the bot removes it here. A folder is only a candidate
+        when the snapshot does not list it; right before removing it the campaign is looked for
+        again in every server, because a campaign that moved servers keeps its ID and its folder
+        appears in the new server's directory before any snapshot knows (#2532). If no server
+        lists a campaign the sweep does nothing, so a failed read can never wipe the audio."""
         keep: dict[int, set[str]] = {}
         for guild_id in await self.campaigns.guilds_with_campaigns():
             keep[guild_id] = await self.campaigns.campaign_ids(guild_id)
         if not any(keep.values()):
             return
-        gone = await asyncio.to_thread(self.recap_audio_files.sweep_gone, keep)
+        files = self.recap_audio_files
+        gone = 0
+        for guild_id, campaign_id in await asyncio.to_thread(files.strays, keep):
+            if await self.campaigns.exists_anywhere(campaign_id):
+                continue
+            if await asyncio.to_thread(files.remove_stray, guild_id, campaign_id):
+                gone += 1
         if gone:
             log.info("Removed the audio of %d deleted campaigns", gone)
 

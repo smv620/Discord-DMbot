@@ -111,23 +111,63 @@ class Deleting(Base):
         self.assertNotIn("Lost World", await self.cards(self.session))
         # The web container cannot remove audio (its volume is read-only): the bot's sweep does.
         self.assertTrue(folder.exists())
-        keep = {
-            g: await self.campaigns.campaign_ids(g)
-            for g in await self.campaigns.guilds_with_campaigns()
-        }
-        self.assertEqual(self.audio.sweep_gone(keep, min_age_s=0), 1)
+        self.assertEqual(await self.sweep(), 1)
         self.assertFalse((self.audio_root / str(LOST) / self.lost.id).exists())
 
-    async def test_the_sweep_keeps_live_campaigns_and_new_folders(self) -> None:
+    async def sweep(self) -> int:
+        """The bot's own method, on a stand-in with the real store and the real audio files."""
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        me = SimpleNamespace(campaigns=self.campaigns, recap_audio_files=self.audio)
+        before = sum(1 for _ in self.audio_root.glob("*/*"))
+        await DMBot._sweep_deleted_campaign_audio(me)  # type: ignore[arg-type]
+        return before - sum(1 for _ in self.audio_root.glob("*/*"))
+
+    async def test_the_sweep_removes_only_the_folders_of_campaigns_that_exist_nowhere(self) -> None:
         mine = self.audio_root / str(THURSDAY.id) / self.one.id / "recaps/1"
         mine.mkdir(parents=True)
-        new = self.audio_root / str(LOST) / "brandnew"
-        new.mkdir(parents=True)
-        keep = {THURSDAY.id: {self.one.id, self.two.id}}
-        self.assertEqual(self.audio.sweep_gone(keep), 0)  # nothing is a day old
-        self.assertEqual(self.audio.sweep_gone(keep, min_age_s=0), 1)  # only the stray goes
+        stray = self.audio_root / str(LOST) / "gonecampaign" / "recaps/1"
+        stray.mkdir(parents=True)
+        self.assertEqual(await self.sweep(), 1)
         self.assertTrue(mine.exists())
-        self.assertFalse(new.exists())
+        self.assertFalse(stray.parent.parent.exists())
+
+    async def test_a_campaign_that_moved_servers_keeps_its_new_folder(self) -> None:
+        """The folder in the new server's directory is not in an older snapshot, and it is as old
+        as the files copied into it: the sweep looks the campaign up again and leaves it."""
+        moved = self.audio_root / "999" / self.one.id / "recaps/1"
+        moved.mkdir(parents=True)
+        self.assertEqual(await self.sweep(), 0)
+        self.assertTrue(moved.exists())
+
+    async def test_a_copy_in_progress_and_a_symlink_are_never_removed(self) -> None:
+        copying = self.audio_root / str(LOST) / "midcopy"
+        (copying / "recaps").mkdir(parents=True)
+        (copying / "recaps" / "1.copying").write_bytes(b"x")
+        outside = Path(tempfile.mkdtemp())
+        link = self.audio_root / str(LOST) / "linked"
+        link.symlink_to(outside, target_is_directory=True)
+        self.assertEqual(await self.sweep(), 0)
+        self.assertTrue(copying.exists())
+        self.assertTrue(link.is_symlink())
+
+    async def test_the_sweep_does_nothing_when_no_server_lists_a_campaign(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        folder = self.audio_root / str(LOST) / "somecampaign"
+        folder.mkdir(parents=True)
+
+        class Empty:
+            async def guilds_with_campaigns(self) -> list[int]:
+                return []
+
+        me = SimpleNamespace(campaigns=Empty(), recap_audio_files=self.audio)
+        await DMBot._sweep_deleted_campaign_audio(me)  # type: ignore[arg-type]
+        self.assertTrue(folder.exists())
 
     async def test_the_typed_name_matches_the_way_discords_delete_does(self) -> None:
         odd = await self.campaigns.create(THURSDAY.id, "Straße  Watch", ALICE.id)

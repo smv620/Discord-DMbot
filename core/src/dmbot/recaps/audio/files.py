@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
+COPYING = ".copying"  # a copy in progress (a campaign move) ends so; never swept
 KEEP_DAYS = 180
 LINK_SECONDS = 15 * 60
 VOICE = "voice"
@@ -67,28 +68,37 @@ class AudioFiles:
     def forget_campaign(self, guild_id: int, campaign_id: str) -> None:
         shutil.rmtree(self._campaign(guild_id, campaign_id), ignore_errors=True)
 
-    def sweep_gone(self, keep: Mapping[int, Iterable[str]], *, min_age_s: float = 86400) -> int:
-        """Delete the folders of campaigns that no longer exist (#2554): `keep` is every campaign
-        that does, by server. The website's delete cannot remove audio (its container mounts the
-        volume read-only), so the bot does it here. A folder newer than `min_age_s` stays, so a
-        campaign made a moment after `keep` was read is never swept. Returns how many went."""
-        gone = 0
+    def strays(self, keep: Mapping[int, Iterable[str]]) -> list[tuple[int, str]]:
+        """(server, campaign) of every campaign folder that `keep` (every campaign that exists, by
+        server) does not list (#2554). Only candidates: a campaign moved to another server a moment
+        ago has its folder there before `keep` could know it, so the caller checks each one again
+        (`remove_stray`) right before removing it. Symlinks and odd names are never listed."""
+        found: list[tuple[int, str]] = []
         for guild_dir in self._root.glob("*"):
-            if not guild_dir.is_dir() or not guild_dir.name.isdigit():
+            if guild_dir.is_symlink() or not guild_dir.is_dir() or not guild_dir.name.isdigit():
                 continue
             alive = set(keep.get(int(guild_dir.name), ()))
             for folder in guild_dir.glob("*"):
-                try:
-                    if (
-                        folder.is_dir()
-                        and folder.name not in alive
-                        and self._now() - folder.stat().st_mtime >= min_age_s
-                    ):
-                        shutil.rmtree(folder, ignore_errors=True)
-                        gone += 1
-                except OSError:
-                    continue
-        return gone
+                if (
+                    not folder.is_symlink()
+                    and folder.is_dir()
+                    and _ID.match(folder.name)
+                    and folder.name not in alive
+                ):
+                    found.append((int(guild_dir.name), folder.name))
+        return found
+
+    def remove_stray(self, guild_id: int, campaign_id: str) -> bool:
+        """Delete one campaign's folder, unless it is a symlink or holds a copy in progress (a
+        `*.copying` file or folder: a move is filling it). The caller has just checked that no
+        server has the campaign. Returns whether it was removed."""
+        folder = self._campaign(guild_id, campaign_id)
+        if folder.is_symlink() or not folder.is_dir():
+            return False
+        if any(p.name.endswith(COPYING) for p in folder.rglob("*")):
+            return False
+        shutil.rmtree(folder, ignore_errors=True)
+        return True
 
     def sweep(self) -> int:
         """Delete the recaps' audio older than the retention. Returns how many recaps' folders

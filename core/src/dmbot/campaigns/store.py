@@ -472,6 +472,14 @@ class CampaignStore:
             cur = await conn.execute("SELECT id FROM campaigns WHERE guild_id = %s", (guild_id,))
             return {str(r["id"]) for r in await cur.fetchall()}
 
+    async def exists_anywhere(self, campaign_id: str) -> bool:
+        """Whether any server has a campaign with this ID, read fresh. A moved campaign keeps its
+        ID, so this is how a sweep tells a deleted campaign from one that changed servers."""
+        for guild_id in await self.guilds_with_campaigns():
+            if campaign_id in await self.campaign_ids(guild_id):
+                return True
+        return False
+
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
         """Drop a server from the list once it holds no campaigns. Check and delete are one
         statement in the server's own scope, so a campaign made a moment ago keeps it listed."""
