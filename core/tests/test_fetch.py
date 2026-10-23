@@ -201,6 +201,17 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LinkError):  # without images=True a picture is still no document
             await self.get("/p")
 
+    async def test_a_picture_fetch_kept_to_named_hosts_refuses_a_redirect_elsewhere(self) -> None:
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        self.route("/ok", web.Response(body=png, content_type="image/png"))
+        self.redirect("/r", f"{self.base}/ok")
+        with self.assertRaises(LinkError):  # the redirect goes to a host that is not named
+            await fetch.fetch(
+                self.base + "/r", self.policy, images=True, stay_on=("cdn.discordapp.com",)
+            )
+        got = await fetch.fetch(self.base + "/r", self.policy, images=True, stay_on=("127.0.0.1",))
+        self.assertEqual(got.data, png)
+
     async def test_a_picture_over_the_size_limit_is_refused(self) -> None:
         self.route(
             "/big", web.Response(body=b"\x89PNG\r\n\x1a\n" + b"x" * 100, content_type="image/png")

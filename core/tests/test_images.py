@@ -8,7 +8,7 @@ import unittest
 from typing import Any
 
 from dmbot import images
-from dmbot.ai import AIError, Image, Reply
+from dmbot.ai import AIError, AIOutOfFunds, Image, Reply
 from dmbot.images import ImageError, Place, Read
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
@@ -121,6 +121,21 @@ class Describing(unittest.TestCase):
         self.assertLessEqual(len(got.text), images.TEXT_MAX)
         self.assertTrue(got.text.startswith("xyz"))
 
+    def test_hidden_and_reordering_characters_and_line_separators_are_dropped(self) -> None:
+        raw = json.dumps(
+            {
+                "kind": "picture",
+                "alt": "A\u202eletter\u200b with\u2028a\u2029seal\ufeff.",
+                "text": "",
+            }
+        )
+        got = images.parse_describe(raw)
+        assert got is not None
+        self.assertEqual(got.alt, "Aletter with a seal.")
+
+    def test_the_size_limit_is_what_the_ai_service_takes(self) -> None:
+        self.assertEqual(images.MAX_BYTES, 5 * 1024 * 1024)
+
     def test_a_maps_places_are_kept_cleaned_and_capped(self) -> None:
         raw = json.dumps(
             {
@@ -214,6 +229,15 @@ class Reading(unittest.IsolatedAsyncioTestCase):
             refused,
         ):
             self.assertIsNone(await images.read(self.image, Fake(answer), Fake()))
+
+    async def test_a_failed_second_call_keeps_the_description_but_no_funds_is_raised(self) -> None:
+        fast = Fake(reply({"kind": "map", "alt": "A map.", "text": ""}))
+        self.assertEqual(
+            await images.read(self.image, fast, Fake(AIError("busy"))), Read("map", "A map.")
+        )
+        fast = Fake(reply({"kind": "map", "alt": "A map.", "text": ""}))
+        with self.assertRaises(AIOutOfFunds):
+            await images.read(self.image, fast, Fake(AIOutOfFunds("no money")))
 
     async def test_an_ai_error_is_the_callers_to_handle(self) -> None:
         with self.assertRaises(AIError):

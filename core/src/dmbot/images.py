@@ -25,13 +25,15 @@ from typing import Any, Protocol
 import yarl
 
 from dmbot import fetch as fetching
-from dmbot.ai import Image
+from dmbot.ai import AIError, AIOutOfFunds, Image
 
 log = logging.getLogger(__name__)
 
 # Discord's own file hosts, and nothing else: a link in a message to anywhere else is never opened.
 CDN_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
-MAX_BYTES = 10 * 1024 * 1024  # "about 10 MB"
+# The AI service takes an image up to 5 MB, so that is the most fetched: a larger one is refused
+# here, in plain words, and never reaches it as an error that looks like an outage.
+MAX_BYTES = 5 * 1024 * 1024
 MAX_PER_MESSAGE = 4
 
 PICTURE, MAP, TEXT = "picture", "map", "text"
@@ -202,6 +204,10 @@ async def fetch_image(link: str, policy: fetching.Policy = fetching.STRICT) -> I
 # --- what the AI said, checked ------------------------------------------------------------
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # all but tab and newline
+# Format characters (bidi overrides, zero-width marks): an image's words can carry them to hide or
+# reorder text, so they never reach the transcript.
+_HIDDEN = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+_BREAKS = re.compile("[\u2028\u2029\u0085]")  # Unicode line and paragraph breaks: a plain break
 
 
 def clean(value: object, limit: int, *, lines: bool = False) -> str:
@@ -209,7 +215,8 @@ def clean(value: object, limit: int, *, lines: bool = False) -> str:
     characters out, spaces squashed (`lines`: line breaks kept), cut at `limit`."""
     if not isinstance(value, str):
         return ""
-    value = _CONTROL.sub("", value).replace("\r\n", "\n").replace("\r", "\n")
+    value = _HIDDEN.sub("", _CONTROL.sub("", _BREAKS.sub("\n", value)))
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
     if lines:
         value = "\n".join(" ".join(part.split()) for part in value.split("\n")).strip()
         value = re.sub(r"\n{3,}", "\n\n", value)
@@ -291,13 +298,19 @@ async def read(image: Image, fast: Vision, careful: Vision) -> Read | None:
         return None
     if described.kind != MAP:
         return described
-    mapped = await careful.complete(
-        MAP_SYSTEM,
-        "Write down this map.",
-        max_tokens=4000,
-        schema=MAP_SCHEMA,
-        images=[image],
-    )
+    try:
+        mapped = await careful.complete(
+            MAP_SYSTEM,
+            "Write down this map.",
+            max_tokens=4000,
+            schema=MAP_SCHEMA,
+            images=[image],
+        )
+    except AIOutOfFunds:
+        raise
+    except AIError:  # the second call failing leaves the first one's description standing
+        log.info("Image: a map's layout could not be read")
+        return described
     parsed = (
         None
         if getattr(mapped, "refused", False) or getattr(mapped, "cut", False)
