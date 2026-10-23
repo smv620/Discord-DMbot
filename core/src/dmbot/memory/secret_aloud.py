@@ -42,15 +42,16 @@ class Said:
         return max(1, len(self.alias_ids))
 
 
-def players_lines(lines: Iterable[Line], *, players: Collection[int]) -> list[str]:
-    """The words players said at the table: lines by someone in `players` (the people recorded now
-    who are not the campaign's DMs), leaving out the sidebar (the DM's questions to DMbot and its
-    answers). Off-topic lines are kept: the raw transcript shows them too, so a secret muttered
-    there is just as out. Both the cleaned and the as-heard words are read, since the cleaner may
-    have respelled a name; a line where they differ counts as two, which only affects the order."""
+def said_lines(lines: Iterable[Line], *, people: Collection[int]) -> list[str]:
+    """The words said at the table: lines by someone in `people` (the people recorded now; the
+    caller leaves the campaign's DMs out or keeps them in), leaving out the sidebar (the DM's
+    questions to DMbot and its answers). Off-topic lines are kept: the raw transcript shows them
+    too, so a secret muttered there is just as out. Both the cleaned and the as-heard words are
+    read, since the cleaner may have respelled a name; a line where they differ counts as two,
+    which only affects the order."""
     out: list[str] = []
     for line in lines:
-        if line.user_id not in players or line.sidebar:
+        if line.user_id not in people or line.sidebar:
             continue
         if line.text:
             out.append(line.text)

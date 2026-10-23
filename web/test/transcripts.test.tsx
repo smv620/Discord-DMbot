@@ -408,6 +408,29 @@ describe("opening at a moment (#2402)", () => {
     expect(scroll).not.toHaveBeenCalled();
   });
 
+  it("takes the last of the lines that share a start (the clock counts whole seconds)", () => {
+    const same = ["[0:00:05] a", "[0:00:10] b", "[0:00:10] c", "[0:00:10] d", "[0:00:15] e"];
+    expect(lineAtMoment(same, 10_000, false)).toBe(3);
+    expect(lineAtMoment(same, 12_000, false)).toBe(3);
+  });
+
+  it("follows a second moment link on the same page, and focuses the line so it is read out", async () => {
+    window.location.hash = "#t=14000";
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    page(mockApi("table"), `/account/transcripts/${REF}/2`);
+    await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".moment")));
+    expect(document.querySelector(".moment")?.getAttribute("tabindex")).toBe("-1");
+    window.location.hash = "#t=0";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await waitFor(() => expect(document.querySelectorAll(".moment")).toHaveLength(1));
+    const now = document.querySelector(".moment") as HTMLElement;
+    await waitFor(() => expect(document.activeElement).toBe(now));
+    window.location.hash = "";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await waitFor(() => expect(document.querySelectorAll(".moment")).toHaveLength(0));
+  });
+
   it("loads the next pages until it reaches the moment", async () => {
     window.location.hash = "#t=125000"; // 2:05, on the third page
     window.HTMLElement.prototype.scrollIntoView = vi.fn();

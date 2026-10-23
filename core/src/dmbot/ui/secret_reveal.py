@@ -20,7 +20,14 @@ from dmbot.dm_screen import secret_posts
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
-from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS, names_note, opened_text
+from dmbot.ui.secret_aloud import (
+    NO_CAMPAIGN,
+    NO_MEMORY,
+    NOT_YOURS,
+    names_note,
+    opened_text,
+    settle,
+)
 
 _NAME = re.compile(r"\*\*(.+?)\*\*")
 PRIVATE_NOTE = "\n(Sent to you alone, because your players can look at your DM screen.)"
@@ -107,6 +114,7 @@ class RevealButton(
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
+            await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
             secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         memory = bot.memory
@@ -125,6 +133,7 @@ class RevealButton(
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
+        await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
         secret_posts.answered(interaction, self.campaign_id)  # (#2156)
 
 

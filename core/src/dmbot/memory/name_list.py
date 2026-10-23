@@ -2,7 +2,8 @@
 at scale", step 3; #126). Pure: no Discord, no database.
 
 One name per line: `name | kind | other names | secret names`. Only the name is needed;
-other names and secret names are separated by `,` or `;` (as in the Add a name form).
+other names and secret names are separated by `,` or `;`; a name with a comma or semicolon in it
+is written in double quotes (only here: the Add a name form does not read quotes).
 Lines starting with `#` are notes and are skipped, so the template's instructions and a
 download's header can stay in the file when it's uploaded again.
 """
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 
 from dmbot.memory.models import NAME_MAX, name_key
 from dmbot.memory.ontology import PERSON_NOT_LISTED, SPELL_NOT_KEPT, UNNAMED_MONSTER, is_dm_word
+from dmbot.memory.scan import alike, sound_keys
 from dmbot.rules import index
 
 MAX_FILE_BYTES = 256 * 1024
@@ -224,6 +226,9 @@ class ListLine:
     kind_word: str  # as written ("" if none)
     others: tuple[str, ...]
     secrets: tuple[str, ...]
+    said_as: str = ""  # a bracket that is clearly how to say the name (#2447): "TAV-in"
+    ask: str = ""  # a bracket that may be how to say it: the DM is asked once
+    whole: str = ""  # the name with its bracket, when it had one (kept whole if already known)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,15 +250,112 @@ class Parsed:
     repeated: int = 0  # the same name twice in the list
 
 
+# Words that mean a bracket is plain English (an aside), never a respelling of the name.
+PLAIN_WORDS = frozenset(
+    {"the", "of", "a", "an", "and", "or", "to", "in", "on", "at", "for", "with", "from", "by"}
+    | {"who", "is", "was", "are", "his", "her", "their", "its", "my", "our", "your", "this"}
+    | {"that", "these", "those", "as", "but", "not", "no"}
+)
+_BRACKET = re.compile(
+    r"^(?P<name>.+?)\s*(?:\((?P<round>[^()\[\]]{1,80})\)|\[(?P<square>[^()\[\]]{1,80})\])$"
+)
+_STRESS = re.compile("[-\u02c8\u02cc\u00b4`]")  # hyphens and stress marks
+SOUND_SAME = 0.8  # this alike once hyphens, stress and capitals are gone: a respelling
+SOUND_SHARED = 0.7  # with a shared sound code
+SOUND_NEAR = 0.5  # at least this alike, or a shared sound code: ask the DM
+SOUND, ASIDE, NEAR_SOUND = "sound", "aside", "near"
+
+
+def split_bracket(cell: str) -> tuple[str, str] | None:
+    """`Tavin (TAV-in)` gives ("Tavin", "TAV-in"); a name with no closing bracket at its end gives
+    None."""
+    found = _BRACKET.match(" ".join(cell.split()))
+    if found is None:
+        return None
+    name = found["name"].strip()
+    inside = " ".join((found["round"] or found["square"] or "").split())
+    return (name, inside) if name and inside else None
+
+
+def judge_bracket(name: str, inside: str) -> str:
+    """What the bracket after a name is (#2447): SOUND (a respelling: after dropping hyphens, stress
+    marks and capitals its sound key is close to the name's), NEAR_SOUND (maybe: ask the DM once) or
+    ASIDE (any other words: kept as another name). A plain English word in it ("the", "of", "a")
+    makes it an aside, whatever it sounds like. Pure code, no AI."""
+    if {w.strip(".,;:!?'\"").lower() for w in inside.split()} & PLAIN_WORDS:
+        return ASIDE
+    plain = _STRESS.sub("", inside).lower()
+    closeness = alike(name, plain)
+    shared = bool(set(sound_keys(name)) & set(sound_keys(plain)))
+    close = closeness >= SOUND_SAME or (shared and closeness >= SOUND_SHARED)
+    if close and _respelled(inside):
+        return SOUND
+    if close or shared or closeness >= SOUND_NEAR:
+        return NEAR_SOUND  # sounds alike but doesn't look like a respelling ("Kaela (Kael)"): ask
+    return ASIDE
+
+
+def _respelled(inside: str) -> bool:
+    """Does the bracket look like a sound being spelled out: a hyphen or stress mark in it, or a
+    shouted syllable ("kah-ZETH", "TAV-in")? A plain look-alike ("Kael" after "Kaela") does not."""
+    return bool(_STRESS.search(inside)) or any(c.isupper() for c in inside[1:])
+
+
+def _pieces(raw: str) -> list[str]:
+    """`raw` split at `,` and `;`, except a piece in double quotes, which is one name as written
+    (a download quotes a name with a separator in it, #2482). A doubled quote inside is one quote.
+    A quote that does not open a piece, or that is not closed before a separator, is just a
+    character, so older lists with quotes in a name read as they always did."""
+    pieces: list[str] = []
+    at, size = 0, len(raw)
+    while at <= size:
+        start = at
+        while start < size and raw[start] == " ":
+            start += 1
+        if start < size and raw[start] == '"':
+            text, end = [], start + 1
+            while end < size:
+                if raw[end] == '"':
+                    if raw[end + 1 : end + 2] != '"':
+                        break
+                    end += 1  # a doubled quote
+                text.append(raw[end])
+                end += 1
+            after = end + 1
+            while after < size and raw[after] == " ":
+                after += 1
+            if end < size and (after >= size or raw[after] in ";,"):
+                pieces.append("".join(text))
+                at = after + 1
+                continue
+        match = _SEPARATORS.search(raw, at)
+        stop = match.start() if match else size
+        pieces.append(raw[at:stop])
+        at = stop + 1
+    return pieces
+
+
 def _names(raw: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    for part in _SEPARATORS.split(raw):
+    for part in _pieces(raw):
         text = " ".join(part.split())
         if text and name_key(text) not in seen:
             seen.add(name_key(text))
             out.append(text)
     return out
+
+
+def _joined(names: Sequence[str]) -> str:
+    """Names for a list cell: separated by "; ", and one with a separator or a quote that could
+    be mistaken for quoting is written in double quotes, so reading the list back gives the same
+    names (#2482)."""
+    return "; ".join(
+        '"' + n.replace('"', '""') + '"'
+        if n.lstrip().startswith('"') or "," in n or ";" in n
+        else n
+        for n in names
+    )
 
 
 def _without(names: list[str], taken: set[str]) -> list[str]:
@@ -332,6 +434,9 @@ class _Taking:
     others: list[str]
     secrets: list[str]
     said: set[str]  # name keys already given for it: the name, other and secret names
+    said_as: str = ""
+    ask: str = ""
+    whole: str = ""
 
     def add(self, names: list[str], into: list[str]) -> None:
         for n in names:
@@ -366,11 +471,27 @@ def parse(text: str, *, secrets: bool, people: bool = True) -> Parsed:
         if kind_of(" ".join(cells[1].split())) == "person" and secrets and people:
             _person(out, found_people, number, cells)
             continue
+        said_as = ask = whole = ""
+        aside: list[str] = []
+        if (bracket := split_bracket(name)) is not None:
+            base, inside = bracket
+            # The whole name stays whole when the campaign already has it, whatever the bracket
+            # turns out to be: a re-upload of "Sera (Sara)" is that name, not a new "Sera" (#2447).
+            whole = name
+            match judge_bracket(base, inside):
+                case "sound":  # SOUND
+                    name, said_as = base, inside
+                case "near":  # NEAR_SOUND
+                    name, ask = base, inside
+                case _:  # an aside: Tavin (the rogue) is Tavin, also called "Tavin the rogue"
+                    name, aside = base, [f"{base} {inside}"]
         if (cells[4] or cells[5]) and kind_of(" ".join(cells[1].split())) != "person":
             out.refused.append((number, ONLY_PEOPLE_HAVE))
             continue
         key = name_key(name)
-        others, hidden = _names(cells[2]), _names(cells[3])
+        # The aside is one name as written, even with a comma in it ("Vex the boss, retired"):
+        # only the typed other names are split.
+        others, hidden = ([*aside, *_names(cells[2])], _names(cells[3]))
         # Counted as kept: without the name, or a secret name said already. Before the
         # checks on each name, so a long line is refused without reading all of it.
         others = _without(others, {key})
@@ -402,17 +523,33 @@ def parse(text: str, *, secrets: bool, people: bool = True) -> Parsed:
             continue
         first = taking.get(key)
         if first is None:
-            taking[key] = first = _Taking(number, name, kind_of(word), word, [], [], {key})
+            taking[key] = first = _Taking(
+                number, name, kind_of(word), word, [], [], {key}, said_as, ask, whole
+            )
         else:  # the same name again: keep the first line, with every other name
             out.repeated += 1
             later = kind_of(word)
             # A kind given later counts when the first line gave none (or "other").
             if first.kind in (None, "concept") and later not in (None, "concept"):
                 first.kind, first.kind_word = later, word
+            if not first.said_as and said_as:
+                first.said_as, first.ask = said_as, ""
+            elif not first.said_as and not first.ask and ask:
+                first.ask = ask
         first.add(others, first.others)
         first.add(hidden, first.secrets)
     out.lines = [
-        ListLine(t.number, t.name, t.kind, t.kind_word, tuple(t.others), tuple(t.secrets))
+        ListLine(
+            t.number,
+            t.name,
+            t.kind,
+            t.kind_word,
+            tuple(t.others),
+            tuple(t.secrets),
+            t.said_as,
+            t.ask,
+            t.whole,
+        )
         for t in taking.values()
     ]
     out.people = [
@@ -437,6 +574,8 @@ def _person(
     if cells[3]:
         out.refused.append((number, NO_SECRETS_FOR_PEOPLE))
         return
+    # The first part is names too: split at a comma when it is written plain ("Bob, Bobby" is two
+    # names), whole when it is in double quotes, which a download does for a name with a comma.
     names = _names(" ; ".join([cells[0], cells[2]]))
     plays = _names(cells[5])
     if len(names) > MAX_PER_LINE or len(plays) > MAX_PER_LINE:
@@ -508,8 +647,8 @@ def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str
         cells = [
             name,
             kind,
-            "; ".join(others[at : at + MAX_PER_LINE]),
-            "; ".join(secrets[at : at + MAX_PER_LINE]),
+            _joined(others[at : at + MAX_PER_LINE]),
+            _joined(secrets[at : at + MAX_PER_LINE]),
         ]
         while len(cells) > 1 and not cells[-1]:
             cells.pop()
@@ -526,12 +665,12 @@ def person_lines(p: OutPerson) -> list[str]:
     out = []
     for at in range(0, max(len(names) - 1, len(plays), 1), MAX_PER_LINE):
         cells = [
-            names[0],
+            _joined(names[:1]),
             "player or DM",
-            "; ".join(names[1:][at : at + MAX_PER_LINE]),
+            _joined(names[1:][at : at + MAX_PER_LINE]),
             "",
             str(p.who),
-            "; ".join(plays[at : at + MAX_PER_LINE]),
+            _joined(plays[at : at + MAX_PER_LINE]),
         ]
         while len(cells) > 5 and not cells[-1]:
             cells.pop()  # the id is always written
@@ -644,3 +783,8 @@ def render_files(
         "\n".join(_prelude(campaign=campaign, secrets=secrets, part=(i, len(chunks))) + body) + "\n"
         for i, body in enumerate(chunks, 1)
     ]
+
+
+# For the readers of these cells outside this module (the AI list merge, #2482).
+split_cell = _pieces
+join_cell = _joined

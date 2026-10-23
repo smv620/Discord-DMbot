@@ -2233,7 +2233,7 @@ class SaveAndResume(SessionTests):
         self.assertNotIn("my boss called again", [text for _, text in table.heard])
         answer = await self.bot.put_back(GUILD, run.id, DM)
         self.assertIn("Put back", answer)
-        store.set_topics.assert_awaited_with(GUILD, "s5", PLAYER, [0], "game")
+        store.set_topics.assert_awaited_with(GUILD, "s5", PLAYER, [0], "game", typed=False)
 
     async def test_only_the_dm_can_put_a_line_back(self) -> None:
         table, posted, _ = await self.left_out_line()
@@ -2316,7 +2316,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         edits = posted.edit.await_count
 
-        async def stop_meanwhile(*_: Any) -> int:
+        async def stop_meanwhile(*_: Any, **__: Any) -> int:
             self.bot.stop_recording(GUILD, PLAYER)
             return 1
 
@@ -2363,7 +2363,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         edits = posted.edit.await_count
 
-        async def stop_meanwhile(*_: Any) -> int:
+        async def stop_meanwhile(*_: Any, **__: Any) -> int:
             await self.bot.stop_table(GUILD, "test")
             return 1
 
@@ -2480,7 +2480,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         table.save_lock.release()
         self.assertIn("Put back", await press)
-        store.set_topics.assert_awaited_once_with(GUILD, "s5", PLAYER, [0], "game")
+        store.set_topics.assert_awaited_once_with(GUILD, "s5", PLAYER, [0], "game", typed=False)
 
     async def test_lines_labelled_after_the_stop_arent_listed(self) -> None:
         table = await self.filtered("1 other")

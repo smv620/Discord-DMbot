@@ -314,6 +314,51 @@ class ThePath(NamesTest):
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
+    async def test_a_truth_upload_pins_what_is_kept_and_an_asserted_one_does_not(self) -> None:
+        for truth in (False, True):
+            await self.asyncTearDown()
+            await self.asyncSetUp()
+            it = self.it()
+            await ui_bg.offer(it, self.campaign.id, Upload(TEXT, "your background"))
+            offer = it.response.sent[0][1]["view"]
+            self.assertIn("May change in play", str(it.response.sent[0][0]))
+            if truth:
+                flip = self.it()
+                await offer._flip(flip)
+                self.assertIn("100% truth", flip.response.edited[0][0])
+                self.assertEqual(offer.switch.label, ui_bg.TRUTH_ON)
+            await offer._read(self.it())
+            await self.confirm_all()
+            _, view = await self.offer()
+            await self.button(view, "✅ Keep").callback(self.it())
+            (rel,) = await self.relations()
+            pinned = await self.memory.pinned_connections(GUILD, self.campaign.id)
+            self.assertEqual(pinned, {rel.id} if truth else set())
+
+    async def test_a_pair_already_waiting_takes_the_truth_word_of_a_later_upload(self) -> None:
+        ids = await self.ids()
+        await self.read()
+        waiting = await self.waiting()
+        first = waiting[0]
+        again = NewLink(first.subject_id, first.predicate, first.object_id, "q", truth=True)
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [again]), 0)
+        (same,) = [
+            w
+            for w in await self.waiting()
+            if w.subject_id == first.subject_id
+            and w.predicate == first.predicate
+            and w.object_id == first.object_id
+        ]
+        self.assertTrue(same.truth)
+        del ids
+
+    async def test_only_a_dm_flips_the_truth_switch(self) -> None:
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(TEXT, "your background"))
+        offer = it.response.sent[0][1]["view"]
+        await offer._flip(self.it(MANAGER))
+        self.assertFalse(offer.truth)
+
     async def test_keep_as_secret_stores_a_secret_connection(self) -> None:
         await self.read()
         await self.confirm_all()
