@@ -26,11 +26,12 @@ import functools
 import json
 import re
 import unicodedata
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
+from dmbot.memory.importance import beat_score
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
@@ -629,18 +630,28 @@ def housekeeping_message(beats: Sequence[Beat], summary: str, catchup: str = "")
     return out
 
 
-def pick_beats(beats: Sequence[Beat], limit: int = 10) -> list[Beat]:
+def pick_beats(
+    beats: Sequence[Beat], limit: int = 10, *, importance: Mapping[str, float] | None = None
+) -> list[Beat]:
     """At most `limit` beats for the writer, in the order they happened: the first (the opening)
     and the last (where the session stopped, which the recap must end on) always, and of the rest
-    those PlotBot marked as mattering (#2254), then those with the most characters in them and the
-    most lines behind them. A long session's sheet
+    those PlotBot marked as mattering (#2254), then those whose names matter most to the story
+    (`importance`, #2411: how connected they are in The truth, so a minor-seeming mention of a
+    well-connected name is kept), then those with the most characters in them and the most lines
+    behind them. A long session's sheet
     has up to 120 beats; the recap is one page, so it can't tell them all (#2013). Beats keep their
     numbers, which housekeeping cites. A shorter sheet is returned whole."""
     if len(beats) <= limit:
         return list(beats)
     middle = sorted(
         beats[1:-1],
-        key=lambda b: (b.matters, len(b.who), len(b.lines), -b.number),
+        key=lambda b: (
+            b.matters,
+            beat_score(b.who, importance or {}),
+            len(b.who),
+            len(b.lines),
+            -b.number,
+        ),
         reverse=True,
     )
     keep = {beats[0].number, beats[-1].number, *(b.number for b in middle[: limit - 2])}

@@ -1823,6 +1823,16 @@ names panel nor the speech-to-text hints can be a fixed list.
       for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is
       never a reveal: it becomes a theory, drawn as uncertain. Red herrings and lies are beliefs the truth
       disagrees with. See docs/STORY_MEMORY.md section 9, "Assertions, perspectives and evidence".
+    - *Built (CloudDev, 2026-10-23, #2411):* **recaps rank by how connected a name is.** `importance` is the
+      number of live connections an entry has in The truth, secret ones included, plus a quarter for each
+      entry two steps out, capped at 20 (`memory/importance.py`, computed in code from the connections and
+      The truth's beliefs; an ended connection, or one The truth puts at 0.0, does not count). It is kept
+      in memory per campaign and read again after each session. It only **ranks**: when a long session has
+      more beats than the recap can tell, a beat's names add their importance after what PlotBot marked
+      (so a minor mention of a well-connected name is kept), and PlotBot's story context is recalled for
+      the names that matter most first. The writer's names and facts still come only from what the players
+      know; the scores are numbers by name and no connection or fact is ever put in a prompt through them.
+      The token budget is unchanged: it changes the order, not the size.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.

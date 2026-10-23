@@ -198,6 +198,31 @@ class TheChecks(unittest.TestCase):
 class TheKnownGate(unittest.IsolatedAsyncioTestCase):
     """An item may be explained only if the players' own view of the memory holds it."""
 
+    async def test_the_names_that_matter_most_are_recalled_first(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+        from dmbot.memory.models import name_key
+
+        seen: list[Any] = []
+
+        class Service:
+            def __init__(self, memory: Any) -> None:
+                pass
+
+            async def recall(self, *a: Any, **k: Any) -> Recall:
+                seen.append(k["seeds"])
+                return Recall("dm_screen", AsOf(), ())
+
+        class Scores:
+            async def get(self, guild_id: int, campaign_id: str) -> dict[str, float]:
+                return {name_key("Lucian"): 12.0}
+
+        bot = SimpleNamespace(memory=object(), importance=Scores())
+        with patch("dmbot.bot.RecallService", Service):
+            await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira", "Lucian", "Mira"])  # type: ignore[arg-type]
+        self.assertEqual(seen[0], ["Lucian", "Mira"])  # the hub first, and no name twice
+
     async def test_known_is_what_both_views_hold(self) -> None:
         from types import SimpleNamespace
 
@@ -224,7 +249,7 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
                 Service.last.append(k)
                 return everything if k["audience"] == "dm_screen" else players
 
-        bot = SimpleNamespace(memory=object())
+        bot = SimpleNamespace(memory=object(), importance=None)
         with patch("dmbot.bot.RecallService", Service):
             got = await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira"])  # type: ignore[arg-type]
         self.assertEqual([(m.id[:1], m.known) for m in got], [("a", True), ("b", False)])
@@ -232,7 +257,7 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("spy", " ".join(m.text for m in got if m.known))
         # the DM-screen read leaves out what the DM has not confirmed
         self.assertTrue(any(k.get("confirmed_only") for k in Service.last))
-        none = SimpleNamespace(memory=None)
+        none = SimpleNamespace(memory=None, importance=None)
         self.assertEqual(await DMBot.recap_story(none, 1, "c", None, ["x"]), [])  # type: ignore[arg-type]
 
 
