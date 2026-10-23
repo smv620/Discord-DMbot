@@ -236,7 +236,7 @@ class TheEdits(Editing):
     async def test_a_stranger_cannot_queue_a_pin_nor_read_its_answer(self) -> None:
         link = await self.free_link("sworn to")
         token = await sessions.sign_in(
-            self.web, BOB, [DiscordGuild(id=999, name="Elsewhere", manage=True)], now=NOW, days=30
+            self.web, ALICE, [DiscordGuild(id=999, name="Elsewhere", manage=True)], now=NOW, days=30
         )
         stranger = await sessions.find(self.web, token, now=NOW)  # in another server only
         self.assertIn(
