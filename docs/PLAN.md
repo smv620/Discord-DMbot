@@ -4073,11 +4073,11 @@ responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4.
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
-(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+(`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
 ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
 deployed but blocked (for example the account move, whose code goes to the payment email while
-payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+payments are off, #1096) is marked `held` in its file, with its reason. A PR that ships a
 feature people can see adds its entry, or a held one, in the same PR.
 
 **Session recaps** (Supervisor, 2026-10-15 and 2026-10-16; built in #1392, #1397, #1412, #1415,
