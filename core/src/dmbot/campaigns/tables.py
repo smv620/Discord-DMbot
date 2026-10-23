@@ -3,13 +3,16 @@
 A campaign-keyed table that is in no backup section and on no written list is a campaign that
 quietly loses data when it is restored or deleted. This module is the one list: `SECTION_TABLES`
 says which tables each registered backup section carries, `NOT_IN_BACKUP` says why a table is left
-out, and the schema test fails when a table with a `campaign_id` is on neither. The same list is
-what a campaign move (#2550) is proved against: every table here moves with its campaign.
+out (with the decision it comes from), and `OWED_TO_BACKUP` is what #2552 still has to add. The
+schema test fails when a table that belongs to a campaign, by a `campaign_id` or by a chain of
+foreign keys to one that has it, is on none of them, and when a section does not mention a table it
+claims. A backup is downloadable by anyone in the server, so nothing private goes into one.
 """
 
 from __future__ import annotations
 
-# Registered backup section name -> the tables it carries.
+# Registered backup section name -> the tables it carries. The memory section's tables are read
+# from the section itself by the test, so this list cannot drift from `memory/backup.py`.
 SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "dms": ("campaign_dms",),
     "confirmations": ("shared_confirmations",),
@@ -34,7 +37,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),
-    "adventure": ("adventure_documents", "adventure_chunks"),
+    "adventure": ("adventure_documents",),
     "plan_spend": ("plan_spend",),
     "site_approvals": ("site_approvals",),
     "map_notes": ("map_notes",),
@@ -44,67 +47,80 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "rule_set_follows": ("rule_set_follows",),
     "game_clock": ("game_clocks", "game_clock_groups"),
     "game_effects": ("game_effects",),
-    "recaps": ("recap_jobs", "recap_dictionaries"),
+    # (only ready jobs are carried today, which is part of what #2552 lists)
+    "recaps": ("recap_jobs",),
     "memory_heard": ("memory_heard",),
 }
 
-# Table -> why a backup does not carry it. A reason that is not already a PLAN decision is
-# Supervisor's to approve on #2552 before it stays here.
+# Table -> why a backup does not carry it, and the decision that says so. A backup is downloadable
+# by anyone in the server, hence the private ones; the rest are runtime state, logs, waits and
+# pointers, or are made again by reading.
+_RUNTIME = "runtime state or a log, not content (Supervisor, #2553)"
+_WAIT = "a wait or a pointer, kept out by its schema comment"
+_PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
+_PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 NOT_IN_BACKUP: dict[str, str] = {
-    "active_sessions": "a session that is running right now; a restore starts with none",
-    "campaign_handover_offers": "an offer to hand it over ends with the campaign it was made for",
-    "image_day_use": "today's image count, a daily meter that starts again each day",
-    "merge_restores": "the undo record of one name merge; a restore starts a fresh history",
-    "memory_changes": "the change log; a restore starts a fresh undo history (memory/backup.py)",
-    "memory_mentions": "where each name was said; rebuilt as sessions are transcribed",
-    "owner_campaigns": "the owner's own list of campaigns, rebuilt from who owns the restored one",
-    "pack_suggestions_sent": "delivery bookkeeping for a suggestion already shown",
-    "rule_set_suggestions_sent": "delivery bookkeeping for a suggestion already shown",
-    "web_peeks": "who looked behind the DM screen on the website; looking is not campaign content",
+    "active_sessions": _RUNTIME,
+    "campaign_handover_offers": _RUNTIME,
+    "image_day_use": _RUNTIME,
+    "web_peeks": _RUNTIME,
+    "npc_notes": "each person's own private 'My notes' never go into a backup (PLAN:1427)",
+    "npc_roster": "derived, made again from the names (its schema comment)",
+    "house_rules_file": "the private share link of the DM's rules file (PLAN:677)",
+    "npcs_channel_messages": "message ids of one server's channel (PLAN:1401)",
+    "name_not_same": "the DM's alone (PLAN:1987)",
+    "plan_nodes": _PLAN_READ,
+    "plan_links": _PLAN_READ,
+    "adventure_reads": _PLAN_READ,
+    "adventure_chunks": "the text is carried; chunks are cut again (PLAN:166, #1698)",
+    "plan_position": _PLAN_LIKE,
+    "plan_divergences": _PLAN_LIKE,
+    "plan_same_as": _PLAN_LIKE,
+    "import_plays": _WAIT,
+    "said_as_suggestions": _WAIT,
+    "name_later": _WAIT,
+    "name_answers": _WAIT,
+    "recap_holds": _WAIT,
+    "recap_requests": _WAIT,
+    "recap_name_checks": _WAIT,
+    "backstory_links": _WAIT,
+    "secret_exposures": _WAIT,
+    "name_actions": _WAIT,
+    "setting_actions": _WAIT,
+    "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
+    "(Supervisor, #2553; PLAN:947)",
+    "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",
+    "memory_changes": "the change log: a restore starts a fresh undo history (PLAN:164)",
+    "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
+    "(PLAN:3722)",
+    "merge_restores": "the undo record of one name merge (PLAN:1971)",
 }
 
 # Tables a backup should carry and does not yet. This is #2552's remaining work: each one moves to
-# a section (or to NOT_IN_BACKUP, with a reason Supervisor has approved) and the list ends empty.
+# a section and the list ends empty. `transcript_lines` has no `campaign_id`; it hangs off
+# `transcript_sessions` (the test follows foreign keys to find such tables).
 OWED_TO_BACKUP: tuple[str, ...] = (
-    "adventure_reads",
-    "backstory_links",
-    "fightbot_players",
-    "house_rules_file",
-    "import_plays",
-    "name_actions",
-    "name_answers",
-    "name_later",
-    "name_not_same",
-    "npc_notes",
-    "npc_roster",
-    "npcs_channel_messages",
-    "pack_suggestions",
-    "plan_divergences",
-    "plan_links",
-    "plan_nodes",
-    "plan_position",
-    "plan_same_as",
-    "recap_holds",
-    "recap_name_checks",
-    "recap_requests",
-    "rule_set_codes",
-    "rule_set_editors",
-    "rule_set_suggestions",
-    "rule_set_versions",
-    "rule_sets",
-    "said_as_suggestions",
-    "secret_exposures",
+    "transcript_sessions",
+    "transcript_lines",
+    "transcript_respells",
+    "transcript_suggestions",
     "session_imports",
     "session_usage",
-    "setting_actions",
-    "transcript_respells",
-    "transcript_sessions",
-    "transcript_suggestions",
+    "fightbot_players",
     "waiting_name_questions",
+    "pack_suggestions",
+    "pack_suggestions_sent",  # with its suggestions: both carried or both not
+    "recap_dictionaries",
+    "rule_sets",
+    "rule_set_versions",
+    "rule_set_editors",
+    "rule_set_suggestions",
+    "rule_set_suggestions_sent",  # with its suggestions
 )
 
 
 def backed_up() -> frozenset[str]:
+    """The tables some registered backup section carries."""
     return frozenset(t for tables in SECTION_TABLES.values() for t in tables)
 
 

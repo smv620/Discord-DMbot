@@ -9,8 +9,8 @@ exactly where it was. The rules, in order of importance:
 
 - **Nothing is lost.** Every table that belongs to the campaign moves, through the foreign keys
   (`tests/test_campaign_move_cascade.py` fails for a key that does not cascade, and the move test
-  compares every table found in the schema, not a hand-kept list). What does not carry over is what is
-  only about the old server: its channels and messages, which `/dmbot start` makes again.
+  compares every table found in the schema, not a hand-kept list). What does not carry over is
+  what is only about the old server: its channels and messages, which `/dmbot start` makes again.
 - **One move at a time, on a campaign nobody is using.** The offer carries a short lease
   (`move_claimed_at`), so two sweeps, or two bot processes, cannot both move it. Inside the
   transaction the campaign is locked `FOR UPDATE` (as `delete` does, so even a child-row insert
