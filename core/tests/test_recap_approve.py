@@ -133,6 +133,161 @@ class TheApproveButton(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(told(interaction), screen.APPROVED_ALREADY)
 
 
+def three(act: str, user: int = DM_ID, *, why: str = "", problems: list[str] | None = None,
+          found: Any = None, approved: bool = True) -> Any:  # fmt: skip
+    """The same, for the three ways to approve (#2420): `why` is why audio can't be made."""
+    button, bot, interaction = armed(
+        act, user, problems=problems, found=found or with_text(), approved=approved
+    )
+    bot.recap_audio_why = AsyncMock(return_value=why)
+    return button, bot, interaction
+
+
+class TheThreeWays(unittest.IsolatedAsyncioTestCase):
+    async def test_only_a_dm_may_press_any_of_them(self) -> None:
+        for act in ("ap", "aa", "ak"):
+            button, bot, interaction = three(act, PLAYER)
+            await button.callback(interaction)
+            self.assertEqual(told(interaction), NOT_YOURS)
+            bot.recaps.approve.assert_not_awaited()
+
+    async def test_approve_and_keep_approves_text_only_and_posts_nothing(self) -> None:
+        button, bot, interaction = three("ak")
+        await button.callback(interaction)
+        bot.recaps.approve.assert_awaited_once_with(
+            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=False
+        )
+        self.assertEqual(told(interaction), screen.KEPT)
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_approve_and_post_approves_text_only_and_hands_it_to_the_bot(self) -> None:
+        button, bot, interaction = three("ap")
+        bot.recaps.get = AsyncMock(side_effect=[with_text(), with_text(status="posted")])
+        await button.callback(interaction)
+        bot.recaps.approve.assert_awaited_once_with(
+            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=True
+        )
+        bot.post_recaps.assert_awaited_once_with(5)
+        self.assertEqual(interaction.followup.send.await_args.args[0], screen.POSTED)
+
+    async def test_a_post_that_the_bots_checks_stop_says_so_and_nothing_is_lost(self) -> None:
+        button, bot, interaction = three("ap")
+        bot.recaps.get = AsyncMock(
+            side_effect=[with_text(), with_text(last_error="A name is secret.")]
+        )
+        await button.callback(interaction)
+        said = interaction.followup.send.await_args.args[0]
+        self.assertIn("Not posted: A name is secret.", said)
+
+    async def test_audio_asks_which_when_it_can_be_made_and_approves_nothing_yet(self) -> None:
+        button, bot, interaction = three("aa")
+        await button.callback(interaction)
+        self.assertEqual(told(interaction), screen.ASK_WHICH_AUDIO)
+        self.assertEqual(
+            labels_of(view_of(interaction)), ["🎙️ Voice-over", "🎵 Background music", "Both"]
+        )  # (text only is the other two buttons)
+        bot.recaps.approve.assert_not_awaited()
+
+    async def test_audio_that_cannot_be_made_is_refused_with_the_reason_for_each(self) -> None:
+        for why in ("not_set_up", "unavailable"):
+            button, bot, interaction = three("aa", why=why)
+            await button.callback(interaction)
+            self.assertEqual(told(interaction), screen.AUDIO_WHY[why])
+            bot.recaps.approve.assert_not_awaited()
+
+    async def test_cue_problems_stop_all_three_and_nothing_is_approved(self) -> None:
+        for act in ("ap", "aa", "ak"):
+            button, bot, interaction = three(act, problems=["Paragraph 1: bad mood."])
+            await button.callback(interaction)
+            self.assertIn(CUES_FIRST, told(interaction))
+            bot.recaps.approve.assert_not_awaited()
+
+    async def test_an_approved_text_and_a_decided_recap_change_nothing(self) -> None:
+        for act in ("ap", "aa", "ak"):
+            button, bot, interaction = three(act, found=job(approved=True, audio_choice="both"))
+            await button.callback(interaction)
+            self.assertEqual(told(interaction), screen.APPROVED_ALREADY)
+            button, bot, interaction = three(act, found=with_text(status="posted"))
+            await button.callback(interaction)
+            self.assertEqual(told(interaction), DECIDED)
+            bot.recaps.approve.assert_not_awaited()
+
+    async def test_post_finishes_a_text_approval_kept_or_stopped_without_approving_again(
+        self,
+    ) -> None:
+        # (#2420) approved as text only, then kept, or stopped by the bot's checks and put back to
+        # a draft: Approve and post text only posts it, only for the text as approved
+        button, bot, interaction = three("ap", found=job(approved=True, audio_choice="text"))
+        bot.recaps.decide = AsyncMock(return_value=True)
+        bot.recaps.get = AsyncMock(
+            side_effect=[job(approved=True, audio_choice="text"), job(status="posted")]
+        )
+        await button.callback(interaction)
+        bot.recaps.approve.assert_not_awaited()
+        bot.recaps.decide.assert_awaited_once_with(5, "c" * 32, AT, "post", require_approved=True)
+        bot.post_recaps.assert_awaited_once_with(5)
+        # an approval with audio chosen is not finished this way, and a text that changed since
+        button, bot, interaction = three("ap", found=job(approved=True, audio_choice="both"))
+        await button.callback(interaction)
+        self.assertEqual(told(interaction), screen.APPROVED_ALREADY)
+        button, bot, interaction = three("ap", found=job(approved=True, audio_choice="text"))
+        bot.recaps.decide = AsyncMock(return_value=False)
+        await button.callback(interaction)
+        self.assertEqual(told(interaction), TOO_LATE)
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_a_store_that_refuses_says_so(self) -> None:
+        for act in ("ap", "ak"):
+            button, _bot, interaction = three(act, approved=False)
+            await button.callback(interaction)
+            self.assertEqual(told(interaction), TOO_LATE)
+
+    def test_the_line_has_the_three_in_the_pages_words_the_review_link_and_no_dont_post(
+        self,
+    ) -> None:
+        view = screen.ready_view(
+            CID, AT, "https://site.example.com", "https://site.example.com/r/1"
+        )
+        labels = labels_of(view)
+        self.assertEqual(
+            labels[:3],
+            ["✅ Approve and post text only", "🎙️ Approve and make audio to review",
+             "📋 Approve but don't post"],
+        )  # fmt: skip
+        self.assertIn("Review the recap", labels)
+        self.assertFalse(any("Don't post" in x or "Not this one" in x for x in labels))
+        link = next(c for c in view.children if getattr(c, "url", None))
+        self.assertEqual(link.url, "https://site.example.com/r/1")  # type: ignore[attr-defined]
+        rows: dict[int, int] = {}
+        for c in view.children:
+            r = getattr(getattr(c, "item", c), "row", 0) or 0
+            rows[r] = rows.get(r, 0) + 1
+        self.assertLessEqual(max(rows.values()), 5)
+        self.assertLessEqual(max(rows), 4)
+
+    def test_the_audio_button_is_greyed_only_when_audio_is_off(self) -> None:
+        on = screen.ready_view(CID, AT, "https://site.example.com").children
+        off = screen.ready_view(CID, AT, "https://site.example.com", audio_off=True).children
+
+        def disabled(children: list[Any]) -> list[bool]:
+            return [bool(getattr(getattr(c, "item", c), "disabled", False)) for c in children[:3]]
+
+        self.assertEqual(disabled(on), [False, False, False])
+        self.assertEqual(disabled(off), [False, True, False])
+
+    def test_without_a_website_read_it_stands_in_for_the_review_link(self) -> None:
+        labels = labels_of(screen.ready_view(CID, AT))
+        self.assertEqual(labels[3], "Read it")
+        self.assertNotIn("Review the recap", labels)
+
+    def test_the_ids_fit_discord_and_survive_a_restart(self) -> None:
+        for act in ("ap", "aa", "ak"):
+            custom = RecapButton(act, CID, AT).item.custom_id
+            assert custom is not None
+            self.assertLessEqual(len(custom), 100)
+            self.assertRegex(custom, r"^dmbot:recap:(ap|aa|ak):[0-9a-f]{32}:[0-9]{1,12}$")
+
+
 class TheButtonsThemselves(unittest.TestCase):
     def test_the_approve_button_has_an_id_that_survives_a_restart(self) -> None:
         self.assertEqual(

@@ -707,6 +707,17 @@ async def run_golden(
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    """Run the tool. `_WRITERS` is set for this run only and put back after it, so a run in the
+    same process (the tests) never leaves the critics, or a model choice, on for the next one."""
+    before = dict(_WRITERS)
+    try:
+        return await _main_async(args)
+    finally:
+        _WRITERS.clear()
+        _WRITERS.update(before)
+
+
+async def _main_async(args: argparse.Namespace) -> int:
     if args.review:
         return review_folder(Path(args.review))
     got = clients_from_env()

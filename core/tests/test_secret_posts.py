@@ -184,6 +184,29 @@ class WhatARestartForgot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.edit.await_args.kwargs["content"], secret_posts.SUMMARY_HIDDEN)
         self.assertIn("summary", secret_posts.SUMMARY_HIDDEN)
 
+    async def test_a_summary_with_no_recant_is_found_by_its_mark_after_a_restart(self) -> None:
+        # (#2502) only new names and things to check, so no ↩️ Recant: the words of what was said
+        # are in it all the same, and it must be pulled back when the screen opens up
+        from dmbot.ui.exposure_summary import summary_view
+
+        secret_posts._posts.clear()
+        secret_posts._searched.clear()
+        view = summary_view([], "c" * 32, 5, new_names=True, claims=True)
+        items: list[Any] = [getattr(c, "item", c) for c in view.children]
+        buttons = [SimpleNamespace(custom_id=i.custom_id) for i in items]
+        self.assertFalse(any(b.custom_id.startswith("dmbot:xr:") for b in buttons))
+        summary = SimpleNamespace(
+            id=1, author=SimpleNamespace(id=9), edit=AsyncMock(),
+            components=[SimpleNamespace(children=buttons)],
+        )  # fmt: skip
+
+        async def history(limit: int | None) -> Any:
+            yield summary
+
+        changed = await secret_posts.hide(G, C, channel=SimpleNamespace(history=history), bot_id=9)
+        self.assertEqual(changed, 1)
+        self.assertEqual(summary.edit.await_args.kwargs["content"], secret_posts.SUMMARY_HIDDEN)
+
     async def test_a_summary_pulled_back_straight_away_gets_its_own_words(self) -> None:
         button = SimpleNamespace(custom_id="dmbot:xr:7:" + "c" * 32 + ":5")
         sent = SimpleNamespace(
