@@ -1160,7 +1160,11 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
   (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
   they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record.
+  the pause stays on the record. A paused person's **typed** question to DMbot is still answered
+  privately (typing to DMbot is deliberate), but nothing of it is written to any transcript or stored
+  (Supervisor, 2026-10-23, #2470). A pause has no lasting effect: it changes no stored consent or
+  choice, a restart while paused keeps the pause (it never starts recording someone who was told they
+  are off the record), and stopping during a pause ends it at once.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
