@@ -116,16 +116,18 @@ class PlotStore:
         """Write the findings and mark the check done, in one step, but only if the recap's text is
         still the one that was checked (an edit meanwhile makes the answer about old words) and it
         is still an unapproved draft (an approved one is still a 'draft' with the same text, and is
-        not written onto either). Returns how many issues were written."""
+        not written onto either). The recap's row is locked (`FOR UPDATE`) for the whole write, as
+        the approval's is, so an approval cannot land between the check and the writes: one in
+        flight is waited for and the check then sees it. Returns how many issues were written."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
                 f" AND session_at = %s AND status = 'draft'"
-                f" AND approved_hash <> {_HASH} AND {_HASH} = %s",
+                f" AND approved_hash <> {_HASH} AND {_HASH} = %s FOR UPDATE",
                 (guild_id, campaign_id, session_at, digest),
             )
-            same = await cur.fetchone() is not None
+            same = await cur.fetchone() is not None  # (locked until this transaction ends)
             # Claim the check first: only the run that still holds it ('running') writes, so a
             # late second run of the same text (a retry that raced the first) adds nothing. A
             # check made for words that have changed since is kept as 'failed', not removed, so

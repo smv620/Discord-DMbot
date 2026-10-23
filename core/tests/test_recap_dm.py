@@ -142,6 +142,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     async def test_yes_on_a_draft_that_is_not_approved_approves_it_first(self) -> None:
         """Posting an unapproved draft counts as approving it (#2122): the same approval door."""
         button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=[])
         bot.recaps.approve = AsyncMock(return_value=True)
         bot.settings.plot_check_on = True
         bot.recaps.get = AsyncMock(
@@ -155,12 +156,25 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     async def test_yes_on_an_unapproved_draft_with_open_points_posts_nothing(self) -> None:
         button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=[])
         bot.recaps.approve = AsyncMock(return_value=False)
         bot.recaps.plot_open = AsyncMock(return_value=True)
         bot.settings.plot_check_on = True
         await button.callback(interaction)
         self.assertIn("PlotBot has points", told(interaction))
         self.assertIn("https://site.example.com", told(interaction))
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_yes_on_an_unapproved_draft_checks_the_cues_and_names_first(self) -> None:
+        """The same checks as the Approve buttons (one helper): nothing is approved or posted."""
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=["Cue 《Gloomy》 is not allowed."])
+        bot.recaps.approve = AsyncMock()
+        await button.callback(interaction)
+        bot.recap_approval_problems.assert_awaited_once()
+        self.assertIn("Gloomy", told(interaction))
+        bot.recaps.approve.assert_not_awaited()
         bot.recaps.decide.assert_not_awaited()
         bot.post_recaps.assert_not_awaited()
 
@@ -225,7 +239,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         button, bot, interaction = press("yes")
         bot.recaps.get = AsyncMock(side_effect=[job(), job(status="posted")])
         await button.callback(interaction)
-        bot.recaps.decide.assert_awaited_once_with(GUILD, CID, AT, "post")
+        bot.recaps.decide.assert_awaited_once_with(GUILD, CID, AT, "post", require_current=True)
         bot.post_recaps.assert_awaited_once_with(GUILD)  # plan, consent, secret names run there
         self.assertEqual(interaction.followup.send.await_args.args[0], POSTED)
 
