@@ -117,6 +117,16 @@ def reading_text(job: Any, link: str) -> str:
     return text
 
 
+def _plot_open_line(bot: Any, guild_id: int, campaign_id: str, job: Any) -> str:
+    """What the DM is told when PlotBot has points that need an answer first, with the page."""
+    page = (
+        page_link(bot.settings.site_url, guild_id, campaign_id, job.session_at)
+        if bot.settings.site_url
+        else "on the website"
+    )
+    return PLOT_OPEN.format(link=page)
+
+
 class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE):
     def __init__(self, act: str, campaign_id: str, session_at: int) -> None:
         label, style = _LABELS[act]
@@ -185,7 +195,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 return
             await _tell(interaction, ASK, view=confirm_view(self.campaign_id, self.session_at))
         elif self.act == "yes":
-            await self._post(interaction, bot, guild.id, campaign.id)
+            await self._post(interaction, bot, guild.id, campaign.id, job)
         else:  # drop
             if not await store.decide(guild.id, campaign.id, self.session_at, "drop"):
                 await _tell(interaction, DECIDED)
@@ -261,12 +271,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if bot.settings.plot_check_on and await bot.recaps.plot_open(
             campaign.guild_id, campaign.id, self.session_at
         ):  # (the store checks it again in the approval's own statement)
-            page = (
-                page_link(bot.settings.site_url, campaign.guild_id, campaign.id, job.session_at)
-                if bot.settings.site_url
-                else "on the website"
-            )
-            await _tell(interaction, PLOT_OPEN.format(link=page))
+            await _tell(interaction, _plot_open_line(bot, campaign.guild_id, campaign.id, job))
             return
         if self.act in ("ap", "aa", "ak") and job.approved and job.audio_choice:
             if self.act == "ap" and job.audio_choice == approval.TEXT:
@@ -344,9 +349,32 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             return
         await _tell(interaction, APPROVED[choice])
 
-    async def _post(self, interaction: discord.Interaction, bot: Any, gid: int, cid: str) -> None:
-        """Yes was pressed: the website's own move, then the bot's own sending and checks."""
-        if not await bot.recaps.decide(gid, cid, self.session_at, "post"):
+    async def _post(
+        self, interaction: discord.Interaction, bot: Any, gid: int, cid: str, job: Any
+    ) -> None:
+        """Yes was pressed: the website's own move, then the bot's own sending and checks.
+        Posting a draft that is not approved counts as approving it (Supervisor, 2026-10-23,
+        #2122): it goes through the same approval as the Approve buttons, so the version is kept
+        and PlotBot's open points hold it."""
+        if not job.approved:
+            if not await bot.recaps.approve(
+                gid,
+                cid,
+                self.session_at,
+                interaction.user.id,
+                approval.TEXT,
+                expected=approval.text_hash(job.title, job.summary),
+                post=True,
+                plot_gate=bot.settings.plot_check_on,
+            ):
+                if bot.settings.plot_check_on and await bot.recaps.plot_open(
+                    gid, cid, self.session_at
+                ):
+                    await _tell(interaction, _plot_open_line(bot, gid, cid, job))
+                else:
+                    await _tell(interaction, DECIDED)
+                return
+        elif not await bot.recaps.decide(gid, cid, self.session_at, "post"):
             await _tell(interaction, DECIDED)
             return
         await self._sent(interaction, bot, gid, cid)

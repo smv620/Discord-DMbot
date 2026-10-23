@@ -48,6 +48,7 @@ FEATURES: tuple[Feature, ...] = (
         "does not fit. You decide.",
         lambda s: s.plot_check_on,
         ("recaps_on", "plot_check_on"),
+        for_dms=False,
     ),
     Feature(
         "recap audio",
