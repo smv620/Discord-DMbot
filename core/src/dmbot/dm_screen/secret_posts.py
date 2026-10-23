@@ -87,14 +87,15 @@ def is_exposed(visibility: str, in_server_channel: bool) -> bool:
 # What a question's buttons start with: the keep-it-secret question and the reveal question.
 # "dmbot:sa:" is the secret question's newer id (the server on it); the old one still parses.
 # "dmbot:xr:" is the after-session summary's ↩️ Recant button (#2410).
-BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:", "dmbot:xr:")
-SUMMARY_PREFIX = "dmbot:xr:"
+# "dmbot:xs:" is the mark every variant of that summary carries, also one with no Recant on it.
+SUMMARY_PREFIXES = ("dmbot:xr:", "dmbot:xs:")
+BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:", *SUMMARY_PREFIXES)
 
 
 def _is_summary(message: Any) -> bool:
     """Whether a message is the after-session summary (its buttons say so)."""
     return any(
-        str(getattr(child, "custom_id", "") or "").startswith(SUMMARY_PREFIX)
+        str(getattr(child, "custom_id", "") or "").startswith(SUMMARY_PREFIXES)
         for row in getattr(message, "components", ())
         for child in getattr(row, "children", ())
     )
