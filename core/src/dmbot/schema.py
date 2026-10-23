@@ -3214,6 +3214,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_name_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)",
     ),
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
+    # The Settings page's choices (#2463), queued for the bot the same way.
+    ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
+    ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
     # The All names page's list (#2294): DMs, and managers without what only a DM sees.
     (
         "dmbot_web_all_names",
@@ -9896,6 +9899,125 @@ NAME_ACTIONS = (
 """
 )
 
+SETTING_ACTIONS = (
+    f"""
+    -- What a DM chose on the website's Settings page (#2463), waiting for the bot: who can see the
+    -- DM screen, how much DMbot says, how long transcripts are kept. The website has no right on
+    -- the campaign tables, so its door only checks the signed-in DM and queues the choice here; the
+    -- bot applies it through the same calls as Discord's ⚙️ Settings buttons (so the channel
+    -- permissions, the notices and the live session follow), after checking again that the sender
+    -- is still a DM of the campaign. Applied in the order made (`seq`). `value` is the choice
+    -- (private/peek/open, quiet/normal, forever/365/90/30); `flag` is the DM's yes to a shorter
+    -- transcript limit, which deletes old sessions, so it is asked for first, as in Discord. `note`
+    -- is what the DM sees afterwards (the same words Discord says). A row lives an hour at most,
+    -- its words are never logged, and it is gone with its campaign, left out of backups, isolated
+    -- per server and read back only by the DM who made it.
+    CREATE TABLE setting_actions (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        setting     TEXT NOT NULL CHECK (setting IN ('visibility', 'level', 'retention')),
+        value       TEXT NOT NULL CHECK (char_length(value) <= 10),
+        flag        BOOLEAN NOT NULL DEFAULT false,
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        note        TEXT NOT NULL DEFAULT '' CHECK (char_length(note) <= 1000),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX setting_actions_open ON setting_actions (guild_id, seq)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("setting_actions")
+    + r"""
+    -- Queue one choice. The door checks what it can see: the caller is a DM of the campaign, the
+    -- setting and its value are ones Discord offers, and the campaign's queue is not full. The bot
+    -- checks the rest when it applies it. Answers 'ok' with the id, or 'bad_setting', 'bad_value'
+    -- or 'too_soon'; NULL for anyone who is not a DM of the campaign.
+    CREATE FUNCTION dmbot_web_setting_add(
+        g BIGINT, c TEXT, st TEXT, val TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF st IS NULL OR st NOT IN ('visibility', 'level', 'retention') THEN
+            RETURN jsonb_build_object('status', 'bad_setting');
+        END IF;
+        IF val IS NULL
+           OR (st = 'visibility' AND val NOT IN ('private', 'peek', 'open'))
+           OR (st = 'level' AND val NOT IN ('quiet', 'normal'))
+           OR (st = 'retention' AND val NOT IN ('forever', '365', '90', '30')) THEN
+            RETURN jsonb_build_object('status', 'bad_value');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
+        DELETE FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting, value, flag,
+                                     created_at)
+            VALUES (g, c, rid, dmbot_current_user(), st, val, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- The state of one choice, for the DM who made it (nobody else's): 'waiting', 'working',
+    -- 'done' or 'failed' with its reason word, and the notice to show. NULL when there is no such
+    -- choice of the caller's in this campaign.
+    CREATE FUNCTION dmbot_web_setting_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r setting_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'setting', r.setting,
+                                  'value', r.value, 'note', r.note);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_setting_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_setting_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -11013,6 +11135,14 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+SESSION_PAUSES = """
+    -- Off the record (#2466): the pauses that are on, kept with the saved session so a restart
+    -- that resumes the session resumes them too. {"people": {"<user id>": <ends at, Unix seconds
+    -- or null for until resumed>}, "table": <ends at or null>}. A new column with a default, so no
+    -- row changes; the session's row already holds this server's data only.
+    ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11557,7 +11687,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
+    ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
+    ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
 )
 
@@ -11636,6 +11768,7 @@ ISOLATED_TABLES = (
     "name_not_same",
     "name_answers",
     "name_actions",
+    "setting_actions",
     "web_peeks",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by

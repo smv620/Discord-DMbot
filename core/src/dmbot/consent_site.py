@@ -35,7 +35,7 @@ class ConsentView(Protocol):
 
     def cached_guilds(self) -> list[int]: ...
 
-    def consenting_now(self, guild_id: int) -> frozenset[int]: ...
+    def agreed_set(self, guild_id: int) -> frozenset[int]: ...  # paused or not
 
     async def stored(self, guild_id: int) -> frozenset[int]: ...
 
@@ -99,7 +99,7 @@ class SiteStops:
         text can quote a row). A person whose save failed stays stopped in this process."""
         with log_context(guild_id=guild_id):
             try:
-                held = self._consent.consenting_now(guild_id)
+                held = self._consent.agreed_set(guild_id)  # off the record is still agreed
                 gone = held - await self._consent.stored(guild_id)
             except Exception as exc:
                 log.error("Couldn't read consent again for a server (%s)", type(exc).__name__)

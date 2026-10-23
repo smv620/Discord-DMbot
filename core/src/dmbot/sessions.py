@@ -11,8 +11,10 @@ goes missing can be traced from the log (#147).
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
@@ -32,6 +34,9 @@ class SavedSession:
     notice_posted: bool
     resume_count: int = 0
     last_resumed_at: int | None = None
+    # Off the record (#2466): the pauses that were on, so a restart keeps them
+    # (`ConsentStore.snapshot`)
+    paused: dict[str, Any] = field(default_factory=dict)
 
 
 class SessionStore:
@@ -52,7 +57,7 @@ class SessionStore:
                 " started_by = EXCLUDED.started_by,"
                 " started_at = EXCLUDED.started_at,"
                 " notice_posted = EXCLUDED.notice_posted,"
-                " resume_count = 0, last_resumed_at = NULL"
+                " resume_count = 0, last_resumed_at = NULL, paused = '{}'"
                 # xmax is 0 only for a row this statement inserted, not one it updated.
                 # A Postgres internal, not documented behaviour: recheck on upgrades.
                 " RETURNING (xmax = 0) AS inserted",
@@ -78,6 +83,15 @@ class SessionStore:
                 " in place of the one saved before" if row and not row["inserted"] else "",
                 session.voice_channel_id,
                 session.started_by,
+            )
+
+    async def save_pauses(self, guild_id: int, paused: dict[str, Any]) -> None:
+        """Keep the server's pauses with its saved session (#2466), so a restart that resumes the
+        session resumes them too and nobody is recorded who asked not to be."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE active_sessions SET paused = %s::jsonb WHERE guild_id = %s",
+                (json.dumps(paused), guild_id),
             )
 
     async def get(self, guild_id: int) -> SavedSession | None:
@@ -157,4 +171,5 @@ async def _select(conn: Conn, guild_id: int) -> SavedSession | None:
         notice_posted=bool(row["notice_posted"]),
         resume_count=int(row["resume_count"]),
         last_resumed_at=row_int(row, "last_resumed_at"),
+        paused=dict(row["paused"] or {}),
     )

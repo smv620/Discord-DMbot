@@ -53,8 +53,11 @@ class FakeConsent:
     def cached_guilds(self) -> list[int]:
         return list(self.held)
 
-    def consenting_now(self, guild_id: int) -> frozenset[int]:
+    def agreed_set(self, guild_id: int) -> frozenset[int]:
         return frozenset(self.held.get(guild_id, set()))
+
+    def consenting_now(self, guild_id: int) -> frozenset[int]:
+        return self.agreed_set(guild_id)
 
     async def stored(self, guild_id: int) -> frozenset[int]:
         self.reads += 1

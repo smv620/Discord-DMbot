@@ -235,7 +235,7 @@ class PeopleReview(_Menu):
             return
         memory, s = got
         bot = _bot(interaction)
-        if person.bot or person.id not in await bot.consent.consenting(guild.id):
+        if person.bot or person.id not in await bot.consent.agreed(guild.id):
             # Only people who agreed to be recorded here could have been at the table.
             await _tell(
                 interaction,
