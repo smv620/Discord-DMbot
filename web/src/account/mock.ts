@@ -1470,7 +1470,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         const looks = nameLooks.get(key); // undefined: not answered yet
         if (looks === undefined) return [{ ...n, answering: false, error: "" }];
         nameLooks.set(key, looks + 1);
-        if (nameFailed.has(key)) return [{ ...n, answering: false, error: "not_found" }];
+        if (nameFailed.has(key)) return [{ ...n, answering: false, error: "gone" }];
         return looks === 0 ? [{ ...n, answering: true, error: "" }] : []; // gone from the next look
       });
       return {

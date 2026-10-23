@@ -5,6 +5,8 @@
 // RECAP_NAME_CHECKS_LIVE is true (false today), so these tests switch it on.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi } from "../src/account/api";
@@ -118,7 +120,7 @@ describe("names to check", () => {
     fireEvent.click(within(garrick).getByRole("button", { name: w.notANameFor("Garrick") }));
     await waitFor(() => expect(calls(api, "answerNameCheck")).toHaveLength(1));
     expect(await within(row("Garrick")).findByRole("alert", undefined, slow)).toBeTruthy();
-    expect(within(row("Garrick")).getByText(w.problem["not-found"] as string)).toBeTruthy();
+    expect(within(row("Garrick")).getByText(w.problem.gone as string)).toBeTruthy();
   });
 
   it("says plainly when an answer is refused", async () => {
@@ -174,5 +176,24 @@ describe("the real client", () => {
       "GET /me/recaps/5.abc.1700/names-to-check ",
       'POST /me/recaps/5.abc.1700/names-to-check/n1 {"action":"not_a_name"}',
     ]);
+  });
+});
+
+describe("the codes the bot writes", () => {
+  // The codes come from core, so a new one there fails here until the page has words for it. Not
+  // listed: PLAYER_CHARACTER, a kind (who plays a character is asked in Discord), never an error.
+  const source = readFileSync(join(process.cwd(), "..", "core", "src", "dmbot", "recaps", "name_answers.py"), "utf8"); // (tests run from web/)
+  const codes = [...source.matchAll(/^([A-Z_]+) = "([a-z_]+)"/gm)]
+    .filter((m) => m[1] !== "PLAYER_CHARACTER")
+    .map((m) => m[2] as string);
+
+  it("are read from core (a guard that the reading works)", () => {
+    expect(codes).toEqual(expect.arrayContaining(["not_allowed", "gone", "bad_kind", "not_joined", "bad_spelling", "failed"]));
+  });
+
+  it.each([...new Set([...codes, "busy"])])("has plain words for %s", (code) => {
+    const said = w.problem[code.replaceAll("_", "-")];
+    expect(said, code).toBeTruthy();
+    expect(said).not.toBe(w.problem.server);
   });
 });

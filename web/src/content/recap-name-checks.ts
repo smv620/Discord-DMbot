@@ -42,6 +42,14 @@ export const nameCheckWords = {
     "bad-action": "That didn't work. Try again.",
     "too-soon": "Try again in a minute.",
     "not-allowed": "Only this campaign's DM can answer these names.",
+    // What the bot writes when it could not apply an answer (core/.../recaps/name_answers.py), by its code
+    // with the underscore as a hyphen. A test reads the codes from core so a new one needs words here.
+    gone: "That name was already answered, here or in Discord. The list is up to date now.",
+    "bad-kind": "That kind can't be used for a name. Pick another kind.",
+    "not-joined": "Those two names can't be joined here. Choose another name, or open the Names page.",
+    "bad-spelling": "That spelling can't be used. Try other letters.",
+    failed: "That didn't save, and nothing was changed. Press the button again.",
+    busy: "DMbot is busy with another answer. Try again in a moment.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
     server: "Something went wrong. Try again in a minute.",
   } as Record<string, string>,
