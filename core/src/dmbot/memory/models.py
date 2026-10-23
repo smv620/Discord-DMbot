@@ -387,6 +387,8 @@ class Relation:
     created_at: int
     # The version of its relationship's definition it was written under (#1189).
     definition_version: int = 1
+    # Kept from the players until the table has said it (#2404); a backstory connection starts so.
+    unrevealed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,6 +447,9 @@ class Written[T]:
     value: T
     batch: int | None
 
+
+# Names one merge takes: the bot, the website and the database door agree (#2426).
+MERGE_MANY_MAX = 50
 
 # ---- beliefs: who believes a connection, and how strongly (#2409; STORY_MEMORY section 9) ----
 
