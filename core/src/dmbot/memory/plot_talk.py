@@ -274,6 +274,7 @@ def parse(raw: str, ctx: Context) -> Answer | None:
                     "entity_id": entry.id,
                     "name": entry.name,
                     "condition": condition,
+                    "was": entry.now,  # what PlotBot saw: Save refuses if the DM changed it since
                     "from_session_at": ctx.session_at,
                 },
             )

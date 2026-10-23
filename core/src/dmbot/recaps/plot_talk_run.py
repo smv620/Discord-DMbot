@@ -25,7 +25,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import plot_talk as pt
-from dmbot.memory._changes import ENTITIES, Changes
+from dmbot.memory._changes import ENTITIES, STATES, Changes
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
 from dmbot.memory.ontology import conditions_for
 
@@ -346,9 +346,19 @@ class TalkRunner:
                     row = await w.get(ENTITIES, entity_id)  # (this campaign's rows only)
                     if row is None or row["status"] != CONFIRMED:
                         raise MemoryRuleError("That entry isn't there any more.")
-                    new, _flags = await self._memory.set_condition_in(
-                        w, entity_id, condition, at if type(at) is int else None
+                    rows = await w.select(
+                        STATES, " AND entity_id = %s AND closed_at IS NULL", [entity_id]
                     )
+                    current = str(rows[0]["condition"]) if rows else ""
+                    was = data.get("was")
+                    new = None  # (already so: nothing to write)
+                    if current != condition:
+                        if isinstance(was, str) and current != was:
+                            # the DM changed it by hand after PlotBot looked: their word stands
+                            raise MemoryRuleError("That entry changed since. Ask PlotBot again.")
+                        new, _flags = await self._memory.set_condition_in(
+                            w, entity_id, condition, at if type(at) is int else None
+                        )
                     label = s.proposal.get("label")
                     label = label if isinstance(label, str) else ""
                     await self._store.mark_in(

@@ -473,3 +473,22 @@ class Saving(TalkBase):
         await self.runner(Ai(good())).apply_round(THURSDAY.id)
         [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
         self.assertIn("Already so", issue["answer"]["note"])
+
+    async def test_a_change_the_dm_made_by_hand_after_the_proposal_stands(self) -> None:
+        p = await self.reply_with_proposal()  # PlotBot saw "dead" and proposes "alive"
+        await self.press(p, "save")
+        for later in ("unknown", "transformed", "captured"):
+            try:  # the DM changes it by hand before the bot applies the Save
+                await self.memory.set_condition(
+                    THURSDAY.id, self.one.id, self.ulfgar.value.id, later, source="dm"
+                )
+                break
+            except Exception:  # the table does not allow that step from "dead": try the next
+                continue
+        else:
+            self.fail("no condition could be set by hand")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), later)  # the DM's word stands
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("changed since", failed["error"])
