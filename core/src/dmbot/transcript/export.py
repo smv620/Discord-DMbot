@@ -133,8 +133,8 @@ def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     """The people a file of this version names, in the order each first speaks in it. DMbot's own
     answers are not a person; the cleaned version leaves out sidebar lines and typing clearly not
     about the game, so someone who only asked DMbot, or whose typing was all hidden, is not
-    listed there (a gap in the numbers or a "(2)" would hint at a hidden person). One order for the website and the Discord download, so
-    a person has the same label in both."""
+    listed there (a gap in the numbers or a "(2)" would hint at a hidden person). One order for
+    the website and the Discord download, so a person has the same label in both."""
     order: list[int] = []
     for line in sorted(lines, key=lambda x: x.started_ms):
         if line.sidebar and line.sidebar not in QUESTION_KINDS:
