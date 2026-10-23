@@ -59,6 +59,15 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
+  /** False when the account's server list doesn't have this campaign's server, or DMbot isn't in it any more
+   * (#2555; core #2554). Only the owner's campaigns can be like that. Missing from an older API. */
+  serverReachable?: boolean;
+  /** Whether this person may delete the campaign: the plan holder, or a game master of a campaign that
+   * has no owner yet (#2555). Missing from an older API: the owner may. */
+  canDelete?: boolean;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -152,6 +161,30 @@ export interface RecapAudio {
   /** Can be bought now: for sale, a paid plan that works, and not already had. */
   canBuy: boolean;
 }
+
+/** One server a person could take a handed-over campaign to (#2534; core #2532). */
+export interface HandoverServer {
+  id: string;
+  name: string;
+  /** Where the campaign runs now. */
+  current: boolean;
+  /** False: DMbot has to be added to it first. */
+  botIn: boolean;
+}
+
+/** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
+ * alike, so the page can't tell anyone which. */
+export type HandoverLook =
+  | { status: "ended" }
+  | {
+      status: "open";
+      campaign: { name: string };
+      from: { name: string };
+      server: { id: string; name: string };
+      canAccept: boolean;
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      servers: HandoverServer[];
+    };
 
 /** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
  * Discord number; the page shows `name` only. */
@@ -1135,6 +1168,12 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "ended" // a hand-over offer that has ended (#2534)
+  | "owner-offer" // the person is the campaign's own owner (#2534)
+  | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "session-running" // a session is running, so the campaign can't be deleted (#2555)
+  | "name-mismatch" // the typed name isn't the campaign's (#2555)
+  | "no-backup" // a Try It campaign has no backup (#2555)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1178,6 +1217,20 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
+  /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
+   * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
+  deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
+  /** The whole campaign as a JSON backup file, offered before Delete (owner and co-DMs; not Try It). */
+  campaignBackup?(ref: string): Promise<Blob>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  handoverLook?(token: string): Promise<HandoverLook>;
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  handoverDecline?(token: string): Promise<void>;
   /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
   addDiscordUrl?(): string;
   /** Take one Discord account off this DMbot account; never the last (#2534). */
@@ -1420,7 +1473,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  ended: "ended",
+  owner: "owner-offer",
+  bad_server: "bad-server",
   last_account: "last-account",
+  not_the_owner: "not-allowed",
+  session_running: "session-running",
+  name_mismatch: "name-mismatch",
+  no_backup_on_this_plan: "no-backup",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1613,6 +1673,22 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    deleteCampaign: async (ref, name) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
+    campaignBackup: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/backup`, undefined, true)) as Blob,
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
+    },
+    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
+    handoverAccept: async (token, serverId) =>
+      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverDecline: async (token) => {
+      await call("POST", "/me/handover/decline", { token });
     },
     addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
     removeDiscordAccount: async (key) => {

@@ -21,9 +21,11 @@ so it works after a restart.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import discord
@@ -99,17 +101,47 @@ def _store(interaction: discord.Interaction) -> CampaignStore:
     return store
 
 
-def name_of(guild: discord.Guild | None, user_id: int) -> str:
-    member = guild.get_member(user_id) if guild is not None else None
-    return member.display_name if member is not None else "someone who left the server"
+LOOKUP_S = 1.5  # how long the card waits for Discord to name its game masters
+LEFT = "someone who left the server"
+UNREACHABLE = "a game master"  # Discord could not be asked: no claim either way (#2556)
 
 
-def card_text(campaign: Campaign, guild: discord.Guild | None) -> str:
+async def _one_name(guild: discord.Guild, user_id: int) -> str:
+    member = guild.get_member(user_id)  # the bot's cache: DMbot has no members intent (#2556)
+    if member is not None:
+        return member.display_name
+    try:
+        return (await guild.fetch_member(user_id)).display_name
+    except discord.NotFound:
+        return LEFT  # Discord says they are not in the server: the only time "left" is true
+    except discord.HTTPException:
+        return UNREACHABLE
+
+
+async def names_of(guild: discord.Guild | None, user_ids: Iterable[int]) -> dict[int, str]:
+    """Display names for the card, the cache first and then Discord, all at once and within
+    `LOOKUP_S` in all (the button must answer inside Discord's three seconds). A game master is
+    called "someone who left the server" only when Discord answers that they did; a name that
+    does not come back in time, or fails for any other reason, is "a game master"."""
+    ids = sorted(set(user_ids))
+    if guild is None:
+        return {uid: UNREACHABLE for uid in ids}
+    found = await asyncio.gather(
+        *(asyncio.wait_for(_one_name(guild, uid), LOOKUP_S) for uid in ids),
+        return_exceptions=True,
+    )
+    return {
+        uid: name if isinstance(name, str) else UNREACHABLE
+        for uid, name in zip(ids, found, strict=True)
+    }
+
+
+def card_text(campaign: Campaign, names: Mapping[int, str]) -> str:
     """The game masters, one to a line, the one whose plan the campaign uses marked."""
     lines = []
     for user_id in sorted(campaign.dm_user_ids):
         plan = " (plan)" if user_id == campaign.owner_user_id else ""
-        lines.append(f"• **{md(name_of(guild, user_id))}**{plan}")
+        lines.append(f"• **{md(names.get(user_id, UNREACHABLE))}**{plan}")
     return (
         f"👑 **Game masters (DMs) of {md(campaign.name)}**\n"
         + "\n".join(lines)
@@ -118,12 +150,12 @@ def card_text(campaign: Campaign, guild: discord.Guild | None) -> str:
     )
 
 
-def plan_holder_words(target: int, presser: int, guild: discord.Guild | None) -> str:
+def plan_holder_words(target: int, presser: int, names: Mapping[int, str]) -> str:
     """Why the plan holder cannot be removed, in the voice that fits who pressed: only the
     plan holder has the 🤝 Hand over button."""
     if target == presser:
         return PLAN_HOLDER_SELF
-    return PLAN_HOLDER_OTHER.format(name=md(name_of(guild, target)))
+    return PLAN_HOLDER_OTHER.format(name=md(names.get(target, UNREACHABLE)))
 
 
 async def _say(interaction: discord.Interaction, text: str) -> None:
@@ -195,8 +227,9 @@ async def open_list(interaction: discord.Interaction, campaign_id: str) -> None:
     if found is None:
         return
     campaign, guild = found
+    names = await names_of(guild, campaign.dm_user_ids)
     await interaction.response.send_message(
-        card_text(campaign, guild),
+        card_text(campaign, names),
         view=ListView(campaign),
         ephemeral=True,
         allowed_mentions=NO_PINGS,
@@ -244,9 +277,10 @@ class ListView(discord.ui.View):
         if found is None:
             return
         campaign, guild = found
+        names = await names_of(guild, campaign.dm_user_ids)
         await interaction.response.send_message(
             "➖ Who should stop being a game master?",
-            view=RemovePicker(campaign, guild),
+            view=RemovePicker(campaign, names),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -320,14 +354,16 @@ async def _tell_new(guild: discord.Guild, campaign: Campaign, user_id: int, by: 
 
 
 class RemovePicker(discord.ui.View):
-    def __init__(self, campaign: Campaign, guild: discord.Guild) -> None:
+    def __init__(self, campaign: Campaign, names: Mapping[int, str]) -> None:
         super().__init__(timeout=10 * 60)
         self.campaign_id = campaign.id
+        self.names = dict(names)  # the ones the list was built with, reused when one is picked
         options = [
             discord.SelectOption(
-                label=(name_of(guild, uid) + (" (plan)" if uid == campaign.owner_user_id else ""))[
-                    :100
-                ],
+                label=(
+                    names.get(uid, UNREACHABLE)
+                    + (" (plan)" if uid == campaign.owner_user_id else "")
+                )[:100],
                 value=str(uid),
             )
             for uid in sorted(campaign.dm_user_ids)
@@ -349,18 +385,18 @@ class RemovePicker(discord.ui.View):
         found = await _a_dm(interaction, self.campaign_id)
         if found is None:
             return
-        campaign, guild = found
+        campaign, _guild = found
         user_id = int(self.pick.values[0])
         if user_id not in campaign.dm_user_ids:
             await _say(interaction, GONE_FROM_LIST)
             return
         if user_id == campaign.owner_user_id:
-            await _say(interaction, plan_holder_words(user_id, interaction.user.id, guild))
+            await _say(interaction, plan_holder_words(user_id, interaction.user.id, self.names))
             return
         if len(campaign.dm_user_ids) <= 1:
             await _say(interaction, LAST_ONE)
             return
-        name = name_of(guild, user_id)
+        name = self.names.get(user_id, UNREACHABLE)
         text = CONFIRM_SELF if user_id == interaction.user.id else CONFIRM.format(name=md(name))
         self.stop()
         await interaction.response.edit_message(
@@ -400,7 +436,7 @@ class ConfirmRemove(discord.ui.View):
             changed = await _store(interaction).remove_dm(guild.id, campaign.id, self.user_id)
         except CampaignError as exc:
             text = (
-                plan_holder_words(self.user_id, interaction.user.id, guild)
+                plan_holder_words(self.user_id, interaction.user.id, {self.user_id: self.name})
                 if str(exc) == OWNER_STAYS
                 else str(exc)  # (the last game master, or a campaign that is gone)
             )
