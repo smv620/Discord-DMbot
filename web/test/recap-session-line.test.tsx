@@ -92,7 +92,7 @@ describe("on the pages", () => {
       return older;
     };
     render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
-    await screen.findByText(/The ferry at dusk/);
+    await screen.findByRole("heading", { name: /The ferry at dusk/ });
     expect(screen.queryByText(/Session \d/)).toBeNull();
     expect(screen.getByText(/Thursday Table/)).toBeTruthy();
   });

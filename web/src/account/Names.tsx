@@ -20,6 +20,7 @@ import {
   type NameSort,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import SayIt from "./SayIt";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -579,6 +580,12 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
   const [ask, setAsk] = useState<"merge" | "remove" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  // How to say it (#2317): the box, what was last saved (so the button knows when nothing changed)
+  // and the answer to the last save. Only a row the API gave a main name's id can have one.
+  const [said, setSaid] = useState(row.saidAs ?? "");
+  const [savedSaid, setSavedSaid] = useState(row.saidAs ?? "");
+  const [saidNote, setSaidNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [savingSaid, setSavingSaid] = useState(false);
   const seq = useRef(0);
   // The two questions replace the buttons that opened them, so focus is moved by hand: onto the
   // question's first button when it opens, and back onto the opener on "No" (#2299).
@@ -600,6 +607,30 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
   const decline = (): void => {
     giveBack.current = true;
     setAsk(null);
+  };
+
+  // The box follows the row when a read changes it (a rename, a merge), as the spelling box does.
+  useEffect(() => {
+    setSaid(row.saidAs ?? "");
+    setSavedSaid(row.saidAs ?? "");
+  }, [row.aliasId, row.saidAs]);
+  const saidId = `said-as-${row.id}`;
+  const saveSaid = async (): Promise<void> => {
+    if (!row.aliasId || !api.saveSaidAs || savingSaid) return;
+    setSavingSaid(true);
+    setSaidNote(null);
+    try {
+      const clean = said.trim();
+      await api.saveSaidAs(refId, row.aliasId, clean === "" ? null : clean);
+      setSaid(clean);
+      setSavedSaid(clean);
+      setSaidNote({ ok: true, text: clean === "" ? words.sayCleared : words.saySaved });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      setSaidNote({ ok: false, text: kind === "bad-text" ? words.sayTooLong : (kind === "network" ? words.errors.network! : words.sayFailed) });
+    } finally {
+      setSavingSaid(false);
+    }
   };
 
   // The box follows the name when a save changes it.
@@ -666,6 +697,57 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
           {words.saveSpelling}
         </button>
       </form>
+
+      {row.aliasId && api.saveSaidAs && (
+        <form
+          class="name-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveSaid();
+          }}
+        >
+          <label class="field" for={saidId}>
+            {words.sayLabel(row.name)}
+          </label>
+          <input
+            id={saidId}
+            type="text"
+            value={said}
+            maxLength={80}
+            aria-describedby={`${saidId}-hint`}
+            disabled={savingSaid}
+            onInput={(e) => {
+              setSaid((e.target as HTMLInputElement).value);
+              setSaidNote(null); // "Saved." must not stay over words that are not saved yet
+            }}
+          />
+          <p class="small muted" id={`${saidId}-hint`}>
+            {words.sayHint}
+          </p>
+          <SayIt
+            api={api}
+            campaignRef={refId}
+            nameId={row.aliasId}
+            name={row.name}
+            fieldId={saidId}
+            value={said}
+            disabled={savingSaid}
+            onValue={(text) => {
+              setSaid(text);
+              setSaidNote(null);
+            }}
+          />
+          <button type="submit" class="button secondary" disabled={savingSaid || said.trim() === savedSaid}>
+            {savingSaid ? words.saySaving : words.saySave}
+          </button>
+          <p
+            class={saidNote ? (saidNote.ok ? "ok small" : "warn small") : "visually-hidden"}
+            role={saidNote && !saidNote.ok ? "alert" : "status"}
+          >
+            {saidNote?.text ?? ""}
+          </p>
+        </form>
+      )}
 
       <form
         class="name-form"

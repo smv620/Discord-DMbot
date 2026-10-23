@@ -100,16 +100,40 @@ async def read_page(
     pages = max(1, -(-total // PAGE_SIZE))
     if page > pages:
         raise RecapError("bad_page")
+    names = got["names"]
+    if got["canEdit"] and names:
+        await _add_said_as(db, session, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
-        "names": got["names"],
+        "names": names,
         "kinds": kinds_from(got["kinds"]),
         "total": total,
         "page": page,
         "pages": pages,
         "pageSize": PAGE_SIZE,
     }
+
+
+async def _add_said_as(
+    db: Database, session: Session, guild_id: int, campaign_id: str, names: list[dict[str, Any]]
+) -> None:
+    """Give a DM's rows `aliasId` and `saidAs` (#2317): the main name's id, which the said-as
+    routes take, and how the narrator says it. A separate door, so the list's own door and its
+    cache of secret names stay as they are; a row with no such name gets neither key."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_all_names_said(%s, %s, %s) AS r",
+            (guild_id, campaign_id, [str(n["id"]) for n in names]),
+        )
+        found = await cur.fetchone()
+    said = {str(r["id"]): r for r in (found["r"] if found and found["r"] else [])}
+    for row in names:
+        mine = said.get(str(row["id"]))
+        if mine is not None:
+            row["aliasId"] = mine["aliasId"]
+            row["saidAs"] = mine["saidAs"]
 
 
 # ---- the DM's actions: queued for the bot, read back by polling ----------------------------------

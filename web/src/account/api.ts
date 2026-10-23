@@ -939,6 +939,10 @@ export interface NameRow {
   secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
   npcId: string | null;
+  /** For a DM, when the entry has a main name: its id, which the said-as calls take (#2317). */
+  aliasId?: string;
+  /** For a DM, how the narrator says that main name; null when it says it as written (#2317). */
+  saidAs?: string | null;
   /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
    * from an API that doesn't send it. */
   mentions?: number;
