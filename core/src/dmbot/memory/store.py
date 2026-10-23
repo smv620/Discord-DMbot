@@ -1890,10 +1890,19 @@ class MemoryStore:
             return Written(None, w.batch)
 
     async def rename_entity(
-        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        name: str,
+        *,
+        source: str,
+        keep_old: bool = True,
     ) -> Written[Entity]:
         """Fix how a name is spelled (the DM's call): the entry's name and the name it's
-        listened for change together, in one change (one undo)."""
+        listened for change together, in one change (one undo). The old spelling stays as an "old
+        spelling" other name, unless `keep_old` is False: a name widened to include it ("Harrow"
+        to "Harrow's Keep", #2570) must not turn every "Harrow" said alone into the longer name."""
         if source != DM:
             raise MemoryRuleError("Only the DM can change a name.")
         name = clean_text(name)
@@ -1935,7 +1944,8 @@ class MemoryStore:
                 await w.insert(
                     ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
                 )
-            await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
+            if keep_old:
+                await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
             return Written(_entity(row), w.batch)
 
     async def _keep_old_spelling(

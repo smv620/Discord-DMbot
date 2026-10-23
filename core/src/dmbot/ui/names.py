@@ -14,6 +14,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
@@ -26,12 +27,14 @@ from dmbot.memory.models import (
     BACKGROUND_SOURCE,
     CONFIRMED,
     DM,
+    NAME_MAX,
     PROPOSED,
     REJECTED,
     Entity,
     MemoryRuleError,
     name_key,
 )
+from dmbot.memory.name_longer import longer_names
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places
@@ -1117,6 +1120,74 @@ async def _review(
     await _send(interaction, text, view)
 
 
+class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
+    """The name card's ✏️ Change the words (#2570): the name filled in, to extend or fix."""
+
+    name: discord.ui.TextInput[ChangeWordsForm] = discord.ui.TextInput(
+        label="Name",
+        placeholder="Add the words around it, or fix the spelling.",
+        max_length=NAME_MAX,
+    )
+
+    def __init__(self, review: SuggestionReview, entity_id: str, start: str, heard: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.review = review
+        self.entity_id = entity_id
+        self.heard = heard  # the longer form as heard, when one was picked
+        self.name.default = start
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.review.apply_words(interaction, self.entity_id, self.heard, self.name.value)
+
+
+class WordsPicker(_Menu):
+    """Up to three likely longer names for the DM to pick from (#2570), or to type their own."""
+
+    def __init__(self, review: SuggestionReview, entity: Entity, candidates: list[str]) -> None:
+        super().__init__()
+        self.review = review
+        self.entity = entity
+        self.candidates = candidates
+        for i, words in enumerate(candidates):
+            self.add_item(
+                _Button(
+                    partial(self._picked, words),
+                    label=logic.shorten(words, REVIEW_LABEL_MAX * 3),
+                    style=discord.ButtonStyle.primary,
+                    row=i,
+                )
+            )
+        self.add_item(
+            _Button(self._own, label="✏️ Type it myself", style=discord.ButtonStyle.secondary, row=3)
+        )
+        self.add_item(
+            _Button(self._back, label="↩ Back", style=discord.ButtonStyle.secondary, row=3)
+        )
+
+    async def _picked(self, words: str, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(
+            ChangeWordsForm(self.review, self.entity.id, words, words)
+        )
+
+    async def _own(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(
+            ChangeWordsForm(self.review, self.entity.id, self.entity.name, "")
+        )
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        current = await self.review._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        text = await self.review.prepare(interaction, campaign, memory, entity)
+        await _replace(interaction, text, self.review)
+
+
 class SuggestionReview(_Menu):
     """One suggested name at a time: Yes (then what it is), Same as…, Not a name, Later."""
 
@@ -1280,6 +1351,15 @@ class SuggestionReview(_Menu):
         )
         self.add_item(
             _Button(self._later, label="⏳ Later", style=discord.ButtonStyle.secondary, row=1)
+        )
+        # The name may be longer or spelled differently than the scan found it (#2570).
+        self.add_item(
+            _Button(
+                self._change_words,
+                label="✏️ Change the words",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
         )
         if self.places.more:  # more windows behind a button (#2329)
             self.add_item(
@@ -1570,6 +1650,85 @@ class SuggestionReview(_Menu):
         except Exception:
             log.exception("Couldn't make a spelled-out name the main name")
         return f"{note} (Its spelling is unchanged: use ⭐ on its card to change it.)"
+
+    def _quotes(self, entity: Entity) -> list[str]:
+        """The words around this name that the card already shows, for the likely longer names:
+        the transcript windows (their bold marks are dropped by `longer_names`)."""
+        return list(self.places.windows)
+
+    async def _change_words(self, interaction: discord.Interaction) -> None:
+        """The name is longer or different (#2570): offer the likely longer names from the card's
+        quotes, or go straight to the form when there are none."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, _memory_unused, entity = current
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a name.")
+            return
+        candidates = longer_names(self._quotes(entity), entity.name)
+        if not candidates:
+            await interaction.response.send_modal(ChangeWordsForm(self, entity.id, entity.name, ""))
+            return
+        await _replace(
+            interaction,
+            f"**What is the whole name?** DMbot found **{_md(entity.name)}**. Pick the words "
+            "around it that fit, or type it yourself.",
+            WordsPicker(self, entity, candidates),
+        )
+
+    async def apply_words(
+        self, interaction: discord.Interaction, entity_id: str, heard: str, words: str
+    ) -> None:
+        """The DM saved the whole name (#2570): the card goes on with it, as with a fixed
+        spelling. What was heard becomes a way it is said, so the Cleaner fixes it in later
+        transcripts, and the old single word stops being offered where it is part of the new name
+        (it is not marked "not a name": said alone elsewhere it can still be offered)."""
+        await _answer_first(interaction, in_place=True)
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        if entity.id != entity_id or not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, GONE)
+            return
+        new = " ".join(words.split())
+        if not new:
+            await _tell(interaction, "Type the name first.")
+            return
+        if len(new) > NAME_MAX:
+            await _tell(interaction, f"Names can be {NAME_MAX} letters at most.")
+            return
+        if name_key(new) != name_key(entity.name):
+            clash = await known_as(memory, campaign, new)
+            if clash is not None:
+                await _tell(interaction, already_known(new, clash))
+                return
+        old = name_key(entity.name)
+        # The old word is part of the new name: keeping it as an old spelling would turn every
+        # "Harrow" said alone into "Harrow's Keep".
+        bare = name_key(re.sub(r"['\u2019]s\b", "", new))  # "Harrow's Keep" holds "Harrow"
+        part = f" {old} " in f" {bare} " and name_key(new) != old
+        try:
+            await memory.rename_entity(
+                campaign.guild_id, campaign.id, entity.id, new, source=DM, keep_old=not part
+            )
+            said = " ".join(heard.split())
+            if said and name_key(said) not in (name_key(new), old):
+                await memory.add_alias(
+                    campaign.guild_id,
+                    campaign.id,
+                    entity.id,
+                    said,
+                    kind="old",
+                    source=DM,
+                    status=CONFIRMED,
+                )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        await self._next(interaction, campaign, memory, note=f"✏️ Now **{_md(new)}**. What is it?")
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)

@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
+from dmbot.memory.name_longer import widened
 from dmbot.memory.sounds import sound_codes
 from dmbot.names import not_names
 
@@ -178,6 +179,7 @@ def find_new_names(
     """Names in these lines (cleaned, so names fixed live are known) worth asking the DM
     about, most heard first: at most MAX_SUGGESTIONS (read when called), or all of them
     with `unlimited` (to group them, then cap)."""
+    lines = list(lines)
     sentences = _sentences(lines)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
@@ -194,11 +196,17 @@ def find_new_names(
             spellings.setdefault(key, Counter())[text] += 1
             if mid:
                 mid_sentence.add(key)
-    found = [
-        Suggestion(spellings[key].most_common(1)[0][0], times)
-        for key, times in counts.items()
-        if times >= min_times and key in mid_sentence
-    ]
+    found = []
+    for key, times in counts.items():
+        if times >= min_times and key in mid_sentence:
+            name = spellings[key].most_common(1)[0][0]
+            # A place's last word is often lower case in the transcript ("Harrow's keep"): when the
+            # same word is followed by the same place word often enough, the longer name is what is
+            # offered (#2570). Still only a suggestion; "Harrow" said alone elsewhere is not lost.
+            longer = widened(lines, name, min_times)
+            if longer and name_key(longer) not in skip and len(longer) <= NAME_MAX:
+                name = longer
+            found.append(Suggestion(name, times))
     found.sort(key=lambda s: (-s.times, s.name))
     return found if unlimited else found[:MAX_SUGGESTIONS]
 
