@@ -343,6 +343,25 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertIn(4, calls)  # the whole slice first, then its halves
         self.assertFalse(done.cut)
 
+    async def test_a_failed_shaping_slice_loses_only_itself_and_the_read_is_reported_cut(
+        self,
+    ) -> None:
+        queue = [Reply(LIST, False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                return queue.pop(0)
+            if "RELATIONSHIPS" in text:  # the relationships' slice fails
+                raise AIError("busy")
+            rows = [r for r in NAME_ROWS if f"- {r['name']} |" in text]
+            return Reply(json.dumps({"names": rows, "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        done = await read(fake)
+        self.assertEqual([n.name for n in done.names], [r["name"] for r in NAME_ROWS])
+        self.assertEqual(done.links, [])
+        self.assertTrue(done.cut)  # never "no names": the names that were shaped are kept
+
     async def test_the_log_has_counts_only(self) -> None:
         with self.assertLogs("dmbot.memory.lore_read", "INFO") as logs:
             await read(ai([Reply(LIST, False)]))
