@@ -555,6 +555,13 @@
   margin: 0.35rem 0;
   overflow-wrap: anywhere;
 }
+/* The line a link asked for (#2402): marked by more than colour (a bar and bold), so it needs no hue. */
+.transcript-lines li.moment {
+  background: var(--accent-soft);
+  border-left: 4px solid var(--accent);
+  padding-left: 0.5rem;
+  font-weight: 600;
+}
 
 /* The recap's voice and music player, and the cue tags in its text (#2017). */
 .account .recap-player {
@@ -794,6 +801,23 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow-wrap: anywhere;
+  }
+
+  /* The label is the thumb's target (44 px); the box inside it is only what is drawn. */
+  .account .name-tick {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    flex: none;
+  }
+
+  .account .name-pick {
+    width: 1.4rem;
+    height: 1.4rem;
+    margin: 0;
+    accent-color: var(--accent);
   }
 
   .account .name-head {

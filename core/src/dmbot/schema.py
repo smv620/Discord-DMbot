@@ -3216,6 +3216,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
     # How a listed name is said, for the DM's row editor (#2317).
     ("dmbot_web_all_names_said", "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"),
+    # The Settings page's choices (#2463), queued for the bot the same way.
+    ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
+    ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
     # The All names page's list (#2294): DMs, and managers without what only a DM sees.
     (
         "dmbot_web_all_names",
@@ -9898,6 +9901,125 @@ NAME_ACTIONS = (
 """
 )
 
+SETTING_ACTIONS = (
+    f"""
+    -- What a DM chose on the website's Settings page (#2463), waiting for the bot: who can see the
+    -- DM screen, how much DMbot says, how long transcripts are kept. The website has no right on
+    -- the campaign tables, so its door only checks the signed-in DM and queues the choice here; the
+    -- bot applies it through the same calls as Discord's ⚙️ Settings buttons (so the channel
+    -- permissions, the notices and the live session follow), after checking again that the sender
+    -- is still a DM of the campaign. Applied in the order made (`seq`). `value` is the choice
+    -- (private/peek/open, quiet/normal, forever/365/90/30); `flag` is the DM's yes to a shorter
+    -- transcript limit, which deletes old sessions, so it is asked for first, as in Discord. `note`
+    -- is what the DM sees afterwards (the same words Discord says). A row lives an hour at most,
+    -- its words are never logged, and it is gone with its campaign, left out of backups, isolated
+    -- per server and read back only by the DM who made it.
+    CREATE TABLE setting_actions (
+        {_memory_scope()}
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        setting     TEXT NOT NULL CHECK (setting IN ('visibility', 'level', 'retention')),
+        value       TEXT NOT NULL CHECK (char_length(value) <= 10),
+        flag        BOOLEAN NOT NULL DEFAULT false,
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        note        TEXT NOT NULL DEFAULT '' CHECK (char_length(note) <= 1000),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX setting_actions_open ON setting_actions (guild_id, seq)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("setting_actions")
+    + r"""
+    -- Queue one choice. The door checks what it can see: the caller is a DM of the campaign, the
+    -- setting and its value are ones Discord offers, and the campaign's queue is not full. The bot
+    -- checks the rest when it applies it. Answers 'ok' with the id, or 'bad_setting', 'bad_value'
+    -- or 'too_soon'; NULL for anyone who is not a DM of the campaign.
+    CREATE FUNCTION dmbot_web_setting_add(
+        g BIGINT, c TEXT, st TEXT, val TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF st IS NULL OR st NOT IN ('visibility', 'level', 'retention') THEN
+            RETURN jsonb_build_object('status', 'bad_setting');
+        END IF;
+        IF val IS NULL
+           OR (st = 'visibility' AND val NOT IN ('private', 'peek', 'open'))
+           OR (st = 'level' AND val NOT IN ('quiet', 'normal'))
+           OR (st = 'retention' AND val NOT IN ('forever', '365', '90', '30')) THEN
+            RETURN jsonb_build_object('status', 'bad_value');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
+        DELETE FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting, value, flag,
+                                     created_at)
+            VALUES (g, c, rid, dmbot_current_user(), st, val, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- The state of one choice, for the DM who made it (nobody else's): 'waiting', 'working',
+    -- 'done' or 'failed' with its reason word, and the notice to show. NULL when there is no such
+    -- choice of the caller's in this campaign.
+    CREATE FUNCTION dmbot_web_setting_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r setting_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'setting', r.setting,
+                                  'value', r.value, 'note', r.note);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_setting_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_setting_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -10328,6 +10450,220 @@ TRANSCRIPT_SPEAKER_NAMES = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+SHARED_RECAP_SESSION = """
+    -- A shared recap says which session it was and how long it ran (#2418), the same two facts the
+    -- DM's page shows. The public door reads them from the transcripts' own sessions, so the
+    -- number is the one the transcripts show. It needs one more read-only policy, tied (like the
+    -- others in RECAP_SHARE) to the one recap's server and campaign the function itself found;
+    -- only the number and the length leave the function, never a line or a speaker.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY recap_share_read ON transcript_sessions FOR SELECT TO %I
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND campaign_id = dmbot_recap_share_campaign())',
+            current_user);
+    END
+    $do$;
+
+    CREATE OR REPLACE FUNCTION dmbot_recap_shared(tok TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        sess_number BIGINT;
+        sess_seconds BIGINT;
+        out JSONB;
+    BEGIN
+        IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
+        SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND status = 'posted';
+        IF NOT FOUND THEN
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
+        -- Which session it was and how long it ran, as the transcripts page numbers and times it
+        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
+        -- sessions, those whose transcripts were deleted by retention included). Only these two
+        -- numbers leave: nothing of the transcript itself.
+        SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
+            SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
+                   CASE WHEN t.ended_at IS NULL THEN NULL
+                        ELSE GREATEST(t.ended_at - t.started_at, 0) END AS seconds
+            FROM transcript_sessions t
+            WHERE t.guild_id = job.guild_id AND t.campaign_id = job.campaign_id
+              AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) x
+        WHERE x.started_at = job.session_at ORDER BY x.number LIMIT 1;
+        out := jsonb_build_object(
+            'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
+            'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'sessionNumber', sess_number, 'sessionSeconds', sess_seconds,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb));
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_shared(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+"""
+
+SHARE_UNPOSTED = """
+    -- A recap's link for one the DM approved and has not posted (#2419: "Approve but don't post",
+    -- then share it their own way). A link is still only made when the DM asks for it (the
+    -- door's "on" and "new"), never by approving. It works while the recap is being posted or
+    -- posted (the DM asked for the post, and the link would otherwise go dead for the minute it
+    -- takes), or while it is a draft whose text is still exactly the text the DM approved: the
+    -- public read checks that itself, so an edit after sharing hides the recap until it is
+    -- approved again, and an unapproved draft never answers. Both doors are otherwise as before.
+    CREATE OR REPLACE FUNCTION dmbot_recap_share(g BIGINT, c TEXT, at_ BIGINT, act TEXT, tok TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF act = 'off' THEN
+            UPDATE recap_jobs SET share_token = NULL
+                WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+            RETURN jsonb_build_object('status', 'ok', 'token', NULL);
+        END IF;
+        IF NOT (
+           job.status IN ('posting', 'posted')
+           OR (job.status = 'draft' AND job.state = 'ready' AND job.approved_hash <> ''
+               AND job.approved_hash = encode(sha256(convert_to(
+                   job.title || E'\n' || job.summary, 'UTF8')), 'hex'))) THEN
+            RETURN jsonb_build_object('status', 'not_posted', 'token', NULL);
+        END IF;
+        IF (act = 'new' OR job.share_token IS NULL)
+           AND (tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$') THEN
+            RETURN NULL;  -- the API always passes a good one
+        END IF;
+        IF act = 'new' OR job.share_token IS NULL THEN
+            UPDATE recap_jobs SET share_token = tok
+                WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+            RETURN jsonb_build_object('status', 'ok', 'token', tok);
+        END IF;
+        RETURN jsonb_build_object('status', 'ok', 'token', job.share_token);
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_recap_shared(tok TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        sess_number BIGINT;
+        sess_seconds BIGINT;
+        out JSONB;
+    BEGIN
+        IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
+        SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND (
+            status IN ('posting', 'posted')
+            OR (status = 'draft' AND state = 'ready' AND approved_hash <> ''
+                AND approved_hash = encode(sha256(convert_to(
+                    title || E'\n' || summary, 'UTF8')), 'hex')));
+        IF NOT FOUND THEN
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
+        -- Which session it was and how long it ran, as the transcripts page numbers and times it
+        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
+        -- sessions, those whose transcripts were deleted by retention included). Only these two
+        -- numbers leave: nothing of the transcript itself.
+        SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
+            SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
+                   CASE WHEN t.ended_at IS NULL THEN NULL
+                        ELSE GREATEST(t.ended_at - t.started_at, 0) END AS seconds
+            FROM transcript_sessions t
+            WHERE t.guild_id = job.guild_id AND t.campaign_id = job.campaign_id
+              AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) x
+        WHERE x.started_at = job.session_at ORDER BY x.number LIMIT 1;
+        out := jsonb_build_object(
+            'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
+            'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'sessionNumber', sess_number, 'sessionSeconds', sess_seconds,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb));
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_share(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_shared(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
 """
 
 RECAP_ADDRESS_CO_DM = """
@@ -10801,6 +11137,14 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+SESSION_PAUSES = """
+    -- Off the record (#2466): the pauses that are on, kept with the saved session so a restart
+    -- that resumes the session resumes them too. {"people": {"<user id>": <ends at, Unix seconds
+    -- or null for until resumed>}, "table": <ends at or null>}. A new column with a default, so no
+    -- row changes; the session's row already holds this server's data only.
+    ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -10886,6 +11230,12 @@ RECAP_HELD_NAMES = r"""
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
+
+BACKSTORY_LINK_WORDS = """
+    -- A stated relationship no fixed kind fits is kept on the catch-all with the words the text
+    -- used (#2454), so a waiting connection has to carry them until the DM keeps it.
+    ALTER TABLE backstory_links ADD COLUMN detail TEXT NOT NULL DEFAULT '';
 """
 
 CAMPAIGN_FACTS = """
@@ -11352,6 +11702,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0179_beliefs", BELIEFS),  # perspectives, beliefs and the backfill (#2409)
     ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0182_share_unposted", SHARE_UNPOSTED),  # a link for an approved, unposted recap (#2419)
     ("0183_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
@@ -11359,9 +11710,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0188_all_names_said", ALL_NAMES_SAID),  # how to say a name, for the Names page (#2317)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
+    ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
+    ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -11438,6 +11792,7 @@ ISOLATED_TABLES = (
     "name_not_same",
     "name_answers",
     "name_actions",
+    "setting_actions",
     "web_peeks",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by

@@ -44,6 +44,7 @@ DEFAULT_DM_SCREEN_LEVEL = NORMAL
 # What a DM confirmed the right to use shared material for (CLAUDE.md, IP rule; #252).
 # The database checks the same list (schema.SHARED_CONFIRMATIONS): a new purpose needs a
 # migration too (a test compares them).
+# (NAMES_LIST is no longer asked for since #2447, but old rows keep it, so it stays in the list.)
 NAMES_LIST, SHARED_STORY, RULEBOOK = "names_list", "shared_story", "rulebook"
 OWN_WRITING = "own_writing"  # a DM's own background or notes, read for names (#2167)
 CONFIRMATION_PURPOSES = (NAMES_LIST, SHARED_STORY, RULEBOOK, OWN_WRITING)

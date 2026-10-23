@@ -166,7 +166,7 @@ class Cards(PanelTest):
                 "📜 My character sheet",
                 "Settings",
                 "Names",
-                "Upload backstory",
+                "Upload campaign lore",
             ],
             PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
             MEMBER: [*OPEN_TO_ALL, "Menu"],

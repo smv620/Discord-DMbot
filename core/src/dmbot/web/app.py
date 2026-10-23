@@ -37,6 +37,7 @@ from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     all_names,
+    campaign_settings,
     email_change,
     email_signin,
     entitlements_writer,
@@ -713,7 +714,7 @@ def create_app(
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
         "too_many_speakers": (413, "too_many_speakers"),
-        "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
+        "not_posted": (409, "not_posted"),  # a link needs a posted or approved recap (#2119)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
         "audio_unavailable": (409, "audio_unavailable"),  # not set up here, or the month's used up
@@ -1217,6 +1218,41 @@ def create_app(
             return await all_names.read_action(db, session, ref, answer)
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    setting_refusals = {
+        "not_found": (404, "not_found"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_setting": (400, "bad_setting"),
+        "bad_value": (400, "bad_value"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/settings", status_code=202)
+    async def me_campaign_setting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """One choice for the campaign's settings (#2463): who can see the DM screen, how much
+        DMbot says, how long transcripts are kept. DM only, re-checked by the bot when it applies
+        it. The answer is polled at `.../settings/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/settings/answers/{answer}")
+    async def me_campaign_setting_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in DM's own choice stands: waiting, working, done or failed (with
+        why, and the words Discord would say)."""
+        session, _token = signed
+        try:
+            return await campaign_settings.read_setting(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/names")

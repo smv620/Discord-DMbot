@@ -73,7 +73,21 @@ export interface CampaignPage {
   settings?: CampaignSettings;
 }
 
-/** What ⚙️ Settings holds for a campaign today, read-only on the website. */
+/** One of the three choices a game master can change on the Settings tab (#2484). */
+export type CampaignSettingName = "visibility" | "level" | "retention";
+
+/** Where a choice sent to the bot stands. `error` is the bot's word when it failed (`needs_confirm`,
+ * `refused` with Discord's words in `note`, `not_allowed`, `not_found`, `bad_value`, `failed`); `note`
+ * is what Discord would say about it. */
+export interface CampaignSettingAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  setting: CampaignSettingName;
+  value: string;
+  note: string;
+}
+
+/** What ⚙️ Settings holds for a campaign today. */
 export interface CampaignSettings {
   visibility: "private" | "peek" | "open";
   level: "quiet" | "normal" | "chatty";
@@ -351,8 +365,8 @@ export type ShareAction = "on" | "off" | "new";
 export interface PublicRecap {
   title: string;
   text: string;
-  /** Unix seconds. */
-  postedAt: number;
+  /** Unix seconds; null for a recap the DM approved and shared without posting it (#2419). */
+  postedAt: number | null;
   /** Only the kinds that exist; each is a full address that needs no sign-in. */
   audio: { voice?: string; music?: string };
   /** When it was played (Unix seconds), which session it was and how long it ran (#2418). Left out
@@ -929,6 +943,9 @@ export interface NameRow {
   aliasId?: string;
   /** For a DM, how the narrator says that main name; null when it says it as written (#2317). */
   saidAs?: string | null;
+  /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
+   * from an API that doesn't send it. */
+  mentions?: number;
 }
 
 export interface NameKind {
@@ -970,6 +987,9 @@ export type NameChange =
   | { action: "hide"; hidden: boolean }
   | { action: "secret"; other: string; secret: boolean }
   | { action: "merge"; into: string }
+  // Several names into the one the request is about (the kept name, whose id is in the path): one
+  // change, one Undo, all or nothing (#2427, the contract CloudDev wrote on #2426).
+  | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
 /** What the bot says about a queued name change (#2294). */
@@ -1086,8 +1106,10 @@ export type ApiErrorKind =
   | "bad-mapping" // the speaker choices don't fit the files (#2107)
   | "bad-date" // a session's date is not a date (#2107)
   | "no-lines-kept" // every line of a file would be dropped (#2107)
-  | "not-posted" // only a posted recap can have a public link (#2118)
+  | "not-posted" // only a posted or approved recap can have a public link (#2118, #2119)
   | "bad-action" // not one of on, off or new (#2118)
+  | "bad-setting" // a campaign setting the site does not change (#2484)
+  | "bad-value" // a choice Discord does not offer for it (#2484)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1225,6 +1247,14 @@ export interface AccountApi {
     number: number,
     version: TranscriptVersion,
   ): Promise<Blob>;
+  /** Send one settings choice to the bot (#2484): the answer to poll. A shorter transcript limit
+   * deletes old sessions, so it goes with `confirm: true` once the game master has said yes. */
+  setCampaignSetting?(
+    campaignRef: string,
+    choice: { setting: CampaignSettingName; value: string; confirm?: boolean },
+  ): Promise<string>;
+  /** Where a choice sent with `setCampaignSetting` stands. */
+  campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
    * older API. */
   timeline?(campaignRef: string): Promise<Timeline>;
@@ -1412,6 +1442,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_lines_kept: "no-lines-kept",
   not_posted: "not-posted",
   bad_action: "bad-action",
+  bad_setting: "bad-setting",
+  bad_value: "bad-value",
 };
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
@@ -1640,6 +1672,19 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    setCampaignSetting: async (campaignRef, choice) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
+          setting: choice.setting,
+          value: choice.value,
+          ...(choice.confirm ? { confirm: true } : {}),
+        })) as { answer: string }
+      ).answer,
+    campaignSettingAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/settings/answers/${encodeURIComponent(answer)}`,
+      )) as CampaignSettingAnswer,
     timeline: async (campaignRef) =>
       (await call(
         "GET",

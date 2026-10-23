@@ -34,6 +34,8 @@ import type {
   WebNode,
   WebQuery,
   CampaignPage,
+  CampaignSettingAnswer,
+  CampaignSettingName,
   Timeline,
   WebRevealTarget,
   MyNpcNote,
@@ -462,6 +464,7 @@ function startNames(): NameRow[] {
         others: n % 4 === 0 ? [`${name.split(" ")[0]}`, `${name} the Elder`] : n % 7 === 0 ? [`${name.split(" ").pop()}`] : [],
         secret: n % 9 === 0,
         npcId: npc ? `n${n}` : null,
+        mentions: ((n * 7) % 11) + 1,
       });
     }
   };
@@ -675,6 +678,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  const lateLooks = new Map<string, number>();
+  const settingAnswers = new Map<string, { ref: string; setting: CampaignSettingName; value: string; confirm?: boolean }>();
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
   };
@@ -1015,6 +1020,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
             }),
       };
     },
+    // The pretend settings queue (#2484): the bot answers on the next look, as the real one does within
+    // seconds. A ref ending `.cs-offline` is never answered (the bot is away), `.cs-refused` is
+    // refused by Discord's rules, `.cs-failed` goes wrong; a shorter keep-time needs `confirm`.
+    async setCampaignSetting(ref, choice): Promise<string> {
+      calls.push(`setCampaignSetting:${ref}:${choice.setting}:${choice.value}${choice.confirm ? ":confirm" : ""}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      const id = `a${settingAnswers.size + 1}`;
+      settingAnswers.set(id, { ref, ...choice });
+      return id;
+    },
+    async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
+      calls.push(`campaignSettingAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = settingAnswers.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
+      if (/\.cs-offline$/.test(ref)) return { ...base, state: "waiting" };
+      // `.cs-late`: the bot answers on the 40th look, long after the page gave up waiting live.
+      if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
+        return { ...base, state: "waiting" };
+      if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
+      if (/\.cs-failed$/.test(ref)) return { ...base, state: "failed", error: "failed" };
+      if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)
+        return { ...base, state: "failed", error: "needs_confirm" };
+      const note =
+        asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
+      return { ...base, state: "done", note };
+    },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
     // one the person is not in; `.npc-dm` shows a DM's own note.
     async npcPage(ref, entry): Promise<NpcPage> {
@@ -1142,6 +1179,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           into.others.push(row.name, ...row.others.filter((o) => !into.others.includes(o)));
           memory.splice(memory.indexOf(row), 1);
           return { ...into, others: [...into.others] };
+        }
+        case "merge-many": {
+          // The queue action of #2427: every other name goes into this one, in one change.
+          const others = [...new Set(change.others)].map((other) => memory.find((n) => n.id === other));
+          if (others.length === 0 || others.some((o) => !o)) throw new ApiError("not-found");
+          if (change.others.includes(id)) throw new ApiError("bad-target");
+          for (const other of others as NameRow[]) {
+            row.others.push(other.name, ...other.others.filter((o) => !row.others.includes(o)));
+            memory.splice(memory.indexOf(other), 1);
+          }
+          return { ...row, others: [...row.others] };
         }
         case "remove":
           memory.splice(memory.indexOf(row), 1);
@@ -1466,11 +1514,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       r.approval = { approved: false, choice: "", approvedAt: null, canApprove: false };
       return { recap: { ...r }, triesLeft: r.triesLeft, needsApproval: true };
     },
-    // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
+    // Sharing a recap by a link (#2119, #2419). Only a posted or approved recap can have one.
     async shareRecap(ref, action) {
       calls.push(`shareRecap:${ref}:${action}`);
       const r = await find(ref);
-      if (r.status !== "posted") throw new ApiError("not-posted");
+      const unposted = r.status === "draft" && r.approval?.approved === true;
+      if (r.status === "dropped" || (r.status === "draft" && !unposted))
+        throw new ApiError("not-posted");
       if (action === "off") r.share = { on: false, path: null };
       else if (action === "new" || !r.share?.on) {
         sharedCount += 1;
