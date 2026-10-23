@@ -16,6 +16,7 @@ from dmbot.fight_style import StyleState, hear
 from dmbot.memory import fight_prompt
 from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
 from dmbot.timebot.clock import Clock
+from tests import speed
 from tests import test_fightbot as tf
 from tests.test_sheet_reread import base
 from tests.test_sheet_store import PLAYER
@@ -612,7 +613,7 @@ class MoreNearMisses(unittest.TestCase):
         start = time.perf_counter()
         self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
         self.assertIsNone(self.heard("a" * 100_000))
-        self.assertLess(time.perf_counter() - start, 0.5)
+        self.assertLess(time.perf_counter() - start, speed.allowed(0.5))
 
 
 class Prompt(unittest.TestCase):
