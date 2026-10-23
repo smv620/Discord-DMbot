@@ -594,8 +594,10 @@ class TheLoop(WithClips):
         store = SimpleNamespace(claim_next=claim, sweep_clips=AsyncMock())
         bot = self.bot(store)
         with (
-            mock.patch("dmbot.bot.recap_requests.run_voice", AsyncMock()) as v,
-            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock(return_value="done")) as one,
+            mock.patch("dmbot.recaps.discord.recap_requests.run_voice", AsyncMock()) as v,
+            mock.patch(
+                "dmbot.recaps.discord.recap_requests.run_one", AsyncMock(return_value="done")
+            ) as one,
         ):
             await DMBot.run_recap_requests(cast(Any, bot))
         self.assertEqual(seen, [False, False])  # typed only
@@ -626,8 +628,8 @@ class TheLoop(WithClips):
             return "done"
 
         with (
-            mock.patch("dmbot.bot.recap_requests.run_voice", slow),
-            mock.patch("dmbot.bot.recap_requests.run_one", AsyncMock()) as sorted_,
+            mock.patch("dmbot.recaps.discord.recap_requests.run_voice", slow),
+            mock.patch("dmbot.recaps.discord.recap_requests.run_one", AsyncMock()) as sorted_,
         ):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(seen, [True])  # voice only
@@ -635,7 +637,7 @@ class TheLoop(WithClips):
             # a slow clip does not hold up the round: a typed note is worked while it runs
             typed = rq.Request("b" * 32, "c" * 32, 100, 7, "fix", 2, "instructions", b"", "")
             run_one = AsyncMock(return_value="done")
-            with mock.patch("dmbot.bot.recap_requests.run_one", run_one):
+            with mock.patch("dmbot.recaps.discord.recap_requests.run_one", run_one):
                 typed_claims = [typed, None]
 
                 async def claim_typed(gid: int, *, voice: bool | None = None) -> Any:
@@ -671,7 +673,7 @@ class TheLoop(WithClips):
         async def boom(*a: Any, **k: Any) -> str:
             raise RuntimeError("decoder fell over")
 
-        with mock.patch("dmbot.bot.recap_requests.run_voice", boom):
+        with mock.patch("dmbot.recaps.discord.recap_requests.run_voice", boom):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             await asyncio.sleep(0.05)
             self.assertEqual(bot._voice_tasks, {})  # the failure freed every slot
@@ -683,7 +685,7 @@ class TheLoop(WithClips):
         import asyncio
         from unittest import mock
 
-        from dmbot.bot import RECAP_VOICE_AT_ONCE
+        from dmbot.recaps.discord import RECAP_VOICE_AT_ONCE
 
         guilds = [SimpleNamespace(id=1000 + n) for n in range(RECAP_VOICE_AT_ONCE + 2)]
         made = []
@@ -699,7 +701,7 @@ class TheLoop(WithClips):
             await release.wait()
             return "done"
 
-        with mock.patch("dmbot.bot.recap_requests.run_voice", slow):
+        with mock.patch("dmbot.recaps.discord.recap_requests.run_voice", slow):
             await asyncio.wait_for(DMBot.run_recap_voice(cast(Any, bot)), 2)
             self.assertEqual(len(bot._voice_tasks), RECAP_VOICE_AT_ONCE)
             self.assertEqual(len(made), RECAP_VOICE_AT_ONCE)  # the rest were not even claimed
@@ -894,7 +896,7 @@ class TheDeepgramTimeout(unittest.TestCase):
         self.assertGreaterEqual(deepgram.request_timeout_s(120.0), 50)
         self.assertEqual(deepgram.request_timeout_s(10_000.0), deepgram.LONG_REQUEST_MAX_S)
         # inside the time the whole job is given (decode, hints, request, name fixing)
-        from dmbot.bot import VOICE_TRANSCRIBE_S
+        from dmbot.recaps.discord import VOICE_TRANSCRIBE_S
         from dmbot.recaps.requests import VOICE_TIMEOUT_S
 
         self.assertLess(deepgram.LONG_REQUEST_MAX_S, VOICE_TRANSCRIBE_S)
@@ -914,7 +916,7 @@ class TheSweepRounds(WithClips):
         )
 
     async def test_clips_are_swept_about_once_a_minute_even_with_recaps_off(self) -> None:
-        from dmbot.bot import CLIP_SWEEP_EVERY
+        from dmbot.recaps.discord import CLIP_SWEEP_EVERY
 
         bot = self.bot(recaps_on=False)
         for _ in range(CLIP_SWEEP_EVERY):
