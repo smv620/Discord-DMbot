@@ -564,7 +564,9 @@ class Decisions(Harness):
         [text] = guild.owner.sent
         self.assertEqual(
             text,
-            handover.TOLD_EXPIRED_EMAIL.format(campaign="Frost\\*maiden", days=HANDOVER_DAYS),
+            "They didn't answer within 7 days, so the offer ended. The campaign is still yours. "
+            "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or "
+            "from your account page.",
         )
         self.assertNotIn("****", text)
         self.assertIn("didn't answer", text)
