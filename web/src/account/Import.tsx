@@ -22,8 +22,11 @@ import {
   type ImportMember,
   type ImportPreview,
   type ImportProgress,
+  type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import WorkProgress from "./WorkProgress";
+import { stageWords } from "../content/work-progress";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -52,6 +55,14 @@ function isFinal(s: Session): boolean {
     s.stage === "done" ||
     s.stage === "failed"
   );
+}
+
+/** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
+ * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
+ * says so); once none can, as failed only if every session failed, else done. */
+function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
+  if (sessions.some((s) => !isFinal(s))) return imp.state === "stalled" ? "stalled" : "running";
+  return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
 function isFailed(s: Session): boolean {
@@ -155,6 +166,8 @@ export default function Import({
     undefined,
   );
   const [pollTries, setPollTries] = useState(0);
+  // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
+  const lastUpdated = useRef(0);
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -240,6 +253,12 @@ export default function Import({
       try {
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
+        const stamp = next.import?.updatedAt;
+        if (typeof stamp === "number" && stamp < lastUpdated.current) {
+          timer = setTimeout(() => void tick(), POLL_MS); // an older answer: keep what is shown, ask again
+          return;
+        }
+        if (typeof stamp === "number") lastUpdated.current = stamp;
         setProgress(next);
         const open = next.sessions.filter((s) => !isFinal(s));
         if (open.length > 0) {
@@ -247,7 +266,10 @@ export default function Import({
           timer = setTimeout(() => void tick(), onlyNames ? SLOW_POLL_MS : POLL_MS);
         }
       } catch (error) {
-        if (live) fail(error);
+        if (!live) return;
+        // The import is gone (finished and cleaned up, or its campaign moved): keep the last answer on the page.
+        if (error instanceof ApiError && error.kind === "not-found") setProblem(words.gone);
+        else fail(error);
       }
     };
     void tick();
@@ -601,12 +623,32 @@ export default function Import({
             <RecapsWhyLine why={startedWithoutRecaps} />
           </p>
         )}
-        <p role="status" aria-live="polite">
-          {words.doneCount(
-            progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
-            progress.sessions.length,
-          )}
-        </p>
+        {progress.import ? (
+          <WorkProgress
+            stage={
+              progress.import.stage === "waiting_for_names"
+                ? words.waitingForNames(progress.sessions.reduce((n, s) => n + (s.namesToAnswer ?? 0), 0))
+                : stageWords(words.stage, progress.import.stage)
+            }
+            done={progress.import.done}
+            total={progress.import.total}
+            unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
+            startedAt={progress.import.startedAt}
+            updatedAt={progress.import.updatedAt}
+            serverNow={progress.import.serverNow}
+            state={shownState(progress.import, progress.sessions)}
+            waiting={progress.import.stage === "waiting_for_names"}
+            reason={progress.import.reason}
+            whatToDo={shownState(progress.import, progress.sessions) === "failed" ? words.failedDo : words.stalledDo}
+          />
+        ) : (
+          <p role="status" aria-live="polite">
+            {words.doneCount(
+              progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
+              progress.sessions.length,
+            )}
+          </p>
+        )}
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
@@ -617,6 +659,7 @@ export default function Import({
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
+                {s.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
               {s.stage === "waiting_for_names" && (
                 <a

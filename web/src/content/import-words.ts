@@ -183,6 +183,13 @@ export const importPage = {
     done: "Imported",
     failed: "Couldn't import this one",
   } as Record<string, string>,
+  // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
+  unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
+  // Said when the server calls the import stalled: it can still move, and the files are safe.
+  stalledDo: "Your files are safe, and you can leave and come back. If nothing moves in 5 more minutes, import the files that aren't done again, one at a time.",
+  failedDo: "Import the files again, one at a time. Nothing already imported is lost.",
+  sessionStalled: "Not moving for a while. Try this one again, one at a time.",
+  gone: "This import is no longer listed. It may have finished. Check Transcripts to see what was imported.",
   waitingForNames: (n: number): string =>
     n > 0
       ? `Waiting for your answers about ${n} ${n === 1 ? "name" : "names"}`

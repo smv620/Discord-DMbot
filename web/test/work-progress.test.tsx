@@ -21,14 +21,14 @@ const T0 = new Date("2026-10-23T12:00:00Z").getTime() / 1000;
 
 describe("duration words", () => {
   it.each([
-    [0, "0 s"],
-    [45, "45 s"],
+    [0, "0 sec"],
+    [45, "45 sec"],
     [60, "1 min"],
-    [125, "2 min 5 s"],
+    [125, "2 min"],
     [700, "11 min"],
     [3780, "1 h 3 min"],
     [7200, "2 h"],
-    [-5, "0 s"],
+    [-5, "0 sec"],
   ])("%s seconds reads %s", (seconds, expected) => {
     expect(w.duration(seconds)).toBe(expected);
   });
@@ -62,13 +62,13 @@ describe("a running job", () => {
 
   it("counts the elapsed time up while the page is open, and the age of the last change", async () => {
     render(<WorkProgress stage="Working" startedAt={T0 - 10} updatedAt={T0 - 8} state="running" />);
-    expect(screen.getByText(w.running("10 s"), { exact: false })).toBeTruthy();
-    expect(screen.getByText(w.lastChange("8 s"), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.running(w.duration(10)), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.lastChange(w.duration(8)), { exact: false })).toBeTruthy();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(55_000);
     });
-    expect(screen.getByText(w.running("1 min 5 s"), { exact: false })).toBeTruthy();
-    expect(screen.getByText(w.lastChange("1 min 3 s"), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.running(w.duration(65)), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.lastChange(w.duration(63)), { exact: false })).toBeTruthy();
   });
 
   it("says just now for a change in the last few seconds, and no change yet when there is none", () => {
@@ -81,8 +81,8 @@ describe("a running job", () => {
   it("corrects a wrong clock on this computer with the server's own time", () => {
     // This browser thinks it is an hour later than the server does.
     render(<WorkProgress stage="Working" startedAt={T0 - 30 - 3600} updatedAt={T0 - 10 - 3600} serverNow={T0 - 3600} state="running" />);
-    expect(screen.getByText(w.running("30 s"), { exact: false })).toBeTruthy();
-    expect(screen.getByText(w.lastChange("10 s"), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.running(w.duration(30)), { exact: false })).toBeTruthy();
+    expect(screen.getByText(w.lastChange(w.duration(10)), { exact: false })).toBeTruthy();
   });
 
   it("stops ticking when the page goes away", async () => {
@@ -95,8 +95,14 @@ describe("a running job", () => {
 describe("a stalled job", () => {
   it("says there has been no change for a while, that DMbot may be stuck, and what to do", () => {
     render(<WorkProgress stage="Working" startedAt={T0 - 400} updatedAt={T0 - 190} state="stalled" />);
-    expect(screen.getByText(w.stalled("3 min 10 s"))).toBeTruthy();
+    expect(screen.getByText(w.stalled(w.duration(190)))).toBeTruthy();
     expect(screen.getByText(w.stalledDo)).toBeTruthy();
+  });
+
+  it("keeps the bar and says the quiet time once, not twice", () => {
+    render(<WorkProgress stage="Working" done={3} total={10} startedAt={T0 - 400} updatedAt={T0 - 190} state="stalled" />);
+    expect(screen.getByRole("progressbar")).toBeTruthy();
+    expect(screen.queryByText(/Last progress/)).toBeNull();
   });
 
   it("uses the page's own advice when it has some", () => {
@@ -112,7 +118,17 @@ describe("a failed job", () => {
     expect(screen.getByRole("alert").textContent).toContain(w.failed);
     expect(screen.getByText("DMbot could not read the file.")).toBeTruthy();
     expect(screen.getByText(w.failedDo)).toBeTruthy();
-    expect(screen.queryByText(w.running("1 min 40 s"), { exact: false })).toBeNull();
+    expect(screen.queryByText(w.running(w.duration(100)), { exact: false })).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("waiting for the person", () => {
+  it("shows the stage only: no bar, no clock, no stall", () => {
+    render(<WorkProgress stage="Waiting for your answers about 2 names" done={3} total={10} startedAt={T0 - 4000} updatedAt={T0 - 3900} state="running" waiting />);
+    expect(screen.getByText("Waiting for your answers about 2 names")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByText(/Running for|Last progress/)).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -10,24 +10,23 @@ export const workWords = {
   /** "3 of 10 sessions", "part 1 of 2". */
   progress: (done: number, total: number, unit?: string): string => (unit ? `${done} of ${total} ${unit}` : `${done} of ${total}`),
   running: (elapsed: string): string => `Running for ${elapsed}.`,
-  lastChange: (ago: string): string => `Last change ${ago} ago.`,
-  justNow: "Last change just now.",
-  noChangeYet: "No change yet.",
-  stalled: (ago: string): string => `No change for ${ago}. DMbot may be stuck.`,
+  lastChange: (ago: string): string => `Last progress ${ago} ago.`,
+  justNow: "Last progress just now.",
+  noChangeYet: "Hasn't moved forward yet.",
+  stalled: (ago: string): string => `Nothing new for ${ago}. It may just be slow.`,
   /** Said after a stall when the page has nothing more specific to say. */
-  stalledDo: "You can leave this page and come back; the work keeps going if it can. If nothing changes soon, try again or ask for help from the Help page.",
+  stalledDo: "You can leave this page and come back. If nothing moves in 5 more minutes, try again. Still stuck? Ask on the Help page.",
   failed: "That didn't work.",
-  failedDo: "Nothing else was changed. Try again, and if it fails again, ask for help from the Help page.",
+  failedDo: "Try again. If it fails again, ask on the Help page and say what you were doing.",
   done: "Done.",
   /** The bar for people using a screen reader. */
   barLabel: (stage: string): string => `Progress: ${stage}`,
-  /** Whole seconds as plain words: "45 s", "2 min", "2 min 5 s", "1 h 3 min". */
+  /** Seconds as plain words that change slowly enough to read: "45 sec" (to the nearest 5), then whole
+   * minutes ("2 min"), then "1 h 3 min". */
   duration: (seconds: number): string => {
     const whole = Math.max(0, Math.floor(seconds));
-    if (whole < 60) return `${whole} s`;
+    if (whole < 60) return `${whole - (whole % 5)} sec`;
     const m = Math.floor(whole / 60);
-    const s = whole % 60;
-    if (m < 10) return s === 0 ? `${m} min` : `${m} min ${s} s`;
     if (m < 60) return `${m} min`;
     const h = Math.floor(m / 60);
     return m % 60 === 0 ? `${h} h` : `${h} h ${m % 60} min`;
