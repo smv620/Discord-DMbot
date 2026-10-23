@@ -5,7 +5,8 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
-import { homebrewCard, houseRulesCard, recapCard, transcriptsCard } from "../content/account-cards";
+import { recapCard } from "../content/account-cards";
+import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
@@ -529,18 +530,17 @@ function SignedIn({
           onNews={setOfferNews}
         />
       )}
+      <CampaignsSection me={me} />
+      <CharactersSection />
+      <SharedRulesSection me={me} />
       <PlanSection me={me} />
+      <h2 id="my-account-heading">{text.myAccountHeading}</h2>
       {me.dmbotId !== undefined && <IdSection me={me} />}
       {api.myEmail && <EmailSection hash={hash} />}
+      <ServersSection me={me} />
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
-      <CampaignsSection me={me} />
-      {api.houseRuleCampaigns && <HouseRulesSection />}
-      {api.homebrewCampaigns && <HomebrewSection />}
-      {api.transcriptCampaigns && <TranscriptsSection />}
-      <ServersSection me={me} />
       <Improvement api={api} />
-      <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
@@ -1052,45 +1052,21 @@ function CampaignsSection({ me }: { me: Me }) {
           {open ? text.showFewer : text.showOlder(older.length)}
         </button>
       )}
-      {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapCard.linkToList}</a>}
+      {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
     </section>
   );
 }
 
-/** A link to the house rules (#1521): for anyone in a server, not only a DM, so it is not part of
- * the campaigns list. Hidden on an API older than the house-rules pages. */
-function HouseRulesSection() {
-  return (
-    <section aria-labelledby="house-rules-heading" class="panel">
-      <h2 id="house-rules-heading">{houseRulesCard.heading}</h2>
-      <p>{houseRulesCard.lead}</p>
-      <a href="/account/house-rules">{houseRulesCard.link}</a>
-    </section>
-  );
-}
-
-/** A link to the homebrew the DM shared (#1525): for anyone in a server, not only a DM. Hidden on
- * an API older than the homebrew pages. */
-function HomebrewSection() {
-  return (
-    <section aria-labelledby="homebrew-heading" class="panel">
-      <h2 id="homebrew-heading">{homebrewCard.heading}</h2>
-      <p>{homebrewCard.lead}</p>
-      <a href="/account/homebrew">{homebrewCard.link}</a>
-    </section>
-  );
-}
-
-/** A link to the session transcripts (#1501): for anyone in a server, not only a DM, so it is not
- * part of the campaigns list. Hidden on an API older than the transcript pages. */
-function TranscriptsSection() {
-  return (
-    <section aria-labelledby="transcripts-heading" class="panel">
-      <h2 id="transcripts-heading">{transcriptsCard.heading}</h2>
-      <p>{transcriptsCard.lead}</p>
-      <a href="/account/transcripts">{transcriptsCard.link}</a>
-    </section>
-  );
+/** The facts on a campaign's card (#2460), each left out when there is none. */
+function facts(c: Campaign): string[] {
+  return [
+    c.sessions ? text.sessionsFact(c.sessions) : null,
+    c.hoursPlayed ? text.hoursFact(c.hoursPlayed) : null,
+    c.players ? text.playersFact(c.players) : null,
+    c.npcs ? text.npcsFact(c.npcs) : null,
+    c.startedAt ? text.startedFact(c.startedAt) : null,
+    c.lastPlayedAt ? text.lastPlayed(c.lastPlayedAt) : text.notPlayed,
+  ].filter((f): f is string => f !== null);
 }
 
 function CampaignRow({
@@ -1118,22 +1094,32 @@ function CampaignRow({
         {/* Linked only when the API sends the campaign's address (#2416). */}
         {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
       </p>
-      <p class="muted small">
-        {campaign.serverName} ·{" "}
-        {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
-      </p>
+      <p class="muted small">{campaign.serverName}</p>
+      <ul class="facts small muted" aria-label={text.factsLabel(campaign.name)}>
+        {facts(campaign).map((f) => (
+          <li key={f}>{f}</li>
+        ))}
+      </ul>
       <p class="tags">
-        <span class={`tag ${campaign.status}`}>
-          <span aria-hidden="true">{campaign.status === "active" ? "🟢" : "⏸️"}</span>{" "}
-          {campaign.status === "active" ? text.active : text.paused}
-        </span>
+        {campaign.live && (
+          <span class="tag active">
+            <span aria-hidden="true">🟢</span> {text.listeningNow}
+          </span>
+        )}
+        {campaign.status === "paused" && (
+          <span class="tag paused">
+            <span aria-hidden="true">⏸️</span> {text.paused}
+          </span>
+        )}
         <span class="tag">
-          <span aria-hidden="true">{campaign.role === "owner" ? "👑" : "🤝"}</span>{" "}
+          <span aria-hidden="true">
+            {campaign.role === "owner" ? "👑" : campaign.role === "player" ? "🎲" : "🤝"}
+          </span>{" "}
           {campaign.role === "owner"
-            ? noLimits
-              ? text.youRunItFree
-              : text.youRunIt
-            : text.youHelp}
+            ? text.youRunIt
+            : campaign.role === "player"
+              ? text.youPlay
+              : text.youHelp}
         </span>
       </p>
       <Notice message={notice} />
@@ -1256,7 +1242,7 @@ function ServersSection({ me }: { me: Me }) {
   const { api } = useShared();
   return (
     <section aria-labelledby="servers-heading" class="panel">
-      <h2 id="servers-heading">{text.serversHeading}</h2>
+      <h3 id="servers-heading">{text.serversHeading}</h3>
       {me.servers.length === 0 ? (
         <p>{text.noServers}</p>
       ) : (
@@ -1309,6 +1295,22 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
 
 /** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
  * API older than this, or a failed load, shows nothing rather than an error. */
+/** The way in to the Shared rules page (#2460). Only a person who runs a campaign has rules to
+ * share or use, and only an API that can say what they share has the page. */
+function SharedRulesSection({ me }: { me: Me }) {
+  const { api } = useShared();
+  if (!api.sharedRules || !me.campaigns.some((c) => c.role !== "player")) return null;
+  return (
+    <section aria-labelledby="shared-rules-heading" class="panel">
+      <h2 id="shared-rules-heading">{sharingCard.heading}</h2>
+      <p>{sharingCard.lead}</p>
+      <p>
+        <a href="/account/sharing">{sharingCard.link}</a>
+      </p>
+    </section>
+  );
+}
+
 function CharactersSection() {
   const { api } = useShared();
   const [list, setList] = useState<Character[] | null>(null);
@@ -1380,7 +1382,7 @@ function CharactersSection() {
 function IdSection({ me }: { me: Me }) {
   return (
     <section aria-labelledby="id-heading" class="panel">
-      <h2 id="id-heading">{text.idHeading}</h2>
+      <h3 id="id-heading">{text.idHeading}</h3>
       <p>{text.idLine(me.dmbotId ?? "")}</p>
       <p class="muted small">{text.idNote}</p>
       {me.experiencePoints !== undefined && (
@@ -1496,7 +1498,7 @@ function EmailSection({ hash }: { hash: string }) {
   if (loadFailed && !mine)
     return (
       <section aria-labelledby="email-section-heading" class="panel" id="email">
-        <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+        <h3 id="email-section-heading">{text.myEmailHeading}</h3>
         <p class="warn" role="alert">
           {text.emailLoadFailed}
         </p>
@@ -1541,7 +1543,7 @@ function EmailSection({ hash }: { hash: string }) {
 
   return (
     <section aria-labelledby="email-section-heading" class="panel" id="email">
-      <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+      <h3 id="email-section-heading">{text.myEmailHeading}</h3>
       <p>{mine.address ? text.emailNow(mine.address) : text.emailNone}</p>
       {payment && <p class="small">{text.emailPayment}</p>}
       {mine.pending && (
@@ -1665,7 +1667,7 @@ function MoveSection() {
   const [sent, setSent] = useState(false);
   return (
     <section aria-labelledby="move-heading" class="panel">
-      <h2 id="move-heading">{text.moveHeading}</h2>
+      <h3 id="move-heading">{text.moveHeading}</h3>
       <p>{text.moveText}</p>
       <Notice message={notice} />
       {sent && (
@@ -1707,7 +1709,7 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
   if (entries.length === 0 && done.length === 0) return null;
   return (
     <section aria-labelledby="recording-heading" class="panel">
-      <h2 id="recording-heading">{text.recordingHeading}</h2>
+      <h3 id="recording-heading">{text.recordingHeading}</h3>
       {done.map((line) => (
         <p key={line} class="ok" role="status">
           {line}
@@ -1797,7 +1799,7 @@ function ExportSection() {
   const { busy, notice, run } = useAction();
   return (
     <section aria-labelledby="export-heading" class="panel">
-      <h2 id="export-heading">{text.exportHeading}</h2>
+      <h3 id="export-heading">{text.exportHeading}</h3>
       <p>{text.exportWhat}</p>
       <ActionButton
         busy={busy}
@@ -1840,7 +1842,7 @@ function DeleteSection({
 
   return (
     <section aria-labelledby="delete-heading" class="panel danger">
-      <h2 id="delete-heading">{text.deleteHeading}</h2>
+      <h3 id="delete-heading">{text.deleteHeading}</h3>
       <Notice message={notice} />
       {step === 0 && (
         <button

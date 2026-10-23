@@ -63,7 +63,17 @@
     margin: 0;
   }
 
-  .account .panel h2 {
+  /* The Shared rules page (#2460): a set or pack, its facts under it, and where to change it. */
+  .account .shared-rules {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .account .panel h2,
+  .account .panel h3 {
     font-size: var(--text-lg);
     margin: 0;
   }
@@ -122,6 +132,16 @@
   .account .ok {
     color: var(--accent);
     font-weight: 600;
+  }
+
+  /* A campaign card's facts (#2460): short phrases that wrap on a phone, never a table. */
+  .account .facts {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
   }
 
   /* A sentence DMbot would have looked at twice (#2297): a pale warning background with the page's
@@ -449,7 +469,8 @@
     overflow: hidden;
   }
 
-  .account .danger h2 {
+  .account .danger h2,
+  .account .danger h3 {
     color: var(--danger);
   }
 

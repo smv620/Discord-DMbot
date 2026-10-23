@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOrder, problem, text } from "../content/homebrew";
+import { sharingCard } from "../content/sharing";
 import {
   ApiError,
   type AccountApi,
@@ -96,6 +97,8 @@ export default function HomebrewPageView({
     <div class="stack">
       <p>
         <a href="/account">{text.account}</a>
+        {" · "}
+        <a href="/account/sharing">{sharingCard.link}</a>
       </p>
       {ref === null ? (
         <Campaigns api={api} />

@@ -12,6 +12,7 @@ import {
   type HouseRuleCampaign,
   type HouseRules,
 } from "./api";
+import { sharingCard } from "../content/sharing";
 import BackToCampaign from "./BackToCampaign";
 
 /** The campaign in the address: `/account/house-rules/<server>.<campaign>`, or null for the list. */
@@ -89,6 +90,8 @@ export default function HouseRulesPage({ api, path }: { api: AccountApi; path: s
     <div class="stack">
       <p>
         <a href="/account">{text.account}</a>
+        {" · "}
+        <a href="/account/sharing">{sharingCard.link}</a>
       </p>
       {ref === null ? <Campaigns api={api} /> : <Rules api={api} campaignRef={ref} />}
     </div>

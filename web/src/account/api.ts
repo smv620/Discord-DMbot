@@ -42,14 +42,23 @@ export interface Campaign {
   /** ISO date and time of the last session, or null if never played. */
   lastPlayedAt: string | null;
   status: "active" | "paused";
-  /** "owner": uses your hours. "co-dm": you help run it. */
-  role: "owner" | "co-dm";
+  /** "owner": uses your hours. "co-dm": you help run it. "player": you play in it (#2460). */
+  role: "owner" | "co-dm" | "player";
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
   /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
    * from an API older than that: the campaign is then not linked. */
   ref?: string;
+  /** The facts on the card (#2460), each left out when there is none: DMbot is listening there
+   * now, the sessions played, hours played (two decimals), player characters claimed, NPCs the
+   * person may see, and when the campaign was started (ISO). Missing from an older API. */
+  live?: boolean;
+  sessions?: number;
+  hoursPlayed?: number;
+  players?: number;
+  npcs?: number;
+  startedAt?: string;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -697,6 +706,35 @@ export interface HouseRules {
   sets: HouseRuleSet[];
 }
 
+/** A house-rules set or homebrew pack a campaign publishes (#2460). `hasCode`: a share code is on
+ * (the code itself is read in Discord, never here). */
+export interface SharedRuleSet {
+  kind: "house-rules" | "homebrew";
+  name: string;
+  version: number;
+  shared: boolean;
+  hasCode: boolean;
+}
+
+/** A set or pack a campaign uses from another table. `updating` is false for one that stopped being
+ * shared: its last version stays, marked "no longer updated". */
+export interface FollowedRuleSet {
+  kind: "house-rules" | "homebrew";
+  name: string;
+  publisher: string;
+  version: number;
+  updating: boolean;
+}
+
+/** One campaign you run that shares or uses rules. `ref` is `<server>.<campaign>`. */
+export interface SharedRulesCampaign {
+  ref: string;
+  name: string;
+  serverName: string;
+  publishes: SharedRuleSet[];
+  follows: FollowedRuleSet[];
+}
+
 /** A campaign with homebrew in one of the person's servers (#1525).
  * `ref` is `<server>.<campaign>`. */
 export interface HomebrewCampaign {
@@ -1160,6 +1198,9 @@ export interface AccountApi {
   /** The campaigns with house rules in the person's servers, for anyone in them (#1521). Missing
    * from an API older than that. */
   houseRuleCampaigns?(): Promise<HouseRuleCampaign[]>;
+  /** The sets and packs your campaigns share and use (#2460), for the campaigns you run. Missing
+   * from an older API. */
+  sharedRules?(): Promise<SharedRulesCampaign[]>;
   /** A campaign's house rules and the sets it follows. `campaignRef` is `<server>.<campaign>`. */
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
@@ -1566,6 +1607,9 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    sharedRules: async () =>
+      ((await call("GET", "/me/shared-rules")) as { campaigns: SharedRulesCampaign[] })
+        .campaigns,
     houseRuleCampaigns: async () =>
       (
         (await call("GET", "/me/house-rules")) as {
