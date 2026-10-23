@@ -1,0 +1,331 @@
+/** @jsxImportSource preact */
+// The hand-over accept page (#2534; core #2532; docs/PLAN.md, "Hand-over by email"). The emailed link
+// is `/handover#<token>` (in the hash, so no server log holds it). Signed in, the person sees which
+// campaign, who offered it and whether they can take it, picks the server it runs on, and accepts or
+// says no. The API decides everything (a paid plan with a free slot, a server of theirs with DMbot in
+// it, an offer still open); this page only says what it is told. A link that has ended says so and
+// changes nothing. The token goes in a request body, never in an address, and is kept across the
+// sign-in in sessionStorage because the hash does not survive it.
+import { useEffect, useRef, useState } from "preact/hooks";
+
+import { HANDOVER_LIVE, handoverWords as words } from "../content/handover-words";
+import { campaignHref } from "./campaignLinks";
+import { ApiError, type AccountApi, type HandoverLook } from "./api";
+import { keepFocus } from "./focus";
+
+const KEY = "dmbot:handover";
+
+/** The token in the address's hash, or one kept across the sign-in; null if neither looks right. */
+export function handoverToken(hash: string): string | null {
+  const fromHash = hash.replace(/^#/, "");
+  if (/^[\w-]{1,200}$/.test(fromHash)) return fromHash;
+  try {
+    const kept = sessionStorage.getItem(KEY);
+    return kept && /^[\w-]{1,200}$/.test(kept) ? kept : null;
+  } catch {
+    return null;
+  }
+}
+
+export function keepHandoverToken(token: string): void {
+  try {
+    sessionStorage.setItem(KEY, token);
+  } catch {
+    // Storage may be blocked; the link in the email still works.
+  }
+}
+
+function forgetHandoverToken(): void {
+  try {
+    sessionStorage.removeItem(KEY);
+  } catch {
+    // nothing to forget
+  }
+}
+
+type View =
+  | { kind: "loading" }
+  | { kind: "no-link" }
+  | { kind: "signed-out" }
+  | { kind: "down" }
+  | { kind: "ended" }
+  | { kind: "open"; look: Extract<HandoverLook, { status: "open" }> }
+  | { kind: "accepted"; ref: string }
+  | { kind: "declined" };
+
+export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: string }) {
+  const [view, setView] = useState<View>({ kind: "loading" });
+  const [server, setServer] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const token = useRef<string | null>(null);
+  const headRef = useRef<HTMLHeadingElement>(null);
+  const inFlight = useRef(false);
+  const [tryNo, setTry] = useState(0); // "Try again" after a failed look
+
+  useEffect(() => {
+    if (!HANDOVER_LIVE) return;
+    const found = handoverToken(hash);
+    token.current = found;
+    if (!found) {
+      setView({ kind: "no-link" });
+      return;
+    }
+    keepHandoverToken(found); // so a sign-in on the way does not lose it
+    // Take the code out of the address bar, so it is not left in the history or shared by a screenshot.
+    // The page keeps it in memory and in sessionStorage; the email link still works.
+    if (typeof window !== "undefined" && window.location.hash !== "") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    void (async () => {
+      try {
+        const me = await api.me();
+        if (!me) {
+          setView({ kind: "signed-out" });
+          return;
+        }
+        const look = await api.handoverLook!(found);
+        if (look.status === "ended") {
+          forgetHandoverToken();
+          setView({ kind: "ended" });
+          return;
+        }
+        // Your own campaign: nothing to accept, so the kept code is forgotten (My Account stops waiting).
+        if (look.why === "owner") forgetHandoverToken();
+        setServer(look.servers.find((s) => s.current && s.botIn)?.id ?? look.servers.find((s) => s.botIn)?.id ?? null);
+        setView({ kind: "open", look });
+      } catch (error) {
+        setView(error instanceof ApiError && error.kind === "signed-out" ? { kind: "signed-out" } : { kind: "down" });
+      }
+    })();
+    // Runs again only for a new API or "Try again": `hash` is read once (the code leaves the address bar), and
+    // the other values it uses are refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, tryNo]);
+
+  if (!HANDOVER_LIVE || !api.handoverLook || !api.handoverAccept || !api.handoverDecline) {
+    return <p role="status">{words.notOpen}</p>;
+  }
+
+  const fail = (error: unknown) => {
+    const kind = error instanceof ApiError ? error.kind : "server";
+    if (kind === "signed-out" || kind === "sign-in-again") {
+      setView({ kind: "signed-out" }); // the session ended meanwhile: sign in again, the code is kept
+      keepFocus(() => headRef.current);
+      return;
+    }
+    if (kind === "ended") {
+      forgetHandoverToken();
+      setView({ kind: "ended" });
+      keepFocus(() => headRef.current);
+      return;
+    }
+    setProblem(words.problem[kind] ?? words.problem["server"] ?? "");
+  };
+
+  const accept = async () => {
+    if (inFlight.current || !token.current || !server) return;
+    inFlight.current = true;
+    setBusy("accept");
+    setProblem(null);
+    try {
+      const done = await api.handoverAccept!(token.current, server);
+      forgetHandoverToken();
+      setView({ kind: "accepted", ref: done.campaignRef });
+      keepFocus(() => headRef.current);
+    } catch (error) {
+      fail(error);
+    } finally {
+      inFlight.current = false;
+      setBusy(null);
+    }
+  };
+
+  const decline = async () => {
+    if (inFlight.current || !token.current) return;
+    inFlight.current = true;
+    setBusy("decline");
+    setProblem(null);
+    try {
+      await api.handoverDecline!(token.current);
+      forgetHandoverToken();
+      setView({ kind: "declined" });
+      keepFocus(() => headRef.current);
+    } catch (error) {
+      fail(error);
+    } finally {
+      inFlight.current = false;
+      setBusy(null);
+    }
+  };
+
+  switch (view.kind) {
+    case "loading":
+      return <p role="status">{words.loading}</p>;
+    case "no-link":
+      return <p role="status">{words.noLink}</p>;
+    case "signed-out":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p>{words.signInLead}</p>
+          <p>
+            <a class="button" href={api.signInUrl()}>
+              {words.signInDiscord}
+            </a>
+          </p>
+          <p>
+            <a href="/account">{words.signInEmail}</a>
+          </p>
+          <p class="muted small">{words.signInNote}</p>
+        </section>
+      );
+    case "down":
+      return (
+        <div class="stack">
+          <p class="warn" role="alert">
+            {words.loadFailed}
+          </p>
+          <p>
+            <button type="button" class="button secondary" onClick={() => setTry((n) => n + 1)}>
+              {words.tryAgain}
+            </button>
+          </p>
+        </div>
+      );
+    case "ended":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p role="status">{words.ended}</p>
+        </section>
+      );
+    case "accepted":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p role="status">{words.accepted}</p>
+          <p>
+            <a class="button" href={campaignHref(view.ref)}>
+              {words.openCampaign}
+            </a>
+          </p>
+        </section>
+      );
+    case "declined":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p role="status">{words.declined}</p>
+        </section>
+      );
+    case "open": {
+      const { look } = view;
+      const reason = look.why ? (words.why[look.why] ?? words.cantNow) : words.cantNow;
+      const anyServer = look.servers.some((s) => s.botIn);
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p>
+            <strong>{words.offer(look.campaign.name, look.from.name)}</strong>
+          </p>
+          <p>{words.runsOn(look.server.name)}</p>
+          {!look.canAccept ? (
+            <>
+              <p role="status">{reason}</p>
+              {(look.why === "try_it" || look.why === "no_plan" || look.why === "no_slot") && (
+                <p>
+                  <a class="button" href="/pricing">
+                    {words.seePlans}
+                  </a>
+                </p>
+              )}
+              {look.why !== "owner" && <p class="muted small">{words.linkKept}</p>}
+              {look.why === "no_slot" && (
+                <p>
+                  <a href="/account">{words.myAccount}</a>
+                </p>
+              )}
+              {look.why !== "owner" && (
+                <p>
+                  <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
+                    {busy === "decline" ? words.declining : words.decline}
+                  </button>
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <fieldset class="stack">
+                <legend>
+                  <strong>{words.whereHeading}</strong>
+                </legend>
+                <p class="muted small">{words.whereLead}</p>
+                {look.servers.map((s) => (
+                  <div key={s.id} class="choice">
+                    <label>
+                      <input
+                        type="radio"
+                        name="handover-server"
+                        value={s.id}
+                        checked={server === s.id}
+                        disabled={!s.botIn}
+                        onChange={() => setServer(s.id)}
+                      />{" "}
+                      {s.name} {s.current && <span class="muted small">{words.current}</span>}
+                      {!s.botIn && <span class="muted small"> {words.needsBot}</span>}
+                    </label>
+                    {!s.botIn && (
+                      <>
+                        {" "}
+                        <a href={api.installUrl(s.id)}>{words.addBotFor(s.name)}</a>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {!anyServer && <p>{words.noServers}</p>}
+                {look.servers.some((s) => !s.botIn) && <p class="muted small">{words.comeBack}</p>}
+              </fieldset>
+              <p>{words.acceptNote}</p>
+              {problem && (
+                <p class="note bad" role="alert">
+                  {problem}
+                </p>
+              )}
+              {anyServer && !server && <p class="muted small">{words.pickFirst}</p>}
+              <div class="row">
+                <button
+                  type="button"
+                  class="button"
+                  disabled={busy !== null || !server || !anyServer}
+                  aria-busy={busy === "accept"}
+                  onClick={() => void accept()}
+                >
+                  {busy === "accept" ? words.accepting : words.accept}
+                </button>
+                <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
+                  {busy === "decline" ? words.declining : words.decline}
+                </button>
+              </div>
+            </>
+          )}
+          {!look.canAccept && problem && (
+            <p class="note bad" role="alert">
+              {problem}
+            </p>
+          )}
+        </section>
+      );
+    }
+  }
+}

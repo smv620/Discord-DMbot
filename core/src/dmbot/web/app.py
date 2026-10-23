@@ -102,6 +102,7 @@ from dmbot.web.recap_requests import (
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
+    approve_unchecked,
     audio_again,
     decide,
     edit_recap,
@@ -741,6 +742,9 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
+        "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
+        "bad_hash": (422, "bad_hash"),
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
         # Importing older sessions (#2105)
@@ -1008,6 +1012,25 @@ def create_app(
                 return JSONResponse(
                     {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
                 )
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/approve-unchecked")
+    async def me_recap_approve_unchecked(ref: str, signed: Signed, request: Request) -> Any:
+        """Approve, as it is, a draft that waited 3 days for its last check (#2305):
+        `{"textHash": <the recap's textHash the page showed>}`. The database's door holds it to a
+        DM of the campaign, to the 3 days (409 `not_yet` before) and to that text (409 `changed`
+        if the draft was revised since); the bot's worker then finishes the recap. A non-DM gets
+        `not_found`. A second press answers the same and changes nothing."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        expected = body.get("textHash") if isinstance(body, dict) else None
+        try:
+            return await approve_unchecked(db, session, ref, expected)  # type: ignore[arg-type]
+        except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

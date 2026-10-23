@@ -3152,6 +3152,11 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     # How many hand-over emails a person sent today, for the limit of five (#2532).
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
+    # ... and approving a draft that waited 3 days for its check, as it is (#2305).
+    (
+        "dmbot_recap_approve_unchecked",
+        "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
+    ),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11320,6 +11325,24 @@ PINNED_TRUTH = """
     1,
 )
 
+# Family roles (#2457, Supervisor's ruling A): whether a family connection's detail is a role that
+# reads one way ("Mira is the niece of Aldric"). Older rows are false: their detail was stored with
+# the two names sorted by id, so its direction is arbitrary and they keep reading "is family of".
+# The column has a default and is added, not updated, so no row changes and no backfill policy.
+# The website's door sends it with each connection, built from the door as it stands now (0190).
+_DIRECTIONAL_LINK = "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,"
+_door_directional = PINNED_TRUTH[
+    PINNED_TRUTH.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_directional.count(_DIRECTIONAL_LINK) == 1
+RELATION_DIRECTIONAL = """
+    ALTER TABLE memory_relations ADD COLUMN directional BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_directional.replace(
+    _DIRECTIONAL_LINK,
+    "'detail', r.detail, 'directional', r.directional, 'secret', r.secret, 'at', r.created_at,",
+    1,
+)
+
 LINK_PIN_ACTION = """
     -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
     -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
@@ -11737,6 +11760,77 @@ IMAGE_LINES = """
     );
     """ + _isolate("image_day_use")
 
+RECAP_APPROVE_UNCHECKED = """
+    -- "Approve it as it is" for a recap whose critics could not be reached for 3 days (#2305).
+    -- The website's role may not write recap_jobs, so this is the door: only a DM of the campaign,
+    -- only a draft still in the critics' loop that has waited at least `wait_s` seconds for its
+    -- check (the caller passes the 3 days, so the number lives in one place), and only the text
+    -- the DM read: `expected` is the hash of the title and summary the page showed, and a draft
+    -- the worker has revised since approves nothing ('changed'). A second press after an approval
+    -- answers 'approved' again and changes nothing. It marks the loop done, records who and when
+    -- in the loop's JSON, adds the note that the draft was never fully checked, and lets the
+    -- worker run on to the title step (next_at = 0), which makes it ready.
+    -- A new function: no rows change, so no row-level-security policy is needed.
+    CREATE FUNCTION dmbot_recap_approve_unchecked(
+        g BIGINT, c TEXT, at_ BIGINT, wait_s BIGINT, note TEXT, expected TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        since_s BIGINT;
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND OR job.status <> 'draft' OR job.state <> 'prose'
+           OR job.critics IS NULL OR job.summary = '' THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF COALESCE((job.critics->>'approved_at')::BIGINT, 0) > 0 THEN
+            RETURN 'approved';  -- already approved: a second press changes nothing
+        END IF;
+        IF COALESCE(job.critics->>'done', 'false') = 'true' THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF expected <> encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')),
+                              'hex') THEN
+            RETURN 'changed';
+        END IF;
+        -- Waiting for the check at all (a wait was counted), and for long enough.
+        since_s := COALESCE((job.critics->>'since')::BIGINT, 0);
+        IF COALESCE((job.critics->>'waits')::BIGINT, 0) = 0 OR since_s = 0
+           OR now_s - since_s < wait_s THEN
+            RETURN 'not_yet';
+        END IF;
+        UPDATE recap_jobs SET
+            critics = job.critics || jsonb_build_object(
+                'done', true, 'approved_by', dmbot_current_user(), 'approved_at', now_s,
+                'notes', CASE WHEN jsonb_typeof(job.critics->'notes') = 'array'
+                              THEN job.critics->'notes' ELSE '[]'::jsonb END || to_jsonb(note)),
+            last_error = '', errors = 0, next_at = 0
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'approved';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)
+        FROM PUBLIC;
+    """
+
 MAP_NOTES = """
     -- A map someone posted in the table chat, put into words for MapBot, a later feature (#2450,
     -- docs/PLAN.md, "Images posted there"): the places on it and where each is from the others, and
@@ -12031,7 +12125,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
+    ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
+    ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
     ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
 )
