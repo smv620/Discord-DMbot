@@ -59,6 +59,7 @@ export const scenarios = [
   "free",
   "free-until",
   "free-paying",
+  "lost-server",
   "down",
 ] as const;
 export type Scenario = (typeof scenarios)[number];
@@ -276,6 +277,18 @@ export function scenarioMe(scenario: Scenario): Me | null {
           renewsOn: "2026-10-14",
           graceEndsOn: null,
         },
+      };
+    case "lost-server":
+      // The table plan, plus a campaign of yours on a server DMbot can't reach any more (#2555).
+      return {
+        ...base,
+        canMove: true,
+        canSupport: true,
+        campaigns: [
+          ...campaigns,
+          { id: "cmp-hollow", ref: "300.cmp9", name: "Lost Hollow", serverName: "", lastPlayedAt: null, status: "paused", role: "owner", serverReachable: false },
+        ],
+        plan: { id: "table", status: "active", hoursUsed: 11.2, hoursCap: 18, renewsOn: "2026-10-14", graceEndsOn: null },
       };
     case "grace":
       return {
@@ -1611,6 +1624,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       // (copied, never changed in place: the pretend campaigns are shared by every test)
       const open = { sentAt: "2026-10-23T12:00:00Z", expiresAt: "2026-10-30T12:00:00Z" };
       me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: open } : x)) };
+    },
+    async deleteCampaign(ref, name) {
+      calls.push(`deleteCampaign:${ref}:${name}`);
+      await reachable();
+      signedIn();
+      const found = me?.campaigns.find((x) => x.ref === ref);
+      if (!found) throw new ApiError("not-found");
+      if (found.role !== "owner") throw new ApiError("not-allowed");
+      if (/running/i.test(found.name)) throw new ApiError("session-running");
+      if (name.split(/\s+/).join(" ").toLowerCase() !== found.name.split(/\s+/).join(" ").toLowerCase()) throw new ApiError("name-mismatch");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
+      return { channelsLeft: found.serverReachable === false };
+    },
+    async campaignBackup(ref) {
+      calls.push(`campaignBackup:${ref}`);
+      await reachable();
+      signedIn();
+      if (me?.plan?.id === "try-it") throw new ApiError("no-backup");
+      return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
     },
     async takeBackHandover(ref) {
       calls.push(`takeBackHandover:${ref}`);

@@ -10,6 +10,7 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-delete";
 import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
 import { handoverToken } from "./Handover";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
@@ -30,6 +31,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import CampaignDelete from "./CampaignDelete";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
 import CampaignFacts from "./CampaignFacts";
@@ -1055,6 +1057,10 @@ function CampaignsSection({ me }: { me: Me }) {
                 setDone(text.handOverDone(person.name));
                 await refresh();
               }}
+              onDeleted={async (name, channelsLeft) => {
+                setDone(CAMPAIGN_DELETE_LIVE ? `${campaignDeleteWords.deleted(name)}${channelsLeft ? ` ${campaignDeleteWords.channelsLeft}` : ""}` : "");
+                await refresh();
+              }}
             />
           ))}
         </ul>
@@ -1084,6 +1090,7 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  onDeleted,
   tryIt = false,
 }: {
   campaign: Campaign;
@@ -1092,6 +1099,8 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** The campaign was deleted from this card (#2555). */
+  onDeleted: (name: string, channelsLeft: boolean) => Promise<void>;
   /** A Try It account: a Try It campaign can't be handed over (#2534). */
   tryIt?: boolean;
 }) {
@@ -1107,7 +1116,10 @@ function CampaignRow({
         {/* Linked only when the API sends the campaign's address (#2416). */}
         {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
       </p>
-      <p class="muted small">{campaign.serverName}</p>
+      <p class="muted small">
+        {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && !campaign.serverName ? campaignDeleteWords.unknownServer : campaign.serverName}
+      </p>
+      {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && <p class="note small">{campaignDeleteWords.unreachable}</p>}
       <CampaignFacts campaign={campaign} />
       <Notice message={notice} />
       {offer && (
@@ -1138,6 +1150,16 @@ function CampaignRow({
       )}
       {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
         <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
+      {/* Only the plan holder (the owner) is offered Delete; co-DMs and players never see it. */}
+      {CAMPAIGN_DELETE_LIVE && campaign.role === "owner" && campaign.ref && api.deleteCampaign && (
+        <CampaignDelete
+          api={api}
+          refId={campaign.ref}
+          name={campaign.name}
+          tryIt={tryIt}
+          onDeleted={(channelsLeft) => void onDeleted(campaign.name, channelsLeft)}
+        />
       )}
       {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton

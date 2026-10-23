@@ -62,6 +62,9 @@ export interface Campaign {
   /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
    * when it was sent and when it ends, never the address. Missing from an older API. */
   handover?: { sentAt: string; expiresAt: string } | null;
+  /** False when the account's server list doesn't have this campaign's server, or DMbot isn't in it any more
+   * (#2555; core #2554). Only the owner's campaigns can be like that. Missing from an older API. */
+  serverReachable?: boolean;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -1165,6 +1168,9 @@ export type ApiErrorKind =
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "session-running" // a session is running, so the campaign can't be deleted (#2555)
+  | "name-mismatch" // the typed name isn't the campaign's (#2555)
+  | "no-backup" // a Try It campaign has no backup (#2555)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1213,6 +1219,11 @@ export interface AccountApi {
   offerHandover?(ref: string, email: string): Promise<void>;
   /** Take the open offer back. */
   takeBackHandover?(ref: string): Promise<void>;
+  /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
+   * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
+  deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
+  /** The whole campaign as a JSON backup file, offered before Delete (owner and co-DMs; not Try It). */
+  campaignBackup?(ref: string): Promise<Blob>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
@@ -1463,6 +1474,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
   owner: "owner-offer",
   bad_server: "bad-server",
   last_account: "last-account",
+  not_the_owner: "not-allowed",
+  session_running: "session-running",
+  name_mismatch: "name-mismatch",
+  no_backup_on_this_plan: "no-backup",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1659,6 +1674,10 @@ export function httpApi(
     offerHandover: async (ref, email) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
     },
+    deleteCampaign: async (ref, name) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
+    campaignBackup: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/backup`, undefined, true)) as Blob,
     takeBackHandover: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
