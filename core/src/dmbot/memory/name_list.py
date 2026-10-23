@@ -574,9 +574,9 @@ def _person(
     if cells[3]:
         out.refused.append((number, NO_SECRETS_FOR_PEOPLE))
         return
-    # The first name is read whole, as for any row (so one with a comma or quote stays one name).
-    first = " ".join(cells[0].split())
-    names = [first, *(n for n in _names(cells[2]) if name_key(n) != name_key(first))]
+    # The first part is names too: split at a comma when it is written plain ("Bob, Bobby" is two
+    # names), whole when it is in double quotes, which a download does for a name with a comma.
+    names = _names(" ; ".join([cells[0], cells[2]]))
     plays = _names(cells[5])
     if len(names) > MAX_PER_LINE or len(plays) > MAX_PER_LINE:
         out.refused.append((number, TOO_MANY_OTHERS))
@@ -665,7 +665,7 @@ def person_lines(p: OutPerson) -> list[str]:
     out = []
     for at in range(0, max(len(names) - 1, len(plays), 1), MAX_PER_LINE):
         cells = [
-            names[0],
+            _joined(names[:1]),
             "player or DM",
             _joined(names[1:][at : at + MAX_PER_LINE]),
             "",

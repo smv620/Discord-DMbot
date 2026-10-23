@@ -123,6 +123,13 @@ class Pronunciation(unittest.TestCase):
             (back,) = parse(text, secrets=True).people
             self.assertEqual((back.names, back.plays), (names, ("Vex, Jr.",)), text)
 
+    def test_a_hand_written_player_row_splits_its_first_part_unless_it_is_quoted(self) -> None:
+        who = "123456789012345678"
+        (plain,) = parse(f"Bob, Bobby | player or DM | | | {who}", secrets=True).people
+        self.assertEqual(plain.names, ("Bob", "Bobby"))
+        (quoted,) = parse(f'"Bob, Bobby" | player or DM | | | {who}', secrets=True).people
+        self.assertEqual(quoted.names, ("Bob, Bobby",))
+
     def test_more_names_than_a_line_holds_still_read_back_as_one_entry(self) -> None:
         others = tuple(f"Alias {n}, the {n}th" for n in range(MAX_PER_LINE + 1))
         text = "\n".join(lines_for("Vex", "npc", others, ()))
