@@ -240,7 +240,7 @@ class ThroughTheRealBot(Settings):
                 channel=MagicMock(send=AsyncMock()), campaign=saved, warning=None
             )
 
-        bot.get_guild = lambda guild_id: SimpleNamespace(id=guild_id)  # type: ignore[method-assign,assignment]
+        bot.get_guild = lambda guild_id: SimpleNamespace(id=guild_id)
         bot.after_screen_change = AsyncMock()  # type: ignore[method-assign]
         bot.post = AsyncMock()  # type: ignore[method-assign]
         waiting = {
