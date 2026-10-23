@@ -586,6 +586,25 @@ class Beliefs(MemoryTest):
         self.assertEqual(len(copy["memory_perspectives"]), 2)
         self.assertTrue(copy["memory_beliefs"])
 
+    async def test_a_backup_cannot_hand_the_party_an_unrevealed_connection(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+
+        a, b = await self.pair()
+        held = (
+            await self.memory.add_relation(
+                GUILD_A, self.c, a, "knows", b, source="dm", confidence=1.0,
+                status=CONFIRMED, unrevealed=True,
+            )
+        ).value[0].id  # fmt: skip
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        rows = self.memory_rows(backup)
+        party = next(r["id"] for r in rows if r["table"] == "perspective" and r["kind"] == "party")
+        proto = next(r for r in rows if r["table"] == "belief")
+        rows.append({**proto, "id": new_id(), "perspective_id": party, "relation_id": held,
+                     "confidence": 1.0, "seq": 99})  # fmt: skip
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(backup)), DM)
+
     async def test_an_older_backup_without_beliefs_gets_them_worked_out(self) -> None:
         a, b = await self.pair()
         c = await self.add("Hollis")

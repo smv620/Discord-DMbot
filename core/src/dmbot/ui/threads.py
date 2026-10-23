@@ -400,9 +400,11 @@ async def link_by_name(
     if not found:
         if make is not None:
             name = " ".join(typed.split())
+            # Typed by the DM, so it starts unrevealed like any name added by hand (#2404).
             made = await memory.add_entity(
-                campaign.guild_id, campaign.id, type=make, name=name, source=DM, status=CONFIRMED
-            )
+                campaign.guild_id, campaign.id, type=make, name=name, source=DM, status=CONFIRMED,
+                hidden_from_players=True,
+            )  # fmt: skip
             changed(interaction, campaign)
             await then(interaction, campaign_id, thread_id, made.value.id)
             return

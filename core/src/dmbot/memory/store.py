@@ -52,6 +52,9 @@ from dmbot.memory._changes import (
 )
 from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
+from dmbot.memory.lookalikes import Name as LookAlikeName
+from dmbot.memory.lookalikes import find as find_look_alikes
+from dmbot.memory.lookalikes import pair as not_same_pair
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import (
     AFFECTED,
@@ -79,6 +82,7 @@ from dmbot.memory.models import (
     LIST_MAX,
     LIVE,
     MENTION_METHODS,
+    MERGE_MANY_MAX,
     MERGED,
     PLAYER_CHARACTER,
     PROPOSED,
@@ -217,7 +221,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
-        r["secret"], r["created_at"], r["definition_version"],
+        r["secret"], r["created_at"], r["definition_version"], r["unrevealed"],
     )  # fmt: skip
 
 
@@ -239,6 +243,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "secret": rel.secret,
         "created_at": rel.created_at,
         "definition_version": rel.definition_version,
+        "unrevealed": rel.unrevealed,
     }
 
 
@@ -346,6 +351,11 @@ class MemoryStore:
         # and every table question ask for it, and it only changes with the campaign's memory.
         # Bounded: the oldest entry goes past PEOPLE_CACHE_MAX campaigns.
         self._people: dict[tuple[int, str], tuple[int, list[tuple[int, list[str], list[str]]]]] = {}
+        # The look-alike groups of a campaign (#2426), kept while its names are the same: the
+        # names panel asks every time a DM opens it, and finding them takes a moment.
+        self._look_alikes: dict[
+            tuple[int, str], tuple[tuple[int, int, int], list[list[LookAlikeName]]]
+        ] = {}
 
     @asynccontextmanager
     async def _write(
@@ -541,7 +551,7 @@ class MemoryStore:
             rows = await scope.select(
                 RELATIONS,
                 " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
-                " AND (%s OR NOT secret) ORDER BY created_at, id",
+                " AND (%s OR (NOT secret AND NOT unrevealed)) ORDER BY created_at, id",
                 [statuses, entity_id, entity_id, include_secret],
             )
             ends = {r[end] for r in rows for end in ("subject_id", "object_id")}
@@ -599,7 +609,7 @@ class MemoryStore:
                     RELATIONS,
                     # a proposed one is shown while it is not secret; a confirmed one when the
                     # players hold it as fact (their belief, #2409)
-                    " AND ((status = 'proposed' AND NOT secret)"
+                    " AND ((status = 'proposed' AND NOT secret AND NOT unrevealed)"
                     f" OR (status = 'confirmed' AND {beliefs.party_knows()})) ORDER BY id",
                 )
                 if r["subject_id"] in live and r["object_id"] in live
@@ -609,7 +619,7 @@ class MemoryStore:
             secret_relations = [
                 r
                 for r in await scope.select(
-                    RELATIONS, " AND status = 'confirmed' AND secret ORDER BY id"
+                    RELATIONS, " AND status = 'confirmed' AND (secret OR unrevealed) ORDER BY id"
                 )
                 if r["subject_id"] in live and r["object_id"] in live
             ]
@@ -1644,6 +1654,9 @@ class MemoryStore:
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
                         "unique_item": None,
+                        # Names from a list, or read from the DM's story, start unrevealed
+                        # (#2404): the table's first mention of one shows it to the players.
+                        "hidden_from_players": True,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -2387,109 +2400,233 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
-            onto = await _load_ontology(w)
-            keep = await _entity_row(w, keep_id)
-            gone = await _entity_row(w, gone_id)
-            if (keep["type"] == PERSON) != (gone["type"] == PERSON):
-                raise MemoryRuleError("A player or the DM can't be the same as a character.")
-            needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
-                keep["type"],
-                keep["role"],
-            ) != (gone["type"], gone["role"])
-            if needs_dm and not dm_said_same:
-                raise MemoryRuleError("Only the DM can say these two are the same.")
-            players = {keep["played_by"], gone["played_by"]} - {None}
-            if len(players) > 1:
-                raise MemoryRuleError("Those are two different players' characters.")
-            if gone["played_by"] is not None and keep["played_by"] is None:
-                # A player's character stays one, whichever name is kept.
-                await w.update(
-                    ENTITIES,
-                    keep_id,
-                    {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
-                )
-                await states.settle_kind(w, onto, [keep_id], gone["type"])
-            kept = await _entity_row(w, keep_id)
-            if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
-                merged = {
-                    "role": kept["role"] or gone["role"],
-                    "needs_look": kept["needs_look"] and gone["needs_look"],
-                    # The kept entry's word on one of a kind, else the merged one's.
-                    "unique_item": (
-                        kept["unique_item"]
-                        if kept["unique_item"] is not None
-                        else gone["unique_item"]
-                    ),
-                    # A clue only some people know stays so if either was (#1649).
-                    "audience_limited": kept["audience_limited"] or gone["audience_limited"],
-                    # And so does an entry the players don't know yet (#2321).
-                    "hidden_from_players": (
-                        kept["hidden_from_players"] or gone["hidden_from_players"]
-                    ),
-                }
-                if merged != {k: kept[k] for k in merged}:
-                    await w.update(ENTITIES, keep_id, merged)
-            await _move_rule_links(w, keep_id, gone_id)
-            await _move_plan_links(w, keep_id, gone_id)
-            await states.move_states(w, onto, keep_id, kept["type"], gone_id)
-            if confirm_keys and source != DM:
-                raise ValueError("Only the DM confirms names")
-            await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
-            # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
-            # has its own: then the merged one's is forgotten (nothing could show or
-            # remove it). Not in the change log: undoing the merge leaves it on the kept
-            # entry; if that entry then has no player, the sheet is left out everywhere.
-            # The kept entry's own sheet counts only if it's its player's (a sheet
-            # left from an earlier player is shown nowhere): drop it first, so it can't
-            # beat a visible one.
-            await w.conn.execute(
-                "DELETE FROM character_sheets s USING memory_entities e"
-                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
-                " AND e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
-                " AND e.id = s.entity_id AND s.player_id IS DISTINCT FROM e.played_by",
-                (guild_id, campaign_id, keep_id),
-            )
-            await w.conn.execute(
-                "DELETE FROM character_sheets"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
-                " AND EXISTS (SELECT 1 FROM character_sheets"
-                "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
-                (guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
-            )
-            await w.conn.execute(
-                "UPDATE character_sheets SET entity_id = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
-                " AND NOT EXISTS (SELECT 1 FROM character_sheets"
-                "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
-                (keep_id, guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
-            )
-            own = await w.select(
-                ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
-            )
-            if own and own[0]["secret"]:
-                # The other entry's name was a secret one: the main name everyone sees
-                # must never be.
-                raise MemoryRuleError("A secret name can't be the main name.")
-            await _move_relations(w, keep_id, gone_id)
-            await _move_standing(w, keep_id, gone_id)
-            await _move_npc_notes(w, guild_id, campaign_id, keep_id, gone_id)
-            for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
-                await w.update_where(
-                    table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id]
-                )
-            await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
-            # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
-            await w.update(
-                ENTITIES,
+            await self._merge_in(
+                w,
+                keep_id,
                 gone_id,
-                {"status": MERGED, "merged_into": keep_id, **_note_cleared(gone)},
+                source=source,
+                dm_said_same=dm_said_same,
+                confirm_keys=confirm_keys,
             )
-            await _forget_quotes(w, [gone_id] if _note_cleared(gone) else [])
-            await _sync_plays(w, keep_id)
-            await _sync_plays(w, gone_id)
             final = await w.get(ENTITIES, keep_id)
             assert final is not None
             return Written(_entity(final), w.batch)
+
+    async def merge_many(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        keep_id: str,
+        other_ids: Sequence[str],
+        *,
+        source: str,
+    ) -> Written[Entity]:
+        """Several entries are one: merge each of `other_ids` into `keep_id` in one write.
+
+        The same rules as `merge` for each name (the DM said they are the same, so kinds may
+        differ), in one change-log batch so one Undo takes the whole thing back, and all or
+        nothing: a name the rules refuse fails the lot. Nothing is deleted. (#2426)
+        """
+        if source != DM:
+            raise ValueError("Only a DM source can say entries are the same")
+        gone = list(dict.fromkeys(other_ids))
+        if not gone or keep_id in gone:
+            raise MemoryRuleError("Pick the other names to merge into the kept one.")
+        if len(gone) > MERGE_MANY_MAX:
+            raise MemoryRuleError(f"Merge up to {MERGE_MANY_MAX} names at a time.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            for gone_id in gone:
+                await self._merge_in(w, keep_id, gone_id, source=source, dm_said_same=True)
+            final = await w.get(ENTITIES, keep_id)
+            assert final is not None
+            return Written(_entity(final), w.batch)
+
+    async def look_alikes(
+        self, guild_id: int, campaign_id: str, *, only: Collection[str] | None = None
+    ) -> list[list[LookAlikeName]]:
+        """Groups of confirmed names that may be one name written several ways, most heard
+        name first in each (the finder is `memory/lookalikes.py`). Pairs the DM said are
+        "Not the same" are left apart. `only`: just the groups holding one of these entries
+        (a card shows the look-alikes of its own name). For the DM; the caller checks."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            cur = await scope.conn.execute(
+                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s",
+                scope.ids,
+            )
+            row = await cur.fetchone()
+            version = int(row["memory_version"]) if row else -1
+            cur = await scope.conn.execute(
+                "SELECT e.id, e.name, (SELECT count(*) FROM memory_mentions m"
+                " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
+                " AND m.entity_id = e.id) AS heard FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
+                " AND e.type <> %s",
+                (*scope.ids, PERSON),
+            )
+            names = [
+                LookAlikeName(str(r["id"]), str(r["name"]), int(r["heard"]))
+                for r in await cur.fetchall()
+            ]
+            cur = await scope.conn.execute(
+                "SELECT a_id, b_id FROM name_not_same WHERE guild_id = %s AND campaign_id = %s",
+                scope.ids,
+            )
+            apart = {(str(r["a_id"]), str(r["b_id"])) for r in await cur.fetchall()}
+        key = (guild_id, campaign_id)
+        stamp = (version, len(names), len(apart))
+        cached = self._look_alikes.get(key)
+        if cached is not None and cached[0] == stamp:
+            found = cached[1]
+        else:
+            # Off the event loop: a campaign of thousands of names takes a moment, and the
+            # bot's other work (voice, consent) must not wait for it.
+            found = await asyncio.to_thread(lambda: find_look_alikes(names, apart=apart))
+            if len(self._look_alikes) > 64:
+                self._look_alikes.clear()
+            self._look_alikes[key] = (stamp, found)
+        if only is not None:
+            wanted = set(only)
+            found = [g for g in found if wanted & {n.id for n in g}]
+        return found
+
+    async def not_the_same(
+        self, guild_id: int, campaign_id: str, ids: Sequence[str], *, user_id: int
+    ) -> int:
+        """The DM says these names are not the same: every pair among them is remembered so
+        the look-alike finder never offers it again. Returns how many pairs were new. Not in the
+        change log (there is nothing to undo: the DM can still merge them by hand)."""
+        keep = list(dict.fromkeys(ids))
+        if len(keep) > MERGE_MANY_MAX + 1:
+            raise MemoryRuleError(f"Pick up to {MERGE_MANY_MAX + 1} names at a time.")
+        self._look_alikes.pop((guild_id, campaign_id), None)
+        pairs = [not_same_pair(a, b) for i, a in enumerate(keep) for b in keep[i + 1 :]]
+        if not pairs:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND type <> %s AND id = ANY(%s)",
+                (guild_id, campaign_id, PERSON, keep),
+            )
+            row = await cur.fetchone()
+            if row is None or int(row["n"]) != len(keep):
+                raise MemoryRuleError(NOT_FOUND)
+            added = 0
+            for a, b in pairs:
+                cur = await conn.execute(
+                    "INSERT INTO name_not_same (guild_id, campaign_id, a_id, b_id, decided_by,"
+                    " created_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (guild_id, campaign_id, a, b, user_id, int(self._clock())),
+                )
+                added += cur.rowcount
+            return added
+
+    async def _merge_in(
+        self,
+        w: Changes,
+        keep_id: str,
+        gone_id: str,
+        *,
+        source: str,
+        dm_said_same: bool,
+        confirm_keys: Collection[str] = (),
+    ) -> None:
+        """One merge inside an open write (see `merge`)."""
+        guild_id, campaign_id = w.guild_id, w.campaign_id
+        onto = await _load_ontology(w)
+        keep = await _entity_row(w, keep_id)
+        gone = await _entity_row(w, gone_id)
+        if (keep["type"] == PERSON) != (gone["type"] == PERSON):
+            raise MemoryRuleError("A player or the DM can't be the same as a character.")
+        needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
+            keep["type"],
+            keep["role"],
+        ) != (gone["type"], gone["role"])
+        if needs_dm and not dm_said_same:
+            raise MemoryRuleError("Only the DM can say these two are the same.")
+        players = {keep["played_by"], gone["played_by"]} - {None}
+        if len(players) > 1:
+            raise MemoryRuleError("Those are two different players' characters.")
+        if gone["played_by"] is not None and keep["played_by"] is None:
+            # A player's character stays one, whichever name is kept.
+            await w.update(
+                ENTITIES,
+                keep_id,
+                {"type": gone["type"], "role": gone["role"], "played_by": gone["played_by"]},
+            )
+            await states.settle_kind(w, onto, [keep_id], gone["type"])
+        kept = await _entity_row(w, keep_id)
+        if kept["type"] == gone["type"]:  # one role, one look: neither is lost or invented
+            merged = {
+                "role": kept["role"] or gone["role"],
+                "needs_look": kept["needs_look"] and gone["needs_look"],
+                # The kept entry's word on one of a kind, else the merged one's.
+                "unique_item": (
+                    kept["unique_item"] if kept["unique_item"] is not None else gone["unique_item"]
+                ),
+                # A clue only some people know stays so if either was (#1649).
+                "audience_limited": kept["audience_limited"] or gone["audience_limited"],
+                # And so does an entry the players don't know yet (#2321).
+                "hidden_from_players": (kept["hidden_from_players"] or gone["hidden_from_players"]),
+            }
+            if merged != {k: kept[k] for k in merged}:
+                await w.update(ENTITIES, keep_id, merged)
+        await _move_rule_links(w, keep_id, gone_id)
+        await _move_plan_links(w, keep_id, gone_id)
+        await states.move_states(w, onto, keep_id, kept["type"], gone_id)
+        if confirm_keys and source != DM:
+            raise ValueError("Only the DM confirms names")
+        await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
+        # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
+        # has its own: then the merged one's is forgotten (nothing could show or
+        # remove it). Not in the change log: undoing the merge leaves it on the kept
+        # entry; if that entry then has no player, the sheet is left out everywhere.
+        # The kept entry's own sheet counts only if it's its player's (a sheet
+        # left from an earlier player is shown nowhere): drop it first, so it can't
+        # beat a visible one.
+        await w.conn.execute(
+            "DELETE FROM character_sheets s USING memory_entities e"
+            " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+            " AND e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+            " AND e.id = s.entity_id AND s.player_id IS DISTINCT FROM e.played_by",
+            (guild_id, campaign_id, keep_id),
+        )
+        await w.conn.execute(
+            "DELETE FROM character_sheets"
+            " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+            " AND EXISTS (SELECT 1 FROM character_sheets"
+            "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
+            (guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
+        )
+        await w.conn.execute(
+            "UPDATE character_sheets SET entity_id = %s"
+            " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+            " AND NOT EXISTS (SELECT 1 FROM character_sheets"
+            "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
+            (keep_id, guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
+        )
+        own = await w.select(
+            ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
+        )
+        if own and own[0]["secret"]:
+            # The other entry's name was a secret one: the main name everyone sees
+            # must never be.
+            raise MemoryRuleError("A secret name can't be the main name.")
+        await _move_relations(w, keep_id, gone_id)
+        await _move_standing(w, keep_id, gone_id)
+        await _move_npc_notes(w, guild_id, campaign_id, keep_id, gone_id)
+        for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
+            await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
+        await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
+        # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
+        await w.update(
+            ENTITIES,
+            gone_id,
+            {"status": MERGED, "merged_into": keep_id, **_note_cleared(gone)},
+        )
+        await _forget_quotes(w, [gone_id] if _note_cleared(gone) else [])
+        await _sync_plays(w, keep_id)
+        await _sync_plays(w, gone_id)
 
     async def check_people(
         self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
@@ -3090,16 +3227,18 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool = False,
         mention_ids: Sequence[str] = (),
+        unrevealed: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
         upgraded (the DM's confirmation, or secret=True); one the DM rejected stays
-        rejected unless the DM says it again."""
+        rejected unless the DM says it again. `unrevealed`: the story holds it back from the
+        players until the table has said it (#2404), the DM's to say."""
         async with self._write(guild_id, campaign_id, source) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
-                secret=secret, mention_ids=mention_ids,
+                secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3117,11 +3256,14 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool = False,
         mention_ids: Sequence[str] = (),
+        unrevealed: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
         campaign."""
         source = w.source
+        if unrevealed and source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
         _check_choice(status, LIVE, "relation status")
         check_status_change(None, status, source)
         _check_confidence(confidence)
@@ -3166,7 +3308,7 @@ class MemoryStore:
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version,
+            pred.version, unrevealed,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(new, existing)
@@ -3190,9 +3332,11 @@ class MemoryStore:
         status: str | None = None,
         to_session_at: int | None = None,
         secret: bool | None = None,
+        unrevealed: bool | None = None,
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
-        fact replaces it rather than overwriting it)."""
+        fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
+        to players on a connection (#2404): both its ends must be shown to the players first."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
@@ -3208,6 +3352,20 @@ class MemoryStore:
                 if current["secret"] and not secret and source != DM:
                     raise MemoryRuleError("Only the DM can stop keeping that secret.")
                 changes["secret"] = secret
+            if unrevealed is not None and unrevealed != current["unrevealed"]:
+                if source != DM:
+                    raise MemoryRuleError("Only the DM can say that.")
+                if not unrevealed:
+                    ends = await w.select(
+                        ENTITIES,
+                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited",
+                        [[current["subject_id"], current["object_id"]]],
+                    )
+                    if len(ends) < 2:
+                        raise MemoryRuleError(
+                            "Show both names to the players first, then this connection."
+                        )
+                changes["unrevealed"] = unrevealed
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
@@ -3318,6 +3476,7 @@ class MemoryStore:
             new, _ = await self.add_relation_in(
                 w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+                unrevealed=bool(current["unrevealed"]),
             )  # fmt: skip
             if new.id == relation_id:
                 return Written(new, w.batch)
@@ -3751,8 +3910,10 @@ class MemoryStore:
                 for r in rows
                 if r["op"] == "update" and (r["after"] or {}).get("status") == REJECTED
             ]
+            if not ended and _is_a_reveal(rows):  # 👁️ Show to players on a held-back one (#2404)
+                ended = rows
             if len(ended) != 1 or any(r["source"] != DM for r in rows):
-                raise MemoryRuleError(NOT_FOUND)  # only a removal or rewording by the DM
+                raise MemoryRuleError(NOT_FOUND)  # only a removal, rewording or reveal by the DM
             for r in rows:  # a secret is not even mentioned, old or not
                 secret = (r["before"] or {}).get("secret") or (r["after"] or {}).get("secret")
                 if secret and not secrets:
@@ -4135,6 +4296,16 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
     elif _stronger(old["status"], status) != old["status"]:
         changes["status"] = status
     return changes
+
+
+def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
+    """One connection changed in place, and only in who may see it (secret or unrevealed): the
+    DM showing a held-back connection to the players."""
+    if len(rows) != 1 or rows[0]["op"] != "update":
+        return False
+    before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
+    changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
+    return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
