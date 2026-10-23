@@ -161,6 +161,23 @@ describe("the whole import's progress", () => {
     expect(document.body.textContent).not.toContain("names_failed"); // the code itself is never printed
   });
 
+  it.each(["recap_failed", "error"])("shows plain words for the failure code %s, never the code", async (code) => {
+    const one: ImportProgress = {
+      import: job({ state: "failed", stage: "failed", reason: code }),
+      sessions: [{ file: "a.txt", date: "2026-09-14", state: "failed", reason: null, stage: "failed" }],
+    };
+    await importing([one]);
+    expect((await screen.findAllByText(w.failedReason[code]!, { exact: false })).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain(code);
+  });
+
+  it("a stall does not send anyone to import again", async () => {
+    await importing([answer(job({ state: "stalled", updatedAt: now() - 190 }), { progress: job({ state: "stalled" }) })]);
+    expect(await screen.findByText(w.stalledDo)).toBeTruthy();
+    expect(w.stalledDo).not.toMatch(/import .*again/i);
+    expect(w.sessionStalled).not.toMatch(/again/i);
+  });
+
   it("says the fallback words for a failure code it doesn't know", async () => {
     const one: ImportProgress = {
       import: job({ state: "failed", stage: "failed", reason: "something_new" }),

@@ -666,7 +666,7 @@ export default function Import({
             state={shownState(progress.import, progress.sessions)}
             waiting={progress.import.stage === "waiting_for_names"}
             frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
-            // (the server's stall words are not shown: the page has its own; its failure reason is a fixed phrase)
+            // (the server's reason is a code, mapped to the page's own words by importReason; its stall words are not shown)
             reason={importReason(progress.import)}
             whatToDo={shownState(progress.import, progress.sessions) === "failed" ? words.failedDo : words.stalledDo}
           />
