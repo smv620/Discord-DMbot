@@ -33,6 +33,7 @@ from dmbot.dm_screen.handover import (
     ACCEPTED,
     DECLINED,
     MOVE_FAILED,
+    MOVE_FAILED_NEW_OWNER,
     MOVED_NEW_OWNER,
     MOVED_OLD_OWNER,
     OFFER_EXPIRED,
@@ -196,17 +197,23 @@ class SiteOffers:
         if moved.result == "reopened" and old is not None:
             with contextlib.suppress(discord.HTTPException):
                 member = await _member(old, offer.from_user_id)
-                await member.send(
-                    MOVE_FAILED.format(campaign=name, reason=moved.reason),
-                    allowed_mentions=NO_PINGS,
-                )
+                await member.send(MOVE_FAILED.format(campaign=name), allowed_mentions=NO_PINGS)
+            if new is not None and offer.to_user_id:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(new, offer.to_user_id)
+                    await member.send(
+                        MOVE_FAILED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                        allowed_mentions=NO_PINGS,
+                    )
         elif moved.result == "moved":
             if old is not None and new is not None:
                 with contextlib.suppress(discord.HTTPException):
                     member = await _member(old, offer.from_user_id)
                     await member.send(
                         MOVED_OLD_OWNER.format(
-                            campaign=name, server=md(new.name), name=md(offer.to_name or "They")
+                            campaign=name,
+                            server=md(new.name),
+                            name=md(offer.to_name or "The new owner"),
                         ),
                         allowed_mentions=NO_PINGS,
                     )

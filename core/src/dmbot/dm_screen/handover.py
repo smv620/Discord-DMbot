@@ -146,11 +146,15 @@ MOVED_OLD_OWNER = (
 )
 MOVED_NEW_OWNER = (
     "✅ **{campaign}** is yours now, on **{server}**. Run `/dmbot start` there to pick its "
-    "channels. **{owner}** is still one of its DMs."
+    "channels. Players there are asked again to agree to being recorded. **{owner}** is still "
+    "one of its DMs."
 )
-MOVE_FAILED = (
-    "DMbot couldn't move **{campaign}** to the other server: {reason} Nothing was lost: the "
-    "campaign is still here and the offer is open again. " + _OFFER_AGAIN
+# The owner is told only that it did not happen, never why: a reason can be about the other
+# person's plan. That person is told the reason, privately, and their page shows it too.
+MOVE_FAILED = "They couldn't take **{campaign}** over this time. Nothing was lost. " + _OFFER_AGAIN
+MOVE_FAILED_NEW_OWNER = (
+    "DMbot couldn't move **{campaign}** to your other server: {reason} The offer is open "
+    "again; open the link in your email to try again."
 )
 # An offer made on the website that DMbot never managed to send (Discord kept failing).
 TOLD_EXPIRED_UNSENT = (

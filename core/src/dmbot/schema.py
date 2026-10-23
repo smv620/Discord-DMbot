@@ -12030,6 +12030,78 @@ _MOVE_BLIND = (
 assert _MOVE_BLIND.count("move_to_guild_id IS NULL") == 3, "0214 must change all three doors"
 HANDOVER_MOVE += _MOVE_BLIND
 
+# A campaign moves to another server by changing `guild_id` on its `campaigns` row (#2532, slice
+# C2); every foreign key that carries `guild_id` must follow it, or the move would be refused for
+# the first child row or leave rows behind. Rebuilt from the catalog so no table is forgotten
+# (tests/test_campaign_move_cascade.py checks it still holds). Each is added NOT VALID and then
+# validated, which does not block writers while the rows are checked.
+CAMPAIGN_MOVE_CASCADE = """
+    DO $$
+    DECLARE r record;
+    BEGIN
+        FOR r IN
+            -- ON UPDATE has to come before DEFERRABLE, so it is put in ahead of it.
+            SELECT c.conrelid::regclass AS tbl, c.conname,
+                   regexp_replace(pg_get_constraintdef(c.oid),
+                                  '( (NOT )?DEFERRABLE.*)?$', ' ON UPDATE CASCADE\\1') AS def
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 AND a.attname = 'guild_id'
+            WHERE c.contype = 'f' AND n.nspname = current_schema() AND c.confupdtype = 'a'
+        LOOP
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
+            EXECUTE format(
+                'ALTER TABLE %s ADD CONSTRAINT %I %s NOT VALID',
+                r.tbl, r.conname, r.def);
+            EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.tbl, r.conname);
+        END LOOP;
+    END $$;
+
+    -- The one write that may take a campaign out of the server in scope: the move sets both
+    -- settings in its own transaction (campaigns/moves.py), and the policy then lets that one
+    -- campaign be seen and written in the server it goes to. (It is for all commands because an
+    -- update's new row must also be readable, which a policy for updates alone does not give.)
+    -- Policies add up, so with the settings unset every other write stays as it was.
+    CREATE POLICY campaign_move ON campaigns
+        USING ((guild_id = dmbot_current_guild()
+                OR guild_id = NULLIF(current_setting('dmbot.moving_to', true), '')::BIGINT)
+               AND id = NULLIF(current_setting('dmbot.moving_campaign', true), ''))
+        WITH CHECK (guild_id = NULLIF(current_setting('dmbot.moving_to', true), '')::BIGINT
+                    AND id = NULLIF(current_setting('dmbot.moving_campaign', true), ''));
+
+    -- Three more facts about a hand-over that moves: when the move was asked for (an offer whose
+    -- move never ran is opened again after an hour), and, when a move did not happen, who had
+    -- accepted and the plain reason, which only that person is shown (the owner is told only that
+    -- it did not happen, because the reason can be about the other person's plan).
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_asked_at BIGINT,
+        ADD COLUMN move_failed_for BIGINT,
+        ADD COLUMN move_failed_reason TEXT;
+    CREATE FUNCTION dmbot_note_move_asked() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF NEW.move_to_guild_id IS NOT NULL AND OLD.move_to_guild_id IS NULL THEN
+            NEW.move_asked_at := dmbot_now();
+            NEW.move_failed_for := NULL;
+            NEW.move_failed_reason := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER campaign_handover_offers_move_asked
+        BEFORE UPDATE OF move_to_guild_id ON campaign_handover_offers
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_move_asked();
+
+    -- The server it arrives in is one that holds campaigns now (the retention job's routing list).
+    CREATE TRIGGER campaign_guilds_note_move
+        AFTER UPDATE OF guild_id ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_campaign_guild();
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -12263,6 +12335,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
     ("0213_handover_claim", HANDOVER_CLAIM),  # opening a hand-over link on the website (#2532)
     ("0214_handover_move", HANDOVER_MOVE),  # a hand-over to another server is asked for (#2532)
+    ("0215_campaign_move_cascade", CAMPAIGN_MOVE_CASCADE),  # a campaign can change server (#2532)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

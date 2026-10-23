@@ -1,25 +1,27 @@
 """Moving a campaign to another server when its new owner accepted a hand-over by email there
 (#2532 slice C; docs/PLAN.md, "Hand-over by email", points 3 and 7).
 
-The website only records the wish (`move_to_guild_id` on the offer). This is the bot's side: like
-loading a backup into the target server, then removing the old copy. The rules, in order of
-importance:
+The website only records the wish (`move_to_guild_id` on the offer). This is the bot's side. A move
+is **one change in one transaction**: the campaign's row changes server and every row that hangs
+off it follows (migration 0215 makes the foreign keys carry the update), so nothing is read back
+and written again, nothing can be left behind, and a failure at any point leaves the campaign
+exactly where it was. The rules, in order of importance:
 
-- **A campaign is never lost.** The old copy goes only after the new copy exists and matches it
-  (the same sections with the same row counts), and in the same transaction that holds the old
-  campaign's lock. Any failure before that leaves the old copy whole and opens the offer again with
-  a plain reason. A failure after the new copy was made and recorded is retried: the copy is
-  reused, never made twice.
-- **One move at a time.** The offer carries a short lease (`move_claimed_at`), so two sweeps, or
-  two bot processes, cannot both move it. The old campaign row is locked for the whole move
-  (`FOR NO KEY UPDATE`, as every memory write takes it), so nothing writes to it meanwhile and the
-  copy is not stale.
-- **Everything stays per Discord account.** Consent records are not copied (as in a restore): they
-  belong to the voices that were recorded. Channels do not carry over; the new owner picks them
-  with `/dmbot start`.
-- **Not yet:** a campaign that published a shared rule set is not moved (the set's rows are keyed
-  to the old server and other tables follow it, and stopping the sharing would strand them). The
-  offer opens again with that reason, until the set can travel too with its followers kept.
+- **Nothing is lost.** Every table keyed by the campaign moves (`campaigns/tables.py` lists them,
+  and a schema test fails for a table that is on neither list). What does not carry over is what is
+  only about the old server: its channels and messages, which `/dmbot start` makes again.
+- **One move at a time, on a campaign nobody is using.** The offer carries a short lease
+  (`move_claimed_at`), so two sweeps, or two bot processes, cannot both move it. Inside the
+  transaction the campaign is locked `FOR UPDATE` (as `delete` does, so even a child-row insert
+  waits), the offer is read again and must still be open, for this server and this run's lease, and
+  a running session stops the move (it tries again after the session ends).
+- **Recap audio is copied before and removed after.** The files are not in the database; they are
+  copied to the new server's folder before the move and the old ones are removed only once it has
+  committed, so a failure in between leaves the old files where they were.
+- **Players are asked again.** Consent records belong to the voices and the server; they are not
+  moved, and counts of names said are kept only for who is recorded in the new server.
+- **Not yet:** a campaign that has published a rule set is not moved (#2551), and the website
+  refuses it before anyone accepts. This is the same check, as the last word under the lock.
 """
 
 from __future__ import annotations
@@ -27,23 +29,43 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal, Protocol
 
-from dmbot.campaigns.models import CampaignError, HandoverOffer
+from dmbot import campaign_cap
+from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore, _to_offer
+from dmbot.db import Conn, Database
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
 
 LEASE_S = 600  # a move that did not finish in this long is taken up again
+STUCK_S = 3600  # an offer that has waited this long for its move is opened again
 Result = Literal["moved", "reopened", "skipped"]
 
+# What the new owner is told when a move does not happen (the old owner is told only that it did
+# not, never why: a reason can be about the new owner's plan).
 SHARES_RULES = (
-    "This campaign shares a rule set, so it can't move to another server yet. It can still be "
-    "handed over on this server."
+    "This campaign shares a rule set, so it can't move to another server yet. "
+    "It can still be handed over on this server."
 )
 CHANGED_HANDS = "The campaign changed hands while the move was waiting."
-COPY_FAILED = "DMbot couldn't make a complete copy in the other server."
+NO_PAID_ROOM = "Your plan has no room for one more campaign, so the move did not happen."
+SESSION_RUNNING = "A session is running. Try again after it ends."
+STUCK = "DMbot couldn't reach the other server in time, so the move did not happen."
+COULD_NOT = "DMbot couldn't move it this time."
+
+
+class AudioFolders(Protocol):
+    """Recap audio on the server's disk (`recaps.audio.files.AudioFiles`)."""
+
+    def copy_campaign(self, from_guild: int, to_guild: int, campaign_id: str) -> None: ...
+
+    def forget_campaign(self, guild_id: int, campaign_id: str) -> None: ...
+
+
+class Refused(Exception):
+    """The move cannot happen now; the message is for the new owner, in plain words."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,35 +75,36 @@ class Moved:
     result: Result
     offer: HandoverOffer
     campaign_name: str
-    new_campaign_id: str | None = None
-    reason: str = ""
+    reason: str = ""  # for the new owner only
 
 
 Told = Callable[[Moved], Awaitable[None]]
-
-
-# Sections whose rows legitimately differ in the copy: the DMs (the new owner is added, as in any
-# restore).
-_DIFFERENT_BY_DESIGN = frozenset({"dms"})
-
-
-def _shape(data: dict[str, Any]) -> dict[str, int]:
-    """What a backup holds, as section names and row counts: two copies of one campaign agree."""
-    return {
-        name: len(rows) if isinstance(rows, list | tuple | dict) else 1
-        for name, rows in data["sections"].items()
-        if name not in _DIFFERENT_BY_DESIGN
-    }
+Consenting = Callable[[int], Awaitable[frozenset[int]]]
 
 
 class HandoverMover:
     def __init__(
-        self, store: CampaignStore, *, clock: Callable[[], float], told: Told | None = None
+        self,
+        store: CampaignStore,
+        *,
+        clock: Callable[[], float],
+        consenting: Consenting | None = None,
+        audio: AudioFolders | None = None,
+        forgotten: Callable[[str], None] | None = None,
+        told: Told | None = None,
     ) -> None:
         self._store = store
-        self._db = store.db
         self._clock = clock
+        self._consenting = consenting
+        self._audio = audio
+        self._forgotten = (
+            forgotten  # caches kept by campaign id alone (the bot's `_forget_campaign`)
+        )
         self.told = told  # set by whoever can reach the two people (the bot's SiteOffers)
+
+    @property
+    def _db(self) -> Database:  # read when used: the store is built first
+        return self._store.db
 
     async def waiting(self, guild_id: int) -> list[int]:
         """The offers of this server that wait for their move (ids, oldest first)."""
@@ -94,7 +117,7 @@ class HandoverMover:
             return [int(row["id"]) for row in await cur.fetchall()]
 
     async def move(self, guild_id: int, offer_id: int) -> Result:
-        """Do one move. Never raises: a failure leaves the old campaign whole (see the module)."""
+        """Do one move. Never raises; a failure leaves the campaign where it was."""
         now = int(self._clock())
         offer = await self._take(guild_id, offer_id, now)
         if offer is None:
@@ -103,16 +126,42 @@ class HandoverMover:
         assert target is not None
         with log_context(guild_id=guild_id, campaign_id=offer.campaign_id):
             try:
-                moved = await self._run(offer, target)
+                moved = await self._run(offer, target, now)
+            except _Changed:
+                return "skipped"  # ended, taken back or opened again since the lease
+            except Refused as refusal:
+                moved = await self._reopen(offer, str(refusal))
             except Exception as exc:  # the type only: an error can quote a row
                 log.warning("A campaign move failed: %s", type(exc).__name__)
-                moved = await self._reopen(offer, COPY_FAILED)
-        if self.told is not None:
+                moved = await self._reopen(offer, COULD_NOT)
+        if self.told is not None and moved.result != "skipped":
             try:
                 await self.told(moved)
             except Exception as exc:
                 log.warning("A campaign move could not be told: %s", type(exc).__name__)
         return moved.result
+
+    async def reopen_stuck(self, guild_id: int) -> int:
+        """Open again the offers whose move has waited too long (the target server became
+        unreachable, say the bot left it), so the owner is not left with an offer that is neither
+        answered nor ended. Returns how many."""
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT * FROM campaign_handover_offers WHERE guild_id = %s AND status = 'open'"
+                " AND move_to_guild_id IS NOT NULL AND move_asked_at < %s"
+                " AND (move_claimed_at IS NULL OR move_claimed_at < %s)",
+                (guild_id, now - STUCK_S, now - LEASE_S),
+            )
+            rows = await cur.fetchall()
+        for row in rows:
+            moved = await self._reopen(_to_offer(row), STUCK)
+            if self.told is not None:
+                try:
+                    await self.told(moved)
+                except Exception as exc:
+                    log.warning("A campaign move could not be told: %s", type(exc).__name__)
+        return len(rows)
 
     # ---- steps ---------------------------------------------------------------
 
@@ -128,104 +177,110 @@ class HandoverMover:
             row = await cur.fetchone()
         return None if row is None else _to_offer(row)
 
-    async def _run(self, offer: HandoverOffer, target: int) -> Moved:
-        store = self._store
+    async def _run(self, offer: HandoverOffer, target: int, now: int) -> Moved:
         g, c = offer.guild_id, offer.campaign_id
-        async with self._db.guild(g) as conn:
-            # Held to the end of this transaction: nothing writes to the campaign meanwhile.
-            # NO KEY UPDATE does not block the offer row's own updates (their foreign key check),
-            # and it is what every memory write takes, so they wait for it.
-            cur = await conn.execute(
-                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s FOR NO KEY UPDATE",
-                (g, c),
-            )
-            if await cur.fetchone() is None:
-                return Moved("skipped", offer, "")  # deleted meanwhile: the offer went with it
-            campaign = await store.get(g, c)
-            if campaign is None:
-                return Moved("skipped", offer, "")
-            if campaign.owner_user_id != offer.from_user_id:
-                return await self._reopen(offer, CHANGED_HANDS, campaign.name)
-            cur = await conn.execute(
-                "SELECT 1 FROM rule_sets WHERE guild_id = %s AND campaign_id = %s LIMIT 1", (g, c)
-            )
-            if await cur.fetchone() is not None:
-                return await self._reopen(offer, SHARES_RULES, campaign.name)
-            old = await store.export(g, c)
-            new_id = offer.moved_campaign_id
-            if new_id is not None and await store.get(target, new_id) is None:
-                new_id = None  # the recorded copy is gone: make it again
-            if new_id is None:
-                try:
-                    copy = await store.import_backup(target, old, offer.to_user_id)
-                except CampaignError as exc:  # plan, slot, name: plain words for the owner
-                    return await self._reopen(offer, str(exc), campaign.name)
-                new_id = copy.id
-                await self._record_copy(offer, new_id)
-            try:
-                await store.add_dm(target, new_id, offer.from_user_id)  # the old owner stays a DM
-                copied = await store.export(target, new_id)
-                if _shape(copied) != _shape(old):
-                    raise CampaignError(COPY_FAILED)
-            except Exception:
-                await self._drop_copy(target, new_id)
-                await self._forget_copy(offer)
-                raise
-            # The new copy is whole: only now does the old one go, in this transaction, and the
-            # offer with it (it is keyed to the campaign). A failure here rolls all of it back.
-            try:
-                await store.delete_in(conn, g, c)
-            except Exception:
-                # Rolled back with this transaction: the old campaign is whole. The copy is taken
-                # back so there is one campaign, and the offer opens again. If the copy cannot be
-                # taken back either, it stays recorded and the next sweep takes the move up again.
-                if await self._drop_copy(target, new_id):
-                    raise
-                await self._release_lease(offer)
-                return Moved("skipped", offer, campaign.name, new_id)
-        return Moved("moved", offer, campaign.name, new_id)
-
-    async def _record_copy(self, offer: HandoverOffer, new_id: str) -> None:
-        async with self._db.guild(offer.guild_id) as conn:
-            await conn.execute(
-                "UPDATE campaign_handover_offers SET moved_campaign_id = %s"
-                " WHERE guild_id = %s AND id = %s",
-                (new_id, offer.guild_id, offer.id),
-            )
-
-    async def _forget_copy(self, offer: HandoverOffer) -> None:
-        async with self._db.guild(offer.guild_id) as conn:
-            await conn.execute(
-                "UPDATE campaign_handover_offers SET moved_campaign_id = NULL"
-                " WHERE guild_id = %s AND id = %s",
-                (offer.guild_id, offer.id),
-            )
-
-    async def _drop_copy(self, target: int, new_id: str) -> bool:
-        """Take a copy back. False when that did not work (it is then left, and logged)."""
+        consenting = await self._consenting(target) if self._consenting else frozenset()
+        copied = False
         try:
-            await self._store.delete(target, new_id)
-        except Exception as exc:
-            log.warning("A half-made campaign copy could not be removed: %s", type(exc).__name__)
-            return False
-        return True
+            if self._audio is not None:
+                self._audio.copy_campaign(g, target, c)  # before the move: the old files stay
+                copied = True
+            async with self._db.guild(g) as conn:
+                name = await self._move_in(conn, offer, target, now, consenting)
+        except BaseException:
+            if copied and self._audio is not None:
+                self._audio.forget_campaign(target, c)  # (the campaign did not arrive: no use)
+            raise
+        # Committed. The old files go only now; a failure here leaves harmless leftovers.
+        if self._audio is not None:
+            self._audio.forget_campaign(g, c)
+        if self._forgotten is not None:
+            self._forgotten(c)
+        return Moved("moved", offer, name)
 
-    async def _release_lease(self, offer: HandoverOffer) -> None:
-        async with self._db.guild(offer.guild_id) as conn:
-            await conn.execute(
-                "UPDATE campaign_handover_offers SET move_claimed_at = NULL"
-                " WHERE guild_id = %s AND id = %s",
-                (offer.guild_id, offer.id),
-            )
+    async def _move_in(
+        self,
+        conn: Conn,
+        offer: HandoverOffer,
+        target: int,
+        now: int,
+        consenting: frozenset[int],
+    ) -> str:
+        g, c = offer.guild_id, offer.campaign_id
+        # The lock first, as `delete` takes it: FOR UPDATE also makes a child-row insert wait.
+        cur = await conn.execute(
+            "SELECT owner_user_id FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
+            (g, c),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise Refused(CHANGED_HANDS)  # deleted meanwhile; the offer went with it
+        # The offer, read again under the lock: it must still be this run's to carry out.
+        cur = await conn.execute(
+            "SELECT status, move_to_guild_id, move_claimed_at, to_user_id"
+            " FROM campaign_handover_offers WHERE guild_id = %s AND id = %s FOR UPDATE",
+            (g, offer.id),
+        )
+        again = await cur.fetchone()
+        if (
+            again is None
+            or again["status"] != "open"
+            or again["move_to_guild_id"] != target
+            or again["move_claimed_at"] != offer.move_claimed_at
+        ):
+            raise _Changed
+        if int(row["owner_user_id"]) != offer.from_user_id:
+            raise Refused(CHANGED_HANDS)
+        cur = await conn.execute(
+            "SELECT 1 FROM active_sessions WHERE guild_id = %s AND campaign_id = %s", (g, c)
+        )
+        if await cur.fetchone() is not None:
+            raise Refused(SESSION_RUNNING)
+        cur = await conn.execute(
+            "SELECT 1 FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
+            " AND status = 'shared' LIMIT 1",
+            (g, c),
+        )
+        if await cur.fetchone() is not None:
+            raise Refused(SHARES_RULES)
+        # The plan is checked now, not when they accepted: it may have lapsed since.
+        if not await campaign_cap.has_paid_room_for_one_more(conn, offer.to_user_id, now):
+            raise Refused(NO_PAID_ROOM)
+        # The offer has done its work and goes (it is keyed to the campaign, which leaves).
+        await conn.execute(
+            "DELETE FROM campaign_handover_offers WHERE guild_id = %s AND id = %s", (g, offer.id)
+        )
+        return await self._store.move_in(
+            conn,
+            g,
+            target,
+            c,
+            new_owner=offer.to_user_id,
+            old_owner=offer.from_user_id,
+            consenting=consenting,
+        )
 
     async def _reopen(self, offer: HandoverOffer, reason: str, name: str = "") -> Moved:
         """The move did not happen: the offer is open again for the owner to see, with nothing
-        claimed, and the old campaign is as it was."""
+        claimed, and the campaign is as it was. The reason is kept for the person who accepted
+        (`move_failed_reason`, shown on their page) and is not told to the owner."""
         async with self._db.guild(offer.guild_id) as conn:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET move_to_guild_id = NULL,"
-                " moved_campaign_id = NULL, move_claimed_at = NULL, to_user_id = 0, to_name = ''"
+                " move_claimed_at = NULL, to_user_id = 0, to_name = '',"
+                " move_failed_for = %s, move_failed_reason = %s"
                 " WHERE guild_id = %s AND id = %s AND status = 'open'",
-                (offer.guild_id, offer.id),
+                (offer.to_user_id, reason, offer.guild_id, offer.id),
             )
-        return Moved("reopened", offer, name, None, reason)
+            if not name:  # for the notices
+                cur = await conn.execute(
+                    "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s",
+                    (offer.guild_id, offer.campaign_id),
+                )
+                row = await cur.fetchone()
+                name = "" if row is None else str(row["name"])
+        return Moved("reopened", offer, name, reason)
+
+
+class _Changed(Exception):
+    """The offer was ended, taken back or reopened between the lease and the lock: nothing to do."""

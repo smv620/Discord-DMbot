@@ -950,6 +950,80 @@ class CampaignStore:
             with log_context(guild_id=guild_id, campaign_id=campaign_id):
                 log.info("Saved session removed: its campaign was deleted")
 
+    async def move_in(
+        self,
+        conn: Conn,
+        guild_id: int,
+        target: int,
+        campaign_id: str,
+        *,
+        new_owner: int,
+        old_owner: int,
+        consenting: frozenset[int],
+    ) -> str:
+        """Move the campaign to another server, inside a transaction the caller holds (and has
+        locked the campaign in; #2532). Returns its name in the new server.
+
+        The campaign's own row changes server and migration 0215's foreign keys carry every row
+        that hangs off it, so nothing is read back and written again and nothing can be left
+        behind (tests/test_campaign_tables.py lists the tables; tests/test_campaign_move.py proves
+        them). What belongs to the old server is reset: channels and messages, which the new
+        owner makes again with /dmbot start; who recorded is not carried (see `consenting`)."""
+        await _scope(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise CampaignError(NOT_HERE)
+        await _scope(conn, target)
+        name = await self._free_name(conn, target, str(row["name"]))  # a clash is renamed
+        await _scope(conn, guild_id)
+        # What is only about the old server's Discord messages is dropped before the move.
+        await conn.execute(
+            "DELETE FROM npcs_channel_messages WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        await conn.execute(
+            "UPDATE game_clocks SET channel_id = NULL, message_id = NULL,"
+            " players_channel_id = NULL, players_message_id = NULL"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        await conn.execute(
+            "UPDATE map_notes SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
+        await conn.execute("SELECT set_config('dmbot.moving_to', %s, true)", (str(target),))
+        cur = await conn.execute(
+            "UPDATE campaigns SET guild_id = %s, name = %s, name_key = %s, owner_user_id = %s,"
+            " channel_number = NULL, dm_screen_channel_id = NULL, transcript_channel_id = NULL,"
+            " gametime_channel_id = NULL, dmbchat_channel_id = NULL, dm_bot_channel_id = NULL,"
+            " dm_bot_message_id = NULL, rules_channel_id = NULL, npcs_channel_id = NULL,"
+            " last_voice_channel_id = NULL, table_chat_channel_id = NULL,"
+            " dndbeyond_invite = NULL, owner_left_at = NULL, owner_missing_since = NULL,"
+            " retention_warned_stage = 0, retention_warned_for = NULL,"
+            " memory_version = memory_version + 1"
+            " WHERE guild_id = %s AND id = %s RETURNING id",
+            (target, name, name_key(name), new_owner, guild_id, campaign_id),
+        )
+        if await cur.fetchone() is None:
+            raise CampaignError(NOT_HERE)
+        await _scope(conn, target)  # from here the campaign is the new server's
+        await conn.execute(
+            "INSERT INTO campaign_dms (campaign_id, guild_id, user_id)"
+            " SELECT %s, %s, u FROM unnest(%s::bigint[]) AS u ON CONFLICT DO NOTHING",
+            (campaign_id, target, [new_owner, old_owner]),  # the old owner stays a DM
+        )
+        # Counts of names said are kept only for who is recorded in this server (#1747).
+        await conn.execute(
+            "DELETE FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
+            " AND NOT (speaker_id = ANY(%s))",
+            (target, campaign_id, sorted(consenting)),
+        )
+        return name
+
     async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:
         """The deletion itself, inside a transaction the caller holds (and has locked the
         campaign in). True if a saved session went with it."""
@@ -1785,6 +1859,12 @@ class CampaignStore:
         raise CampaignError("Too many campaigns with that name. Rename one and try again.")
 
 
+async def _scope(conn: Conn, guild_id: int) -> None:
+    """Look at another server's rows for the rest of this transaction (a move reads and writes
+    both; row-level security still shows only the one in scope at a time)."""
+    await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),))
+
+
 def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
     return Campaign(
         id=row["id"],
@@ -1889,6 +1969,10 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         via_email=bool(row.get("via_email", False)),
         move_to_guild_id=row_int(row, "move_to_guild_id"),
         moved_campaign_id=row.get("moved_campaign_id"),
+        move_claimed_at=row_int(row, "move_claimed_at"),
+        move_asked_at=row_int(row, "move_asked_at"),
+        move_failed_for=row_int(row, "move_failed_for"),
+        move_failed_reason=row.get("move_failed_reason"),
     )
 
 

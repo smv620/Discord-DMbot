@@ -1527,7 +1527,15 @@ class DMBot(commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
-            mover=HandoverMover(campaigns, clock=time.time),  # a hand-over to another server
+            # a hand-over to another server: its audio files go with it, and the caches that are
+            # kept by campaign id alone are dropped
+            mover=HandoverMover(
+                campaigns,
+                clock=time.time,
+                consenting=consent.consenting,
+                audio=self.recap_audio_files,
+                forgotten=self._forget_campaign,
+            ),
         )
         # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
         self.site_stops = SiteStops(

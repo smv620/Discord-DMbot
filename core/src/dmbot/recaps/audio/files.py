@@ -64,6 +64,24 @@ class AudioFiles:
             raise ValueError("not a scene kind")
         return self._campaign(guild_id, campaign_id) / "ambience" / f"{scene}.mp3"
 
+    def copy_campaign(self, from_guild: int, to_guild: int, campaign_id: str) -> None:
+        """Copy a campaign's audio to another server's folder (a move, #2532), made whole in a
+        side folder and then put in place, so a failure leaves nothing half-copied. The old files
+        stay until the caller removes them."""
+        source = self._campaign(from_guild, campaign_id)
+        target = self._campaign(to_guild, campaign_id)
+        if not source.is_dir():
+            return
+        side = target.with_name(f"{campaign_id}.copying")
+        shutil.rmtree(side, ignore_errors=True)
+        try:
+            shutil.copytree(source, side)
+            shutil.rmtree(target, ignore_errors=True)  # (a leftover of an earlier try)
+            side.rename(target)
+        except BaseException:
+            shutil.rmtree(side, ignore_errors=True)
+            raise
+
     def forget_campaign(self, guild_id: int, campaign_id: str) -> None:
         shutil.rmtree(self._campaign(guild_id, campaign_id), ignore_errors=True)
 
