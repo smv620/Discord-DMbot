@@ -14,6 +14,7 @@ DM's campaign, so **paste nothing from them into GitHub but the scores and count
 from __future__ import annotations
 
 import secrets
+import sys
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -98,11 +99,10 @@ def summary_lines(
     letter: str,
     prices: dict[str, tuple[float, float]],
     checks: list[tuple[str, bool, str]],
-    *,
-    with_beats: bool,
 ) -> list[str]:
     """One draft's terminal report: state, every check, calls and tokens and the cost of each
-    model's share. Fixed words and counts; no provider, no model, no text of the recap."""
+    share. The rows are the same for both drafts and name no provider or model. Fixed words and
+    counts; no text of the recap."""
     job = out.job
     rows = [
         f"== Draft {letter} ==",
@@ -113,27 +113,31 @@ def summary_lines(
     ]
     if job.grade:
         rows.append("  grader: " + ", ".join(f"{k} {v}" for k, v in job.grade.items()))
-    parts = [("writer", out.creative), ("formatter", out.formatting), ("checks", out.careful)]
-    if with_beats:
-        parts.append(("beat sheet and the rest", out.fast))
+    parts = [
+        ("writer", out.creative),
+        ("formatter", out.formatting),
+        ("checks", out.careful),
+        ("everything else", out.fast),
+    ]
     total = 0.0
     priced = True
     for name, counted in parts:
         if counted is None:
-            continue
-        price = prices.get(counted.model)
-        cost = (
-            f"${(counted.input_tokens * price[0] + counted.output_tokens * price[1]) / 1e6:.3f}"
-            if price
-            else "no price on file"
-        )
-        if price:
-            total += (counted.input_tokens * price[0] + counted.output_tokens * price[1]) / 1e6
+            counted_calls, used, cost = 0, "in 0, out 0", "$0.000"
         else:
-            priced = False
-        used = f"in {counted.input_tokens}, out {counted.output_tokens}"
-        rows.append(f"  {name}: {counted.calls} calls, {used}, {cost}")
-    note = "" if priced else " (without the model with no price)"
+            price = prices.get(counted.model)
+            dollars = (
+                (counted.input_tokens * price[0] + counted.output_tokens * price[1]) / 1e6
+                if price
+                else None
+            )
+            priced = priced and dollars is not None
+            total += dollars or 0.0
+            counted_calls = counted.calls
+            used = f"in {counted.input_tokens}, out {counted.output_tokens}"
+            cost = f"${dollars:.3f}" if dollars is not None else "no price on file"
+        rows.append(f"  {name}: {counted_calls} calls, {used}, {cost}")
+    note = "" if priced else " (without the share with no price)"
     rows.append(f"  total: ${total:.3f}{note}")
     return rows
 
@@ -144,15 +148,13 @@ def writers_from_env(
 ) -> list[Writer] | None:  # fmt: skip
     """The two writers: Claude and Gemini, each on its own client (so no fallback from one to the
     other hides which wrote a draft). None, after a plain line, when a key is missing."""
-    import sys
-
     key, gemini_key = get("ANTHROPIC_API_KEY"), get("GEMINI_API_KEY")
     if not key or not gemini_key:
         print("recap_run: --compare needs ANTHROPIC_API_KEY and GEMINI_API_KEY", file=sys.stderr)
         return None
-    claude = AnthropicClient(key, replace(models, creative=claude_model))
+    claude = AnthropicClient(key, replace(models, creative=claude_model), fallback=False)
     gemini = AnthropicClient(
-        key, replace(models, creative=gemini_model), gemini=GeminiClient(gemini_key)
+        key, replace(models, creative=gemini_model), gemini=GeminiClient(gemini_key), fallback=False
     )
     register(claude)
     register(gemini)
@@ -191,10 +193,16 @@ async def run_compare(
 ) -> int:
     """Both writers on the same beats. 0 when both drafts finished, 1 when one did not, 3 when a
     draft names something the DM keeps secret (nothing is written then)."""
+    order = order or blind_order()
+    for name in (*DRAFT_FILES, KEY_FILE):  # nothing of an earlier comparison is left to be mixed in
+        (folder / name).unlink(missing_ok=True)
+    # Draft A runs first whichever writer it is, so the beat sheet (made by the first run) is in
+    # A's numbers whichever provider wrote A: the report never shows which is which.
+    first_writer, second_writer = writers[order[0]], writers[order[1]]
     first = await run_text(
         inputs, fast, careful, consenting, session_at=session_at, models=models,
-        creative=writers[0].creative, formatting=writers[0].formatting,
-        creative_models=writers[0].models, critics=True,
+        creative=first_writer.creative, formatting=first_writer.formatting,
+        creative_models=first_writer.models, critics=True,
     )  # fmt: skip
     try:
         start = start_from(first)
@@ -203,25 +211,27 @@ async def run_compare(
         return 1
     second = await run_text(
         inputs, fast, careful, consenting, session_at=session_at, models=models,
-        creative=writers[1].creative, formatting=writers[1].formatting,
-        creative_models=writers[1].models, critics=True, start=start,
+        creative=second_writer.creative, formatting=second_writer.formatting,
+        creative_models=second_writer.models, critics=True, start=start,
     )  # fmt: skip
-    outcomes = (first, second)
-    if any(leaks(o) for o in outcomes):
+    drafts = (first, second)  # draft A, draft B
+    if any(leaks(o) for o in drafts):
         emit("recap_run: a draft names something the DM keeps secret, so nothing is written.")
         return 3
-    order = order or blind_order()
-    write_blind(folder, outcomes, [w.label for w in writers], order, voice_tags=voice_tags)
+    write_blind(
+        folder,
+        drafts,
+        [writers[order[0]].label, writers[order[1]].label],
+        (0, 1),
+        voice_tags=voice_tags,
+    )
     emit(
         f"Wrote {DRAFT_FILES[0]} and {DRAFT_FILES[1]} in {folder}, and which is which in "
-        f"{KEY_FILE}. Read the drafts first; open the key after. Draft costs: the second "
-        "writer starts from the first one's beat sheet, so the beat sheet is in one draft's "
-        "numbers only."
+        f"{KEY_FILE}. Read the drafts first; open the key after. Draft B starts from draft A's "
+        "beat sheet, so the beat sheet is in A's numbers only (under 'everything else')."
     )
-    for slot, which in enumerate(order):
+    for slot, outcome_ in enumerate(drafts):
         emit("")
-        for line in summary_lines(
-            outcomes[which], "AB"[slot], prices, checks_of(outcomes[which]), with_beats=which == 0
-        ):
+        for line in summary_lines(outcome_, "AB"[slot], prices, checks_of(outcome_)):
             emit(line)
-    return 0 if all(o.job.state == "ready" for o in outcomes) else 1
+    return 0 if all(o.job.state == "ready" for o in drafts) else 1

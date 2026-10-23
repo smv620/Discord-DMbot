@@ -279,11 +279,13 @@ _FUNDS_WORDS = re.compile(
 )
 
 
-# Gemini says it with a 429 `RESOURCE_EXHAUSTED` (or 403) whose message names billing, prepaid
-# credits or a spend cap. A plain rate limit is a 429 with other words, so it is only "busy".
+# Gemini says it with a 429 `RESOURCE_EXHAUSTED` (or 403) whose message names prepaid credits, a
+# spend cap or billing not being on. Google's ordinary quota message ("You exceeded your current
+# quota, please check your plan and billing details") is a rate or daily limit, not money, so it
+# is only "busy" and the call is tried again later.
 _GEMINI_FUNDS_WORDS = re.compile(
-    r"prepayment credits? (are|is) depleted|billing (account|is)|spend(ing)? cap|exceeded your "
-    r"(current )?quota.*billing|enable billing",
+    r"prepayment credits? (are|is) depleted|spend(ing)? cap|billing (account )?(is )?(not "
+    r"(enabled|active)|disabled|inactive)|enable billing",
     re.IGNORECASE,
 )
 
@@ -590,9 +592,12 @@ class AnthropicClient:
         watch: Watcher | None = None,
         clock: Callable[[], float] = time.monotonic,
         gemini: GeminiClient | None = None,
+        fallback: bool = True,
     ) -> None:
         """`gemini`: when given, the CREATIVE tier is sent to it instead (#2575); every other tier
-        stays here. Its model name is `models.creative`."""
+        stays here. Its model name is `models.creative`. `fallback=False`: a refused model is an
+        error and never falls to a lower tier (a comparison tool must not swap writers silently)."""
+        self._fallback = fallback
         self._key = api_key
         self._gemini = gemini
         self.models = models
@@ -626,6 +631,8 @@ class AnthropicClient:
             if all(model != known for _, known in steps):
                 steps.append((step, model))
             step = NEXT_DOWN.get(step)
+        if not self._fallback:
+            return steps[:1]
         now = self._clock()
         usable = [
             (t, m)

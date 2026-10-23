@@ -527,14 +527,14 @@ def parse_creative_provider(
         raise ConfigError("AI_PROVIDER_CREATIVE in .env must be anthropic or gemini.")
     if provider == "anthropic":
         return provider, models, ""
+    if not get("GEMINI_API_KEY"):  # first: with no key nothing here may stop start-up
+        return "anthropic", replace(models, creative=DEFAULT_MODELS.creative), NO_GEMINI_KEY_NOTICE
     name = _unquote(get("AI_MODEL_CREATIVE"))
     if not GEMINI_MODEL_NAME.match(name):
         raise ConfigError(
             "AI_PROVIDER_CREATIVE is gemini, so AI_MODEL_CREATIVE in .env must be a Gemini model "
             "name (it starts with gemini-, no quotes or spaces)."
         )
-    if not get("GEMINI_API_KEY"):
-        return "anthropic", replace(models, creative=DEFAULT_MODELS.creative), NO_GEMINI_KEY_NOTICE
     return provider, replace(models, creative=name), ""
 
 

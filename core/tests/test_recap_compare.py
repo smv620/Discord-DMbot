@@ -73,26 +73,48 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
         folder, said, code = await self.run_it(runner, (1, 0))
         self.assertEqual(code, 0)
         a, b = (folder / "A.txt").read_text(), (folder / "B.txt").read_text()
-        self.assertIn("warmed his hands", a)  # the second writer's draft is A this time
-        self.assertIn("lit the fire", b)
-        self.assertEqual(
-            (folder / "key.txt").read_text(),
-            "A = Gemini gemini-writer\nB = Anthropic claude-writer\n",
-        )
+        self.assertIn("lit the fire", a)  # draft A is written first; here by the second writer
+        self.assertIn("warmed his hands", b)
+        key = (folder / "key.txt").read_text()
+        self.assertEqual(key, "A = Gemini gemini-writer\nB = Anthropic claude-writer\n")
         for text in (a, b, *said):
             self.assertNotIn("gemini", text.lower())
             self.assertNotIn("claude", text.lower())
             self.assertNotIn("anthropic", text.lower())
 
-    async def test_the_second_writer_starts_from_the_first_ones_beat_sheet(self) -> None:
-        runner = Runner()
-        await self.run_it(runner, (0, 1))
-        self.assertNotIn("start", runner.calls[0])
-        state, fields = runner.calls[1]["start"]
-        self.assertEqual(state, "checked")
-        self.assertEqual(fields["beats"], [{"what": "x"}])
-        self.assertEqual(fields["speakers"], (1, 2))
-        self.assertEqual([c["creative"] for c in runner.calls], ["c0", "c1"])
+    async def test_draft_a_runs_first_and_draft_b_starts_from_its_beat_sheet(self) -> None:
+        for order, expect in (((0, 1), ["c0", "c1"]), ((1, 0), ["c1", "c0"])):
+            runner = Runner()
+            await self.run_it(runner, order)
+            self.assertNotIn("start", runner.calls[0])
+            state, fields = runner.calls[1]["start"]
+            self.assertEqual(state, "checked")
+            self.assertEqual(fields["beats"], [{"what": "x"}])
+            self.assertEqual(fields["speakers"], (1, 2))
+            self.assertEqual([c["creative"] for c in runner.calls], expect)
+
+    async def test_the_two_reports_have_the_same_rows_whichever_writer_wrote_them(self) -> None:
+        _, said, _ = await self.run_it(Runner(), (1, 0))
+        text = "\n".join(said)
+        a, b = text.split("== Draft B ==")
+        labels = lambda block: [  # noqa: E731
+            line.split(":")[0].strip() for line in block.splitlines() if line.startswith("  ")
+        ]
+        self.assertEqual(labels(a), labels(b))
+
+    async def test_an_earlier_comparison_in_the_folder_is_cleared_first(self) -> None:
+        folder = Path(tempfile.mkdtemp()) / "cmp"
+        folder.mkdir(parents=True)
+        for name in ("A.txt", "B.txt", "key.txt"):
+            (folder / name).write_text("old")
+        code = await cmp.run_compare(
+            Runner(), SimpleNamespace(), "f", "c", None,  # type: ignore[arg-type]
+            session_at=1, models=("f", "c"), writers=WRITERS, folder=folder, prices={},
+            checks_of=lambda o: [], leaks=lambda o: True, voice_tags=False, order=(0, 1),
+            emit=lambda line: None,
+        )  # fmt: skip
+        self.assertEqual(code, 3)
+        self.assertEqual([p.name for p in folder.iterdir()], [])
 
     async def test_costs_and_checks_are_printed_by_letter(self) -> None:
         _, said, _ = await self.run_it(Runner(), (0, 1))
@@ -142,6 +164,15 @@ class TheArguments(unittest.TestCase):
 
     def test_a_good_compare_line_is_accepted(self) -> None:
         args = parse_args(
-            ["--session", "1", "c", "2", "--compare", "--out", "x", "--gemini-model", "g"]
-        )
+            [
+                "--session", "1", "c", "2", "--compare", "--out", "x", "--gemini-model", "g",
+                "--paid-gemini-key",
+            ]
+        )  # fmt: skip
         self.assertTrue(args.compare)
+
+    def test_compare_will_not_run_without_the_paid_key_confirmation(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(
+                ["--session", "1", "c", "2", "--compare", "--out", "x", "--gemini-model", "g"]
+            )

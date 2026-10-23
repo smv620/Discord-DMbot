@@ -1288,7 +1288,11 @@ class DMBot(commands.AutoShardedBot):
             else None
         )
         if gemini is not None:
-            log.info("The recap writer is %s (Gemini)", settings.ai_models.creative)
+            log.warning(
+                "The recap writer is %s (Gemini): GEMINI_API_KEY must belong to a Google account "
+                "with billing on, or Google may use the recaps' text (the free tier's terms).",
+                settings.ai_models.creative,
+            )
         self.ai_client = (
             AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch, gemini=gemini)
             if settings.ai_key

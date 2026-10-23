@@ -174,6 +174,47 @@ class TheErrors(unittest.IsolatedAsyncioTestCase):
         self.assertNotIsInstance(caught.exception, AIOutOfFunds)
         self.assertEqual(len(claude.sent), 0)
 
+    async def test_googles_ordinary_quota_message_is_busy_not_money(self) -> None:
+        message = "You exceeded your current quota, please check your plan and billing details."
+        body = json.dumps({"error": {"status": "RESOURCE_EXHAUSTED", "message": message}})
+        self.assertFalse(is_gemini_out_of_funds(429, body))
+        client, _, _, watch = rig(FakeResponse(429, body))
+        with self.assertRaises(AIError) as caught:
+            await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertNotIsInstance(caught.exception, AIOutOfFunds)
+        self.assertEqual(watch.funds, 0)
+
+    async def test_a_spend_cap_or_billing_off_is_money(self) -> None:
+        for message in ("Your spend cap was reached.", "Billing is not enabled for this project."):
+            self.assertTrue(
+                is_gemini_out_of_funds(429, json.dumps({"error": {"message": message}})),
+                message,
+            )
+
+    async def test_with_no_fallback_a_missing_model_is_an_error_not_another_writer(self) -> None:
+        missing = FakeResponse(404, json.dumps({"error": {"status": "NOT_FOUND"}}))
+        gem = Session(("generateContent", missing))
+        claude = Session(("anthropic", CLAUDE_OK))
+        client = AnthropicClient(
+            "a",
+            MODELS,
+            session=claude,
+            fallback=False,  # type: ignore[arg-type]
+            gemini=GeminiClient("g", session=gem),  # type: ignore[arg-type]
+        )
+        with self.assertRaises(AIError):
+            await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertEqual(len(claude.sent), 0)
+
+    async def test_an_empty_cut_off_answer_is_marked_cut(self) -> None:
+        thinking = {
+            "candidates": [{"content": {"parts": []}, "finishReason": "MAX_TOKENS"}],
+            "usageMetadata": {"promptTokenCount": 10, "thoughtsTokenCount": 8000},
+        }
+        client, *_ = rig(FakeResponse(200, thinking))
+        reply = await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertEqual((reply.text, reply.cut, reply.output_tokens), ("", True, 8000))
+
     async def test_a_bad_key_is_told_plainly(self) -> None:
         error = {"message": "API key not valid.", "details": [{"reason": "API_KEY_INVALID"}]}
         body = json.dumps({"error": error})
@@ -217,10 +258,17 @@ class TheSettings(unittest.TestCase):
 
     def test_gemini_needs_a_gemini_model_name(self) -> None:
         with self.assertRaises(ConfigError):
-            parse_creative_provider(self.get(AI_PROVIDER_CREATIVE="gemini"), MODELS)
+            parse_creative_provider(
+                self.get(AI_PROVIDER_CREATIVE="gemini", GEMINI_API_KEY="k"), MODELS
+            )
         with self.assertRaises(ConfigError):
             parse_creative_provider(
-                self.get(AI_PROVIDER_CREATIVE="gemini", AI_MODEL_CREATIVE="claude-opus-5-5"), MODELS
+                self.get(
+                    AI_PROVIDER_CREATIVE="gemini",
+                    AI_MODEL_CREATIVE="claude-opus-5-5",
+                    GEMINI_API_KEY="k",
+                ),
+                MODELS,
             )
 
     def test_an_unknown_provider_stops_start_up(self) -> None:
@@ -230,6 +278,14 @@ class TheSettings(unittest.TestCase):
     def test_no_key_means_the_writer_stays_on_anthropic_with_a_plain_line(self) -> None:
         env = self.get(AI_PROVIDER_CREATIVE="gemini", AI_MODEL_CREATIVE="gemini-writer")
         provider, models, notice = parse_creative_provider(env, MODELS)
+        self.assertEqual(provider, "anthropic")
+        self.assertTrue(models.creative.startswith("claude-"))
+        self.assertIn("GEMINI_API_KEY", notice)
+
+    def test_provider_gemini_with_no_key_and_no_model_does_not_stop_start_up(self) -> None:
+        provider, models, notice = parse_creative_provider(
+            self.get(AI_PROVIDER_CREATIVE="gemini"), MODELS
+        )
         self.assertEqual(provider, "anthropic")
         self.assertTrue(models.creative.startswith("claude-"))
         self.assertIn("GEMINI_API_KEY", notice)

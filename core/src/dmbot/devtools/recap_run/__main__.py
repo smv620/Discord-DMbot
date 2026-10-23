@@ -585,6 +585,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     parser.add_argument("--gemini-model", metavar="NAME", help="with --compare: the Gemini model")
     parser.add_argument(
+        "--paid-gemini-key", action="store_true",
+        help="with --compare: I confirm GEMINI_API_KEY belongs to a Google account with billing "
+        "on (the free tier lets Google use what is sent)",
+    )  # fmt: skip
+    parser.add_argument(
         "--claude-model", metavar="NAME",
         help="with --compare: the Claude writer (default: the creative model on file)",
     )  # fmt: skip
@@ -616,8 +621,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error(
                 "--compare needs --out DIR (for the drafts and the key) and --gemini-model"
             )
-    elif args.gemini_model or args.claude_model:
-        parser.error("--gemini-model and --claude-model go with --compare")
+        if not args.paid_gemini_key:
+            parser.error(
+                "--compare sends the session to Google: add --paid-gemini-key to confirm the key "
+                "is on a billing-enabled account (the free tier lets Google use what is sent)"
+            )
+    elif args.gemini_model or args.claude_model or args.paid_gemini_key:
+        parser.error("--gemini-model, --claude-model and --paid-gemini-key go with --compare")
     if args.out and not (args.transcript or args.compare):
         parser.error("--out goes with --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
