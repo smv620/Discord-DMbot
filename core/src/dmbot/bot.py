@@ -1536,7 +1536,7 @@ class DMBot(commands.AutoShardedBot):
             mover=HandoverMover(
                 campaigns,
                 clock=time.time,
-                consenting=consent.consenting,
+                consenting=lambda guild: consent.consenting(guild),
                 audio=self.recap_audio_files,
                 forgotten=self._forget_campaign,
             ),

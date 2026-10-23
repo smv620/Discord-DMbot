@@ -3164,6 +3164,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
     ),  # #2532, slice C (granted now that the bot's move exists)
     ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
+    ("dmbot_handover_shares_rules", "dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)"),  # #2532
+    ("dmbot_handover_move_failed", "dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)"),  # #2532
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -12147,6 +12149,29 @@ CAMPAIGN_MOVE_CASCADE = """
         WITH CHECK (guild_id = NULLIF(current_setting('dmbot.moving_to', true), '')::BIGINT
                     AND id = NULLIF(current_setting('dmbot.moving_campaign', true), ''));
 
+    -- Whether the campaign an emailed link is for shares a rule set: such a campaign cannot move to
+    -- another server yet (#2551), and the page says so before anyone accepts or buys a plan. Only
+    -- the link's own secret opens the question.
+    CREATE FUNCTION dmbot_handover_shares_rules(g BIGINT, o BIGINT, p_hash TEXT) RETURNS BOOLEAN
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT g IS NOT NULL AND o IS NOT NULL AND p_hash ~ '^[0-9a-f]{64}$'
+            AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+            AND EXISTS (
+                SELECT 1 FROM campaign_handover_offers f
+                JOIN rule_sets s ON s.guild_id = f.guild_id AND s.campaign_id = f.campaign_id
+                WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+                  AND f.status = 'open' AND s.status = 'shared')
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
     -- Three more facts about a hand-over that moves: when the move was asked for (an offer whose
     -- move never ran is opened again after an hour), and, when a move did not happen, who had
     -- accepted and the plain reason, which only that person is shown (the owner is told only that
@@ -12170,6 +12195,26 @@ CAMPAIGN_MOVE_CASCADE = """
     CREATE TRIGGER campaign_handover_offers_move_asked
         BEFORE UPDATE OF move_to_guild_id ON campaign_handover_offers
         FOR EACH ROW EXECUTE FUNCTION dmbot_note_move_asked();
+
+    -- The plain reason a move did not happen, for the person who had accepted and nobody else
+    -- (the owner is told only that it did not happen). Shown on that person's page.
+    CREATE FUNCTION dmbot_handover_move_failed(g BIGINT, o BIGINT, p_hash TEXT) RETURNS TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT f.move_failed_reason FROM campaign_handover_offers f
+        WHERE dmbot_current_user() IS NOT NULL AND f.guild_id = g AND f.id = o AND f.via_email
+          AND f.token_hash = p_hash AND f.status = 'open'
+          AND f.move_failed_for = dmbot_current_user()
+          AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT) FROM PUBLIC;
 
     -- The server it arrives in is one that holds campaigns now (the retention job's routing list).
     CREATE TRIGGER campaign_guilds_note_move

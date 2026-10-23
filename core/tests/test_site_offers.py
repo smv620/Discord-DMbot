@@ -582,7 +582,7 @@ class Decisions(Harness):
         by_email = replace(
             offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD, delivered_at=NOW
         )
-        await self.offers._tell_moved(Moved("moved", by_email, "Frost*maiden", "n" * 32))
+        await self.offers._tell_moved(Moved("moved", by_email, "Frost*maiden"))
         self.assertEqual(
             self.guilds[GUILD].owner.sent,
             [
@@ -600,12 +600,19 @@ class Decisions(Harness):
             ],
         )
         self.guilds[GUILD].owner.sent.clear()
+        self.guilds[OTHER_GUILD].buyer.sent.clear()
+        failed = replace(by_email, to_user_id=BUYER)
         await self.offers._tell_moved(
-            Moved("reopened", by_email, "Frost*maiden", None, "No room in that plan.")
+            Moved(
+                "reopened", failed, "Frost*maiden", "Your plan has no room for one more campaign."
+            )
         )
+        # The owner is told it did not happen, never why; the person who accepted is told why.
         [text] = self.guilds[GUILD].owner.sent
-        self.assertIn("No room in that plan.", text)
-        self.assertIn("Nothing was lost", text)
+        self.assertEqual(text, handover.MOVE_FAILED.format(campaign="Frost\\*maiden"))
+        self.assertNotIn("plan", text)
+        [theirs] = self.guilds[OTHER_GUILD].buyer.sent
+        self.assertIn("Your plan has no room for one more campaign.", theirs)
 
     async def test_declined_tells_the_owner(self) -> None:
         self.decided("declined")

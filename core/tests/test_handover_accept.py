@@ -410,9 +410,69 @@ class Moving(LinkBase):
             look["servers"],
             [
                 {"id": "111", "name": "Thursday Table", "current": True, "botIn": True},
-                {"id": "222", "name": "Quillon's Corner", "current": False, "botIn": True},
+                {
+                    "id": "222",
+                    "name": "Quillon's Corner",
+                    "current": False,
+                    "botIn": True,
+                    "why": None,
+                },
             ],  # (Gorrak's Hall: not one they manage)
         )
+
+    async def share_rules(self, status: str) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+                " created_at) VALUES (%s, %s, %s, 'house_rules', 'Ours', %s, %s, 5)",
+                (THURSDAY.id, self.campaign.id, "c" * 32, status, ALICE.id),
+            )
+
+    async def test_a_campaign_that_shares_rules_cannot_move_and_the_page_says_so_up_front(
+        self,
+    ) -> None:
+        await self.share_rules("shared")
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        look = (await self.post(bob, "look", token=token)).json()
+        [here, there] = look["servers"]
+        self.assertIsNone(here.get("why"))  # it can still be handed over on this server
+        self.assertEqual(
+            there["why"],
+            "can't move to another server yet, but it can be handed over on this server",
+        )
+        self.assertTrue(look["canAccept"])
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "shares_rules"))
+        row = await self.row()
+        self.assertEqual((row["to_user_id"], row["move_to_guild_id"]), (0, None))  # not claimed
+        ok = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual(ok.status_code, 200)  # the same server is fine
+
+    async def test_a_failed_move_shows_its_reason_to_the_person_who_accepted_only(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertIsNone(look["moveFailed"])
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET move_failed_for = %s,"
+                " move_failed_reason = 'A session is running. Try again after it ends.'"
+                " WHERE guild_id = %s",
+                (BOB.id, THURSDAY.id),
+            )
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual(look["moveFailed"], "A session is running. Try again after it ends.")
+        carol = await self.person(CAROL)
+        other = (await self.post(carol, "look", token=token)).json()
+        self.assertIsNone(other["moveFailed"])
+
+    async def test_a_rule_set_that_is_not_shared_does_not_stop_a_move(self) -> None:
+        await self.share_rules("unshared")
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual(got.status_code, 202)
 
     async def test_asking_for_another_server_claims_the_link_and_records_the_wish(self) -> None:
         token = await self.link()
