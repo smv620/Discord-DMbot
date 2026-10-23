@@ -355,6 +355,15 @@ class RecapStore:
         if not fields or not set(fields) <= _WRITABLE:
             raise ValueError(sorted(set(fields) - _WRITABLE))
         sets = ", ".join(f"{name} = %s" for name in fields)
+        # A save of the critics' loop is made from what the worker read some time ago. A DM who
+        # approved the unchecked draft meanwhile (#2305) must not lose that to it, nor have the
+        # revised words they did not read put over theirs: once approved, a save of the loop (not
+        # a clearing, which Try again does) changes nothing.
+        guard = (
+            " AND COALESCE((critics->>'approved_at')::bigint, 0) = 0"
+            if fields.get("critics") is not None
+            else ""
+        )
         values: list[Any] = []
         for name, value in fields.items():
             if name in _LISTS:
@@ -368,7 +377,7 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 f"UPDATE recap_jobs SET {sets}, updated_at = %s WHERE guild_id = %s"
-                " AND campaign_id = %s AND session_at = %s AND status = 'draft'",
+                " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
                 (*values, int(self._now()), guild_id, campaign_id, session_at),
             )
 

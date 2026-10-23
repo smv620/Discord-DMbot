@@ -808,6 +808,34 @@ class Criticising(WorkerHarness):
             job = await self.worker.run(1, self.one.id, 100) or job
         return job
 
+    async def test_a_draft_the_dm_approved_unchecked_is_finished_while_the_service_is_down(
+        self,
+    ) -> None:
+        """#2305: the website's door marks the loop done and approved; the worker then runs the
+        title step and the recap is ready, with the DM recorded and the service still down."""
+        fast = self.fast_for(WITH_MOTIVE)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.drive(await self.go(), 6)
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        loop = cr.loop_from_json(job.critics)
+        fast.down = False  # (the title step is a different call; the critics are never reached)
+        await self.store.update(
+            1, self.one.id, 100,
+            critics=replace(
+                loop, done=True, approved_by=7, approved_at=int(self.clock.now)
+            ).to_json(),
+            last_error="", next_at=0,
+        )  # fmt: skip
+        # the day's tally is at its cap (the waiting tries count in it): only the title step is
+        # left, and that must not fail the recap the DM approved
+        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS + 5)):
+            job = await self.drive(job, 3)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        done = cr.loop_from_json(job.critics)
+        self.assertEqual((done.done, done.approved_by), (True, 7))  # the DM stays recorded
+        self.assertIn("avenge", job.summary)  # the draft is what the DM approved: nothing was cut
+
     async def test_an_outage_waits_without_failing_or_spending_the_jobs_calls(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.down = True
@@ -837,8 +865,11 @@ class Criticising(WorkerHarness):
         job = await self.drive(job, 6)
         told.assert_awaited_once()
         self.assertTrue(cr.loop_from_json(job.critics).told)
-        self.assertIn("3 days", cr.UNCHECKED_TOLD)
-        self.assertIn("you'll be told when it's ready", cr.UNCHECKED_TOLD)
+        self.assertEqual(
+            cr.UNCHECKED_TOLD,
+            "📜 Your recap is written but DMbot couldn't finish checking it. You can read it and "
+            "approve it yourself on the recap page.",
+        )
         # the service answers: the check reads the draft, the invented motive is fixed, and the
         # waiting state is cleared
         fast.down = False

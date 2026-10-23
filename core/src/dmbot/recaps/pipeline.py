@@ -371,9 +371,12 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, over)
         if job.calls >= self._ceiling(job):
             return await self._fail(gid, cid, job, CAP)
-        in_loop = job.state == "prose" and self._critics and not cr.loop_from_json(job.critics).done
+        loop = cr.loop_from_json(job.critics)
+        in_loop = job.state == "prose" and self._critics and not loop.done
         spent_today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
-        if spent_today >= DAILY_CALLS and not in_loop:  # (the loop stops by itself, below)
+        # (the loop stops by itself, below; and a draft the DM approved unchecked only has its
+        # title step left, which the waiting tries' calls in the day's tally must not fail, #2305)
+        if spent_today >= DAILY_CALLS and not in_loop and not loop.approved_at:
             return await self._fail(gid, cid, job, DAILY)
         inputs = await self._load(gid, cid, job)
         if inputs is None:
