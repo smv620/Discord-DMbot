@@ -568,16 +568,26 @@ adds a row (bitemporal, section 1). **Manipulation** (`MANIPULATED_BY`): an evid
 evidence or item that faked it ("Fabio plants the ledger" → the ledger clue; a Ring of Mind Shielding →
 the Zone of Truth event).
 
-**How today's words map onto it:**
-- **Secret** = The truth believes it, and The party has no belief.
-- **Not revealed yet** = the same. **Revealed** = The party believes it at 1.0 (Revealed Fact).
+**Everything is an assertion; 100% truth is a pin** (owner, 2026-10-22, replacing the first mapping). Every
+relationship is asserted by someone: the table, a player, an NPC, the DM. Nothing is treated as true because
+DMbot heard it, read it, or the DM confirmed it. **The only truth is what the DM pins as 100% truth**, from
+campaign lore uploaded as truth or with 📌 on a connection in the story graph. A campaign may never pin
+anything, and every fact stays an assertion. 100% truth has one job: private DM-screen notices when the story
+goes off the rails from what the DM intended by mistake ("This contradicts a 📌 truth: …"). It never changes
+what players see.
+- **The perspectives** (the tables #2409 built, renamed in words only): **The DM's view** (what the DM has
+  asserted or kept, which the code calls `truth`) and **The party** (what the players have been shown). A
+  DM's-view belief carries a **📌 pinned** mark when it is 100% truth.
+- **Secret / not revealed yet** = the DM's view holds it, and The party has no belief.
+- **Revealed** = The party believes it at 1.0 (Revealed Fact): said at the table, or typed in the table chat
+  DMbot reads.
 - **A theory** = The party (or one PC) at about 0.5 (Theory).
-- **A lie or red herring** = The party believes it while The truth holds it at 0.0 (False Evidence), with
-  the real assertion beside it as a Secret Plot.
-- **The DM confirms** = The truth's belief. Only the DM writes The truth, so "only DM-confirmed facts
-  count" stands.
-- **Players View** draws The party's beliefs: theories dotted and marked "?", known ones solid. **Full
-  View** (DMs, and peekers) draws The truth, and marks where the party is wrong or doesn't know yet.
+- **A lie or red herring** = The party believes it while a 📌 truth says otherwise (False Evidence), with the
+  real assertion beside it.
+- **The DM confirms (✅ Keep)** = the DM's view asserts it. **📌 Pin as 100% truth** = the same belief, pinned.
+  Only the DM writes the DM's view or pins, so "only DM-confirmed facts count" stands.
+- **Players View** draws The party's beliefs (theories dotted, "?"). **Full View** draws the DM's view, with
+  📌 on pinned truths, and marks where the party is wrong or doesn't know yet.
 
 **The four rules DMbot follows when reading a session** (the extractor and EntityBot, section 3):
 - **A. Theories:** a player or NPC voices a suspicion, a theory or an accusation the DM hasn't confirmed.
@@ -973,3 +983,12 @@ as today.
 All of the open decisions were answered by the owner on 2026-10-06: see "Decisions"
 at the top. The 5a extractor was measured on 2026-10-15; the numbers and costs are in
 `docs/costs.md` ("Measured 2026-10-15").
+
+**Built (#2409).** Part A (migration 0179): the two perspectives, the beliefs, `manipulated_by`, the backfill,
+`MemoryStore.believe`, `party_view` and `truth_view`, and the writers kept in step through the connection's
+`secret` flag. Part B: the readers that show the players the story read what The party believes, not the flag:
+recall's players audience and the NPC roster behind the NPC pages, the name lookup the name dropdown and the
+cleaner use (`beliefs.party_knows()` in SQL), and the website's relationship web (migration 0185). Until
+guesses arrive (#2412) The party's belief and the flag always agree, and tests hold the readers to it. A
+reworded connection (#2408) carries the old one's beliefs, evidence, mentions and session span. The flag
+and the API's `secret` field stay until every reader has moved and a later migration drops the flag.
