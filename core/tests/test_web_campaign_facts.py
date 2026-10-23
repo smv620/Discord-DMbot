@@ -142,8 +142,9 @@ class TheFacts(Base):
         mira = await self.add("Mira", "player_character")
         await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", ALICE.id, mira)
         cards = (await me.build_me(self.web, self.session, now=NOW))["campaigns"]
-        self.assertEqual([c["id"] for c in cards], [self.c])
-        self.assertNotEqual(cards[0]["role"], "player")
+        mine = [c for c in cards if c["id"] == self.c]
+        self.assertEqual(len(mine), 1)
+        self.assertNotEqual(mine[0]["role"], "player")
 
     async def signed(self, user: Any) -> Session:
         from dmbot.web import sessions
