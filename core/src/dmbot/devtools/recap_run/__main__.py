@@ -186,6 +186,7 @@ async def run_text(
     formatting: Client | None = None,
     creative_models: tuple[str, str] = ("creative", "formatting"),
     critics: bool = False,
+    story: pl.Story | None = None,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -226,6 +227,7 @@ async def run_text(
         creative=creative_c,
         formatting=formatting_c,
         critics=critics,
+        story=story,  # PlotBot's story memory, when a test or tool connects it (#2254)
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins

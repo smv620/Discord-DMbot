@@ -1833,6 +1833,9 @@ names panel nor the speech-to-text hints can be a fixed list.
       the names that matter most first. The writer's names and facts still come only from what the players
       know; the scores are numbers by name and no connection or fact is ever put in a prompt through them.
       The token budget is unchanged: it changes the order, not the size.
+      **PlotBot is DM-only, so it may read DM-only connections** (it has since #2254, and is told which
+      memory the players know); the recap **writer** and every other call never get them, and a test
+      proves it with a real store behind PlotBot's story memory.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.

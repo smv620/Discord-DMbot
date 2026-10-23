@@ -144,21 +144,53 @@ class FromTheStory(MemoryTest):
         await cache.refresh(GUILD_A, self.c)
         self.assertTrue(await cache.get(GUILD_A, self.c))
 
-    async def test_a_hidden_connection_never_reaches_the_writer(self) -> None:
-        # The recap ranks by the numbers and is given none of the words: run it, with the hub's
-        # scores in, and read everything the AI was sent.
-        await self.hub()
-        scores = dict(await imp.by_name(self.memory, GUILD_A, self.c))
-        scores[name_key("Oskar")] = 12.0  # the canned session's own name, so ranking acts on it
-        fast, careful = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER,
-                                  fx.FINISH_ANSWER), fx.Canned()  # fmt: skip
+    async def test_a_hidden_connection_reaches_plotbot_but_never_the_recap_writer(self) -> None:
+        # The hub, Oskar, is said in the session and tied by twelve hidden connections whose words
+        # are SECRET_WORDS. The real store is connected as PlotBot's story memory (as the bot does),
+        # so the path that could leak exists: PlotBot is DM-only and may read it (since #2254); the
+        # call that writes the recap, and every other call, must not.
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+        from dmbot.recaps import significance as sg
+
+        hub = await self.add("Oskar")
+        await self.add("Mira")
+        for n in range(12):
+            other = await self.add(
+                f"Quillon {chr(97 + n)}"
+            )  # (recall names the other end, not the words)
+            await self.relate(hub, "knows", other, secret=True, detail=SECRET_WORDS)
+        cache = imp.ImportanceCache(self.memory)
+        bot = SimpleNamespace(memory=self.memory, importance=cache)
+
+        async def story(gid: int, cid: str, job: Any, seeds: Any) -> Any:
+            # (a test run files its job under a placeholder campaign; the memory is the real one's)
+            return await DMBot.recap_story(bot, GUILD_A, self.c, job, seeds)  # type: ignore[arg-type]
+
+        scores = await cache.get(GUILD_A, self.c)
+        self.assertGreaterEqual(scores[name_key("Oskar")], 12.0)
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        careful = fx.Canned('{"notes": [], "details": []}')  # PlotBot marks nothing
         base: dict[str, Any] = {
             "lines": fx.lines(), "dm_ids": {fx.DM}, "allowed_names": list(fx.NAMES),
-            "secret_names": ["Lucian"], "previous": "", "day": 4, "hours": 3.5,
-            "importance": scores,
+            "secret_names": [], "previous": "the party set out", "day": 4, "hours": 3.5,
+            "importance": dict(scores),
         }  # fmt: skip
-        out = await run.run_text(pl.Inputs(**base), fast, careful, models=("m-fast", "m-careful"))
-        sent = " ".join([*fast.sent, *careful.sent, *fast.systems, *careful.systems])
-        self.assertNotIn(SECRET_WORDS, sent)
-        self.assertNotIn("Lucian", sent)
+        out = await run.run_text(
+            pl.Inputs(**base), fast, careful, models=("m-fast", "m-careful"), story=story
+        )
+        plotbot = [
+            text
+            for system, text in zip(careful.systems, careful.sent, strict=True)
+            if system == sg.system()
+        ]
+        self.assertTrue(plotbot, "PlotBot was never asked, so this proves nothing")
+        self.assertIn("Quillon", " ".join(plotbot))  # the path exists: DM-only, as since #2254
+        others = " ".join([*fast.sent, *fast.systems, *careful.systems])
+        others += " ".join(
+            t for s, t in zip(careful.systems, careful.sent, strict=True) if s != sg.system()
+        )
+        self.assertNotIn("Quillon", others)  # the writer and every other call never see it
+        self.assertNotIn(SECRET_WORDS, others + " ".join(plotbot))  # and no one gets the words
         self.assertEqual(out.job.state, "ready")
