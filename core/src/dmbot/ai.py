@@ -502,9 +502,9 @@ class GeminiClient:
                 if resp.status != 200:
                     reason = (await resp.text())[:2000]
                     if is_gemini_out_of_funds(resp.status, reason):
+                        # Only Gemini's own alert: `Watcher.out_of_funds` tells the admins the
+                        # Anthropic account is out, which it is not.
                         log.error("Gemini says the account is out of funds or at its limit")
-                        if self._watch is not None:
-                            self._watch.out_of_funds()
                         raise_alert(Problem.GEMINI_OUT_OF_FUNDS)
                         raise AIOutOfFunds(OUT_OF_FUNDS)
                     if is_gemini_key_refused(resp.status, reason):

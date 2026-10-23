@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 from typing import Any
+from unittest import mock
 
 from dmbot.ai import (
     AIError,
@@ -161,7 +162,22 @@ class TheErrors(unittest.IsolatedAsyncioTestCase):
         client, _, claude, watch = rig(FakeResponse(429, body))
         with self.assertRaises(AIOutOfFunds):
             await client.complete("s", "t", tier=AIModelTier.CREATIVE)
-        self.assertEqual((watch.funds, len(claude.sent)), (1, 0))
+        # the admins are told by Gemini's own alert, never "the Anthropic account is out"
+        self.assertEqual((watch.funds, len(claude.sent)), (0, 0))
+
+    async def test_money_runs_out_raises_only_geminis_own_alert(self) -> None:
+        from dmbot import alerts
+
+        raised: list[alerts.Problem] = []
+        message = "Your prepayment credits are depleted."
+        body = json.dumps({"error": {"status": "RESOURCE_EXHAUSTED", "message": message}})
+        client, *_ = rig(FakeResponse(429, body))
+        with (
+            mock.patch("dmbot.ai.raise_alert", raised.append),
+            self.assertRaises(AIOutOfFunds),
+        ):
+            await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertEqual(raised, [alerts.Problem.GEMINI_OUT_OF_FUNDS])
 
     async def test_a_plain_rate_limit_is_busy_not_money(self) -> None:
         body = json.dumps(

@@ -9,6 +9,17 @@ draft A or B and prints its checks, tokens and cost, and names no provider or mo
 run starts after the beats, so its numbers are the writing and the checks only; the first run's
 also hold the beat sheet (said in the report). Files are private to the user; a recap holds the
 DM's campaign, so **paste nothing from them into GitHub but the scores and counts.**
+
+Operating notes (#2575). Run it on the server:
+`python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT --compare --out DIR
+--gemini-model NAME --paid-gemini-key --yes` (or `--transcript FILE --dm NAME`). `--claude-model`
+sets the Claude writer (default: the creative model on file). It needs ANTHROPIC_API_KEY and
+GEMINI_API_KEY. **The Gemini key must belong to a Google account with billing on:** on the free
+tier Google may use what is sent, which is the session's text, and `--paid-gemini-key` is your
+word that it is not. Neither client falls back to the other, so a mistyped model is an error. The
+cost of each share is printed per draft; give `--price MODEL=IN,OUT` (dollars per million tokens)
+for a model with no price on file. Gemini's price is not on file: take it from Google's pricing
+page when it is needed (the price section of docs/costs.md waits for the owner's label).
 """
 
 from __future__ import annotations
