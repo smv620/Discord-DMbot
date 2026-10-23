@@ -46,7 +46,7 @@ from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore, _to_offer
 from dmbot.db import Conn, Database
 from dmbot.logs import log_context
-from dmbot.recaps.store import AUDIO_MAX_TRIES
+from dmbot.recaps.store import AUDIO_DUE_WHERE, AUDIO_MAX_TRIES
 
 log = logging.getLogger(__name__)
 
@@ -298,8 +298,7 @@ class HandoverMover:
             )
         cur = await conn.execute(
             "SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-            " AND (leased_to > %s OR (state = 'ready' AND audio = 'queued' AND audio_tries < %s"
-            " AND status IN ('draft', 'posting', 'posted') AND audio_next_at <= %s)) LIMIT 1",
+            f" AND (leased_to > %s OR ({AUDIO_DUE_WHERE})) LIMIT 1",
             (g, c, now, AUDIO_MAX_TRIES, now),
         )
         if await cur.fetchone() is not None:

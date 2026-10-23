@@ -543,6 +543,22 @@ class Moving(HandoverTest):
         self.assertEqual(await self.move(), "reopened")
         await self.assertWhole(BUSY)
 
+    async def test_the_job_the_move_waits_for_is_the_one_the_audio_worker_picks(self) -> None:
+        """One text for the pick, the lease and the move: the seeded job is really due."""
+        from dmbot.recaps.store import RecapStore
+
+        await self.seed()
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0"
+            " WHERE guild_id = %s AND session_at = 100",
+            GUILD,
+        )  # fmt: skip
+        store = RecapStore(self.db, clock=lambda: float(NOW))
+        self.assertEqual(await store.audio_due(GUILD), [(self.campaign.id, 100)])
+        self.assertEqual(await self.move(), "reopened")  # the move stops for the same job
+        await self.assertWhole(BUSY)
+
     async def test_an_import_being_read_stops_the_move(self) -> None:
         await self.seed()
         sid = (await self.snapshot(GUILD, ["transcript_sessions"]))["transcript_sessions"][0]
@@ -597,7 +613,8 @@ class Moving(HandoverTest):
         """The worker's lease update takes a lock on the job's row, which the move holds."""
         await self.seed()
         real = CampaignStore.move_in
-        inside, took = asyncio.Event(), {}
+        inside = asyncio.Event()
+        took: dict[str, Any] = {}
 
         async def slow(store: CampaignStore, *a: Any, **kw: Any) -> str:
             inside.set()

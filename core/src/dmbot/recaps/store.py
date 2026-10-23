@@ -37,6 +37,13 @@ MAX_CORRECTIONS = 10  # corrections kept for one recap (#2076)
 MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
 AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
+# A recap whose narration is waiting to be made and may start (placeholders: the tries limit, now).
+# One text for the worker's pick (`audio_due`), its lease (`audio_lease`) and the campaign move
+# (campaigns/moves.py), which must refuse exactly while the worker could start.
+AUDIO_DUE_WHERE = (
+    "state = 'ready' AND audio = 'queued' AND audio_tries < %s"
+    " AND status IN ('draft', 'posting', 'posted') AND audio_next_at <= %s"
+)
 STUCK = "The narration and music were never finished. The text is fine."
 AUDIO_LEASE_S = 20 * 60  # the audio takes longer: several provider calls and the mix
 TERMINAL = ("ready", "failed")
@@ -419,9 +426,7 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT ON (campaign_id) campaign_id, session_at FROM recap_jobs"
-                " WHERE guild_id = %s AND state = 'ready' AND audio = 'queued'"
-                " AND audio_tries < %s AND status IN ('draft', 'posting', 'posted')"
-                " AND audio_next_at <= %s AND leased_to <= %s"
+                f" WHERE guild_id = %s AND {AUDIO_DUE_WHERE} AND leased_to <= %s"
                 " ORDER BY campaign_id, session_at LIMIT %s",
                 (guild_id, AUDIO_MAX_TRIES, now, now, limit),
             )
@@ -441,10 +446,7 @@ class RecapStore:
                 " posting_since = COALESCE(posting_since,"
                 " floor(extract(epoch FROM clock_timestamp()))::BIGINT)"
                 " WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_at = %s AND leased_to <= %s AND audio_next_at <= %s"
-                " AND audio_tries < %s"
-                " AND state = 'ready' AND audio = 'queued'"
-                " AND status IN ('draft', 'posting', 'posted')"
+                f" AND session_at = %s AND leased_to <= %s AND {AUDIO_DUE_WHERE}"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
@@ -453,8 +455,8 @@ class RecapStore:
                     campaign_id,
                     session_at,
                     now,
-                    now,
                     AUDIO_MAX_TRIES,
+                    now,
                     guild_id,
                     campaign_id,
                     now,
