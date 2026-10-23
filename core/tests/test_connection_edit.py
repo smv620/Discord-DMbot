@@ -234,6 +234,29 @@ class Cards(base.NamesTest):
         self.assertEqual((now.predicate, now.secret), ("enemy_of", True))
         self.assertNotEqual(now.id, old.id)
 
+    async def test_the_note_reads_from_the_card_whichever_way_round_the_row_is_stored(self) -> None:
+        """#2509: a connection with no direction ("is an enemy of") is said from the card the DM
+        is on, for a row stored with the card's name first and for one stored with it second."""
+        for kesh_first in (False, True):
+            other = await ui.save_name(
+                self.memory, self.campaign, "Kesh" if not kesh_first else "Mira", "npc", [], []
+            )
+            first, second = (other.id, self.bell.id) if kesh_first else (self.bell.id, other.id)
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, first, "knows", second,
+                source="dm", confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+            self.fresh()
+            (link,) = [r for r in await self.relations() if other.id in (r.subject_id, r.object_id)]
+            page = await self.page_of_relation(link.id)
+            page.words._values = ["enemy_of"]
+            it = self.it()
+            await page.words.callback(it)
+            self.assertIn(
+                f"Changed to: Belleros is an enemy of {other.name}. Wrong?",
+                it.response.edited[0][0],
+            )
+
     async def test_other_words_through_the_form(self) -> None:
         await self.know("Kesh")
         page = await self.page()

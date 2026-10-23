@@ -260,18 +260,24 @@ class OneConnection(_Menu):
             return
         changed(interaction, c)
         self.stop()
+        reads = _md(self._now_reads(found, moved.value, self.entity_id))
         await show_card(
             interaction, c.id, self.entity_id, replace=True,
-            note=f"Changed to: {_md(self._now_reads(found, moved.value))}. {UNDO_NOTE}",
+            note=f"Changed to: {reads}. {UNDO_NOTE}",
             undo_connection=moved.batch,
         )  # fmt: skip
 
     @staticmethod
-    def _now_reads(found: Found, stored: Relation) -> str:
+    def _now_reads(found: Found, stored: Relation, card_id: str) -> str:
         # From the row as stored, not the words typed: a family role may have put the two names
-        # the other way round (#2457), and the note must say what the card will now say.
-        subject = found.names.entities.get(stored.subject_id)
-        other = found.names.entities.get(stored.object_id)
+        # the other way round (#2457), and the note must say what the card will now say. A
+        # connection with no direction ("is an enemy of") is said from the card the DM is on,
+        # whichever way round the row happens to be stored, as the card itself reads it.
+        first, second = stored.subject_id, stored.object_id
+        if not stored.directional and second == card_id:
+            first, second = second, first
+        subject = found.names.entities.get(first)
+        other = found.names.entities.get(second)
         words = link_words(stored.predicate, stored.detail, directional=stored.directional)
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
