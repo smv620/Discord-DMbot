@@ -31,6 +31,7 @@ from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS
 
 log = logging.getLogger(__name__)
 
+MESSAGE_MAX = 2000  # Discord's limit for a message
 MAX_LISTED = 10  # items the message lists (and buttons it carries); the rest wait for next time
 NAMES_LISTED = 5  # new names the message lists (as the separate post did)
 PER_ROW = 5  # Discord: five buttons to a row
@@ -61,30 +62,67 @@ def summary_text(
     private: bool = False,
     new_names: Sequence[str] = (),
     claims_waiting: int = 0,
+    claim_lines: Sequence[str] = (),
+    can_check: bool = True,
 ) -> str:
     """The message. `items`: one plain line each, in order (a name, or two names and how they are
     tied); `waiting`: how many more there are than listed. Short and plain: what was said, that the
     players can see it now, and what the button does. `new_names`: names DMbot heard for the first
-    time this session (the 📝 Check new names list rides here so the DM gets one message)."""
-    where = (
-        f" (campaign {discord.utils.escape_markdown(campaign_name)})"
-        if private and campaign_name
-        else ""
+    time this session (the 📝 Check new names list rides here so the DM gets one message).
+    `claims_waiting`: how many things said at the table wait for the DM's check; `claim_lines`:
+    the first few in words and who said them. **Every copy of this message is for the DM alone**
+    (the DM screen while it is private, else a private message), which is why the words may be
+    here: the posts anyone can read say the count only. `can_check`: the 🗣️ button is on this
+    copy (a private message has no server for it). The words are dropped if the message would
+    pass Discord's limit."""
+    text = _compose(
+        items, waiting, campaign_name, private, new_names, claims_waiting, claim_lines, can_check
     )
-    lines = [f"🤫 **Said at the table, now shown to your players**{where}"]
-    lines += [f"{n}. {discord.utils.escape_markdown(_short(i))}" for n, i in enumerate(items, 1)]
-    if waiting > 0:
-        lines.append(
-            f"…and {waiting} more. They come in your next summary, and your players don't see "
-            "them until then."
+    if len(text) > MESSAGE_MAX and claim_lines:  # too long: the count alone says enough
+        text = _compose(
+            items, waiting, campaign_name, private, new_names, claims_waiting, (), can_check
         )
-    lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
+    return text
+
+
+def _compose(
+    items: Sequence[str],
+    waiting: int,
+    campaign_name: str,
+    private: bool,
+    new_names: Sequence[str],
+    claims_waiting: int,
+    claim_lines: Sequence[str],
+    can_check: bool,
+) -> str:
+    lines: list[str] = []
+    if items:
+        where = (
+            f" (campaign {discord.utils.escape_markdown(campaign_name)})"
+            if private and campaign_name
+            else ""
+        )
+        lines.append(f"🤫 **Said at the table, now shown to your players**{where}")
+        lines += [
+            f"{n}. {discord.utils.escape_markdown(_short(i))}" for n, i in enumerate(items, 1)
+        ]
+        if waiting > 0:
+            lines.append(
+                f"…and {waiting} more. They come in your next summary, and your players don't see "
+                "them until then."
+            )
+        lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
     if new_names:
-        lines.append("")
-        lines.append(names_line(new_names))
+        lines += ["", names_line(new_names)] if lines else [names_line(new_names)]
     if claims_waiting:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.append(claims_line(claims_waiting))
+        lines += [f"• {line}" for line in claim_lines]
+        if len(claim_lines) < claims_waiting and claim_lines:
+            lines.append(f"…and {claims_waiting - len(claim_lines)} more in the check.")
+        if not can_check:
+            lines.append("Open 🗣️ Check what was said on your DM screen to answer.")
     if private:
         lines.append(PRIVATE_NOTE)
     return "\n".join(lines)

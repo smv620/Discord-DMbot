@@ -81,6 +81,20 @@ class Text(unittest.TestCase):
         self.assertEqual(len(plain.children), 1)  # no names, no extra button
         self.assertNotIn("🆕", summary_text(["A"], 0))
 
+    def test_things_to_check_are_spelled_out_for_the_dm_and_dropped_if_too_long(self) -> None:
+        lines = ["**Bram** carries **Heartseeker**? _(you said)_"] * 2
+        text = summary_text([], 0, claims_waiting=4, claim_lines=lines)
+        self.assertIn("• **Bram** carries", text)
+        self.assertIn("…and 2 more in the check.", text)
+        long = ["x" * 600] * 5
+        full = summary_text(
+            ["Name " + "y" * 400] * MAX_LISTED, 0, new_names=["N" * 300] * 5,
+            claims_waiting=9, claim_lines=long,
+        )  # fmt: skip
+        self.assertLessEqual(len(full), 2000)
+        self.assertNotIn("xxx", full)  # the words went; the count stays
+        self.assertIn("9 things said at the table to check", full)
+
     def test_a_long_list_of_long_names_still_fits(self) -> None:
         line = names_line(["N" * 300] * 9)
         self.assertIn("and 4 more", line)
@@ -226,6 +240,7 @@ class StepBase(Base):
             screen_channel_id=55,
             new_names=[],
             claims_waiting=0,
+            claim_preview=[],
         )
 
     async def waiting_secret(self) -> str:
@@ -318,7 +333,10 @@ class TheStep(StepBase):
         table = self.table()
         table.claims_waiting = 3
         await DMBot.send_exposure_summary(bot, table)
-        self.assertNotIn("🔗", bot.sidebar_send_dm.await_args.args[1])  # (no server to check in)
+        sent_text, sent_view = bot.sidebar_send_dm.await_args.args[1:3]
+        self.assertIn("Open 🗣️ Check what was said on your DM screen", sent_text)  # no button here
+        ids = [getattr(c, "item", c).custom_id for c in sent_view.children]
+        self.assertNotIn(f"dmbot:claims:review:{self.c}", ids)
         self.assertEqual(table.claims_waiting, 3)  # posted by the "new connections" step
 
     async def test_new_names_wait_for_their_own_post_when_the_summary_cannot_go(self) -> None:
@@ -329,13 +347,46 @@ class TheStep(StepBase):
         await DMBot.send_exposure_summary(bot, table)
         self.assertEqual(table.new_names, ["Bryn Shander"])  # the "new names" step posts them
 
-    async def test_without_a_secret_the_names_are_left_for_the_names_step(self) -> None:
+    async def test_without_a_secret_the_message_still_goes_for_names_and_things_to_check(
+        self,
+    ) -> None:
         bot = self.bot(campaign(id=self.c))
         table = self.table()
         table.new_names = ["Bryn Shander"]
+        table.claims_waiting = 2
+        table.claim_preview = ["**Bram** carries **Heartseeker**? _(a player said)_"]
         await DMBot.send_exposure_summary(bot, table)
+        text, view = bot.post_message.await_args.args[1:3]
+        self.assertNotIn("Recant", text)  # no secret, no Recant part
+        self.assertNotIn("Said at the table, now shown", text)
+        self.assertIn("🆕 **1 new name to check:** **Bryn Shander**", text)
+        self.assertIn("• **Bram** carries **Heartseeker**?", text)
+        self.assertIn("…and 1 more in the check.", text)
+        self.assertEqual(table.new_names, [])
+        self.assertEqual((table.claims_waiting, table.claim_preview), (0, []))
+        self.assertEqual(len(view.children), 2)  # the two check buttons, no Recant
+
+    async def test_with_nothing_to_tell_nothing_is_sent(self) -> None:
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
         bot.post_message.assert_not_awaited()
-        self.assertEqual(table.new_names, ["Bryn Shander"])
+
+    async def test_the_words_of_what_was_said_go_only_to_the_dm_never_to_the_screen_post(
+        self,
+    ) -> None:
+        from dmbot.ui.claims_review import waiting_text
+
+        # a screen the players can read gets the count from the "new connections" step
+        text = waiting_text(3)
+        self.assertNotIn("Bram", text)
+        bot = self.bot(campaign(id=self.c, dm_screen_visibility="open"))
+        table = self.table()
+        table.claims_waiting = 3
+        table.claim_preview = ["**Bram** carries **Heartseeker**? _(a player said)_"]
+        await DMBot.send_exposure_summary(bot, table)
+        bot.post_message.assert_not_awaited()  # nothing on the screen
+        self.assertIn("Bram", bot.sidebar_send_dm.await_args.args[1])  # privately, in words
+        self.assertEqual(table.claims_waiting, 3)  # the screen is still told the count only
 
     async def test_when_it_cannot_be_sent_nothing_is_shown_and_it_waits(self) -> None:
         alias = await self.waiting_secret()

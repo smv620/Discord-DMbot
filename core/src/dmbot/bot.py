@@ -411,6 +411,7 @@ from dmbot.ui import logic as ui_logic
 from dmbot.ui import looked_at, rule_card
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
+from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
@@ -564,6 +565,7 @@ SECRET_QUESTION_WAITING = (
     "🤫 DMbot couldn't send you a question about a secret name. Turn on Direct Messages in this "
     "server's Privacy Settings (tap the server name) and it will ask next session."
 )
+CLAIMS_PREVIEW = 5  # things to check the DM-only summary spells out; the rest are in the check
 SUMMARY_WAITING = (
     "🤫 DMbot couldn't send you the after-session summary of secrets said at the table, so nothing "
     "was shown to your players. Turn on Direct Messages in this server's Privacy Settings (tap the "
@@ -833,6 +835,9 @@ class Table:
     # How many things said at the table wait for the DM's check (#2410): counted by the "what was
     # said" step, told by the summary when it goes to the DM screen, else posted on its own.
     claims_waiting: int = 0
+    # The first few of them in words ("**Bram** carries **Heartseeker**? (a player said)"), for the
+    # DM-only summary. Never posted where a player can read: the screen post says the count only.
+    claim_preview: list[str] = field(default_factory=list)
     # Who answered to which name this session ("a name, then an answer", #1188); in memory
     # only, and nothing a speaker said stays once they stop being recorded.
     name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
@@ -9514,16 +9519,16 @@ class DMBot(commands.AutoShardedBot):
             if campaign is None:
                 return
             rows, stands_for = dedupe(await self.exposures.waiting(gid, cid))
-            if not rows:
-                return
-            described = await describe(self.memory, gid, cid, rows)
+            described = await describe(self.memory, gid, cid, rows) if rows else []
             kept = {row.id for row, _ in described}
             gone = [row.id for row in rows if row.id not in kept]
             if gone:  # no longer secret (the DM changed it meanwhile): nothing to tell
                 await self.exposures.mark(
                     gid, cid, [*gone, *(i for g in gone for i in stands_for[g])], "settled"
                 )
-            if not described:
+            # With no secret to tell, the message still goes when there are new names or things to
+            # check (#2410): one message after a session, and the Recant part is simply absent.
+            if not described and not (table.new_names or table.claims_waiting):
                 return
             listed = described[:MAX_LISTED]
             ids = [row.id for row, _ in listed]
@@ -9535,7 +9540,9 @@ class DMBot(commands.AutoShardedBot):
                     campaign_name=campaign.name,
                     private=private,
                     new_names=table.new_names,
-                    claims_waiting=0 if private else table.claims_waiting,
+                    claims_waiting=table.claims_waiting,
+                    claim_lines=table.claim_preview,  # (every copy of this message is DM-only)
+                    can_check=not private,
                 )
 
             async def by_private_message(dm_ids: Iterable[int]) -> tuple[int, int]:
@@ -9578,7 +9585,7 @@ class DMBot(commands.AutoShardedBot):
                         reached = on_screen = 1
             if not reached:
                 log.warning("The secrets summary could not be sent: %d waiting", len(described))
-                if closed:  # nobody could be told because their private messages are closed
+                if closed and described:  # nobody could be told: their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
             if on_screen or reached >= len(campaign.dm_user_ids):
@@ -9587,6 +9594,7 @@ class DMBot(commands.AutoShardedBot):
                 table.new_names = []
             if on_screen:
                 table.claims_waiting = 0  # the screen message carried the count
+                table.claim_preview = []
             shown = failed = 0
             for row, _ in listed:  # told: now show them, one change each
                 # Claimed first: a Recant pressed since the message went out has already taken the
@@ -9703,11 +9711,17 @@ class DMBot(commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
             table.claims_waiting = counts.get("proposed", 0)
+            if table.claims_waiting:
+                waiting = await ClaimStore(self.memory).waiting(
+                    gid, cid, opted_in=agreed, limit=CLAIMS_PREVIEW
+                )
+                table.claim_preview = [claims_question(claim) for claim in waiting[:CLAIMS_PREVIEW]]
 
     async def post_claims(self, table: Table) -> None:
         """The DM screen says how many things wait for the check, never what, with a button only
         the DM can use, when the summary has not already said so."""
         waiting, table.claims_waiting = table.claims_waiting, 0
+        table.claim_preview = []
         if waiting and table.campaign_id is not None:
             await self.post(
                 table.screen_channel_id,
