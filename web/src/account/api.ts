@@ -179,7 +179,9 @@ export type HandoverLook =
       from: { name: string };
       server: { id: string; name: string };
       canAccept: boolean;
-      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      /** `shares_rules`: the campaign can only be handed over on the server it runs on now, and the person is
+       * not in that server (#2550); `canAccept` is false. */
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner" | "shares_rules";
       servers: HandoverServer[];
       /** A plain sentence, safe to show, on why the move this person asked for last time did not happen; the
        * offer is open again. Only the person who accepted ever gets one. Missing from an API older than #2550. */

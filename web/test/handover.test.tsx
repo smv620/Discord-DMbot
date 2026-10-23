@@ -487,6 +487,21 @@ describe("moving to another server (#2550)", () => {
     expect(screen.queryByText(w.noServers)).toBeNull();
   });
 
+  it("a top-level shares_rules (canAccept false) says it can only be handed over where it runs now", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const real = api.handoverLook!.bind(api);
+    api.handoverLook = async (token) => {
+      const got = await real(token);
+      return got.status === "open" ? { ...got, canAccept: false, why: "shares_rules", servers: [] } : got;
+    };
+    render(<Handover api={api} hash="#open" />);
+    expect(await screen.findByText(w.why.shares_rules!)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.accept })).toBeNull();
+    expect(screen.queryByRole("link", { name: w.seePlans })).toBeNull(); // it is not a plan problem
+    expect(screen.getByRole("button", { name: w.decline })).toBeTruthy();
+  });
+
   it("does not hide the current server's choice behind a greyed one", async () => {
     await open("#shares");
     await screen.findByText(w.offer("The Silver Hall", "Mira"));

@@ -59,6 +59,7 @@ export const handoverWords = {
     no_plan: "You need a paid plan with a free campaign slot to take a campaign.",
     no_slot: "Your plan has no free campaign slot. Hand over or remove one of your campaigns, or pick a bigger plan. Then open this offer again.",
     owner: "This is your own campaign, so there is nothing to accept.",
+    shares_rules: "This campaign can only be handed over on the server it runs on now. Ask the DM to invite you there, then open this link again.",
   } as Record<string, string>,
   // Why the campaign can't move to one of the other servers, by the API's code (#2550).
   serverWhy: {
@@ -67,7 +68,7 @@ export const handoverWords = {
   cantMoveThere: "The campaign can't move to this server right now.",
   moving: "Moving your campaign. This takes a minute.",
   movingSlow: "This is taking longer than usual. If the campaign doesn't show up in My Account soon, open the link in the offer email again: if the move did not happen, the offer will be open again.",
-  onlyHere: "This campaign can only be handed over on the server it runs on now. Ask the DM to invite you there, then open this link again.",
+  onlyHere: "This campaign can only be handed over on the server it runs on now. Ask the DM to invite you there, then open this link again.", // (the same words as why.shares_rules, for a person whose servers are all greyed)
   cantNow: "You can't take this campaign right now. Nothing was changed.",
   seePlans: "See the plans",
   myAccount: "Go to My Account",
