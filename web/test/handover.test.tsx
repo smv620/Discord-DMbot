@@ -196,6 +196,27 @@ describe("the hand-over accept page", () => {
     expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
   });
 
+  it("takes the code out of the address bar once it has been read", async () => {
+    window.history.replaceState(null, "", "/handover#open");
+    await open(window.location.hash);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    expect(window.location.hash).toBe("");
+    expect(sessionStorage.getItem("dmbot:handover")).toBe("open"); // still kept for the way back
+  });
+
+  it("says the server step's DM line, and the sign-in note names the email link", () => {
+    expect(w.whereLead).toContain("your Discord account simply becomes its DM there");
+    expect(w.signInNote).toBe("After you sign in, open the link in the offer email again.");
+  });
+
+  it("has one Help step for it, and one GO_LIVE row", async () => {
+    const { featureSteps } = await import("../src/content/help-features");
+    expect(featureSteps.filter((f) => f.whatsNew === "Receive a campaign by email")).toHaveLength(1);
+    const { readFileSync } = await import("node:fs");
+    const golive = readFileSync(`${process.cwd()}/../docs/GO_LIVE.md`, "utf8");
+    expect(golive.split("\n").filter((l) => l.startsWith("| `HANDOVER_LIVE`"))).toHaveLength(1);
+  });
+
   it("is held with its What's new entry", async () => {
     const real = await vi.importActual<typeof import("../src/content/handover-words")>("../src/content/handover-words");
     const { held } = await import("../src/content/whats-new");
