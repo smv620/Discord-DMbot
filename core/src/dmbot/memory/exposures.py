@@ -167,6 +167,24 @@ class Waiting:
     batch: int | None
 
 
+def dedupe(rows: Sequence[Waiting]) -> tuple[list[Waiting], dict[int, list[int]]]:
+    """One row for each secret, however many sessions said it: the first (the most said, as the
+    rows come), with the ids of the others it stands for, which the caller settles once it is
+    handled. Names by spelling, connections by id."""
+    kept: list[Waiting] = []
+    stands_for: dict[int, list[int]] = {}
+    seen: dict[tuple[str, str | None], int] = {}
+    for row in rows:
+        key = (row.kind, row.spelling if row.kind == "name" else row.relation_id)
+        if key in seen:
+            stands_for[seen[key]].append(row.id)
+            continue
+        seen[key] = row.id
+        stands_for[row.id] = []
+        kept.append(row)
+    return kept, stands_for
+
+
 async def describe(
     memory: MemoryStore, guild_id: int, campaign_id: str, rows: Sequence[Waiting]
 ) -> list[tuple[Waiting, str]]:

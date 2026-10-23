@@ -1826,33 +1826,28 @@ names panel nor the speech-to-text hints can be a fixed list.
     - *Built, slice 1 (CloudDev, 2026-10-23, #2410, migration 0200):* **nothing becomes revealed before the
       DM is told.** After a session DMbot only **records** the secret names (the whole-name matcher) and the
       secret connections (one line naming both ends, by any of their names) that people recorded now said
-      or typed, the DM's own table words too (a DM slip is the first case), never the DM sidebar or the DM screen, and nobody who is not recorded now, in
-      `secret_exposures`: which secret and how often, never a line or who said it. Nothing is applied and the
-      players see no change. An answer the DM gives another way (the live "Is it revealed now?", or the
-      after-session "keep it secret?") settles the exposure so the summary will not ask again; an answer during the session is kept for it, so the recording at the end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a count only, so a person who stops being recorded afterwards leaves no words behind; the summary (next slice) reads the exposures again before it applies them. The summary
+      or typed, the DM's own table words too (a DM slip is the first case), never the DM sidebar or the DM
+      screen, and nobody who is not recorded now, in `secret_exposures`: which secret and how often, never a
+      line or who said it. Nothing is applied and the players see no change. An answer the DM gives another
+      way (the live "Is it revealed now?", or the after-session "keep it secret?") settles the exposure so
+      the summary will not ask again; an answer during the session is kept for it, so the recording at the
+      end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a
+      count only, so a person who stops being recorded afterwards leaves no words behind; the summary
+      reads the exposures again before it applies them.
     - *Built, slice 2 (CloudDev, 2026-10-23, #2410, migration 0201):* after the exposures are recorded,
       **one private summary** goes to the campaign's DMs (the DM screen while it is private, a private message
-      to each DM when players may look at it): each item, numbered, with a **↩️ Recant** button; at most ten,
-      and "and N more" with the website link for the rest, which stay unshown until the next summary. It
-      replaces the secret-name question. **Only after the message went out** is each listed secret shown to
-      the players, in a change of its own (a name's secret flag cleared on every name with that spelling; a
-      connection's secret flag cleared, so The party believes it as a Revealed Fact), so ↩️ Recant undoes
-      exactly that one through the change log. If the message cannot be sent (private messages closed),
-      nothing is shown and the screen says so without a name. Recant on something changed again since
-      says so and leaves it. The new-names and new-connections lists, and the four connection choices, are
-      the next slices.
-    - *Built, slice 2 (CloudDev, 2026-10-23, #2410, migration 0201):* after the exposures are recorded,
-      **one private summary** goes to the campaign's DMs (the DM screen while it is private, a private message
-      to each DM when players may look at it): each item, numbered, with a **↩️ Recant** button; at most ten,
-      and "and N more" with the website link for the rest, which stay unshown until the next summary. It
-      replaces the secret-name question. **Only after the message went out** is each listed secret shown to
-      the players, in a change of its own (a name's secret flag cleared on every name with that spelling; a
-      connection's secret flag cleared, so The party believes it as a Revealed Fact), so ↩️ Recant undoes
-      exactly that one through the change log. If the message cannot be sent (private messages closed),
-      nothing is shown and the screen says so without a name. Recant on something changed again since
-      says so and leaves it. The new-names and new-connections lists, and the four connection choices, are
-      the next slices.
-      that tells the DM and applies the exposures (with Recant) is the next slice.
+      to each DM when players may look at it, also when the screen opens up while it is being sent): each
+      secret listed once however many sessions it was said in, numbered, with a **↩️ Recant** button; at most
+      ten, and "and N more" for the rest, which come in the next summary and are not shown until then. It
+      replaces the secret-name question. **Only after the message was seen by a DM** is each listed secret
+      shown to the players, in a change of its own (a name's secret flag cleared on every name with that
+      spelling; a connection's secret flag cleared, so The party believes it as a Revealed Fact), so
+      ↩️ Recant undoes exactly that one through the change log. If the message cannot be sent (private
+      messages closed), nothing is shown and the screen says so without a name. If showing one fails after
+      the message went out, it is tried again once, and if it still fails the DMs are told privately, with
+      no name, that some were not shown yet and will be after the next session. Recant on something changed
+      again since says so and leaves it. The new-names and new-connections lists, and the four connection
+      choices, are the next slices.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.

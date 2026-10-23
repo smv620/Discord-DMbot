@@ -38,14 +38,14 @@ class Text(unittest.TestCase):
         self.assertIn("↩️ Recant", text)
         self.assertNotIn("more", text)
 
-    def test_past_the_cap_it_says_how_many_more_and_links_the_website(self) -> None:
-        text = summary_text(["A"] * MAX_LISTED, 3, site_link="https://example.org/names")
+    def test_past_the_cap_it_says_how_many_more_and_that_they_come_next_time(self) -> None:
+        text = summary_text(["A"] * MAX_LISTED, 3)
         self.assertIn("and 3 more", text)
-        self.assertIn("https://example.org/names", text)
+        self.assertIn("next summary", text)
 
     def test_ten_long_items_still_fit_in_a_discord_message(self) -> None:
         text = summary_text(
-            ["Name " + "x" * 400] * MAX_LISTED, 40, site_link="https://e.org/" + "p" * 200
+            ["Name " + "x" * 400] * MAX_LISTED, 40, campaign_name="C" * 200, private=True
         )
         self.assertLessEqual(len(text), 2000)
 
@@ -65,6 +65,10 @@ class Text(unittest.TestCase):
         self.assertEqual(first.custom_id, f"dmbot:xr:1:{CID}:{GUILD_A}")
         self.assertLessEqual(len(first.custom_id or ""), 100)
         self.assertEqual(first.label, "↩️ Recant 1")
+
+
+def MESSAGE() -> Any:  # a posted message, as the bot keeps it
+    return SimpleNamespace(id=1, edit=AsyncMock())
 
 
 class Base(MemoryTest):
@@ -183,6 +187,7 @@ class StepBase(Base):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
             settings=SimpleNamespace(site_url="https://example.org"),
             post=AsyncMock(return_value=posted),
+            post_message=AsyncMock(return_value=MESSAGE() if posted else None),
             sidebar_send_dm=AsyncMock(return_value=dm),
             lookup=None,
         )
@@ -191,9 +196,12 @@ class StepBase(Base):
         return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=55)
 
     async def waiting_secret(self) -> str:
-        _, alias = await self.secret_name("Auril")
+        return await self.waiting_secret_named("Auril")
+
+    async def waiting_secret_named(self, name: str) -> str:
+        _, alias = await self.secret_name(name)
         await self.store.record(
-            GUILD_A, self.c, 100, [Exposure("name", spelling_key("Auril"), None, 2)]
+            GUILD_A, self.c, 100, [Exposure("name", spelling_key(name), None, 2)]
         )
         return alias
 
@@ -204,11 +212,11 @@ class TheStep(StepBase):
         bot = self.bot(campaign(id=self.c))
         order: list[str] = []
 
-        async def post(*args: Any, **kw: Any) -> bool:
+        async def post(*args: Any, **kw: Any) -> Any:
             order.append(f"post, secret then: {await self.is_secret(alias)}")
-            return True
+            return MESSAGE()
 
-        bot.post = post
+        bot.post_message = post
         await DMBot.send_exposure_summary(bot, self.table())
         self.assertEqual(order, ["post, secret then: True"])  # still secret when told
         self.assertFalse(await self.is_secret(alias))  # and shown after
@@ -229,7 +237,7 @@ class TheStep(StepBase):
         bot = self.bot(camp)
         await DMBot.send_exposure_summary(bot, self.table())
         self.assertEqual(bot.sidebar_send_dm.await_count, 2)
-        bot.post.assert_not_awaited()  # nothing on the screen the players can read
+        bot.post_message.assert_not_awaited()  # nothing on the screen the players can read
         self.assertFalse(await self.is_secret(alias))
 
     async def test_closed_private_messages_show_nothing_and_say_so_without_a_name(self) -> None:
@@ -257,17 +265,86 @@ class TheStep(StepBase):
         )
         bot = self.bot(campaign(id=self.c))
         await DMBot.send_exposure_summary(bot, self.table())
-        self.assertIn("and 2 more", bot.post.await_args.args[1])
+        self.assertIn("and 2 more", bot.post_message.await_args.args[1])
         self.assertEqual(
             [await self.is_secret(a) for a in aliases], [False] * MAX_LISTED + [True, True]
         )
         self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
 
+    async def test_a_summary_pulled_back_from_the_screen_goes_privately_and_counts_once(
+        self,
+    ) -> None:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        opened = campaign(id=self.c, dm_screen_visibility="open")
+        bot.campaigns.get = AsyncMock(side_effect=[campaign(id=self.c), opened])
+        message = MESSAGE()
+        bot.post_message = AsyncMock(return_value=message)
+        await DMBot.send_exposure_summary(bot, self.table())
+        message.edit.assert_awaited()  # pulled back: nobody saw the names there
+        bot.sidebar_send_dm.assert_awaited_once()  # and the DM got it privately
+        self.assertFalse(await self.is_secret(alias))
+
+    async def test_a_summary_pulled_back_with_closed_messages_shows_nothing(self) -> None:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c), dm="forbidden")
+        opened = campaign(id=self.c, dm_screen_visibility="open")
+        bot.campaigns.get = AsyncMock(side_effect=[campaign(id=self.c), opened])
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertTrue(await self.is_secret(alias))
+        self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 1)
+
+    async def test_a_showing_that_fails_is_tried_again_and_then_the_dm_is_told(self) -> None:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        real = self.memory.reveal_exposed
+        calls = {"n": 0}
+
+        async def flaky(*args: Any, **kw: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("down")
+            return await real(*args, **kw)
+
+        with patch.object(self.memory, "reveal_exposed", flaky):
+            await DMBot.send_exposure_summary(bot, self.table())
+        self.assertEqual(calls["n"], 2)
+        self.assertFalse(await self.is_secret(alias))  # the second try worked
+        bot.sidebar_send_dm.assert_not_awaited()
+
+        alias2 = await self.waiting_secret_named("Vex")
+        bot2 = self.bot(campaign(id=self.c))
+
+        async def broken(*args: Any, **kw: Any) -> Any:
+            raise OSError("down")
+
+        with patch.object(self.memory, "reveal_exposed", broken):
+            await DMBot.send_exposure_summary(bot2, self.table())
+        self.assertTrue(await self.is_secret(alias2))  # still secret
+        (call,) = bot2.sidebar_send_dm.await_args_list
+        self.assertNotIn("Vex", call.args[1])  # told privately, with no name
+        self.assertIn("still secret", call.args[1])
+        (row,) = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(row.spelling, spelling_key("Vex"))  # waits for the next summary
+
+    async def test_a_secret_said_in_two_sessions_is_listed_and_shown_once(self) -> None:
+        alias = await self.waiting_secret()
+        await self.store.record(
+            GUILD_A, self.c, 200, [Exposure("name", spelling_key("Auril"), None, 1)]
+        )
+        self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
+        text = bot.post_message.await_args.args[1]
+        self.assertEqual(text.count("Auril"), 1)
+        self.assertFalse(await self.is_secret(alias))
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])  # the other is settled
+
     async def test_something_no_longer_secret_is_settled_not_told(self) -> None:
         await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "ghost", None, 1)])
         bot = self.bot(campaign(id=self.c))
         await DMBot.send_exposure_summary(bot, self.table())
-        bot.post.assert_not_awaited()
+        bot.post_message.assert_not_awaited()
         self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
 
 
@@ -350,11 +427,11 @@ class Recanting(StepBase):
         row = (await self.store.waiting(GUILD_A, self.c))[0]
         bot = self.bot(campaign(id=self.c))
 
-        async def posted(*args: Any, **kw: Any) -> bool:
+        async def posted(*args: Any, **kw: Any) -> Any:
             await self.press(bot, row.id)  # the DM presses while the loop has not reached it
-            return True
+            return MESSAGE()
 
-        bot.post = posted
+        bot.post_message = posted
         await DMBot.send_exposure_summary(bot, self.table())
         self.assertTrue(await self.is_secret(alias))  # never shown
         got = await self.store.one(GUILD_A, self.c, row.id)
@@ -404,10 +481,11 @@ class WhatIsListedIsWhatIsShown(StepBase):
             memory=self.memory, exposures=self.store, lookup=None,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
             settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
+            post_message=AsyncMock(return_value=MESSAGE()),
             sidebar_send_dm=AsyncMock(return_value="sent"),
         )  # fmt: skip
         await DMBot.send_exposure_summary(bot, self.table())
-        self.assertIn("Vexa", bot.post.await_args.args[1])
+        self.assertIn("Vexa", bot.post_message.await_args.args[1])
         self.assertFalse(await self.is_secret(alias))
 
     async def test_a_led_to_link_is_neither_listed_nor_shown(self) -> None:
@@ -432,11 +510,12 @@ class RunningTwice(StepBase):
             memory=self.memory, exposures=self.store, lookup=None,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
             settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
+            post_message=AsyncMock(return_value=MESSAGE()),
             sidebar_send_dm=AsyncMock(return_value="sent"),
         )  # fmt: skip
         await DMBot.send_exposure_summary(bot, self.table())
         await DMBot.send_exposure_summary(bot, self.table())
-        self.assertEqual(bot.post.await_count, 1)
+        self.assertEqual(bot.post_message.await_count, 1)
 
 
 if __name__ == "__main__":

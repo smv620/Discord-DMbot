@@ -20,6 +20,7 @@ from typing import Any
 
 import discord
 
+from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
@@ -34,7 +35,6 @@ GONE = "DMbot doesn't remember that one any more."
 BUSY = "DMbot is showing that one right now. Press again in a moment."
 NOTHING = "Nothing to take back: that one was never shown to your players."
 ALREADY = "That one is already taken back."
-ALREADY_UNDONE = "That was already undone."  # undo_batch's own words
 SECRET_AGAIN = "↩️ Taken back: number {n} is secret again."
 PRIVATE_NOTE = "(Sent to you alone, because your players can look at your DM screen.)"
 
@@ -48,7 +48,6 @@ def summary_text(
     items: Sequence[str],
     waiting: int,
     *,
-    site_link: str = "",
     campaign_name: str = "",
     private: bool = False,
 ) -> str:
@@ -63,8 +62,10 @@ def summary_text(
     lines = [f"🤫 **Said at the table, now shown to your players**{where}"]
     lines += [f"{n}. {discord.utils.escape_markdown(_short(i))}" for n, i in enumerate(items, 1)]
     if waiting > 0:
-        more = f"and {waiting} more, not shown to the players until you see them"
-        lines.append(f"…{more}" + (f": {site_link}" if site_link else "."))
+        lines.append(
+            f"…and {waiting} more. They come in your next summary, and your players don't see "
+            "them until then."
+        )
     lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
     if private:
         lines.append(PRIVATE_NOTE)

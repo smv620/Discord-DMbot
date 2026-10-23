@@ -19,7 +19,15 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Hashable,
+    Iterable,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import partial
@@ -248,7 +256,13 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
-from dmbot.memory.exposures import ExposureStore, describe, find_exposures, secret_connections
+from dmbot.memory.exposures import (
+    ExposureStore,
+    dedupe,
+    describe,
+    find_exposures,
+    secret_connections,
+)
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
@@ -396,7 +410,6 @@ from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import looked_at, rule_card
 from dmbot.ui import recap_feedback as recap_feedback_screen
-from dmbot.ui.all_names import page_url
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
@@ -555,6 +568,10 @@ SUMMARY_WAITING = (
     "🤫 DMbot couldn't send you the after-session summary of secrets said at the table, so nothing "
     "was shown to your players. Turn on Direct Messages in this server's Privacy Settings (tap the "
     "server name) and it will send it after the next session."
+)
+SUMMARY_PARTIAL = (
+    "🤫 Some of the secrets in your after-session summary could not be shown to your players "
+    "yet, so they are still secret. DMbot will try again after the next session."
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
@@ -9488,7 +9505,7 @@ class DMBot(commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None:
                 return
-            rows = await self.exposures.waiting(gid, cid)
+            rows, stands_for = dedupe(await self.exposures.waiting(gid, cid))
             if not rows:
                 return
             described = await describe(self.memory, gid, cid, rows)
@@ -9499,33 +9516,49 @@ class DMBot(commands.AutoShardedBot):
             if not described:
                 return
             listed = described[:MAX_LISTED]
-            by_private_message = campaign.dm_screen_visibility != "private"
-            text = summary_text(
-                [words for _, words in listed],
-                len(described) - len(listed),
-                site_link=page_url(self.settings.site_url, gid, cid)
-                if self.settings.site_url
-                else "",
-                campaign_name=campaign.name,
-                private=by_private_message,
-            )
-            view = summary_view([row.id for row, _ in listed], cid, gid)
-            reached = closed = 0
-            if by_private_message:  # players may look at the screen: it goes to the DMs only
-                for dm_id in sorted(campaign.dm_user_ids):
+            ids = [row.id for row, _ in listed]
+
+            def message(private: bool) -> str:
+                return summary_text(
+                    [words for _, words in listed],
+                    len(described) - len(listed),
+                    campaign_name=campaign.name,
+                    private=private,
+                )
+
+            async def by_private_message(dm_ids: Iterable[int]) -> tuple[int, int]:
+                reached = closed = 0
+                for dm_id in sorted(dm_ids):
                     sent = await self.sidebar_send_dm(
-                        dm_id, text, summary_view([row.id for row, _ in listed], cid, gid)
+                        dm_id, message(True), summary_view(ids, cid, gid)
                     )
                     reached += sent == "sent"
                     closed += sent == "forbidden"
-            elif await self.post(table.screen_channel_id, text, view=view, secret_of=(gid, cid)):
-                reached = 1
+                return reached, closed
+
+            reached = closed = 0
+            if campaign.dm_screen_visibility != "private":  # players may look at the screen
+                reached, closed = await by_private_message(campaign.dm_user_ids)
+            else:
+                sent = await self.post_message(
+                    table.screen_channel_id, message(False), summary_view(ids, cid, gid)
+                )
+                if sent is not None:
+                    # Asked again after the send: if the screen opened up meanwhile the message is
+                    # pulled back, so it does not count as told; it goes privately instead.
+                    now = await self.campaigns.get(gid, cid)
+                    if now is None or now.dm_screen_visibility != "private":
+                        await secret_posts.hide_one(sent)
+                        reached, closed = await by_private_message((now or campaign).dm_user_ids)
+                    else:
+                        secret_posts.remember(gid, cid, sent)
+                        reached = 1
             if not reached:
                 log.warning("The secrets summary could not be sent: %d waiting", len(described))
                 if closed:  # nobody could be told because their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
-            shown = 0
+            shown = failed = 0
             for row, _ in listed:  # told: now show them, one change each
                 # Claimed first: a Recant pressed since the message went out has already taken the
                 # row (the claim then matches nothing and it stays secret), and one pressed now
@@ -9534,21 +9567,36 @@ class DMBot(commands.AutoShardedBot):
                     continue
                 spelling = [row.spelling] if row.kind == "name" and row.spelling else []
                 relation = [row.relation_id] if row.kind == "connection" and row.relation_id else []
-                try:
-                    written = await self.memory.reveal_exposed(
-                        gid, cid, spellings=spelling, relation_ids=relation
-                    )
-                except Exception:
-                    await self.exposures.mark(gid, cid, [row.id], "pending")  # next summary
-                    raise
+                written = None
+                for _try in range(2):  # once more if it fails
+                    try:
+                        written = await self.memory.reveal_exposed(
+                            gid, cid, spellings=spelling, relation_ids=relation
+                        )
+                        break
+                    except Exception as exc:  # (the text can carry a name: only the type is logged)
+                        log.warning(
+                            "Couldn't show a secret said at the table: %s", type(exc).__name__
+                        )
+                if written is None:
+                    await self.exposures.mark(gid, cid, [row.id], "pending")  # the next summary
+                    failed += 1
+                    continue
                 if written.batch is None:
                     await self.exposures.mark(gid, cid, [row.id], "settled")
-                    continue
-                await self.exposures.mark(gid, cid, [row.id], "applied", written.batch)
-                shown += 1
+                else:
+                    await self.exposures.mark(gid, cid, [row.id], "applied", written.batch)
+                    shown += 1
+                if stands_for[row.id]:  # the same secret said in earlier sessions: handled with it
+                    await self.exposures.mark(gid, cid, stands_for[row.id], "settled")
             if shown and self.lookup is not None:
                 self.lookup.drop([cid])
-            log.info("Secrets said at the table: %d told, %d shown", len(listed), shown)
+            if failed:  # the message said "now shown" for these: say it was not, with no name
+                for dm_id in sorted(campaign.dm_user_ids):
+                    await self.sidebar_send_dm(dm_id, SUMMARY_PARTIAL)
+            log.info(
+                "Secrets said at the table: %d told, %d shown, %d not", len(listed), shown, failed
+            )
 
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
