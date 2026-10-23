@@ -3490,6 +3490,34 @@ class MemoryStore:
             )  # fmt: skip
             return Written(belief, w.batch)
 
+    async def pin(
+        self, guild_id: int, campaign_id: str, relation_id: str, pinned: bool, *, source: str
+    ) -> Written[Belief]:
+        """📌 Pin as 100% truth, or Unpin (#2447): the DM's word that this connection is true in the
+        story. A new belief of The truth's in one change, so one Undo takes it back. DM only."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await beliefs.perspective_ids(w)
+            belief = await beliefs.set_pin(w, relation_id, pinned)
+            return Written(belief, w.batch)
+
+    async def pinned_connections(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The ids of the confirmed connections the DM has pinned as 100% truth now."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            cur = await scope.conn.execute(
+                "SELECT b.relation_id FROM memory_beliefs b JOIN memory_perspectives p"
+                " ON p.guild_id = b.guild_id AND p.campaign_id = b.campaign_id"
+                " AND p.id = b.perspective_id JOIN memory_relations r"
+                " ON r.guild_id = b.guild_id AND r.campaign_id = b.campaign_id"
+                " AND r.id = b.relation_id WHERE b.guild_id = %s AND b.campaign_id = %s"
+                " AND p.kind = 'truth' AND b.pinned AND r.status = 'confirmed'"
+                " AND r.to_session_at IS NULL"
+                " AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x WHERE"
+                " x.guild_id = b.guild_id AND x.campaign_id = b.campaign_id"
+                " AND x.perspective_id = b.perspective_id AND x.relation_id = b.relation_id)",
+                scope.ids,
+            )
+            return {str(r["relation_id"]) for r in await cur.fetchall()}
+
     async def party_view(
         self, guild_id: int, campaign_id: str, *, known_only: bool = True
     ) -> list[Belief]:

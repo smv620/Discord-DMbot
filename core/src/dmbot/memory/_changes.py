@@ -179,7 +179,8 @@ BELIEFS = Table(
     "memory_beliefs",
     "id",
     ("id", "perspective_id", "relation_id", "confidence", "status", "session_at",
-     "evidence_ids", "seq", "recorded_at"),
+     "evidence_ids", "seq", "recorded_at", "pinned"),
+    defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
 )  # fmt: skip
 # The DM's word that a book entry and a table entry are one, or are not (#1715).
 PLAN_SAME_AS = Table(
@@ -618,6 +619,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "made_before_name_gate": True,
         "manipulated_by": None,  # nothing was faked before beliefs (#2409)
     },
+    "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
     "memory_predicates": {
         "covers": [], "not_this": [], "inverse_label": "", "synonyms": [], "version": 1,
         "from_set": None,

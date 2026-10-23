@@ -491,6 +491,7 @@ class Belief:
     evidence_ids: tuple[str, ...]
     seq: int
     recorded_at: int
+    pinned: bool = False  # the DM's 📌 100% truth (#2447): only on The truth's belief
 
     @property
     def known(self) -> bool:
