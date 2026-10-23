@@ -15,12 +15,13 @@ tokens, never content.
 from __future__ import annotations
 
 import asyncio
+import base64
 import enum
 import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -65,6 +66,18 @@ NEXT_DOWN = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class Image:
+    """One image sent with a request (#2450): its media type and bytes. Sent once and never
+    stored; the bytes are not logged."""
+
+    media_type: str
+    data: bytes
+
+    def __repr__(self) -> str:  # never the bytes
+        return f"Image({self.media_type!r}, {len(self.data)} bytes)"
+
+
 class Feature(enum.StrEnum):
     """The jobs that use the AI. Rules, cleaner, house rules and the rules-alert check are
     listed ahead of their first use, so each already has its tier."""
@@ -93,6 +106,8 @@ class Feature(enum.StrEnum):
     RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
     RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
+    IMAGE = "image"  # an image posted in the table chat, described once (#2450)
+    IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -124,6 +139,10 @@ FEATURE_TIERS = {
     Feature.RECAP_FORMAT: AIModelTier.FORMATTING,
     # Numbers only, each checked against what was shown, and the DM answers every one (#2284).
     Feature.RULE_CONFLICTS: AIModelTier.FAST,
+    # A short description by the fast model; a map is read again by the careful one, since the
+    # layout has to be detailed enough to draw (#2450).
+    Feature.IMAGE: AIModelTier.FAST,
+    Feature.IMAGE_MAP: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -344,8 +363,10 @@ class TierClient:
         *,
         max_tokens: int = 8000,
         schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
     ) -> Reply:
-        """`schema`: ask for the answer as JSON of this shape (structured outputs, #2039)."""
+        """`schema`: ask for the answer as JSON of this shape (structured outputs, #2039).
+        `images`: sent with the text, for a job that reads a picture (#2450)."""
         return await self._client.complete(
             system,
             text,
@@ -354,6 +375,7 @@ class TierClient:
             feature=self.feature,
             cache_system=self.cache_system,
             schema=schema,
+            images=images,
         )
 
 
@@ -430,8 +452,10 @@ class AnthropicClient:
         feature: str | None = None,
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
     ) -> Reply:
-        """One request on `tier`: `system` instructions, `text` as the user's message.
+        """One request on `tier`: `system` instructions, `text` as the user's message (after any
+        `images`, #2450).
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
@@ -451,6 +475,7 @@ class AnthropicClient:
                     feature=feature,
                     cache_system=cache_system,
                     schema=schema,
+                    images=images,
                 )
             except _ModelRefused as refused:
                 if lower is None:
@@ -491,13 +516,29 @@ class AnthropicClient:
         feature: str | None = None,
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
     ) -> Reply:
+        # `images`: each goes in as an image block before the text, base64 (#2450).
         # `schema`: structured outputs (#2039). The Messages API takes `output_config.format`
         # with `type: json_schema`; no beta header, and every model in the tier chain supports
         # it. The answer text is then JSON of that shape (unless it was cut off or refused).
         # `cache_system`: ask the service to remember the system text between calls, which it
         # charges much less to read again. It only does so above a minimum length that depends on
         # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
+        content: Any = text
+        if images:
+            content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image.media_type,
+                        "data": base64.b64encode(image.data).decode("ascii"),
+                    },
+                }
+                for image in images
+            ]
+            content.append({"type": "text", "text": text})
         body: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -506,7 +547,7 @@ class AnthropicClient:
                 if cache_system
                 else system
             ),
-            "messages": [{"role": "user", "content": text}],
+            "messages": [{"role": "user", "content": content}],
         }
         if schema is not None:
             body["output_config"] = {"format": {"type": "json_schema", "schema": schema}}

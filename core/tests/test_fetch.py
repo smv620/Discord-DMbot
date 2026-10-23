@@ -182,6 +182,43 @@ class Fetching(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(str(self.server.port), str(ctx.exception))  # never the link
         return str(ctx.exception)
 
+    async def test_a_picture_fetch_takes_pictures_only_and_a_document_fetch_takes_no_picture(
+        self,
+    ) -> None:
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        self.route("/p", web.Response(body=png, content_type="image/png"))
+        self.route("/j", web.Response(body=b"\xff\xd8\xff" + b"x", content_type="image/jpeg"))
+        self.route("/h", web.Response(text="<p>hi</p>", content_type="text/html"))
+        self.route("/s", web.Response(body=b"<svg/>", content_type="image/svg+xml"))
+        got = await fetch.fetch(self.base + "/p", self.policy, images=True)
+        self.assertEqual((got.data, got.filename), (png, "link.png"))
+        self.assertEqual(
+            (await fetch.fetch(self.base + "/j", self.policy, images=True)).filename, "link.jpg"
+        )
+        for path in ("/h", "/s"):  # a page, and a picture type DMbot does not read
+            with self.subTest(path), self.assertRaises(LinkError):
+                await fetch.fetch(self.base + path, self.policy, images=True)
+        with self.assertRaises(LinkError):  # without images=True a picture is still no document
+            await self.get("/p")
+
+    async def test_a_picture_fetch_kept_to_named_hosts_refuses_a_redirect_elsewhere(self) -> None:
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 20
+        self.route("/ok", web.Response(body=png, content_type="image/png"))
+        self.redirect("/r", f"{self.base}/ok")
+        with self.assertRaises(LinkError):  # the redirect goes to a host that is not named
+            await fetch.fetch(
+                self.base + "/r", self.policy, images=True, stay_on=("cdn.discordapp.com",)
+            )
+        got = await fetch.fetch(self.base + "/r", self.policy, images=True, stay_on=("127.0.0.1",))
+        self.assertEqual(got.data, png)
+
+    async def test_a_picture_over_the_size_limit_is_refused(self) -> None:
+        self.route(
+            "/big", web.Response(body=b"\x89PNG\r\n\x1a\n" + b"x" * 100, content_type="image/png")
+        )
+        with self.assertRaises(LinkError):
+            await fetch.fetch(self.base + "/big", self.policy, max_bytes=50, images=True)
+
     async def test_documents_and_pages_by_type(self) -> None:
         self.route("/a", web.Response(text="Auril", content_type="text/plain"))
         self.route("/b", web.Response(text="<p>Auril</p>", content_type="text/html"))
