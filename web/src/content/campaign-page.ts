@@ -106,4 +106,46 @@ export const campaignPage = {
     delete: "⚙️ Settings → 🗂️ Campaign management → 🗑 Delete this campaign",
   },
   listeningNow: "Listening now",
+
+  // Changing the three choices that the site can change (#2484, CloudDev's #2463). Each button has
+  // Discord's own name and icon; the bot applies a choice exactly as Discord's button does.
+  controls: {
+    visibility: "👁️ Who can see the DM screen",
+    level: "💬 How much DMbot says",
+    retention: "🗄️ Keep transcripts for",
+  },
+  options: {
+    visibility: [
+      ["private", "🔒 Only the DM"],
+      ["peek", "👀 Players can peek"],
+      ["open", "📖 Everyone in the server"],
+    ],
+    level: [
+      ["quiet", "🔇 Quiet"],
+      ["normal", "🔔 Normal"],
+    ],
+    retention: [
+      ["forever", "Forever"],
+      ["365", "1 year"],
+      ["90", "90 days"],
+      ["30", "30 days"],
+    ],
+  } as Record<string, [string, string][]>,
+  saving: "Saving…",
+  slow: "This is taking longer than usual.",
+  offline: "DMbot will change this when it's back. Open this page again later to see it.",
+  saved: "Saved.",
+  timedOut: "That choice timed out. Try again.",
+  refused: "Discord didn't allow this change:",
+  notAllowed: "Only this campaign's DM can change this. Ask them, or use ⚙️ Settings in Discord.",
+  campaignGone: "DMbot can't find this campaign any more.",
+  failed: "Something went wrong. Try again.",
+  badChoice: "That choice isn't available. Reload the page and try again.",
+  tooSoon: "Slow down a moment.",
+  // The same warning as Discord's before a shorter limit is saved (transcript_keep.warning_text).
+  retentionWarning: (label: string): string =>
+    `Sessions older than ${label} will be deleted every night, with their downloads on the website. The first clean-up is tonight. Recaps and the facts you confirmed stay. Nobody can get the deleted transcripts back.`,
+  deleteAfter: (label: string): string => `Delete after ${label}`,
+  keepAsIs: "Keep as it is",
+  ownerOnlyNote: "The campaign's owner does these in Discord.",
 };
