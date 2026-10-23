@@ -3226,6 +3226,11 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     button's ID holds the session, the poster and the line's moment, so it works after a restart. A line not saved
     yet says "try again in a minute". A picture's line is kept apart from the same person's speech at the same moment:
     a speech fix never touches it and a picture fix never touches speech.
+    *Deleting the picture (#2522):* the reply is sent as a Discord reply to the picture, so it carries a reference to it.
+    A delete or a purge removes the reply: from memory (the newest 200 replies) at once, and otherwise (after a restart,
+    or past the 200) by reading the 50 messages after the picture, in a channel that is read as table chat (a voice
+    channel's chat, or a campaign's extra channel), for DMbot's own message that references it. Another bot's or a
+    person's message is never touched, and a server's chat is read at most 10 times a minute for this.
   - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
     that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
     yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
@@ -4836,6 +4841,17 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       DM's recap page. The DM decides, as always.
     - **This is DMbot's own loop,** before the DM sees anything. PlotBot's DM-facing check before
       Accept (above) still runs on the result.
+    - *Built, approving an unchecked draft (CloudDev, 2026-10-23, #2305).* A recap whose check cannot be
+      reached waits (15 minutes, an hour, 4 hours, then every 12 hours) and never fails for waiting. After **3 days**
+      the DM is told once, in these words: "📜 Your recap is written but DMbot couldn't finish checking it. You can read
+      it and approve it yourself on the recap page." The page shows the draft with the sentences DMbot could not check
+      marked, and `POST /me/recaps/{ref}/approve-unchecked` with the recap's `textHash` (a DM of the campaign; anyone else
+      gets "not found"; before the 3 days, `not_yet`; a draft revised since the page showed it, `changed`; a second press
+      answers the same) approves it as it is, so only the words the DM read are approved. The database's door (`dmbot_recap_approve_unchecked`, migration
+      0207) marks the check done, records who and when in the critics' JSON, and adds the note "Check: DMbot could not
+      finish checking this recap. The DM approved it as it is."; the bot's worker then runs the title and
+      housekeeping step and the recap is `ready`, after which the usual approval and posting apply. Players see nothing
+      before the DM posts, as with any recap. A save of the critics' loop made from before the approval cannot undo it.
   - **Cost:** the owner accepts **two to five times** today's recap cost for this. The per-recap call
     ceiling and the campaign's daily ceiling rise to match. docs/costs.md is updated in its own PR,
     which needs the owner's label.
