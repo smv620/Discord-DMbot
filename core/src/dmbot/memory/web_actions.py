@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.memory import link_edits
-from dmbot.memory.link_words import predicate_for
+from dmbot.memory.link_words import predicate_for, predicate_for_either
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -305,10 +305,12 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             or other.id == entity_id
         ):
             return _failed(BAD_TARGET)
-        predicate, detail = predicate_for(a.text)
+        predicate, detail, swapped = predicate_for_either(a.text)
+        # "has a niece" typed on Aldric's card is stored as "Mira kin_of Aldric, niece" (#2457)
+        first, second = (other.id, entity_id) if swapped else (entity_id, other.id)
         try:
             await memory.add_relation(
-                guild_id, cid, entity_id, predicate, other.id, source=DM, confidence=1.0,
+                guild_id, cid, first, predicate, second, source=DM, confidence=1.0,
                 status=CONFIRMED, detail=detail[:100], secret=a.flag,
             )  # fmt: skip
         except MemoryRuleError:

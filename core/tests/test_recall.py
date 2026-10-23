@@ -298,6 +298,27 @@ class Recalling(MemoryTest):
         )
         self.assertEqual((await self.roster_ties())["Mira"], ("Ulfgar",))
 
+    async def test_a_family_role_reads_its_own_way_on_each_roster_entry_and_in_recall(self) -> None:
+        """#2457: "is the niece of Ulfgar" on the one, "has a niece: Mira" on the other; with no
+        role both just name each other."""
+        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        await self.memory.change_relation_words(
+            GUILD_A, self.c, self.secret, "kin_of", "niece", source="dm"
+        )
+        link = next(
+            r
+            for r in (await self.memory.lookup_data(GUILD_A, self.c)).relations
+            if r.predicate == "kin_of"
+        )
+        names = {e.id: e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        sub, obj = names[link.subject_id], names[link.object_id]
+        ties = await self.roster_ties()
+        self.assertEqual(ties[sub], (f"is the niece of {obj}",))
+        self.assertEqual(ties[obj], (f"has a niece: {sub}",))
+        self.assertIn(
+            f"{sub} is the niece of {obj}", self.texts(await self.recall(PLAYERS, sub, hops=1))
+        )
+
     async def lookup_ids(self) -> tuple[set[str], set[str]]:
         data = await self.memory.lookup_data(GUILD_A, self.c)
         return {r.id for r in data.relations}, {r.id for r in data.secret_relations}

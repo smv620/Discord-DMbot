@@ -2204,6 +2204,19 @@ names panel nor the speech-to-text hints can be a fixed list.
   connections the DM confirmed are used**, in hints and anywhere else, **and secret
   connections never feed hints**: today's lookup also loads suggested ones, so step 1
   adds a map of confirmed, non-secret connections.
+  *Built, family roles (CloudDev, 2026-10-23, #2457):* a family connection (`kin_of`) keeps the word
+  it was said in (parent, child, sibling, spouse, grandparent, grandchild, mother, father, son,
+  daughter, sister, brother, wife, husband, aunt, uncle, niece, nephew, cousin, grandmother,
+  grandfather, granddaughter, grandson; `memory/kin.py`) as its detail. With a role it is stored once,
+  in the role's direction ("Mira kin_of Aldric, niece") and reads "is the niece of" on Mira's card and
+  "has a niece" on Aldric's: the same word both times, so a gender is never guessed for the other name.
+  The name card, the connection editor's sentence, the relationship web (label, direction and a `back`
+  reading), NPC list and pages ("Connected to: …") and recall's text all show it. Typed or picked
+  words give it ("is the niece of"); on the website, words read from the other side ("has a niece")
+  are stored with the two names swapped. With no role, or any detail that is not one of these
+  words, it still reads "is family of" both ways. No migration. Old family rows whose detail is
+  exactly one of the words now read with that role, in the direction they were stored. The lore
+  read's pass 2 is not changed (follow-up).
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),

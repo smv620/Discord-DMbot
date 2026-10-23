@@ -38,6 +38,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot.memory import kin
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
@@ -360,7 +361,7 @@ class RecallService:
                 aliases.setdefault(str(r["entity_id"]), []).append(str(r["text"]))
             party = await party_id(scope)
             cur = await scope.conn.execute(
-                "SELECT subject_id, predicate, object_id, source FROM memory_relations"
+                "SELECT subject_id, predicate, object_id, detail, source FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND to_session_at IS NULL AND {party_knows_by('memory_relations', party)}"
                 " AND predicate = ANY(%s)"
@@ -379,6 +380,11 @@ class RecallService:
             if predicate == ROSTER_GROUP_LINK:
                 if onto.is_a(str(shown[b]["type"]), "faction"):
                     groups.setdefault(a, []).append(names[b])
+            elif predicate == "kin_of" and (family := kin.role_of(str(r["detail"] or ""))):
+                # a family role is true of one name only (#2457): "is the niece of Aldric" on the
+                # one, "has a niece: Mira" on the other
+                ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
+                ties.setdefault(b, []).append(f"{kin.backward(family)}: {names[a]}")
             else:
                 ties.setdefault(a, []).append(names[b])
                 ties.setdefault(b, []).append(names[a])

@@ -91,6 +91,28 @@ class TheEdits(Editing):
         log = await self.log_since(before)
         self.assertTrue(log and all(r["source"] == "dm" for r in log))
 
+    async def test_family_words_keep_their_role_and_the_reverse_wording_swaps_the_names(
+        self,
+    ) -> None:
+        """#2457: "is the niece of" stores Mira -> Rook; "has a niece" typed on the other name
+        stores the same connection, with the names swapped; the web draws both the same."""
+        first = await self.add_link(self.mira, self.rook, "is the niece of")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(first), self.mira, self.rook)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        self.assertEqual(link["back"], "has a niece")
+        expected = "a-b" if edge["a"] == self.mira else "b-a"
+        self.assertEqual(link["direction"], expected)  # reads from Mira, the niece
+        # typed from the other name's card: Rook "has a niece" (Rook is the first name)
+        second = await self.add_link(self.rook, self.hall, "has a niece")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(second), self.rook, self.hall)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        expected = "a-b" if edge["a"] == self.hall else "b-a"
+        self.assertEqual(
+            link["direction"], expected
+        )  # stored Far Hall -> Rook: the Hall is the niece
+
     async def test_changing_the_words_replaces_the_connection_and_undo_takes_it_back(self) -> None:
         link = self.links["mira-keep"]
         before = await self.memory.version(self.g, self.one.id)
