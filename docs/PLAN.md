@@ -1830,6 +1830,28 @@ names panel nor the speech-to-text hints can be a fixed list.
       `secret_exposures`: which secret and how often, never a line or who said it. Nothing is applied and the
       players see no change. An answer the DM gives another way (the live "Is it revealed now?", or the
       after-session "keep it secret?") settles the exposure so the summary will not ask again; an answer during the session is kept for it, so the recording at the end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a count only, so a person who stops being recorded afterwards leaves no words behind; the summary (next slice) reads the exposures again before it applies them. The summary
+    - *Built, slice 2 (CloudDev, 2026-10-23, #2410, migration 0201):* after the exposures are recorded,
+      **one private summary** goes to the campaign's DMs (the DM screen while it is private, a private message
+      to each DM when players may look at it): each item, numbered, with a **↩️ Recant** button; at most ten,
+      and "and N more" with the website link for the rest, which stay unshown until the next summary. It
+      replaces the secret-name question. **Only after the message went out** is each listed secret shown to
+      the players, in a change of its own (a name's secret flag cleared on every name with that spelling; a
+      connection's secret flag cleared, so The party believes it as a Revealed Fact), so ↩️ Recant undoes
+      exactly that one through the change log. If the message cannot be sent (private messages closed),
+      nothing is shown and the screen says so without a name. Recant on something changed again since
+      says so and leaves it. The new-names and new-connections lists, and the four connection choices, are
+      the next slices.
+    - *Built, slice 2 (CloudDev, 2026-10-23, #2410, migration 0201):* after the exposures are recorded,
+      **one private summary** goes to the campaign's DMs (the DM screen while it is private, a private message
+      to each DM when players may look at it): each item, numbered, with a **↩️ Recant** button; at most ten,
+      and "and N more" with the website link for the rest, which stay unshown until the next summary. It
+      replaces the secret-name question. **Only after the message went out** is each listed secret shown to
+      the players, in a change of its own (a name's secret flag cleared on every name with that spelling; a
+      connection's secret flag cleared, so The party believes it as a Revealed Fact), so ↩️ Recant undoes
+      exactly that one through the change log. If the message cannot be sent (private messages closed),
+      nothing is shown and the screen says so without a name. Recant on something changed again since
+      says so and leaves it. The new-names and new-connections lists, and the four connection choices, are
+      the next slices.
       that tells the DM and applies the exposures (with Recant) is the next slice.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses

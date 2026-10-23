@@ -248,7 +248,7 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
-from dmbot.memory.exposures import ExposureStore, find_exposures, secret_connections
+from dmbot.memory.exposures import ExposureStore, describe, find_exposures, secret_connections
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
@@ -396,12 +396,19 @@ from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import looked_at, rule_card
 from dmbot.ui import recap_feedback as recap_feedback_screen
+from dmbot.ui.all_names import page_url
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.exposure_summary import (
+    MAX_LISTED,
+    RecantButton,
+    summary_text,
+    summary_view,
+)
 from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
@@ -543,6 +550,11 @@ CLIP_SWEEP_EVERY = (
 SECRET_QUESTION_WAITING = (
     "🤫 DMbot couldn't send you a question about a secret name. Turn on Direct Messages in this "
     "server's Privacy Settings (tap the server name) and it will ask next session."
+)
+SUMMARY_WAITING = (
+    "🤫 DMbot couldn't send you the after-session summary of secrets said at the table, so nothing "
+    "was shown to your players. Turn on Direct Messages in this server's Privacy Settings (tap the "
+    "server name) and it will send it after the next session."
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
@@ -1518,6 +1530,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
+        self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(
@@ -2871,8 +2884,9 @@ class DMBot(commands.AutoShardedBot):
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.ask_about_claims(table)),
             ("names said at the table", lambda: self.reveal_names_said(table)),
-            ("secrets said aloud", lambda: self.ask_about_secrets(table)),
+            # (replaces the secret-name question: the summary says what was shown, with Recant)
             ("secret exposures", lambda: self.record_exposures(table)),
+            ("secret summary", lambda: self.send_exposure_summary(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
@@ -9454,6 +9468,78 @@ class DMBot(commands.AutoShardedBot):
                 return
             waiting = await self.exposures.record(gid, cid, table.started_at, found)
             log.info("Secrets said at the table: %d found, %d waiting", len(found), waiting)
+
+    async def send_exposure_summary(self, table: Table) -> None:
+        """After a session (#2410, slice 2): tell the DMs what the table said that was secret, then
+        show it to the players. One private message (the DM screen while it is private, a private
+        message to each DM when players may look at it), each item with a ↩️ Recant button.
+        Nothing is shown to the players unless the message went out, and each item is shown in a
+        change of its own, so Recant undoes exactly that one. At most `MAX_LISTED` items; the rest
+        wait for the next summary and are not shown until then. The log has counts, no names."""
+        if (
+            self.memory is None
+            or self.exposures is None
+            or table.campaign_id is None
+            or table.screen_channel_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            rows = await self.exposures.waiting(gid, cid)
+            if not rows:
+                return
+            described = await describe(self.memory, gid, cid, rows)
+            kept = {row.id for row, _ in described}
+            gone = [row.id for row in rows if row.id not in kept]
+            if gone:  # no longer secret (the DM changed it meanwhile): nothing to tell
+                await self.exposures.mark(gid, cid, gone, "settled")
+            if not described:
+                return
+            listed = described[:MAX_LISTED]
+            alone = campaign.dm_screen_visibility != "private"
+            text = summary_text(
+                [words for _, words in listed],
+                len(described) - len(listed),
+                site_link=page_url(self.settings.site_url, gid, cid)
+                if self.settings.site_url
+                else "",
+                campaign_name=campaign.name,
+                private=alone,
+            )
+            view = summary_view([row.id for row, _ in listed], cid, gid)
+            reached = closed = 0
+            if alone:  # players may look at the screen: it goes to the DMs only
+                for dm_id in sorted(campaign.dm_user_ids):
+                    sent = await self.sidebar_send_dm(
+                        dm_id, text, summary_view([row.id for row, _ in listed], cid, gid)
+                    )
+                    reached += sent == "sent"
+                    closed += sent == "forbidden"
+            elif await self.post(table.screen_channel_id, text, view=view, secret_of=(gid, cid)):
+                reached = 1
+            if not reached:
+                log.warning("The secrets summary could not be sent: %d waiting", len(described))
+                if closed:  # nobody could be told because their private messages are closed
+                    await self.post(table.screen_channel_id, SUMMARY_WAITING)
+                return  # nothing is shown to the players
+            shown = 0
+            for row, _ in listed:  # told: now show them, one change each
+                spelling = [row.spelling] if row.kind == "name" and row.spelling else []
+                relation = [row.relation_id] if row.kind == "connection" and row.relation_id else []
+                written = await self.memory.reveal_exposed(
+                    gid, cid, spellings=spelling, relation_ids=relation
+                )
+                if written.batch is None:
+                    await self.exposures.mark(gid, cid, [row.id], "settled")
+                    continue
+                await self.exposures.mark(gid, cid, [row.id], "applied", written.batch)
+                shown += 1
+            if shown and self.lookup is not None:
+                self.lookup.drop([cid])
+            log.info("Secrets said at the table: %d told, %d shown", len(listed), shown)
 
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the

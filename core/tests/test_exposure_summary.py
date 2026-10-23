@@ -1,0 +1,344 @@
+"""The after-session summary of secrets said at the table (#2410, slice 2): the text and buttons,
+showing exposures in a change each, the step that tells the DMs first and shows afterwards, and
+↩️ Recant. Invented names."""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import discord
+
+from dmbot.bot import DMBot
+from dmbot.memory.exposures import Exposure, ExposureStore, describe
+from dmbot.memory.models import CONFIRMED, spelling_key
+from dmbot.ui.exposure_summary import (
+    GONE,
+    MAX_LISTED,
+    RecantButton,
+    summary_text,
+    summary_view,
+)
+from dmbot.ui.secret_aloud import NOT_YOURS
+from tests.test_memory_store import GUILD_A, MemoryTest
+
+DM_ID = 7
+CID = "c" * 32
+
+
+class Text(unittest.TestCase):
+    def test_the_message_lists_numbers_the_items_and_says_what_the_button_does(self) -> None:
+        text = summary_text(["Auril (a name)", "Mira and Rook (knows)"], 0)
+        self.assertIn("1. Auril (a name)", text)
+        self.assertIn("2. Mira and Rook (knows)", text)
+        self.assertIn("↩️ Recant", text)
+        self.assertNotIn("more", text)
+
+    def test_past_the_cap_it_says_how_many_more_and_links_the_website(self) -> None:
+        text = summary_text(["A"] * MAX_LISTED, 3, site_link="https://example.org/names")
+        self.assertIn("and 3 more", text)
+        self.assertIn("https://example.org/names", text)
+
+    def test_ten_long_items_still_fit_in_a_discord_message(self) -> None:
+        text = summary_text(
+            ["Name " + "x" * 400] * MAX_LISTED, 40, site_link="https://e.org/" + "p" * 200
+        )
+        self.assertLessEqual(len(text), 2000)
+
+    def test_a_private_copy_says_why_and_names_the_campaign(self) -> None:
+        text = summary_text(["Auril (a name)"], 0, campaign_name="Frost*", private=True)
+        self.assertIn("Sent to you alone", text)
+        self.assertIn("Frost\\*", text)
+
+    def test_one_button_for_each_item_five_to_a_row_and_no_more_than_the_cap(self) -> None:
+        view = summary_view(list(range(1, 15)), CID, GUILD_A)
+        self.assertEqual(len(view.children), MAX_LISTED)
+        rows = [c.item.row for c in view.children if isinstance(c, RecantButton)]
+        self.assertEqual((rows.count(0), rows.count(1)), (5, 5))
+        first = view.children[0]
+        assert isinstance(first, RecantButton)
+        first = first.item
+        self.assertEqual(first.custom_id, f"dmbot:xr:1:{CID}:{GUILD_A}")
+        self.assertLessEqual(len(first.custom_id or ""), 100)
+        self.assertEqual(first.label, "↩️ Recant 1")
+
+
+class Base(MemoryTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = ExposureStore(self.db)
+
+    async def secret_name(self, name: str = "Auril") -> tuple[str, str]:
+        owner = await self.add("Mira", type="character", role="npc", status=CONFIRMED)
+        alias = await self.memory.add_alias(
+            GUILD_A, self.c, owner, name, kind="nickname", source="dm", status=CONFIRMED,
+            secret=True,
+        )  # fmt: skip
+        return owner, alias.value.id
+
+    async def secret_link(self) -> str:
+        a = await self.add("Mira", type="character", role="npc", status=CONFIRMED)
+        b = await self.add("Rook", type="character", role="npc", status=CONFIRMED)
+        written = await self.relate(a, "knows", b, status=CONFIRMED, secret=True)
+        return str(written.value[0].id)
+
+    async def is_secret(self, alias_id: str) -> bool:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT secret FROM memory_aliases WHERE id = %s", (alias_id,))
+            row = await cur.fetchone()
+        assert row is not None
+        return bool(row["secret"])
+
+
+class Showing(Base):
+    async def test_a_name_is_shown_in_one_change_and_undo_hides_it_again(self) -> None:
+        _, alias = await self.secret_name()
+        written = await self.memory.reveal_exposed(
+            GUILD_A, self.c, spellings=[spelling_key("Auril")], relation_ids=[]
+        )
+        self.assertEqual(written.value, (1, 0))
+        self.assertFalse(await self.is_secret(alias))
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch, source="dm")
+        self.assertTrue(await self.is_secret(alias))
+
+    async def test_a_connection_is_shown_to_the_party_and_undo_takes_it_back(self) -> None:
+        rid = await self.secret_link()
+        self.assertEqual(await self.memory.party_view(GUILD_A, self.c), [])
+        written = await self.memory.reveal_exposed(
+            GUILD_A, self.c, spellings=[], relation_ids=[rid]
+        )
+        self.assertEqual(written.value, (0, 1))
+        self.assertEqual(
+            [b.relation_id for b in await self.memory.party_view(GUILD_A, self.c)], [rid]
+        )
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch, source="dm")
+        self.assertEqual(await self.memory.party_view(GUILD_A, self.c), [])
+
+    async def test_what_is_not_secret_or_not_confirmed_changes_nothing(self) -> None:
+        written = await self.memory.reveal_exposed(
+            GUILD_A, self.c, spellings=["nobody"], relation_ids=["f" * 32]
+        )
+        self.assertEqual((written.value, written.batch), ((0, 0), None))
+
+    async def test_every_name_with_the_spelling_is_shown_and_others_are_not(self) -> None:
+        _, one = await self.secret_name("Auril")
+        _, two = await self.secret_name("auril")
+        _, other = await self.secret_name("Vex")
+        await self.memory.reveal_exposed(
+            GUILD_A, self.c, spellings=[spelling_key("Auril")], relation_ids=[]
+        )
+        self.assertEqual([await self.is_secret(x) for x in (one, two, other)], [False, False, True])
+
+    async def test_the_rows_move_once_and_only_from_the_right_state(self) -> None:
+        await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "auril", None, 2)])
+        (row,) = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applied", 55), 1)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applied", 66), 0)
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual((got.status, got.batch), ("applied", 55))
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "recanted"), 1)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "recanted"), 0)
+        self.assertIsNone(await self.store.one(GUILD_A, "0" * 32, row.id))  # another campaign's
+
+    async def test_describing_gives_plain_words_and_leaves_out_what_is_no_longer_secret(
+        self,
+    ) -> None:
+        await self.secret_name("Auril")
+        rid = await self.secret_link()
+        found = [
+            Exposure("name", spelling_key("Auril"), None, 3),
+            Exposure("connection", None, rid, 1),
+            Exposure("name", "gone name", None, 1),
+        ]
+        await self.store.record(GUILD_A, self.c, 100, found)
+        rows = await self.store.waiting(GUILD_A, self.c)
+        got = [text for _, text in await describe(self.memory, GUILD_A, self.c, rows)]
+        self.assertEqual(got, ["Auril (a name)", "Mira and Rook (knows)"])
+
+
+def campaign(**kw: Any) -> Any:
+    base: dict[str, Any] = {
+        "guild_id": GUILD_A, "id": CID, "name": "Frost", "dm_user_ids": frozenset({DM_ID}),
+        "dm_screen_visibility": "private",
+    }  # fmt: skip
+    return SimpleNamespace(**{**base, **kw})
+
+
+class StepBase(Base):
+    def bot(self, camp: Any, *, posted: bool = True, dm: str = "sent") -> Any:
+        return SimpleNamespace(
+            memory=self.memory,
+            exposures=self.store,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
+            settings=SimpleNamespace(site_url="https://example.org"),
+            post=AsyncMock(return_value=posted),
+            sidebar_send_dm=AsyncMock(return_value=dm),
+            lookup=None,
+        )
+
+    def table(self) -> Any:
+        return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=55)
+
+    async def waiting_secret(self) -> str:
+        _, alias = await self.secret_name("Auril")
+        await self.store.record(
+            GUILD_A, self.c, 100, [Exposure("name", spelling_key("Auril"), None, 2)]
+        )
+        return alias
+
+
+class TheStep(StepBase):
+    async def test_the_dms_are_told_first_and_then_it_is_shown_with_a_recant_button(self) -> None:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        order: list[str] = []
+
+        async def post(*args: Any, **kw: Any) -> bool:
+            order.append(f"post, secret then: {await self.is_secret(alias)}")
+            return True
+
+        bot.post = post
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertEqual(order, ["post, secret then: True"])  # still secret when told
+        self.assertFalse(await self.is_secret(alias))  # and shown after
+        (row,) = [r for r in [await self.store.one(GUILD_A, self.c, 1)] if r]
+        self.assertEqual(row.status, "applied")
+        self.assertIsNotNone(row.batch)
+
+    async def test_when_it_cannot_be_sent_nothing_is_shown_and_it_waits(self) -> None:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c), posted=False)
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertTrue(await self.is_secret(alias))
+        self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 1)
+
+    async def test_when_players_may_look_at_the_screen_each_dm_gets_it_privately(self) -> None:
+        alias = await self.waiting_secret()
+        camp = campaign(id=self.c, dm_user_ids=frozenset({7, 8}), dm_screen_visibility="open")
+        bot = self.bot(camp)
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertEqual(bot.sidebar_send_dm.await_count, 2)
+        bot.post.assert_not_awaited()  # nothing on the screen the players can read
+        self.assertFalse(await self.is_secret(alias))
+
+    async def test_closed_private_messages_show_nothing_and_say_so_without_a_name(self) -> None:
+        alias = await self.waiting_secret()
+        camp = campaign(id=self.c, dm_screen_visibility="open")
+        bot = self.bot(camp, dm="forbidden")
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertTrue(await self.is_secret(alias))
+        (call,) = bot.post.await_args_list
+        self.assertNotIn("Auril", call.args[1])
+
+    async def test_only_the_cap_is_shown_and_the_rest_wait(self) -> None:
+        aliases = []
+        for n in range(MAX_LISTED + 2):
+            _, alias = await self.secret_name(f"Name{chr(97 + n)}x")
+            aliases.append(alias)
+        await self.store.record(
+            GUILD_A,
+            self.c,
+            100,
+            [
+                Exposure("name", spelling_key(f"Name{chr(97 + n)}x"), None, 20 - n)
+                for n in range(MAX_LISTED + 2)
+            ],
+        )
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertIn("and 2 more", bot.post.await_args.args[1])
+        self.assertEqual(
+            [await self.is_secret(a) for a in aliases], [False] * MAX_LISTED + [True, True]
+        )
+        self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
+
+    async def test_something_no_longer_secret_is_settled_not_told(self) -> None:
+        await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "ghost", None, 1)])
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
+        bot.post.assert_not_awaited()
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
+
+
+class Recanting(StepBase):
+    def interaction(self, bot: Any, user: int = DM_ID) -> Any:
+        return SimpleNamespace(
+            client=bot,
+            guild=None,
+            user=SimpleNamespace(id=user),
+            message=SimpleNamespace(),
+            response=SimpleNamespace(
+                edit_message=AsyncMock(),
+                send_message=AsyncMock(),
+                is_done=lambda: False,
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def press(self, bot: Any, exposure_id: int, user: int = DM_ID) -> Any:
+        button = RecantButton(exposure_id, self.c, GUILD_A, 1)
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(label="↩️ Recant 1", custom_id=button.item.custom_id))
+        interaction = self.interaction(bot, user)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await button.callback(interaction)
+        return interaction
+
+    async def shown(self) -> tuple[Any, str, Any]:
+        alias = await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
+        row = await self.store.one(GUILD_A, self.c, 1)
+        assert row is not None
+        return bot, alias, row
+
+    async def test_recant_hides_exactly_that_one_again_and_closes_the_button(self) -> None:
+        bot, alias, row = await self.shown()
+        self.assertFalse(await self.is_secret(alias))
+        interaction = await self.press(bot, row.id)
+        self.assertTrue(await self.is_secret(alias))
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual(got.status, "recanted")
+        sent = interaction.response.edit_message.await_args.kwargs["view"]
+        self.assertTrue(sent.children[0].disabled)
+        self.assertIn("Taken back", sent.children[0].label)
+        self.assertIn("secret again", interaction.followup.send.await_args.args[0])
+        self.assertNotIn("Auril", interaction.followup.send.await_args.args[0])
+
+    async def test_a_second_press_and_a_stranger_change_nothing(self) -> None:
+        bot, alias, row = await self.shown()
+        stranger = await self.press(bot, row.id, user=99)
+        self.assertEqual(stranger.response.send_message.await_args.args[0], NOT_YOURS)
+        self.assertFalse(await self.is_secret(alias))
+        await self.press(bot, row.id)
+        again = await self.press(bot, row.id)
+        self.assertIn("already", again.response.send_message.await_args.args[0])
+        self.assertTrue(await self.is_secret(alias))
+
+    async def test_an_unknown_exposure_is_not_found(self) -> None:
+        bot = self.bot(campaign(id=self.c))
+        interaction = await self.press(bot, 987654)
+        self.assertEqual(interaction.response.send_message.await_args.args[0], GONE)
+
+    async def test_when_it_was_changed_again_since_it_stays_shown_and_says_so(self) -> None:
+        bot, alias, row = await self.shown()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_aliases SET text = 'Auril II' WHERE id = %s", (alias,)
+            )
+        interaction = await self.press(bot, row.id)
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual(got.status, "applied")  # not marked taken back: it was not
+        interaction.response.send_message.assert_awaited()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2235,6 +2235,50 @@ class MemoryStore:
             done = [await self._change_alias(w, i, source, None, False) for i in ids]
             return Written(done, w.batch)
 
+    async def reveal_exposed(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        spellings: Sequence[str],
+        relation_ids: Sequence[str],
+    ) -> Written[tuple[int, int]]:
+        """The after-session summary (#2410): secrets the table said are shown to the players, all
+        in one change so one Undo (the DM's ↩️ Recant) hides exactly these again. `spellings`:
+        secret names, by `spelling_key`, every confirmed secret name with that spelling; and
+        `relation_ids`: secret connections, whose party belief follows the flag. Written as the
+        scan (DMbot's own check, like `reveal_said`), only ever showing, never hiding, and only
+        what is still secret and confirmed: a "led to" link stays the DM's alone. Returns
+        (names shown, connections shown); none, no change."""
+        wanted = set(spellings)
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            cur = await w.conn.execute(
+                "SELECT a.id, a.text, a.key, e.name FROM memory_aliases a JOIN memory_entities e"
+                " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " AND e.id = a.entity_id WHERE a.guild_id = %s AND a.campaign_id = %s"
+                " AND a.secret AND a.status = 'confirmed' AND e.status = 'confirmed'"
+                " AND e.type <> 'person' ORDER BY a.id",
+                w.ids,
+            )
+            names = 0
+            for r in await cur.fetchall():
+                if spelling_key(str(r["text"])) not in wanted:
+                    continue
+                if str(r["key"]) == lookup_key(str(r["name"])):
+                    continue  # the main name is never secret; a leftover flag is not ours to change
+                await w.update(ALIASES, str(r["id"]), {"secret": False})
+                names += 1
+            shown = 0
+            for row in await w.select(RELATIONS, " AND id = ANY(%s)", [list(relation_ids)]):
+                if (
+                    row["secret"]
+                    and row["status"] == CONFIRMED
+                    and row["predicate"] != threads_mod.LED_TO
+                ):
+                    await w.update(RELATIONS, row["id"], {"secret": False})
+                    shown += 1
+            return Written((names, shown), w.batch if names or shown else None)
+
     async def _change_alias(
         self, w: Changes, alias_id: str, source: str, status: str | None, secret: bool | None
     ) -> Alias:
