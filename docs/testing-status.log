@@ -32,7 +32,7 @@ READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 - CloudDev, 2026-10-23, once #2550 merges (hand-over by email, #2532 C2): migration 0215 re-creates every foreign key
   that carries guild_id (about 130 of them) with ON UPDATE CASCADE, so a campaign can change server in one change.
   Each key is rebuilt and checked again, which holds locks on those tables for the whole migration: deploy with the
-  bot stopped, after the backup (dry run first), then start bot before web-api. 0212-0214 come with it. DMBOT_HANDOVER_EMAIL stays off (the website and
+  bot stopped, after the backup (dry run first), then start bot before web-api. This PR's own migration is 0215; 0212, 0213 and 0214 come with #2546, #2548 and #2549. DMBOT_HANDOVER_EMAIL stays off (the website and
   the Discord button keep the old behaviour) until the owner's go.
 (nothing else: the deploy of 3b75a693 (migrations 0122-0127) and everything before it are live)
 - Waiting on the owner, not a deploy: once the Stripe account exists (#1096), replace the LEMONSQUEEZY_* values in .env

@@ -27,7 +27,7 @@ from dmbot.memory.models import new_id
 from dmbot.recaps.audio.files import AudioFiles
 from tests.test_campaign_handover import BUYER, CO_DM, GUILD, NOW, OTHER_GUILD, OWNER, HandoverTest
 
-HEARD_OK, HEARD_NOT = 31, 32  # one speaker recorded in the new server, one not
+HEARD_OK, HEARD_NOT = 31, 32  # one speaker who agreed in the new server, one who did not
 
 
 class Moving(HandoverTest):
@@ -181,6 +181,57 @@ class Moving(HandoverTest):
             " 'ABCDEFGHIJ')",
             g, c, "p" * 32, OWNER,
         )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO npc_roster (guild_id, campaign_id, entry_id, view, updated_at)"
+            " VALUES (%s, %s, %s, '{}'::jsonb, 1)",
+            g, c, a,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id, kind,"
+            " body, created_at) VALUES (%s, %s, %s, 100, %s, 'instructions', 'Shorter', 1)",
+            g, c, "b" * 32, OWNER,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO session_usage (guild_id, campaign_id, session_started_at, owner_user_id,"
+            " updated_at) VALUES (%s, %s, 100, %s, 1)",
+            g, c, OWNER,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+            " created_at) VALUES (%s, %s, %s, 'homebrew', 'Mine', 'unshared', %s, 1)",
+            g, c, "d" * 32, OWNER,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO rule_set_codes (guild_id, campaign_id, code, set_id, active, created_at)"
+            " VALUES (%s, %s, 'ABCDEFGHIJ', %s, false, 1)",
+            g, c, "d" * 32,
+        )  # fmt: skip
+        doc, chapter = "e" * 32, "f" * 32
+        await self.sql(
+            g,
+            "INSERT INTO adventure_documents (guild_id, campaign_id, id, file_name, fingerprint,"
+            " characters, chunks, added_by, added_at)"
+            " VALUES (%s, %s, %s, 'a.txt', repeat('0', 64), 1, 0, %s, 1)",
+            g, c, doc, OWNER,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO plan_nodes (guild_id, campaign_id, id, document_id, kind, name, name_key,"
+            " summary, quote, chunk_ids, position, created_at)"
+            " VALUES (%s, %s, %s, %s, 'chapter', 'One', 'one', '', '', '{}', 0, 1)",
+            g, c, chapter, doc,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO plan_position (guild_id, campaign_id, id, document_id, chapter_id, set_by,"
+            " created_at) VALUES (%s, %s, %s, %s, %s, %s, 1)",
+            g, c, "9" * 32, doc, chapter, OWNER,
+        )  # fmt: skip
         self.audio_file(GUILD, "recaps/100/recap-voice.mp3")
 
     def audio_file(self, guild: int, relative: str) -> Path:
@@ -190,6 +241,8 @@ class Moving(HandoverTest):
         return path
 
     async def campaign_tables(self) -> list[str]:
+        # Read from the schema, not from `campaigns/tables.py`: the move must carry what exists,
+        # whatever any list says, and a table nobody listed still has to show up here.
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT table_name FROM information_schema.columns"
@@ -238,6 +291,11 @@ class Moving(HandoverTest):
             "character_sheets",
             "rule_set_follows",
             "memory_heard",
+            "npc_roster",
+            "recap_requests",
+            "session_usage",
+            "rule_set_codes",
+            "plan_position",
         ):
             self.assertTrue(before[table], table)
         self.assertEqual(await self.mover.waiting(GUILD), [self.offer_id])
@@ -290,7 +348,7 @@ class Moving(HandoverTest):
         names = sorted(c["name"] for c in await self.campaigns_in(OTHER_GUILD))
         self.assertEqual(names, ["Frostmaiden", "Frostmaiden (moved)"])
 
-    async def test_counts_of_names_said_are_kept_only_for_who_is_recorded_in_the_new_server(
+    async def test_counts_of_names_said_are_kept_only_for_who_agreed_in_the_new_server(
         self,
     ) -> None:
         await self.seed()
@@ -478,7 +536,7 @@ class Moving(HandoverTest):
         await self.seed()
         await self.sql(
             GUILD,
-            "UPDATE recap_jobs SET state = 'audio', audio_next_at = 0"
+            "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0"
             " WHERE guild_id = %s AND session_at = 100",
             GUILD,
         )  # fmt: skip
@@ -534,3 +592,32 @@ class Moving(HandoverTest):
         [told] = self.told
         self.assertEqual((told.result, told.reason), ("ended", CHANGED_HANDS))
         self.assertEqual(await self.campaigns_in(OTHER_GUILD), [])
+
+    async def test_a_claim_made_after_the_checks_waits_for_the_move_and_finds_nothing(self) -> None:
+        """The worker's lease update takes a lock on the job's row, which the move holds."""
+        await self.seed()
+        real = CampaignStore.move_in
+        inside, took = asyncio.Event(), {}
+
+        async def slow(store: CampaignStore, *a: Any, **kw: Any) -> str:
+            inside.set()
+            await asyncio.sleep(0.5)  # the move holds its locks meanwhile
+            return await real(store, *a, **kw)
+
+        async def worker() -> None:
+            await inside.wait()
+            began = asyncio.get_running_loop().time()
+            async with self.db.guild(GUILD) as conn:  # a second connection
+                cur = await conn.execute(
+                    "UPDATE recap_jobs SET leased_to = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND session_at = 300 RETURNING session_at",
+                    (NOW + 300, GUILD, self.campaign.id),
+                )
+                took["rows"] = await cur.fetchall()
+            took["waited"] = asyncio.get_running_loop().time() - began
+
+        with patch.object(CampaignStore, "move_in", slow):
+            moved, _ = await asyncio.gather(self.move(), worker())
+        self.assertEqual(moved, "moved")
+        self.assertEqual(took["rows"], [])  # the job is no longer in the old server to lease
+        self.assertGreater(took["waited"], 0.3)  # it waited for the move to commit

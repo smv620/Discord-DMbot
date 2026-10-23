@@ -12104,8 +12104,9 @@ HANDOVER_MOVE += _MOVE_BLIND
 # A campaign moves to another server by changing `guild_id` on its `campaigns` row (#2532, slice
 # C2); every foreign key that carries `guild_id` must follow it, or the move would be refused for
 # the first child row or leave rows behind. Rebuilt from the catalog so no table is forgotten
-# (tests/test_campaign_move_cascade.py checks it still holds). Each is added NOT VALID and then
-# validated, which does not block writers while the rows are checked.
+# (tests/test_campaign_move_cascade.py checks it still holds). Dropping a key takes an exclusive
+# lock on its table, and the migration is one transaction, so those locks last until it ends: deploy
+# it with the bot stopped (docs/testing-status.log). Each key is added NOT VALID and then validated.
 CAMPAIGN_MOVE_CASCADE = """
     DO $$
     DECLARE r record;
@@ -12193,12 +12194,22 @@ CAMPAIGN_MOVE_CASCADE = """
     -- campaign be seen and written in the server it goes to. (It is for all commands because an
     -- update's new row must also be readable, which a policy for updates alone does not give.)
     -- Policies add up, so with the settings unset every other write stays as it was.
-    CREATE POLICY campaign_move ON campaigns
-        USING ((guild_id = dmbot_current_guild()
-                OR guild_id = NULLIF(current_setting('dmbot.moving_to', true), '')::BIGINT)
-               AND id = NULLIF(current_setting('dmbot.moving_campaign', true), ''))
-        WITH CHECK (guild_id = NULLIF(current_setting('dmbot.moving_to', true), '')::BIGINT
-                    AND id = NULLIF(current_setting('dmbot.moving_campaign', true), ''));
+    -- Only for the role the bot connects as (the one that ran this migration), as `move_all` is:
+    -- the website's role never gets it.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY campaign_move ON campaigns TO %I'
+            ' USING ((guild_id = dmbot_current_guild()'
+            '         OR guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT)'
+            '        AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))'
+            ' WITH CHECK (guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT'
+            '             AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))',
+            current_user);
+    END
+    $do$;
 
     -- Whether the campaign an emailed link is for shares a rule set: such a campaign cannot move to
     -- another server yet (#2551), and the page says so before anyone accepts or buys a plan. Only

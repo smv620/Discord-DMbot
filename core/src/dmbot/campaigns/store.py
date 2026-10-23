@@ -1857,7 +1857,8 @@ class CampaignStore:
         return campaign_id
 
     async def _free_name(self, conn: Conn, guild_id: int, base: str, word: str = "restored") -> str:
-        """`base`, or `base (restored)`, `base (restored 2)`, … whichever is free."""
+        """`base`, or `base (<word>)`, `base (<word> 2)`, … whichever is free ("restored" for a
+        restore, "moved" for a move)."""
         cur = await conn.execute("SELECT name_key FROM campaigns WHERE guild_id = %s", (guild_id,))
         taken = {r["name_key"] for r in await cur.fetchall()}
         if name_key(base) not in taken:

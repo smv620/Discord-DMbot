@@ -27,7 +27,7 @@ exactly where it was. The rules, in order of importance:
   file finished meanwhile, and only then are the old ones removed. A failure in between leaves the
   old files where they were.
 - **Players are asked again.** Consent records belong to the voices and the server; they are not
-  moved, and counts of names said are kept only for who is recorded in the new server.
+  moved, and counts of names said are kept only for who agreed in the new server.
 - **Not yet:** a campaign that has published a rule set is not moved (#2551), and the website
   refuses it before anyone accepts. This is the same check, as the last word under the lock.
 """
@@ -39,11 +39,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from psycopg import sql
+
 from dmbot import campaign_cap
 from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore, _to_offer
 from dmbot.db import Conn, Database
 from dmbot.logs import log_context
+from dmbot.recaps.store import AUDIO_MAX_TRIES
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +66,27 @@ SESSION_RUNNING = "A session is running. Try again after it ends."
 BUSY = "DMbot is still finishing the last session. Try again in a few minutes."
 STUCK = "DMbot couldn't reach the other server in time, so the move did not happen."
 COULD_NOT = "DMbot couldn't move it this time."
+
+
+# Tables a worker takes rows of with a claim or a lease: locked for the move, so a claim made after
+# the move's checks waits (the campaign's own row lock does not stop their updates).
+LOCKED_TABLES = (
+    "recap_jobs",
+    "session_imports",
+    "name_actions",
+    "name_answers",
+    "recap_requests",
+    "secret_exposures",
+    "setting_actions",
+)
+# Of those, the ones that say 'working' while a worker has a row.
+WORKED_TABLES = (
+    "session_imports",
+    "name_actions",
+    "name_answers",
+    "recap_requests",
+    "setting_actions",
+)
 
 
 class AudioFolders(Protocol):
@@ -261,23 +285,35 @@ class HandoverMover:
         )
         if await cur.fetchone() is not None:
             raise Refused(SESSION_RUNNING)
-        # Work that writes to the campaign without holding its row: a recap job a worker has
-        # leased, or one waiting for its audio, and an import being read. Their rows would be
-        # left behind, or an audio file would land in the folder that is about to go.
+        # Work that writes to the campaign without holding its row: a recap job a worker holds or
+        # has due for audio, an import being read, a website request being answered. Their rows
+        # are locked first, so a worker that takes a lease after the check below waits for this
+        # transaction, and then finds the row gone from the old server and takes nothing.
+        for table in LOCKED_TABLES:
+            await conn.execute(
+                sql.SQL(
+                    "SELECT 1 FROM {} WHERE guild_id = %s AND campaign_id = %s FOR UPDATE"
+                ).format(sql.Identifier(table)),
+                (g, c),
+            )
         cur = await conn.execute(
             "SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-            " AND (leased_to > %s OR (state = 'audio' AND audio_next_at <= %s)) LIMIT 1",
-            (g, c, now, now),
+            " AND (leased_to > %s OR (state = 'ready' AND audio = 'queued' AND audio_tries < %s"
+            " AND status IN ('draft', 'posting', 'posted') AND audio_next_at <= %s)) LIMIT 1",
+            (g, c, now, AUDIO_MAX_TRIES, now),
         )
         if await cur.fetchone() is not None:
             raise Refused(BUSY)
-        cur = await conn.execute(
-            "SELECT 1 FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
-            " AND state = 'working' LIMIT 1",
-            (g, c),
-        )
-        if await cur.fetchone() is not None:
-            raise Refused(BUSY)
+        for table in WORKED_TABLES:
+            cur = await conn.execute(
+                sql.SQL(
+                    "SELECT 1 FROM {} WHERE guild_id = %s AND campaign_id = %s"
+                    " AND state = 'working' LIMIT 1"
+                ).format(sql.Identifier(table)),
+                (g, c),
+            )
+            if await cur.fetchone() is not None:
+                raise Refused(BUSY)
         cur = await conn.execute(
             "SELECT 1 FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
             " AND status = 'shared' LIMIT 1",
