@@ -83,6 +83,7 @@ from dmbot.consent_dm import (
     renewed_text,
     request_text,
     request_view,
+    resume_view,
     send_prompt,
     unreachable_text,
     warning_text,
@@ -298,7 +299,7 @@ from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
-from dmbot.off_the_record import OffTheRecord, Paused
+from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -340,7 +341,7 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter, request_in
+from dmbot.sidebar.ask import AskLimiter, asks_off_record, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
@@ -377,7 +378,15 @@ from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Re
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
-from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer, TranscriptSession, line_ref
+from dmbot.transcript.models import (
+    NARRATING,
+    OFF_RECORD,
+    OFF_RECORD_WORDS,
+    Line,
+    TranscriptBuffer,
+    TranscriptSession,
+    line_ref,
+)
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -1068,6 +1077,7 @@ class DMBot(commands.AutoShardedBot):
             listening=lambda guild_id: guild_id in self.tables,
             drop=self._drop_in_flight,
             save=self._save_pauses,
+            gap=self._off_record_gap,
         )
         self.campaigns = campaigns
         self.sessions = sessions
@@ -1469,6 +1479,7 @@ class DMBot(commands.AutoShardedBot):
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
         # Stopped sessions still writing down their last words, by server.
         self._ending: dict[int, list[Table]] = {}
+        self._starting: dict[int, Table] = {}  # sessions being resumed after a restart (#2466)
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
         self._closing = False
@@ -1921,6 +1932,67 @@ class DMBot(commands.AutoShardedBot):
         for person in people:
             table.segmenter.drop(person)
             table.transcript.drop_speaker(person)
+
+    def _off_record_gap(self, guild_id: int, user_id: int, began: float, ended: float) -> None:
+        """A stretch off the record is over: its marker goes in the session's transcript."""
+        # (a session being resumed after a restart is not in `tables` yet: `_starting` has it)
+        table = self.tables.get(guild_id) or self._starting.get(guild_id)
+        if table is not None:
+            self._add_gaps(table, [(user_id, began, ended)])
+
+    def _add_gaps(self, table: Table, gaps: Sequence[tuple[int, float, float]]) -> None:
+        """One marker line for each person for each stretch (0: the table's pause, for everyone
+        who agreed). Under a second is not worth a line. There is no speech in it: nothing was
+        captured."""
+        if self.transcripts is None:
+            return
+        for who, began, ended in gaps:
+            length = int((ended - began) * 1000)
+            if length < 1000:
+                continue
+            people = self._at_the_table(table) if who == 0 else [who]
+            for person in people:
+                table.unsaved.add(
+                    Line(
+                        int(began * 1000),
+                        person,
+                        OFF_RECORD_WORDS,
+                        OFF_RECORD_WORDS,
+                        length,
+                        sidebar=OFF_RECORD,
+                    )
+                )
+
+    def _at_the_table(self, table: Table) -> list[int]:
+        """Who was in the voice channel and agreed, for the marker of the table's break: not
+        everyone in the server who ever agreed (the transcript is open to the whole server)."""
+        channel = self.get_channel(table.voice_channel_id)
+        here = {m.id for m in getattr(channel, "members", ())}
+        return sorted(here & self.consent.agreed_set(table.guild_id))
+
+    def _wake_off_the_record(self, guild_id: int, user_id: int) -> None:
+        """ "Hey DMbot, off the record", said or typed: this person only, for five minutes. The
+        line itself is kept out of every transcript by the caller. They are off the record in core
+        at once, with no await, so a line that arrives a moment later is already dropped; the
+        rest (saving, ears, the table's line, their private note) follows."""
+        refused = self.off_the_record.start_pause(
+            guild_id, user_id, WAKE_MINUTES, never_shorten=True
+        )
+        if refused is not None:
+            return  # not recorded, not listening, or already off the record for longer
+        self._track(self._pause_by_phrase(guild_id, user_id), "off-the-record")
+
+    async def _pause_by_phrase(self, guild_id: int, user_id: int) -> None:
+        with log_context(guild_id=guild_id):
+            done = await self.off_the_record.announce_pause(
+                guild_id, user_id, WAKE_MINUTES, said_it=True
+            )
+            text = (
+                paused_text(done.until)
+                + " What you said just now was not saved."
+                + ("" if done.told else NOT_TOLD)
+            )
+            await self._dm_message(user_id, text, resume_view(guild_id))
 
     async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused:
         return await self.off_the_record.pause(guild_id, user_id, minutes)
@@ -2753,7 +2825,9 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.pop(guild_id, None)
         if table is None:
             return None
-        self.off_the_record.end_session(guild_id)  # every pause ends with the session (#2466)
+        # Every pause ends with the session (#2466); the stretches still on are marked in its
+        # transcript, which is saved after this.
+        self._add_gaps(table, self.off_the_record.end_session(guild_id))
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
         if table.campaign_id:  # the moment to put the NPC list in order again (#1761)
@@ -4185,10 +4259,14 @@ class DMBot(commands.AutoShardedBot):
         # Off the record (#2466): a pause survives a restart. It is put back before the allowlist
         # goes to ears, so nobody who asked not to be recorded is let in.
         await self.consent.agreed(guild.id)  # (loaded: a pause is only for someone who agreed)
-        await self.off_the_record.restore(guild.id, saved.paused)
-        # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
-        # when it connects (_on_ears_link_change).
-        await self.start_table(table)
+        self._starting[guild.id] = table  # so a pause that ended while down can mark the transcript
+        try:
+            await self.off_the_record.restore(guild.id, saved.paused)
+            # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
+            # when it connects (_on_ears_link_change).
+            await self.start_table(table)
+        finally:
+            self._starting.pop(guild.id, None)
         await self.off_the_record.say_expired(guild.id, saved.paused)
         log.info("Resuming session (restart %d in a row)", streak)
         return True
@@ -4497,7 +4575,15 @@ class DMBot(commands.AutoShardedBot):
         ):
             return True
         text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if text is not None:
+        if (
+            text is not None
+            and asks_off_record(text)
+            and self.consent.agreed_now(
+                table.guild_id, author.id
+            )  # paused or not: it only asks for a pause
+        ):
+            self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
+        elif text is not None:
             self.sidebar.ask_in_chat(table, author.id, text)
         return True
 
@@ -4763,6 +4849,16 @@ class DMBot(commands.AutoShardedBot):
             return
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
+        if text and asks_off_record(text):
+            # "Hey DMbot, off the record" (#2466): this person goes off the record and the line
+            # that said so is in neither transcript, nor anything fed from it. Not waited on a
+            # speaker label: a wrongly paused person only presses Resume, while waiting keeps
+            # them recorded.
+            if self.tables.get(table.guild_id) is table:  # (a session that is ending pauses no one)
+                self._wake_off_the_record(table.guild_id, utterance.user_id)
+                # Words of theirs that were written down before this line arrived are not kept.
+                table.unsaved.drop_since(utterance.user_id, utterance.start_ms)
+            return
         cleaned = text
         if text and table.name_lookup is not None:
             # Fixes DMbot isn't sure of are never silent: made only when the DM screen
@@ -5119,6 +5215,9 @@ class DMBot(commands.AutoShardedBot):
         audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
         about the game goes through the same off-topic filter as talk and is left out of the
         cleaned version (#2447, item 6)."""
+        if asks_off_record(text):  # the line is not kept; they are off the record (#2466)
+            self._wake_off_the_record(table.guild_id, user_id)
+            return
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
         listeners = table.typed_rate.allow(user_id, now)

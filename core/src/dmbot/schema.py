@@ -11143,6 +11143,18 @@ SESSION_PAUSES = """
     ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
 """
 
+OFF_RECORD_LINES = """
+    -- A stretch where a person was off the record (#2466) is one marker line in the transcript,
+    -- in both versions: "(Mia was off the record, nothing recorded, 20:14-20:19 UTC)". It is
+    -- stored as a line of its
+    -- own kind under that person (so a consent stop or "Delete my past transcripts" takes it
+    -- with their other lines) and holds no speech: when it began, how long it lasted, and the
+    -- words "off the record". The one change is the list of kinds the column accepts.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question', 'off_record'));
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11818,6 +11830,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
+    ("0198_off_record_lines", OFF_RECORD_LINES),  # the "off the record" marker line (#2466)
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)

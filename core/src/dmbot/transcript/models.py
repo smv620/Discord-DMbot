@@ -41,6 +41,12 @@ SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 # transcript. DMbot's answer to either is a SIDEBAR_ANSWER line.
 SIDEBAR_TABLE_QUESTION = "table_question"
 QUESTION_KINDS = (SIDEBAR_QUESTION, SIDEBAR_TABLE_QUESTION)
+# A stretch where someone was off the record (#2466): the marker line "(Mia was off the record,
+# nothing recorded, 20:14-20:19 UTC)" in both versions, so a reader sees the gap is on purpose.
+# Stored with the sidebar kinds so it needs no new table; it holds no speech (nothing was
+# captured), only when it began (`started_ms`) and how long it lasted (`duration_ms`).
+OFF_RECORD = "off_record"
+OFF_RECORD_WORDS = "off the record"
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
 # Typed in the table's chat (#1118): not speech, so no speech-to-text in its lineage.
 VIA_TABLE_CHAT = "table-chat"
@@ -103,7 +109,12 @@ class Line:
     message_id: int = 0
 
     def __post_init__(self) -> None:
-        if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
+        if self.sidebar not in (
+            "",
+            SIDEBAR_ANSWER,
+            OFF_RECORD,
+            *QUESTION_KINDS,
+        ):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
         if tidy != self.entity:  # one line, never blank, never too long for the database
@@ -142,6 +153,13 @@ class TranscriptBuffer:
 
     def drop_speaker(self, user_id: int) -> None:
         self._waiting = [w for w in self._waiting if w.user_id != user_id]
+
+    def drop_since(self, user_id: int, started_ms: int) -> None:
+        """ "Hey DMbot, off the record": what this person said from the moment they said it, which
+        may already have arrived (a later clip can be written down before the earlier one)."""
+        self._waiting = [
+            w for w in self._waiting if not (w.user_id == user_id and w.started_ms >= started_ms)
+        ]
 
     def take(self, allowed: Callable[[int], bool]) -> list[Line]:
         """Everything waiting from people still allowed; nothing is left behind."""

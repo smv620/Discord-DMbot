@@ -29,6 +29,11 @@ class TheNumbers(unittest.TestCase):
         self.assertEqual(short.span_minutes(lines), 20)
         self.assertTrue(short.is_short(20, short.talk_minutes(lines, {ALICE})))
 
+    def test_an_off_the_record_marker_is_no_speech_and_does_not_stretch_the_span(self) -> None:
+        marker = said(5, 90, sidebar="off_record")  # (#2466) a long break, no talk in it
+        self.assertEqual(short.span_minutes([said(0, 10), said(10, 10), marker]), 20)
+        self.assertEqual(short.span_minutes([marker]), 0)
+
     def test_two_hours_with_ten_minutes_of_game_talk_is_short(self) -> None:
         lines = [said(0, 10), said(110, 10, topic="off_topic")]
         lines += [said(20, 90, BOB, topic="off_topic")]
