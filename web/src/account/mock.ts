@@ -1595,6 +1595,42 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (token !== "good-link") throw new ApiError("bad-link");
       me = scenarioMe("table");
     },
+    // The hand-over accept page (#2534). Tokens: `open` (can accept), `no-plan`, `try-it`, `own`, `late`
+    // (ended); `gone-after` looks open and ends before accepting.
+    async handoverLook(token) {
+      calls.push(`handoverLook:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      return {
+        status: "open",
+        campaign: { name: "The Silver Hall" },
+        from: { name: "Mira" },
+        server: { id: "s1", name: "Friday Night Dice" },
+        canAccept: why === null,
+        why,
+        servers: [
+          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+          { id: "s2", name: "Sunday Table", current: false, botIn: true },
+          { id: "s3", name: "New Server", current: false, botIn: false },
+        ],
+      };
+    },
+    async handoverAccept(token, serverId) {
+      calls.push(`handoverAccept:${token}:${serverId}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+      if (serverId === "s3") throw new ApiError("bad-server");
+      return { campaignRef: "s1.cmp1" };
+    },
+    async handoverDecline(token) {
+      calls.push(`handoverDecline:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+    },
     async getMoveCode() {
       calls.push("move-code");
       signedIn();

@@ -10,6 +10,8 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { HANDOVER_LIVE, handoverWords } from "../content/handover-words";
+import { handoverToken } from "./Handover";
 import { keepFocus } from "./focus";
 import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
@@ -513,6 +515,12 @@ function SignedIn({
         <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
+      {HANDOVER_LIVE && handoverToken("") !== null && (
+        // An offer link was opened before signing in: its code was kept, so the way back is here.
+        <p class="ok" role="status">
+          {handoverWords.waitingOnAccount} <a href="/handover">{handoverWords.waitingLink}</a>
+        </p>
+      )}
       {installMessage && <ForgetInstallResult />}
       {installMessage && (
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">

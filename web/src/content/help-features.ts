@@ -28,6 +28,16 @@ export const featureSteps: FeatureStep[] = [
     text: "On My Account, each campaign is a card. Tap its name to open its page. 🟢 Listening now means a session is running. The card also says your part: You run it, You help run it or You play in it. It shows sessions, hours, players, NPCs and when it started and was last played. Anything DMbot doesn't know yet is left out.",
   },
   {
+    audience: "account",
+    whatsNew: "Receive a campaign by email",
+    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on, then accept, or say no thanks. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the game master to hand the campaign over again.",
+  },
+  {
+    audience: "account",
+    whatsNew: "Receive a campaign by email",
+    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on, then accept, or say no thanks. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the game master to hand the campaign over again.",
+  },
+  {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
     text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
