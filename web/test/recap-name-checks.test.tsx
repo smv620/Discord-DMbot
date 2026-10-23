@@ -197,3 +197,14 @@ describe("the codes the bot writes", () => {
     expect(said).not.toBe(w.problem.server);
   });
 });
+
+describe("a busy answer through the real client", () => {
+  it("is read as slow-down, and the page has words for it", async () => {
+    const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: "busy" }), { status: 409 })) as typeof fetch);
+    const caught = await api.answerNameCheck!("5.abc.1700", "n1", { action: "not_a_name" }).catch((e) => e);
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught.kind).toBe("slow-down");
+    expect(w.problem[caught.kind]).toBeTruthy();
+    expect(w.problem[caught.kind]).not.toBe(w.problem.server);
+  });
+});

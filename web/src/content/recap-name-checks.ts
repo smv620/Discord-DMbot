@@ -50,6 +50,8 @@ export const nameCheckWords = {
     "bad-spelling": "That spelling can't be used. Try other letters.",
     failed: "That didn't save, and nothing was changed. Press the button again.",
     busy: "DMbot is busy with another answer. Try again in a moment.",
+    // The API's own `busy` (409) is read by the client as "slow-down".
+    "slow-down": "DMbot is busy with another answer. Try again in a moment.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
     server: "Something went wrong. Try again in a minute.",
   } as Record<string, string>,
