@@ -11135,6 +11135,14 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+SESSION_PAUSES = """
+    -- Off the record (#2466): the pauses that are on, kept with the saved session so a restart
+    -- that resumes the session resumes them too. {"people": {"<user id>": <ends at, Unix seconds
+    -- or null for until resumed>}, "table": <ends at or null>}. A new column with a default, so no
+    -- row changes; the session's row already holds this server's data only.
+    ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11220,6 +11228,12 @@ RECAP_HELD_NAMES = r"""
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
+
+BACKSTORY_LINK_WORDS = """
+    -- A stated relationship no fixed kind fits is kept on the catch-all with the words the text
+    -- used (#2454), so a waiting connection has to carry them until the DM keeps it.
+    ALTER TABLE backstory_links ADD COLUMN detail TEXT NOT NULL DEFAULT '';
 """
 
 CAMPAIGN_FACTS = """
@@ -11647,8 +11661,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
+    ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
 )

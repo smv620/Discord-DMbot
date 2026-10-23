@@ -631,7 +631,7 @@ async def dmbot_names(
     if (file is not None or link) and mine:  # only read for someone who may use it
         from dmbot.ui.name_lists import NO_AI_FOR_DOCUMENTS, read_attachment, read_link_once
 
-        if file is None and bot.ai is None:  # a link is always for the AI: don't fetch it
+        if file is None and bot.background_ai is None:  # a link is always for the AI: no fetch
             await _tell(interaction, NO_AI_FOR_DOCUMENTS)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)

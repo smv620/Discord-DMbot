@@ -146,6 +146,7 @@ class Tiers(unittest.TestCase):
             {
                 Feature.NAMES: AIModelTier.CAREFUL,
                 Feature.NAMES_BACKGROUND: AIModelTier.FAST,  # a DM's background (#2167)
+                Feature.NAMES_BACKGROUND_READ: AIModelTier.CAREFUL,  # pass 1 of it (#2454)
                 Feature.TOPIC: AIModelTier.FAST,
                 Feature.AUDIO_CHECK: AIModelTier.FAST,
                 Feature.SIDEBAR: AIModelTier.FAST,
@@ -185,6 +186,7 @@ class Tiers(unittest.TestCase):
         for client, job in (
             (bot.ai, Feature.NAMES),
             (bot.background_ai, Feature.NAMES_BACKGROUND),
+            (bot.background_read_ai, Feature.NAMES_BACKGROUND_READ),
             (bot.topic_ai, Feature.TOPIC),
             (bot.audio_ai, Feature.AUDIO_CHECK),
             (bot.sheet_ai, Feature.SHEET),

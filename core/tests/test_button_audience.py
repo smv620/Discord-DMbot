@@ -74,6 +74,9 @@ AUDIENCE: dict[str, str] = {
             "consent_dm.DeleteYesButton",
             "consent_dm.KeepButton",
             "consent_dm.MenuButton",
+            "consent_dm.OffRecordButton",  # off the record: only your own recording (#2466)
+            "consent_dm.OffRecordForButton",
+            "consent_dm.ResumeButton",
             "consent_dm.SaveVoiceButton",
             "consent_dm.StartButton",
             "consent_dm.StopButton",
@@ -158,6 +161,9 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.recap_panel.RecapsButton",
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
+            "dm_screen.table_pause.PauseTableButton",  # the table's off the record (#2466)
+            "dm_screen.table_pause.PauseTableForButton",
+            "dm_screen.table_pause.ResumeTableButton",
             "dm_screen.set_update.SetUpdateButton",
             "dm_screen.settings.FeaturesButton",
             "dm_screen.settings.HomebrewButton",
@@ -204,6 +210,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_hold.WriteNowButton",
             "ui.recap_share.ShareButton",
             "ui.recap_short.ShortRecapButton",
+            "ui.revealed_report.UndoRevealedButton",
             "ui.secret_aloud.SecretAloudButton",
             "ui.secret_reveal.RevealButton",
             "ui.story_watch.KnowButton",

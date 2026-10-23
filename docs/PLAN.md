@@ -1840,8 +1840,13 @@ names panel nor the speech-to-text hints can be a fixed list.
       other; only a 🤫 spelling or a clue only some know keeps the secret treatment. The recap may use an
       unrevealed name only when the table said it in that session's lines (the recap writes what the party
       knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
-      node and connection. Matching what is said at the table, and the after-session "Revealed at the
-      table" line, are the next slice.
+      node and connection. **After each session** (and each imported session) a held-back name that a
+      recorded person said or typed at the table, by its name or another of its names as whole words, is shown
+      to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
+      step: until the knowledge map review (#2410), the after-session report points to the held-back
+      connections whose names are both revealed now.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
@@ -2057,6 +2062,14 @@ names panel nor the speech-to-text hints can be a fixed list.
     text and continued if needed. **Pass 2** (the fast model) only reshapes that list into the ingestion
     format, never adding. Code then checks every quote against the original text. DMbot never says "no names
     found" when an answer was cut short.
+    *Built (#2454, migration 0191, `memory/lore_read.py`):* pass 1's room is about an eighth as many tokens as the
+    text has characters (at least 3,000, at most 8,000 and never above the model's own output limit in
+    `ai.MAX_OUTPUT_TOKENS`); a cut answer is asked for again with twice the room, and one still cut is continued
+    from the list so far (up to 3 follow-ups). Pass 2 shapes the list 50 lines at a time and halves a slice whose
+    answer is cut. Pass 1's prompt carries two worked examples (a constant, `EXAMPLES`, pinned by a test); a rumour
+    goes under NOT INCLUDED and is never a relationship. Pass 2 maps each relationship onto the fixed kinds or the
+    campaign's own, or `other` with its words: the catch-all `associated_with`, labelled with those words
+    (`backstory_links.detail`). When nothing could be read before the cut, the DM is told so, never "no names".
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
