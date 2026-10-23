@@ -2253,7 +2253,7 @@ class MemoryStore:
         wanted = set(spellings)
         async with self._write(guild_id, campaign_id, "scan") as w:
             cur = await w.conn.execute(
-                "SELECT a.id, a.text, a.key, e.name FROM memory_aliases a JOIN memory_entities e"
+                "SELECT a.id, a.text FROM memory_aliases a JOIN memory_entities e"
                 " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
                 " AND e.id = a.entity_id WHERE a.guild_id = %s AND a.campaign_id = %s"
                 " AND a.secret AND a.status = 'confirmed' AND e.status = 'confirmed'"
@@ -2264,8 +2264,6 @@ class MemoryStore:
             for r in await cur.fetchall():
                 if spelling_key(str(r["text"])) not in wanted:
                     continue
-                if str(r["key"]) == lookup_key(str(r["name"])):
-                    continue  # the main name is never secret; a leftover flag is not ours to change
                 await w.update(ALIASES, str(r["id"]), {"secret": False})
                 names += 1
             shown = 0

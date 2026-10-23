@@ -31,7 +31,10 @@ MAX_LISTED = 10  # items the message lists (and buttons it carries); the rest wa
 PER_ROW = 5  # Discord: five buttons to a row
 LABEL_MAX = 80  # characters of a name in the list
 GONE = "DMbot doesn't remember that one any more."
+BUSY = "DMbot is showing that one right now. Press again in a moment."
+NOTHING = "Nothing to take back: that one was never shown to your players."
 ALREADY = "That one is already taken back."
+ALREADY_UNDONE = "That was already undone."  # undo_batch's own words
 SECRET_AGAIN = "↩️ Taken back: number {n} is secret again."
 PRIVATE_NOTE = "(Sent to you alone, because your players can look at your DM screen.)"
 
@@ -89,6 +92,8 @@ class RecantButton(
         return cls(int(match["exposure"]), match["campaign"], int(match["guild"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer Discord at once (it waits three seconds); the work and the replies follow.
+        await interaction.response.defer()
         bot = _bot(interaction)
         # A press in a server must be in the server the message is about; in a private message the
         # server comes from the button.
@@ -115,18 +120,29 @@ class RecantButton(
         if row.status == "recanted":
             await _tell(interaction, ALREADY)
             return
+        if row.status == "settled":
+            await _tell(interaction, NOTHING)
+            return
+        if row.status == "applying":
+            await _tell(interaction, BUSY)
+            return
         if row.status == "applied" and row.batch is not None:
             try:
                 await memory.undo(campaign.guild_id, campaign.id, row.batch, source=DM)
             except TooLateToUndo as exc:
                 await _tell(interaction, str(exc))
                 return
-            except MemoryRuleError as exc:  # changed again since: it can't be put back on its own
-                await _tell(interaction, str(exc))
-                return
+            except MemoryRuleError as exc:
+                # Undone already from the change log: it is taken back, so close it here too.
+                # Anything else (changed again since) can't be put back on its own: say so.
+                if str(exc) != ALREADY_UNDONE:
+                    await _tell(interaction, str(exc))
+                    return
             if bot.lookup is not None:
                 bot.lookup.drop([campaign.id])
-        await exposures.mark(campaign.guild_id, campaign.id, [row.id], "recanted")
+        if not await exposures.mark(campaign.guild_id, campaign.id, [row.id], "recanted"):
+            await _tell(interaction, BUSY)  # shown meanwhile: press again
+            return
         # Close this button on the message, and say so without a name (the message may be seen).
         view = discord.ui.View.from_message(interaction.message, timeout=None)  # type: ignore[arg-type]
         number = 0
@@ -135,7 +151,7 @@ class RecantButton(
                 item.disabled = True  # type: ignore[attr-defined]
                 item.label = (item.label or "").replace("↩️ Recant", "↩️ Taken back")  # type: ignore[attr-defined]
                 number = int("".join(c for c in item.label if c.isdigit()) or 0)  # type: ignore[attr-defined]
-        await interaction.response.edit_message(view=view, allowed_mentions=NO_PINGS)
+        await interaction.edit_original_response(view=view, allowed_mentions=NO_PINGS)
         await interaction.followup.send(
             SECRET_AGAIN.format(n=number) if number else "↩️ Taken back.",
             ephemeral=True,

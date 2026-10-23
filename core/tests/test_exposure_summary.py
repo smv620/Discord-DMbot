@@ -15,8 +15,10 @@ from dmbot.bot import DMBot
 from dmbot.memory.exposures import Exposure, ExposureStore, describe
 from dmbot.memory.models import CONFIRMED, spelling_key
 from dmbot.ui.exposure_summary import (
+    BUSY,
     GONE,
     MAX_LISTED,
+    NOTHING,
     RecantButton,
     summary_text,
     summary_view,
@@ -136,6 +138,9 @@ class Showing(Base):
     async def test_the_rows_move_once_and_only_from_the_right_state(self) -> None:
         await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "auril", None, 2)])
         (row,) = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applied", 55), 0)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applying"), 1)
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applying"), 0)
         self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applied", 55), 1)
         self.assertEqual(await self.store.mark(GUILD_A, self.c, [row.id], "applied", 66), 0)
         got = await self.store.one(GUILD_A, self.c, row.id)
@@ -274,10 +279,11 @@ class Recanting(StepBase):
             user=SimpleNamespace(id=user),
             message=SimpleNamespace(),
             response=SimpleNamespace(
-                edit_message=AsyncMock(),
+                defer=AsyncMock(),
                 send_message=AsyncMock(),
-                is_done=lambda: False,
+                is_done=lambda: True,  # (answered at once by the defer: replies go by followup)
             ),
+            edit_original_response=AsyncMock(),
             followup=SimpleNamespace(send=AsyncMock()),
         )
 
@@ -306,7 +312,7 @@ class Recanting(StepBase):
         got = await self.store.one(GUILD_A, self.c, row.id)
         assert got is not None
         self.assertEqual(got.status, "recanted")
-        sent = interaction.response.edit_message.await_args.kwargs["view"]
+        sent = interaction.edit_original_response.await_args.kwargs["view"]
         self.assertTrue(sent.children[0].disabled)
         self.assertIn("Taken back", sent.children[0].label)
         self.assertIn("secret again", interaction.followup.send.await_args.args[0])
@@ -315,17 +321,17 @@ class Recanting(StepBase):
     async def test_a_second_press_and_a_stranger_change_nothing(self) -> None:
         bot, alias, row = await self.shown()
         stranger = await self.press(bot, row.id, user=99)
-        self.assertEqual(stranger.response.send_message.await_args.args[0], NOT_YOURS)
+        self.assertEqual(stranger.followup.send.await_args.args[0], NOT_YOURS)
         self.assertFalse(await self.is_secret(alias))
         await self.press(bot, row.id)
         again = await self.press(bot, row.id)
-        self.assertIn("already", again.response.send_message.await_args.args[0])
+        self.assertIn("already", again.followup.send.await_args.args[0])
         self.assertTrue(await self.is_secret(alias))
 
     async def test_an_unknown_exposure_is_not_found(self) -> None:
         bot = self.bot(campaign(id=self.c))
         interaction = await self.press(bot, 987654)
-        self.assertEqual(interaction.response.send_message.await_args.args[0], GONE)
+        self.assertEqual(interaction.followup.send.await_args.args[0], GONE)
 
     async def test_when_it_was_changed_again_since_it_stays_shown_and_says_so(self) -> None:
         bot, alias, row = await self.shown()
@@ -337,7 +343,100 @@ class Recanting(StepBase):
         got = await self.store.one(GUILD_A, self.c, row.id)
         assert got is not None
         self.assertEqual(got.status, "applied")  # not marked taken back: it was not
-        interaction.response.send_message.assert_awaited()
+        interaction.followup.send.assert_awaited()
+
+    async def test_a_recant_pressed_before_the_showing_keeps_it_secret(self) -> None:
+        alias = await self.waiting_secret()
+        row = (await self.store.waiting(GUILD_A, self.c))[0]
+        bot = self.bot(campaign(id=self.c))
+
+        async def posted(*args: Any, **kw: Any) -> bool:
+            await self.press(bot, row.id)  # the DM presses while the loop has not reached it
+            return True
+
+        bot.post = posted
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertTrue(await self.is_secret(alias))  # never shown
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual(got.status, "recanted")
+
+    async def test_a_recant_while_it_is_being_shown_waits(self) -> None:
+        await self.waiting_secret()
+        row = (await self.store.waiting(GUILD_A, self.c))[0]
+        await self.store.mark(GUILD_A, self.c, [row.id], "applying")
+        interaction = await self.press(self.bot(campaign(id=self.c)), row.id)
+        self.assertEqual(interaction.followup.send.await_args.args[0], BUSY)
+
+    async def test_a_recant_on_a_settled_row_says_nothing_was_shown(self) -> None:
+        await self.waiting_secret()
+        row = (await self.store.waiting(GUILD_A, self.c))[0]
+        await self.store.mark(GUILD_A, self.c, [row.id], "settled")
+        interaction = await self.press(self.bot(campaign(id=self.c)), row.id)
+        self.assertEqual(interaction.followup.send.await_args.args[0], NOTHING)
+        interaction.edit_original_response.assert_not_awaited()
+
+    async def test_a_recant_after_the_change_log_undid_it_closes_the_button(self) -> None:
+        bot, alias, row = await self.shown()
+        assert row.batch is not None
+        await self.memory.undo(GUILD_A, self.c, row.batch, source="dm")  # from the change log
+        interaction = await self.press(bot, row.id)
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual(got.status, "recanted")
+        interaction.edit_original_response.assert_awaited()
+        self.assertTrue(await self.is_secret(alias))
+
+
+class WhatIsListedIsWhatIsShown(StepBase):
+    async def test_a_main_name_made_secret_is_listed_and_shown(self) -> None:
+        owner = await self.add("Vexa", type="character", role="npc", status=CONFIRMED)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE entity_id = %s", (owner,)
+            )  # a leftover flag on the main name
+            cur = await conn.execute("SELECT id FROM memory_aliases WHERE entity_id = %s", (owner,))
+            (alias,) = [r["id"] for r in await cur.fetchall()]
+        await self.store.record(
+            GUILD_A, self.c, 100, [Exposure("name", spelling_key("Vexa"), None, 1)]
+        )
+        bot = SimpleNamespace(
+            memory=self.memory, exposures=self.store, lookup=None,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
+            settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
+            sidebar_send_dm=AsyncMock(return_value="sent"),
+        )  # fmt: skip
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertIn("Vexa", bot.post.await_args.args[1])
+        self.assertFalse(await self.is_secret(alias))
+
+    async def test_a_led_to_link_is_neither_listed_nor_shown(self) -> None:
+        a = await self.add("Mira", type="character", role="npc", status=CONFIRMED)
+        b = await self.add("Rook", type="character", role="npc", status=CONFIRMED)
+        written = await self.relate(a, "led_to", b, status=CONFIRMED, secret=True)
+        rid = str(written.value[0].id)
+        await self.store.record(GUILD_A, self.c, 100, [Exposure("connection", None, rid, 1)])
+        rows = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(await describe(self.memory, GUILD_A, self.c, rows), [])
+        shown = await self.memory.reveal_exposed(GUILD_A, self.c, spellings=[], relation_ids=[rid])
+        self.assertEqual((shown.value, shown.batch), ((0, 0), None))
+
+
+class RunningTwice(StepBase):
+    async def test_a_second_run_sends_nothing_and_shows_nothing_more(self) -> None:
+        await self.secret_name("Auril")
+        await self.store.record(
+            GUILD_A, self.c, 100, [Exposure("name", spelling_key("Auril"), None, 1)]
+        )
+        bot = SimpleNamespace(
+            memory=self.memory, exposures=self.store, lookup=None,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
+            settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
+            sidebar_send_dm=AsyncMock(return_value="sent"),
+        )  # fmt: skip
+        await DMBot.send_exposure_summary(bot, self.table())
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertEqual(bot.post.await_count, 1)
 
 
 if __name__ == "__main__":

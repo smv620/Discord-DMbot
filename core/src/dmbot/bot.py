@@ -9499,7 +9499,7 @@ class DMBot(commands.AutoShardedBot):
             if not described:
                 return
             listed = described[:MAX_LISTED]
-            alone = campaign.dm_screen_visibility != "private"
+            by_private_message = campaign.dm_screen_visibility != "private"
             text = summary_text(
                 [words for _, words in listed],
                 len(described) - len(listed),
@@ -9507,11 +9507,11 @@ class DMBot(commands.AutoShardedBot):
                 if self.settings.site_url
                 else "",
                 campaign_name=campaign.name,
-                private=alone,
+                private=by_private_message,
             )
             view = summary_view([row.id for row, _ in listed], cid, gid)
             reached = closed = 0
-            if alone:  # players may look at the screen: it goes to the DMs only
+            if by_private_message:  # players may look at the screen: it goes to the DMs only
                 for dm_id in sorted(campaign.dm_user_ids):
                     sent = await self.sidebar_send_dm(
                         dm_id, text, summary_view([row.id for row, _ in listed], cid, gid)
@@ -9527,11 +9527,20 @@ class DMBot(commands.AutoShardedBot):
                 return  # nothing is shown to the players
             shown = 0
             for row, _ in listed:  # told: now show them, one change each
+                # Claimed first: a Recant pressed since the message went out has already taken the
+                # row (the claim then matches nothing and it stays secret), and one pressed now
+                # is told to wait, so it can never fall between the showing and the record of it.
+                if not await self.exposures.mark(gid, cid, [row.id], "applying"):
+                    continue
                 spelling = [row.spelling] if row.kind == "name" and row.spelling else []
                 relation = [row.relation_id] if row.kind == "connection" and row.relation_id else []
-                written = await self.memory.reveal_exposed(
-                    gid, cid, spellings=spelling, relation_ids=relation
-                )
+                try:
+                    written = await self.memory.reveal_exposed(
+                        gid, cid, spellings=spelling, relation_ids=relation
+                    )
+                except Exception:
+                    await self.exposures.mark(gid, cid, [row.id], "pending")  # next summary
+                    raise
                 if written.batch is None:
                     await self.exposures.mark(gid, cid, [row.id], "settled")
                     continue

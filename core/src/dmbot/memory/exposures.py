@@ -21,6 +21,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 
 from psycopg import errors
 
@@ -194,6 +195,7 @@ async def describe(
                 " LEFT JOIN memory_predicates p ON p.guild_id = r.guild_id"
                 " AND p.campaign_id = r.campaign_id AND p.key = r.predicate"
                 " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.id = ANY(%s) AND r.secret"
+                " AND r.predicate <> 'led_to'"
                 " AND r.status = 'confirmed'",
                 (*scope.ids, wanted),
             )  # fmt: skip
@@ -366,6 +368,16 @@ class ExposureStore:
                 for r in await cur.fetchall()
             ]  # fmt: skip
 
+    # Where a row may come from for each state it moves to: a second press or a second run
+    # matches nothing, and a row is claimed (`applying`) before its secret is shown.
+    _FROM: ClassVar[dict[str, tuple[str, ...]]] = {
+        "applying": ("pending",),
+        "pending": ("applying",),
+        "applied": ("applying",),
+        "settled": ("pending", "applying"),
+        "recanted": ("applied", "pending"),
+    }
+
     async def mark(
         self,
         guild_id: int,
@@ -374,16 +386,13 @@ class ExposureStore:
         status: str,
         batch: int | None = None,
     ) -> int:
-        """Move rows to `applied` (with the change-log batch that showed them), `recanted` or
-        `settled`. Only a row in the state it should leave moves: applied from pending, recanted
-        from applied or pending, so a second press does nothing."""
-        assert status in ("applied", "recanted", "settled")
-        leaving = ("pending",) if status != "recanted" else ("applied", "pending")
+        """Move rows to `status` (`applied` with the change-log batch that showed them). Only a
+        row in a state it may come from moves, and the count says how many did."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE secret_exposures SET status = %s, batch = COALESCE(%s, batch)"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
                 " AND status = ANY(%s)",
-                (status, batch, guild_id, campaign_id, list(ids), list(leaving)),
+                (status, batch, guild_id, campaign_id, list(ids), list(self._FROM[status])),
             )
             return cur.rowcount
