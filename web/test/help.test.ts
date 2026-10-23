@@ -601,3 +601,14 @@ describe("Help for the features of 2026-10-22/23 (#2498)", () => {
     for (const s of featureSteps) expect(s.text, s.whatsNew).not.toMatch(/entit|knowledge graph|API|queue|endpoint/i);
   });
 });
+
+describe("Help renders no held text (#2498)", () => {
+  it("none of the held features' steps is in the sections Help draws", () => {
+    const drawn = [...dmSteps, ...playerSteps, ...accountSteps].map((x) => x.text);
+    for (const s of featureSteps.filter((f) => !isLive(f.whatsNew))) expect(drawn, s.whatsNew).not.toContain(s.text);
+  });
+
+  it("every step of the new file ends with a full stop", () => {
+    for (const s of featureSteps) expect(s.text.endsWith("."), s.whatsNew).toBe(true);
+  });
+});
