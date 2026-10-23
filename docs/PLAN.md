@@ -3881,7 +3881,8 @@ again, and the rest of that period is not paid back unless they ask before delet
 refunds page says so, and so does the delete screen); after deletion DMbot keeps only
 the Discord account number, if that account used Try It (one trial per person), and the
 reference numbers of its payments with the account number (so no payment is counted
-twice). **Campaign ownership and hand-over (decided 2026-10-08, #437):** every campaign
+twice). *The offer and the answer below are replaced by "Hand-over by email" (owner,
+2026-10-23); ownership, the 7 days and the owner's notes stay.* **Campaign ownership and hand-over (decided 2026-10-08, #437):** every campaign
 has one owner (`campaigns.owner_user_id`): the DM who created it, or whoever restored it
 from a backup as a new campaign (replacing an existing campaign from a backup keeps that
 campaign's owner, so a restore can never be used as a hand-over; #609). Campaigns from
@@ -5140,6 +5141,64 @@ run side by side: one failing never stops the other. Not done here: marking the 
 the website's Recaps list (WebDev: `transcripts_deleted_at` is on the session row).
 
 **Bots are never transcribed** (music bots etc.) — enforced in ears by an allowlist.
+
+**Hand-over by email, and one DMbot account with several Discord accounts (owner, 2026-10-23;
+Supervisor's details marked).**
+- **Why (owner):** a Discord ID isn't tied to the Stripe customer that pays, so an offer sent to a
+  Discord account can reach someone with no account or only Try It. A hand-over is therefore
+  received **only by email**, and access is keyed on the **DMbot account**, not on one Discord ID.
+- **Hand-over by email.**
+  1. **The offer.** The owner starts it in Discord (⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over)
+     or on their account page, and types the new owner's **email address**. *(Supervisor:)* The
+     owner sees only "We've emailed the offer", never whether that address has a DMbot account or a
+     plan (the rule from #437 point 2 stands). At most 5 offers a day per owner, and one open offer
+     per campaign; a new one takes back the old one.
+  2. **The email** holds a one-use link (`/handover#<token>`, in the hash like the email-change
+     link, so no server log holds it) that works for 7 days, and **step-by-step instructions**:
+     - sign in to the DMbot website (with Discord or by email);
+     - you need a paid plan with a free campaign slot (**Try It can't receive a campaign or import
+       one**); if you don't have one, pick a plan first, and the link still works for 7 days;
+     - press **Accept**, and choose where the campaign runs: **the Discord server it runs on now**, or
+       **another server of yours** (with "Add DMbot to a server" for one it isn't on yet);
+     - **if you play on a server where DMbot already runs this campaign, your Discord account
+       simply becomes its DM there**; nothing needs installing;
+     - then start a session as usual with `/dmbot start`.
+  3. **Accepting** happens only on the website. Discord's **Accept / No thanks** buttons are removed.
+     The page checks the signed-in DMbot account at that moment: paid plan (not Try It, a trial
+     extension or the free list), a free campaign slot, and not the campaign's own owner. Ownership
+     moves to that **DMbot account**; the old owner stays a co-DM, as before. *(Supervisor:)* Moving
+     the campaign to another server is done like loading a backup into that server (everything moves,
+     consent records stay with each Discord account), and the old server's copy is removed in the same
+     change; the owner chose to hand it over, so this is not a cross-server leak.
+  4. **When the link is opened too late**, or after the owner took the offer back, or after it was
+     accepted: the page says so plainly ("This offer has ended. Ask the DM to hand the campaign over
+     again.") and changes nothing.
+  5. **The owner is told** (privately in Discord, and by email when DMbot has one) when the offer is
+     accepted, turned down, or **ends after 7 days unanswered**: "They didn't answer within 7 days, so
+     the offer ended. The campaign is still yours. You can offer it again from ⚙️ Settings →
+     🗂️ Campaign management → 🤝 Hand over, or from your account page."
+  6. *(Supervisor:)* Offers still open on the day this ships keep their Discord buttons until they end
+     (at most 7 days); no new Discord offers are made.
+- **One DMbot account, several Discord accounts.**
+  1. **The key is the DMbot account** (the account number; today's DMbot ID). Everything a person has
+     belongs to the account: the plan and hours, the campaigns they own, the campaigns they DM or
+     co-DM, sign-in, and the Stripe customer. **A Discord ID is one of a list** on the account.
+  2. **Adding a Discord account** *(Supervisor):* only by proving it. Signed in to the account on the
+     website, press **Add a Discord account** and sign in with that Discord account (Discord's own
+     sign-in). Never by typing an ID. A Discord account belongs to at most one DMbot account; one that
+     already owns campaigns or has its own plan can't be added (hand its campaigns over first). The
+     first Discord account is the one the account was made with, and the DMbot ID never changes.
+  3. **Using it:** in Discord, any of the account's Discord accounts acts as that account: it can run
+     the account's campaigns, start sessions on its plan, and is DM wherever the account is DM.
+  4. **What stays per Discord account:** **recording consent** (it belongs to the voice that is
+     recorded), who is speaking in a transcript, and Try It (one per person: a Discord account that
+     used Try It counts as used for the account it joins).
+  5. **Removing one:** from the account page, never the last one. Its campaigns stay with the account.
+  6. *(Supervisor:)* **Moving to a new Discord account** (above) becomes "add the new one, then remove
+     the old one", and `/dmbot migrate` is retired once adding works. The move history
+     (`account_id_history`) keeps recording each add and remove.
+  7. *(Supervisor, build order):* first the hand-over by email (#2532, which keys the new owner by the
+     signed-in DMbot account), then the account key change (#2533 core, #2534 website).
 
 **Accounts: the DMbot ID, email sign-in, moving to a new Discord account, trial emails,
 experience points and the trial extension (owner, 2026-10-14; Supervisor's details marked).**
