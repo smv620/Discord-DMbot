@@ -2064,7 +2064,7 @@ names panel nor the speech-to-text hints can be a fixed list.
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
     "a". Otherwise it's an aside, kept as an other name with the name in front: `Tavin (the rogue)` gives
-    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (the Rogue) how to say Tavin?" [It's how
+    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (Kael) how to say Kaela?" [It's how
     to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
   - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
   - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen

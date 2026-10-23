@@ -84,6 +84,19 @@ class Brackets(unittest.TestCase):
         got = plan(parse("Fenn (Lower Quay) | place", secrets=True).lines, known, secrets=True)
         self.assertEqual((got.new, got.more, got.known), ([], [], 1))  # no stray "Fenn" alias
 
+    def test_a_known_name_with_a_respelling_or_look_alike_bracket_stays_whole(self) -> None:
+        """Whatever the bracket turns out to be, a name the campaign holds with it is that name:
+        no new "Sera", no question about a pronunciation (#2447)."""
+        for text in ("Sera (SEH-rah)", "Sera (Sara)", "Sera (the old one)"):
+            with self.subTest(text):
+                sera = "d" * 32
+                known = CampaignLookup.build(
+                    LookupData(1, (entity(sera, text, "npc"),), (alias(sera, text),), (), ())
+                )
+                got = plan(parse(f"{text} | npc", secrets=True).lines, known, secrets=True)
+                self.assertEqual((got.new, got.more, got.known), ([], [], 1))
+                self.assertEqual((got.asks, got.sounds), ([], {}))
+
     def test_a_name_new_to_the_campaign_with_a_bracket_is_split(self) -> None:
         got = run("Fenn (Lower Quay) | place")
         self.assertEqual((got.new[0].name, got.new[0].others), ("Fenn", ("Fenn Lower Quay",)))

@@ -227,7 +227,7 @@ class ListLine:
     secrets: tuple[str, ...]
     said_as: str = ""  # a bracket that is clearly how to say the name (#2447): "TAV-in"
     ask: str = ""  # a bracket that may be how to say it: the DM is asked once
-    whole: str = ""  # the name with its bracket, when the bracket was split off as an aside
+    whole: str = ""  # the name with its bracket, when it had one (kept whole if already known)
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,21 +428,23 @@ def parse(text: str, *, secrets: bool, people: bool = True) -> Parsed:
         aside: list[str] = []
         if (bracket := split_bracket(name)) is not None:
             base, inside = bracket
+            # The whole name stays whole when the campaign already has it, whatever the bracket
+            # turns out to be: a re-upload of "Sera (Sara)" is that name, not a new "Sera" (#2447).
+            whole = name
             match judge_bracket(base, inside):
                 case "sound":  # SOUND
                     name, said_as = base, inside
                 case "near":  # NEAR_SOUND
                     name, ask = base, inside
                 case _:  # an aside: Tavin (the rogue) is Tavin, also called "Tavin the rogue"
-                    whole, name, aside = name, base, [f"{base} {inside}"]
+                    name, aside = base, [f"{base} {inside}"]
         if (cells[4] or cells[5]) and kind_of(" ".join(cells[1].split())) != "person":
             out.refused.append((number, ONLY_PEOPLE_HAVE))
             continue
         key = name_key(name)
-        others, hidden = (
-            _names(" ; ".join([*aside, cells[2]]) if aside else cells[2]),
-            _names(cells[3]),
-        )
+        # The aside is one name as written, even with a comma in it ("Vex the boss, retired"):
+        # only the typed other names are split.
+        others, hidden = ([*aside, *_names(cells[2])], _names(cells[3]))
         # Counted as kept: without the name, or a secret name said already. Before the
         # checks on each name, so a long line is refused without reading all of it.
         others = _without(others, {key})

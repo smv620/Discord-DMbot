@@ -1519,12 +1519,12 @@ class SoundQuestions(_Questions):
                 continue
             self.add_item(
                 _Button(
-                    self._answer(i, True), label=f"{i + 1}. Yes, how to say it",
+                    self._answer(i, True), label=f"{i + 1}. It's how to say it",
                     style=discord.ButtonStyle.primary, row=i,
                 )
             )  # fmt: skip
             self.add_item(
-                _Button(self._answer(i, False), label=f"{i + 1}. No, another name", row=i)
+                _Button(self._answer(i, False), label=f"{i + 1}. It's another name", row=i)
             )
 
     def _answer(self, i: int, sound: bool) -> Any:

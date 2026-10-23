@@ -95,6 +95,15 @@ class Pronunciation(unittest.TestCase):
             (one.name, one.whole, one.others), ("Fenn", "Fenn (Lower Quay)", ("Fenn Lower Quay",))
         )
 
+    def test_every_kind_of_bracket_remembers_the_whole_name(self) -> None:
+        for text in ("Sera (SEH-rah)", "Sera (Sara)", "Sera (the old one)"):
+            (one,) = parse(f"{text} | npc", secrets=True).lines
+            self.assertEqual((one.name, one.whole), ("Sera", text), text)
+
+    def test_an_aside_with_a_comma_stays_one_name(self) -> None:
+        one = self.read("Vex (the boss, retired) | npc | Vexa")
+        self.assertEqual((one.name, one.others), ("Vex", ("Vex the boss, retired", "Vexa")))
+
     def test_no_bracket_and_a_bracket_not_at_the_end_are_left_alone(self) -> None:
         self.assertEqual(self.read("Tavin | npc").said_as, "")
         one = self.read("The (old) Mill | place")
