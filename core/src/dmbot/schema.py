@@ -3154,10 +3154,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
     ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
     ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
-    (
-        "dmbot_handover_request_move",
-        "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
-    ),  # #2532
+    # dmbot_handover_request_move (#2532, slice C) is granted when the bot's move exists (C2).
     ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11966,7 +11963,7 @@ HANDOVER_MOVE = """
            OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
             RETURN false;
         END IF;
-        IF NOT (p_target = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
             RETURN false;
         END IF;
         PERFORM set_config('dmbot.guild_id', p_target::text, true);
@@ -12001,6 +11998,26 @@ HANDOVER_MOVE = """
     REVOKE ALL ON FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)
         FROM PUBLIC;
 """
+
+
+# A pending move makes the doors of 0213 look away (#2532, slice C): the claimant's look says the
+# link has ended, a release leaves the claim alone, and nobody can decline underneath the move.
+# Built from 0213's own text, so the two cannot drift: the same doors, the same grants and pinned
+# search_path, with one more condition each.
+_MOVE_BLIND = (
+    HANDOVER_CLAIM.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+    .replace(
+        "AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()",
+        "AND f.status = 'open' AND f.move_to_guild_id IS NULL"
+        " AND f.created_at + 604800 > dmbot_now()",
+    )
+    .replace(
+        "AND status = 'open' AND to_user_id = me;",
+        "AND status = 'open' AND move_to_guild_id IS NULL AND to_user_id = me;",
+    )
+)
+assert _MOVE_BLIND.count("move_to_guild_id IS NULL") == 3, "0214 must change all three doors"
+HANDOVER_MOVE += _MOVE_BLIND
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
