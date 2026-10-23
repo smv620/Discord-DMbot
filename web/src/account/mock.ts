@@ -234,6 +234,10 @@ export function scenarioMe(scenario: Scenario): Me | null {
     servers,
     recording,
     dmbotId: "1P0Z4F6N2K9",
+    discordAccounts: [
+      { key: "d1", name: "Mira (main)", current: true, canRemove: true },
+      { key: "d2", name: "Mira on the phone", current: false, canRemove: true },
+    ],
     experiencePoints: 1245,
     canMove: false,
     canSupport: false,
@@ -1650,6 +1654,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       if (token === "gone-after") throw new ApiError("ended");
+    },
+    addDiscordUrl: () => "#demo-add-discord",
+    async removeDiscordAccount(key) {
+      calls.push(`removeDiscordAccount:${key}`);
+      await reachable();
+      signedIn();
+      const list = me?.discordAccounts ?? [];
+      const found = list.find((a) => a.key === key);
+      if (!found) throw new ApiError("not-found");
+      if (list.length <= 1) throw new ApiError("last-account");
+      const left = list.filter((a) => a.key !== key);
+      me = { ...me!, discordAccounts: left.map((a) => ({ ...a, canRemove: left.length > 1 })) };
     },
     async getMoveCode() {
       calls.push("move-code");

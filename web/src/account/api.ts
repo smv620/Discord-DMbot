@@ -180,6 +180,17 @@ export type HandoverLook =
       servers: HandoverServer[];
     };
 
+/** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
+ * Discord number; the page shows `name` only. */
+export interface DiscordAccount {
+  key: string;
+  name: string;
+  /** The one signed in right now. */
+  current: boolean;
+  /** False for the last one. */
+  canRemove: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -187,6 +198,8 @@ export interface Me {
   access?: Access;
   campaigns: Campaign[];
   servers: Server[];
+  /** The Discord accounts on this DMbot account (#2534). Missing from an API older than #2533. */
+  discordAccounts?: DiscordAccount[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
@@ -1152,6 +1165,7 @@ export type ApiErrorKind =
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1203,6 +1217,10 @@ export interface AccountApi {
   handoverLook?(token: string): Promise<HandoverLook>;
   handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
   handoverDecline?(token: string): Promise<void>;
+  /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
+  addDiscordUrl?(): string;
+  /** Take one Discord account off this DMbot account; never the last (#2534). */
+  removeDiscordAccount?(key: string): Promise<void>;
   /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
    * Missing from an API older than that. */
   myEmail?(): Promise<MyEmail>;
@@ -1444,6 +1462,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   ended: "ended",
   owner: "owner-offer",
   bad_server: "bad-server",
+  last_account: "last-account",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1648,6 +1667,10 @@ export function httpApi(
       (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
     handoverDecline: async (token) => {
       await call("POST", "/me/handover/decline", { token });
+    },
+    addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
+    removeDiscordAccount: async (key) => {
+      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
