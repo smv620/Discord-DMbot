@@ -174,6 +174,12 @@ Some jobs are easy and some are hard, so DMbot uses different-sized AI brains:
 
 Small jobs use the small brain, so DMbot stays quick at the table and doesn't cost more than it needs to.
 
+### Still have a question?
+
+Send it to us on the **Say hello** page. It has a short form, and we read every message. You can also
+read and ask in the public **Questions and answers**, where anyone can see the answers (so don't put
+private details there).
+
 ---
 
 ## Part 2: For builders
