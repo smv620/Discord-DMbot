@@ -412,10 +412,11 @@ terminal output or Discord screenshots copied to it.
   a table holding rows. Open **every** table the statement reads, not only the one it
   writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
   backfill would have deleted every row it meant to fill).
-- **Claim the migration number on the issue before pushing** (Supervisor, 2026-10-16, after
-  three collisions in one night: #1430, #1452, #1453): comment "Claiming migration NNNN_name" on
-  your issue, taking the lowest number no open PR or issue has claimed, then push. A collision
-  found at review is renumbered by the later claimant. Names order the list, so a gap is fine.
+- **Claim the migration number on #2475 before pushing** (Supervisor, 2026-10-16; one place since
+  2026-10-23, after four more collisions in one night when claims sat on separate issues): read
+  #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
+  comments claim the same number, the earlier keeps it and the later renumbers. Names order the
+  list, so a gap is fine.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests
