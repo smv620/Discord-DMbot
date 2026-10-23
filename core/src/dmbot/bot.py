@@ -830,6 +830,9 @@ class Table:
     # The new names the after-session scan found (#2410): they ride in the secrets summary when
     # there is one, and are posted on their own by the "new names" step when nothing carried them.
     new_names: list[str] = field(default_factory=list)
+    # How many things said at the table wait for the DM's check (#2410): counted by the "what was
+    # said" step, told by the summary when it goes to the DM screen, else posted on its own.
+    claims_waiting: int = 0
     # Who answered to which name this session ("a name, then an answer", #1188); in memory
     # only, and nothing a speaker said stays once they stop being recorded.
     name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
@@ -2902,12 +2905,13 @@ class DMBot(commands.AutoShardedBot):
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
-            ("what was said", lambda: self.ask_about_claims(table)),
+            ("what was said", lambda: self.note_claims(table)),
             ("names said at the table", lambda: self.reveal_names_said(table)),
             # (replaces the secret-name question: the summary says what was shown, with Recant)
             ("secret exposures", lambda: self.record_exposures(table)),
             ("secret summary", lambda: self.send_exposure_summary(table)),
             ("new names", lambda: self.post_new_names(table)),
+            ("new connections", lambda: self.post_claims(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
@@ -9531,6 +9535,7 @@ class DMBot(commands.AutoShardedBot):
                     campaign_name=campaign.name,
                     private=private,
                     new_names=table.new_names,
+                    claims_waiting=0 if private else table.claims_waiting,
                 )
 
             async def by_private_message(dm_ids: Iterable[int]) -> tuple[int, int]:
@@ -9539,20 +9544,27 @@ class DMBot(commands.AutoShardedBot):
                     sent = await self.sidebar_send_dm(
                         dm_id,
                         message(True),
-                        summary_view(ids, cid, gid, new_names=bool(table.new_names)),
+                        summary_view(ids, cid, gid, new_names=bool(table.new_names), private=True),
                     )
                     reached += sent == "sent"
                     closed += sent == "forbidden"
                 return reached, closed
 
             reached = closed = 0
+            on_screen = 0  # the message stayed on the DM screen (the count of checks is in it)
             if campaign.dm_screen_visibility != "private":  # players may look at the screen
                 reached, closed = await by_private_message(campaign.dm_user_ids)
             else:
                 sent = await self.post_message(
                     table.screen_channel_id,
                     message(False),
-                    summary_view(ids, cid, gid, new_names=bool(table.new_names)),
+                    summary_view(
+                        ids,
+                        cid,
+                        gid,
+                        new_names=bool(table.new_names),
+                        claims=bool(table.claims_waiting),
+                    ),
                 )
                 if sent is not None:
                     # Asked again after the send: if the screen opened up meanwhile the message is
@@ -9563,13 +9575,15 @@ class DMBot(commands.AutoShardedBot):
                         reached, closed = await by_private_message((now or campaign).dm_user_ids)
                     else:
                         secret_posts.remember(gid, cid, sent)
-                        reached = 1
+                        reached = on_screen = 1
             if not reached:
                 log.warning("The secrets summary could not be sent: %d waiting", len(described))
                 if closed:  # nobody could be told because their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
             table.new_names = []  # the message listed them: nobody is told twice
+            if on_screen:
+                table.claims_waiting = 0  # the screen message carried the count
             shown = failed = 0
             for row, _ in listed:  # told: now show them, one change each
                 # Claimed first: a Recant pressed since the message went out has already taken the
@@ -9675,24 +9689,33 @@ class DMBot(commands.AutoShardedBot):
             if found:
                 log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
 
-    async def ask_about_claims(self, table: Table) -> None:
-        """After a session: if the story extractor left proposals waiting (#1297), the DM
-        screen says how many, never what, with a button only the DM can use. With the
-        extractor off (the default) nothing is ever waiting and nothing is posted; this step
-        itself makes no AI call."""
+    async def note_claims(self, table: Table) -> None:
+        """After a session (#1297): count the proposals the story extractor left waiting. With the
+        extractor off (the default) nothing is ever waiting; this step makes no AI call. The
+        summary tells the DM when it goes to the DM screen (#2410); `post_claims` otherwise."""
         if self.memory is None or table.campaign_id is None:
             return
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             agreed = await self.consent.consenting(gid)
             counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
-            waiting = counts.get("proposed", 0)
-            if waiting:
-                await self.post(
-                    table.screen_channel_id,
-                    claims_waiting_text(waiting),
-                    view=claims_review_view(cid),
-                )
+            table.claims_waiting = counts.get("proposed", 0)
+
+    async def post_claims(self, table: Table) -> None:
+        """The DM screen says how many things wait for the check, never what, with a button only
+        the DM can use, when the summary has not already said so."""
+        waiting, table.claims_waiting = table.claims_waiting, 0
+        if waiting and table.campaign_id is not None:
+            await self.post(
+                table.screen_channel_id,
+                claims_waiting_text(waiting),
+                view=claims_review_view(table.campaign_id),
+            )
+
+    async def ask_about_claims(self, table: Table) -> None:
+        """Count and tell in one go: the two steps above, for a caller that wants both."""
+        await self.note_claims(table)
+        await self.post_claims(table)
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed

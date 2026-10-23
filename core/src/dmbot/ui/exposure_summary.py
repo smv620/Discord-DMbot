@@ -24,6 +24,7 @@ import discord
 from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
+from dmbot.ui.claims_review import ClaimsReviewButton
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.names import RecapNamesButton, ReviewButton
 from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS
@@ -59,6 +60,7 @@ def summary_text(
     campaign_name: str = "",
     private: bool = False,
     new_names: Sequence[str] = (),
+    claims_waiting: int = 0,
 ) -> str:
     """The message. `items`: one plain line each, in order (a name, or two names and how they are
     tied); `waiting`: how many more there are than listed. Short and plain: what was said, that the
@@ -80,6 +82,9 @@ def summary_text(
     if new_names:
         lines.append("")
         lines.append(names_line(new_names))
+    if claims_waiting:
+        lines.append("")
+        lines.append(claims_line(claims_waiting))
     if private:
         lines.append(PRIVATE_NOTE)
     return "\n".join(lines)
@@ -96,6 +101,16 @@ def names_line(names: Sequence[str]) -> str:
     return (
         f"🆕 **{len(names)} {what} to check:** {shown}{more}. "
         "Say which are in your game, so DMbot spells them right."
+    )
+
+
+def claims_line(count: int) -> str:
+    """The 🔗 line: how many things said at the table wait for the check, never what (the check
+    itself says what, privately, with ✅ remember, 🤫 true but secret and ❌ not true)."""
+    what = "thing" if count == 1 else "things"
+    return (
+        f"🔗 **{count} {what} said at the table to check.** Nothing is remembered until you say "
+        "so: true, true but secret from your players, or not true."
     )
 
 
@@ -201,6 +216,7 @@ def summary_view(
     *,
     new_names: bool = False,
     private: bool = False,
+    claims: bool = False,
 ) -> discord.ui.View:
     """One ↩️ Recant button for each listed item, five to a row, numbered like the list; then the
     📝 Check new names button on its own row when the message lists new names."""
@@ -214,4 +230,8 @@ def summary_view(
         check = RecapNamesButton(guild_id, campaign_id) if private else ReviewButton(campaign_id)
         check.item.row = 2  # after the (at most two) rows of Recant buttons
         view.add_item(check)
+    if claims and not private:  # the check needs the server: only the screen's button has it
+        check_claims = ClaimsReviewButton(campaign_id)
+        check_claims.item.row = 2
+        view.add_item(check_claims)
     return view

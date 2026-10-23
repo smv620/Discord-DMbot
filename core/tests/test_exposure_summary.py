@@ -221,7 +221,11 @@ class StepBase(Base):
 
     def table(self) -> Any:
         return SimpleNamespace(
-            guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=55, new_names=[]
+            guild_id=GUILD_A,
+            campaign_id=self.c,
+            screen_channel_id=55,
+            new_names=[],
+            claims_waiting=0,
         )
 
     async def waiting_secret(self) -> str:
@@ -263,6 +267,42 @@ class TheStep(StepBase):
         self.assertIn("🆕 **1 new name to check:** **Bryn Shander**", text)
         self.assertTrue(any(getattr(c, "item", c).row == 2 for c in view.children))
         self.assertEqual(table.new_names, [])  # nobody hears them twice
+
+    async def test_a_private_copy_carries_the_names_button_that_works_without_a_server(
+        self,
+    ) -> None:
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c, dm_screen_visibility="open"))
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        await DMBot.send_exposure_summary(bot, table)
+        view = bot.sidebar_send_dm.await_args.args[2]
+        ids = [getattr(c, "item", c).custom_id for c in view.children]
+        self.assertIn(f"dmbot:names:recap:{GUILD_A}:{self.c}", ids)
+        self.assertNotIn(f"dmbot:names:review:{self.c}", ids)
+
+    async def test_the_count_of_things_to_check_rides_on_the_screen_message(self) -> None:
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c))
+        table = self.table()
+        table.claims_waiting = 3
+        await DMBot.send_exposure_summary(bot, table)
+        text, view = bot.post_message.await_args.args[1:3]
+        self.assertIn("🔗 **3 things said at the table to check.**", text)
+        self.assertIn(
+            f"dmbot:claims:review:{self.c}",
+            [getattr(c, "item", c).custom_id for c in view.children],
+        )
+        self.assertEqual(table.claims_waiting, 0)  # told: the "new connections" step stays quiet
+
+    async def test_a_private_copy_leaves_the_check_to_the_screen_post(self) -> None:
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c, dm_screen_visibility="open"))
+        table = self.table()
+        table.claims_waiting = 3
+        await DMBot.send_exposure_summary(bot, table)
+        self.assertNotIn("🔗", bot.sidebar_send_dm.await_args.args[1])  # (no server to check in)
+        self.assertEqual(table.claims_waiting, 3)  # posted by the "new connections" step
 
     async def test_new_names_wait_for_their_own_post_when_the_summary_cannot_go(self) -> None:
         await self.waiting_secret()
