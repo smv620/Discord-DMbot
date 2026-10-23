@@ -46,11 +46,9 @@ class TheShape(unittest.TestCase):
         done = one("recap_ready", NOW, reason="leftover")
         self.assertEqual((done["state"], done["reason"]), ("done", None))
 
-    def test_a_job_waiting_to_be_taken_stalls_only_after_an_hour(self) -> None:
-        hours_ago = NOW - 30 * 60
-        self.assertEqual(one("cleaning", hours_ago, queued=True)["state"], "running")
-        self.assertEqual(one("cleaning", hours_ago)["state"], "stalled")
-        self.assertEqual(one("cleaning", NOW - 3601, queued=True)["state"], "stalled")
+    def test_a_stalled_state_always_says_stalled_not_an_older_reason(self) -> None:
+        got = one("checking_names", 1000, reason="partly_labelled")
+        self.assertEqual((got["state"], got["reason"]), ("stalled", "stalled"))
 
     def test_a_recap_that_was_held_or_declined_is_an_end_not_a_stall(self) -> None:
         got = one("recap_not_written", 1000)
@@ -79,12 +77,22 @@ class TheWholeImport(unittest.TestCase):
         )
         self.assertEqual((got["startedAt"], got["updatedAt"]), (1000, NOW))
 
-    def test_a_failed_or_stalled_session_shows_on_the_whole(self) -> None:
+    def test_a_stalled_session_shows_on_the_whole_even_beside_a_failed_one(self) -> None:
         stalled = one("cleaning", 1000)
-        failed = one("failed", NOW, reason="x")
+        failed = one("failed", NOW, reason="error")
         self.assertEqual(pg.whole([one("done", NOW), stalled], now=NOW)["state"], "stalled")
         got = pg.whole([stalled, failed], now=NOW)
-        self.assertEqual((got["state"], got["reason"]), ("failed", "x"))
+        self.assertEqual(
+            (got["state"], got["reason"], got["stage"]), ("stalled", "stalled", "cleaning")
+        )
+        moving = pg.whole([one("cleaning", NOW), failed], now=NOW)
+        self.assertEqual((moving["state"], moving["reason"]), ("running", None))
+
+    def test_it_is_failed_only_when_nothing_can_move_any_more(self) -> None:
+        got = pg.whole([one("done", NOW), one("failed", NOW, reason="names_failed")], now=NOW)
+        self.assertEqual(
+            (got["state"], got["reason"], got["stage"]), ("failed", "names_failed", "failed")
+        )
 
     def test_all_done_is_done_and_all_ended_with_a_failure_is_failed(self) -> None:
         self.assertEqual(pg.whole([one("done", NOW)], now=NOW)["stage"], "done")

@@ -47,9 +47,6 @@ ENDS: Final[Mapping[str, str]] = {
 # What a stalled job and a failed recap say (codes, like the reasons the jobs store).
 STALLED_REASON: Final = "stalled"
 RECAP_FAILED_REASON: Final = "recap_failed"
-# A job still waiting to be taken (the bot works a few at a time, or is stopped) stalls only after
-# this long, not after its stage's limit.
-QUEUED_STALL_S: Final = 60 * 60
 # What each count measures, for the stages that have one.
 UNITS: Final[Mapping[str, str]] = {"cleaning": "lines"}
 
@@ -64,19 +61,17 @@ def shape(
     total: int | None = None,
     unit: str | None = None,
     reason: str | None = None,
-    queued: bool = False,
 ) -> dict[str, Any]:
     """One job's progress. `updated_at` never goes before `started_at` nor after `now` (the times
     come from the database's clock and `now` from the server's, which can differ a little).
-    `queued`: not taken yet, so it waits its turn for up to `QUEUED_STALL_S` before it stalls."""
+    A job waiting its turn behind others passes the newest movement of the batch as `updated_at`,
+    so it is not called stalled while the batch moves (see `web.imports`)."""
     updated_at = min(max(updated_at, started_at), max(now, started_at))
     state = ENDS.get(stage, RUNNING)
     limit = STALL_AFTER_S.get(stage)
-    if queued and limit is not None:
-        limit = max(limit, QUEUED_STALL_S)
     if state == RUNNING and limit is not None and now - updated_at > limit:
         state = STALLED
-        reason = reason or STALLED_REASON
+        reason = STALLED_REASON  # always: a reason stored for an earlier end is not this stall's
     if state == FAILED and not reason:
         reason = RECAP_FAILED_REASON if stage == "recap_failed" else None
     if state in (RUNNING, DONE):
@@ -109,31 +104,30 @@ ORDER: Final[Sequence[str]] = (
 
 def whole(parts: Sequence[Mapping[str, Any]], *, now: int) -> dict[str, Any]:
     """The shape for a batch of jobs: `done` of `total` jobs finished (unit 'sessions'), at the
-    earliest stage any unfinished one is in, failed if one failed, else stalled if one stalled."""
+    earliest stage any unfinished one is in. While any job can still move the batch is `stalled`
+    if one is, else `running`: a failed session stays on its own row and does not hide that the
+    rest is stuck (the page would tell the DM to import again). Only when nothing can move any
+    more is it `failed` (some failed) or `done`."""
     if not parts:
         return shape("done", started_at=now, updated_at=now, now=now)
     states = [p["state"] for p in parts]
     open_stages = [p["stage"] for p in parts if p["stage"] not in ENDS]
     if open_stages:
         stage = min(open_stages, key=lambda s: ORDER.index(s) if s in ORDER else len(ORDER))
+        state = STALLED if STALLED in states else RUNNING
+        reason = STALLED_REASON if state == STALLED else None
     else:
         stage = "failed" if FAILED in states else "done"
-    state = (
-        FAILED if FAILED in states else STALLED if STALLED in states
-        else DONE if all(s == DONE for s in states) else RUNNING
-    )  # fmt: skip
-    # (a failure's reason is the one shown when a stalled session is also in the batch)
-    wanted = FAILED if state == FAILED else STALLED
-    reason = next((p["reason"] for p in parts if p["state"] == wanted and p["reason"]), None)
-    out = {
+        state = FAILED if FAILED in states else DONE
+        reason = next((p["reason"] for p in parts if p["state"] == FAILED and p["reason"]), None)
+    return {
         "stage": stage,
         "startedAt": min(int(p["startedAt"]) for p in parts),
         "updatedAt": max(int(p["updatedAt"]) for p in parts),
         "serverNow": now,
         "state": state,
-        "reason": reason if state in (FAILED, STALLED) else None,
+        "reason": reason,
         "done": sum(1 for s in states if s == DONE),
         "total": len(parts),
         "unit": "sessions",
     }
-    return out

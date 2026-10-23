@@ -11889,6 +11889,7 @@ IMPORT_STEPS = """
                        'moved', i.updated_at,
                        'recapMoved', COALESCE(r.updated_at, 0),
                        'stepDone', i.step_done, 'stepTotal', i.step_total,
+                       'scanned', i.scanned, 'recapState', r.state,
                        'stage', CASE
                            WHEN i.state = 'failed' THEN 'failed'
                            WHEN i.state <> 'done' THEN 'cleaning'

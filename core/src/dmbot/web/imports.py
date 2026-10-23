@@ -725,25 +725,49 @@ RECAP_STAGES = frozenset(
 )
 
 
-def _shape_of(s: dict[str, Any], now: int) -> dict[str, Any]:
-    """One session's progress in the shared shape. Its last move is the later of the import's own
-    and, at the recap stages, the recap job's."""
+def _queued(s: dict[str, Any]) -> bool:
+    """Whether the session is waiting its turn rather than working: cleaning goes in the order the
+    files were loaded, name scans and recaps in the order of the dates, behind every earlier
+    session, so a later session that is ready can sit still while an earlier one moves."""
     stage = s["stage"]
-    moved = int(s["moved"])
-    if stage in RECAP_STAGES:
-        moved = max(moved, int(s["recapMoved"]))
-    cleaning = stage == "cleaning"
-    return progress_shape.shape(
-        stage,
-        started_at=int(s["imported"]),
-        updated_at=moved,
-        now=now,
-        done=int(s["stepDone"]) if cleaning else None,
-        total=int(s["stepTotal"]) if cleaning else None,
-        unit=progress_shape.UNITS.get(stage),
-        reason=s["reason"] or None,
-        queued=s["state"] == "waiting",
+    return (
+        (stage == "cleaning" and s["state"] == "waiting")
+        or (stage == "checking_names" and not s["scanned"])
+        or stage == "starting_recap"
+        or (stage == "writing_recap" and s["recapState"] == "queued")
     )
+
+
+def _moved_of(s: dict[str, Any]) -> int:
+    """When the session last moved: its own row, and at the recap stages the recap job's."""
+    moved = int(s["moved"])
+    if s["stage"] in RECAP_STAGES:
+        moved = max(moved, int(s["recapMoved"]))
+    return max(moved, int(s["imported"]))
+
+
+def _shapes(found: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
+    """Each session's progress in the shared shape. A session waiting its turn takes the newest
+    movement of the whole import as its own, so it is never called stalled while the import is
+    moving; an import where nothing has moved stalls, queued sessions included."""
+    newest = max((_moved_of(s) for s in found), default=0)
+    out = []
+    for s in found:
+        cleaning = s["stage"] == "cleaning"
+        out.append(
+            progress_shape.shape(
+                s["stage"],
+                started_at=int(s["imported"]),
+                updated_at=max(newest, _moved_of(s)) if _queued(s) else _moved_of(s),
+                now=now,
+                done=int(s["stepDone"]) if cleaning else None,
+                total=int(s["stepTotal"]) if cleaning else None,
+                unit=progress_shape.UNITS.get(s["stage"]),
+                # Only a failure carries the job's own stored reason (a code).
+                reason=(s["reason"] or None) if s["stage"] == "failed" else None,
+            )
+        )
+    return out
 
 
 async def progress(
@@ -765,7 +789,7 @@ async def progress(
     if not found:
         raise RecapError("not_found")
     now = int(time.time())
-    parts = [_shape_of(s, now) for s in found]
+    parts = _shapes(found, now)
     return {
         # The whole import in the one shared shape (#2564), then each session's own `progress`.
         # A session's `state` stays the stored one (waiting, working, done, failed); the shape's

@@ -1303,6 +1303,93 @@ class TheProgress(WithImports):
         again = (await self.stage(imp))["progress"]
         self.assertEqual(again["state"], "running")
 
+    async def two_imports(self) -> tuple[str, list[str], list[int]]:
+        """Two sessions of one import, the later-dated one first in line to be cleaned."""
+        done = await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [
+                    {"file": "a.txt", "date": "2026-09-14", "writeRecap": True},
+                    {"file": "b.txt", "date": "2026-09-21", "writeRecap": True},
+                ],
+            },
+            ("a.txt", CRAIG),
+            ("b.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT i.session_id, t.started_at FROM session_imports i"
+                " JOIN transcript_sessions t ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " ORDER BY t.started_at"
+            )
+            rows = await cur.fetchall()
+        return (
+            done["importId"],
+            [r["session_id"] for r in rows],
+            [int(r["started_at"]) for r in rows],
+        )
+
+    async def test_a_session_waiting_its_turn_is_not_stalled_while_the_import_moves(self) -> None:
+        imp, sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            # the later session finished cleaning long ago and waits for the earlier one's scan;
+            # the earlier one is being scanned right now
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', imported_at = %s, updated_at = %s"
+                " WHERE session_id = %s",
+                (old, old, sessions[1]),
+            )
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', scanned = TRUE, imported_at = %s,"
+                " updated_at = %s WHERE session_id = %s",
+                (old, int(time.time()) - 5, sessions[0]),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        first, later = (s["progress"] for s in got["sessions"])
+        self.assertEqual((first["stage"], first["state"]), ("checking_names", "running"))
+        self.assertEqual((later["stage"], later["state"]), ("checking_names", "running"))
+        self.assertEqual(got["import"]["state"], "running")
+
+    async def test_when_nothing_in_the_import_has_moved_the_waiting_one_stalls_too(self) -> None:
+        imp, _sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', imported_at = %s, updated_at = %s",
+                (old, old),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual([s["progress"]["state"] for s in got["sessions"]], ["stalled", "stalled"])
+        self.assertEqual(got["import"]["state"], "stalled")
+
+    async def test_a_stored_reason_does_not_ride_along_on_a_stall(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        old = int(time.time()) - 3 * 3600
+        await self.set_import(
+            state="done", scanned=True, reason="partly_labelled", imported_at=old, updated_at=old
+        )
+        part = (await self.stage(imp))["progress"]
+        self.assertEqual((part["state"], part["reason"]), ("stalled", "stalled"))
+
+    async def test_a_failed_session_does_not_hide_a_stalled_one_in_the_import(self) -> None:
+        imp, sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET state = 'failed', reason = 'error', imported_at = %s,"
+                " updated_at = %s WHERE session_id = %s",
+                (old, old, sessions[0]),
+            )
+            await conn.execute(
+                "UPDATE session_imports SET imported_at = %s, updated_at = %s"
+                " WHERE session_id = %s",
+                (old, old, sessions[1]),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual(got["import"]["state"], "stalled")
+        self.assertEqual(got["sessions"][0]["progress"]["state"], "failed")
+
     async def test_a_failed_job_says_why_and_a_waiting_one_never_stalls(self) -> None:
         imp, _, _ = await self.one_import(True)
         await self.set_import(state="failed", reason="no names")
