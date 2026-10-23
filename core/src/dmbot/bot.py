@@ -8940,6 +8940,14 @@ class DMBot(commands.AutoShardedBot):
                     f"Read and approve this recap on your recap page first{where}. "
                     "Nothing was shared.",
                 )
+            if job.audio_choice != "text":
+                # Approved for narration or music: it is posted after the audio is made and
+                # reviewed, never by Share, so say what to do instead of a failure that can't mend.
+                return (
+                    None,
+                    "This recap is waiting for its narration. Review it on your recap page, "
+                    f"then share{where}. Nothing was shared.",
+                )
             # The approval is checked again in SQL, in the same statement that moves it on, so a
             # text edited since the check above cannot slip through; of two presses, one wins.
             if await store.decide(gid, cid, session_at, "post", require_approved=True):

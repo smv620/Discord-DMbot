@@ -288,7 +288,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
         base = dict(
             state="ready", status="posted", approved=True, title="The Silver Lock",
             summary="Mira drew her blade.", housekeeping=("Mira has 4 HP.",), speakers=(1, 2),
-            last_error="",
+            last_error="", audio_choice="text",
         )  # fmt: skip
         return SimpleNamespace(**{**base, **kw})
 
@@ -361,3 +361,24 @@ class ThePicker(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShareOnAnAudioApprovedDraft(unittest.IsolatedAsyncioTestCase):
+    """Share never posts a draft approved for narration or music (#2420): it says what to do."""
+
+    async def test_it_says_the_recap_waits_for_its_narration_and_posts_nothing(self) -> None:
+        job = SimpleNamespace(state="ready", status="draft", approved=True, audio_choice="both")
+        bot = SimpleNamespace(
+            recaps=SimpleNamespace(
+                get=AsyncMock(return_value=job), decide=AsyncMock(return_value=False)
+            ),
+            settings=SimpleNamespace(site_url="https://site.example.com"),
+            post_recaps=AsyncMock(),
+        )
+        campaign = SimpleNamespace(guild_id=GUILD, id=CID)
+        token, why = await DMBot.recap_share_link(cast(Any, bot), cast(Any, campaign), 100)
+        self.assertIsNone(token)
+        self.assertIn("waiting for its narration", why)
+        self.assertNotIn("Try again", why)
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
