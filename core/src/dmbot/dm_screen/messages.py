@@ -73,6 +73,7 @@ HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to yo
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
 STOP_LISTENING_LABEL = "Stop listening"
+PAUSE_TABLE_LABEL = "Pause the table"  # with ⏸️: the DM's off the record (#2466)
 NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )

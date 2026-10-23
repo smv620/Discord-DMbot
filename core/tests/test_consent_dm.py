@@ -145,8 +145,11 @@ def test_buttons_carry_the_server() -> None:
         f"dmbot:consent:yes:1:v{TERMS_VERSION}",
         "dmbot:consent:no:1",
     ]
-    assert custom_ids(c.menu_view(GUILD)) == ["dmbot:consent:menu:1:-"]
-    assert custom_ids(c.menu_view(GUILD, "ab" * 16)) == [f"dmbot:consent:menu:1:{'ab' * 16}"]
+    assert custom_ids(c.menu_view(GUILD)) == ["dmbot:consent:menu:1:-", "dmbot:consent:pause:1:-"]
+    assert custom_ids(c.menu_view(GUILD, "ab" * 16)) == [
+        f"dmbot:consent:menu:1:{'ab' * 16}",
+        f"dmbot:consent:pause:1:{'ab' * 16}",
+    ]
     assert custom_ids(c.consent_view(GUILD)) == [f"dmbot:consent:yes:1:v{TERMS_VERSION}"]
     assert custom_ids(c.warning_view(GUILD)) == [
         "dmbot:consent:stopyes:1",
@@ -175,9 +178,10 @@ def test_the_menu_shows_only_what_applies() -> None:
         )
 
     sheet, stop, close = "dmbot:sheet:1:-", "dmbot:consent:stop:1:-", "dmbot:consent:close:1:-"
+    pause = "dmbot:consent:pause:1:-"  # off the record for a while (#2466): for the recorded
     delete = "dmbot:consent:del:1"  # 🗑 Delete my past transcripts: for anyone, recorded or not
-    assert ids(recording=True, sheets=True) == [sheet, stop, delete, close]
-    assert ids(recording=True, sheets=False) == [stop, delete, close]
+    assert ids(recording=True, sheets=True) == [sheet, pause, stop, delete, close]
+    assert ids(recording=True, sheets=False) == [pause, stop, delete, close]
     start = "dmbot:consent:start:1"  # shows the request: never saves a yes by itself
     assert ids(recording=False, sheets=True) == [sheet, start, delete, close]
     assert ids(recording=False, sheets=False) == [start, delete, close]
@@ -353,8 +357,9 @@ class ConsentDMTests(DatabaseTest):
         await self.joined()
         assert "you said yes on <t:" in self.sent_text(self.player)
         assert c.SHEET_NOTE not in self.sent_text(self.player)  # sheets off here (#834)
-        (menu,) = custom_ids(self.player.send.await_args.kwargs["view"])
+        menu, pause = custom_ids(self.player.send.await_args.kwargs["view"])
         assert re.fullmatch(r"dmbot:consent:menu:1:([0-9a-f]{32}|-)", menu)  # this campaign
+        assert re.fullmatch(r"dmbot:consent:pause:1:([0-9a-f]{32}|-)", pause)  # off the record
 
     async def age_consent(self, user_id: int) -> None:
         """Make a saved yes look as if it was given under older wording (#35)."""
@@ -650,6 +655,92 @@ class ConsentDMTests(DatabaseTest):
     def allowlists(self) -> list[list[str]]:
         return [json.loads(m)["userIds"] for m in self.ears.sent if '"allowlist"' in m]
 
+    # ---- off the record (#2466) ------------------------------------------------------------
+
+    async def test_pausing_takes_a_player_off_the_allowlist_and_resume_puts_them_back(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.bot.push_allowlist(GUILD)
+        self.table.dmbchat_channel_id = 555  # the table's DMbot chat
+        assert str(PLAYER) in self.allowlists()[-1]
+        press = self.button_press(PLAYER)
+        await c.OffRecordButton(GUILD).callback(press)
+        view = press.response.edit_message.await_args.kwargs["view"]
+        assert [button(b).label for b in view.children] == [
+            "5 minutes",
+            "15 minutes",
+            "Until I press Resume",
+        ]
+        pick = self.button_press(PLAYER)
+        await c.OffRecordForButton(GUILD, 5).callback(pick)
+        assert not self.consent.has_consent(GUILD, PLAYER)  # not captured, not transcribed
+        assert str(PLAYER) not in self.allowlists()[-1]
+        assert "isn't recording you" in pick.edit_original_response.await_args.kwargs["content"]
+        assert any("is off the record for 5 minutes" in text for _, text in self.posts)
+        assert await self.consent.stored(GUILD) == {PLAYER}  # consent itself is untouched
+        back = self.button_press(PLAYER)
+        await c.ResumeButton(GUILD).callback(back)
+        assert self.consent.has_consent(GUILD, PLAYER)
+        assert str(PLAYER) in self.allowlists()[-1]
+        assert any("is back on the record" in text for _, text in self.posts)
+
+    async def test_nothing_to_pause_without_a_session_or_without_having_agreed(self) -> None:
+        pick = self.button_press(PLAYER)
+        await c.OffRecordForButton(GUILD, 5).callback(pick)  # never agreed
+        assert "isn't recording you" in pick.edit_original_response.await_args.kwargs["content"]
+        await self.consent.grant(GUILD, PLAYER)
+        del self.bot.tables[GUILD]
+        pick = self.button_press(PLAYER)
+        await c.OffRecordForButton(GUILD, 5).callback(pick)
+        assert "isn't listening" in pick.edit_original_response.await_args.kwargs["content"]
+        assert self.consent.has_consent(GUILD, PLAYER)
+
+    async def test_the_menu_offers_resume_instead_of_pause_while_off_the_record(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.bot.pause_recording(GUILD, PLAYER, None)
+        press = self.button_press(PLAYER)
+        await c.MenuButton(GUILD).callback(press)
+        ids = custom_ids(press.response.send_message.await_args.kwargs["view"])
+        assert "dmbot:consent:resume:1" in ids
+        assert "dmbot:consent:pause:1:-" not in ids
+        assert "dmbot:consent:stop:1:-" in ids  # stopping is still one tap away
+
+    async def test_the_dm_pauses_the_table_and_the_list_is_emptied_then_restored(self) -> None:
+        from dmbot.dm_screen import table_pause as tp
+
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        await self.bot.push_allowlist(GUILD)
+        self.table.campaign_id = "ab" * 16
+        self.table.dmbchat_channel_id = 555
+        player = self.button_press(PLAYER, self.guild)
+        await tp.PauseTableButton(self.table.campaign_id).callback(player)
+        assert tp.ONLY_DMS in player.response.send_message.await_args.args  # a player is refused
+        assert self.consent.has_consent(GUILD, PLAYER)
+        pick = self.button_press(DM, self.guild)
+        await tp.PauseTableForButton(self.table.campaign_id, 15).callback(pick)
+        assert self.allowlists()[-1] == []
+        assert not self.consent.has_consent(GUILD, DM)
+        assert any(text == "⏸️ The table is off the record." for _, text in self.posts)
+        refused = self.button_press(PLAYER, self.guild)
+        await tp.ResumeTableButton(self.table.campaign_id).callback(refused)
+        assert not self.consent.has_consent(GUILD, PLAYER)  # still paused: a player can't resume it
+        back = self.button_press(DM, self.guild)
+        await tp.ResumeTableButton(self.table.campaign_id).callback(back)
+        assert sorted(self.allowlists()[-1]) == sorted([str(PLAYER), str(DM)])
+
+    async def test_the_dm_can_still_ask_the_sidebar_while_off_the_record(self) -> None:
+        await self.consent.grant(GUILD, DM)
+        await self.bot.off_the_record.pause_table(GUILD, None)
+        assert not self.consent.has_consent(GUILD, DM)
+        assert self.bot.sidebar_has_consent(GUILD, DM)  # a question to DMbot, not table speech
+        assert not self.bot.sidebar_has_consent(GUILD, PLAYER)
+
+    async def test_the_session_ending_ends_every_pause(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.bot.pause_recording(GUILD, PLAYER, None)
+        await self.bot.stop_table(GUILD, "test")
+        assert self.consent.has_consent(GUILD, PLAYER)  # recorded as usual next session
+
     async def test_consent_button_saves_and_starts_capture_at_once(self) -> None:
         press = self.button_press(PLAYER)
         await c.ConsentButton(GUILD).callback(press)
@@ -658,7 +749,7 @@ class ConsentDMTests(DatabaseTest):
         edit = press.edit_original_response.await_args.kwargs
         assert "You said yes on <t:" in edit["content"]
         assert c.SHEET_NOTE not in edit["content"]  # sheets off here: no 📜 to point at
-        assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-"]
+        assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-", "dmbot:consent:pause:1:-"]
         self.bot.sheets = MagicMock()
         press = self.button_press(PLAYER)
         await c.ConsentButton(GUILD).callback(press)
@@ -755,6 +846,7 @@ class ConsentDMTests(DatabaseTest):
         edit = press.response.edit_message.await_args.kwargs
         assert set(edit) == {"view"}  # the reminder's text stays
         assert custom_ids(edit["view"]) == [
+            f"dmbot:consent:pause:1:{campaign}",
             f"dmbot:consent:stop:1:{campaign}",
             "dmbot:consent:del:1",
             f"dmbot:consent:close:1:{campaign}",
@@ -785,7 +877,7 @@ class ConsentDMTests(DatabaseTest):
     async def test_on_the_reminder_keep_and_close_give_it_back_unchanged(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         campaign = "ab" * 16
-        menu = [f"dmbot:consent:menu:1:{campaign}"]
+        menu = [f"dmbot:consent:menu:1:{campaign}", f"dmbot:consent:pause:1:{campaign}"]
         warned = c.with_warning(self.guild.name, self.REMINDER)
         keep = self.lasting(self.button_press(PLAYER), warned)
         await c.KeepButton(GUILD, campaign).callback(keep)
@@ -813,7 +905,7 @@ class ConsentDMTests(DatabaseTest):
         await c.KeepButton(GUILD).callback(press)
         edit = press.response.edit_message.await_args.kwargs
         assert edit["content"] == c.not_recorded_menu_text(self.guild.name)  # not "recording"
-        assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-"]
+        assert custom_ids(edit["view"]) == ["dmbot:consent:menu:1:-", "dmbot:consent:pause:1:-"]
 
     async def test_stop_recording_me_warns_and_records_nothing(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
@@ -1041,6 +1133,7 @@ class ConsentDMTests(DatabaseTest):
         args = press.response.send_message.await_args
         assert args.args[0] == c.menu_text(self.guild.name) and args.kwargs["ephemeral"]
         assert custom_ids(args.kwargs["view"]) == [
+            "dmbot:consent:pause:1:-",
             "dmbot:consent:stop:1:-",
             "dmbot:consent:del:1",
             "dmbot:consent:close:1:-",
@@ -1259,7 +1352,10 @@ class ConsentDMTests(DatabaseTest):
         await consent_give.callback(call)  # type: ignore[call-arg]
         args = call.followup.send.await_args
         assert "You said yes on <t:" in args.args[0]
-        assert custom_ids(args.kwargs["view"]) == ["dmbot:consent:menu:1:-"]
+        assert custom_ids(args.kwargs["view"]) == [
+            "dmbot:consent:menu:1:-",
+            "dmbot:consent:pause:1:-",
+        ]
 
 
 def test_no_text_in_the_bot_or_the_website_still_calls_the_menu_a_gear() -> None:

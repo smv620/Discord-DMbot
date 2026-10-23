@@ -12,6 +12,13 @@ Revoking must never be undone by a race or a database failure:
   give consent again), so a failed save can't quietly bring them back. A grant that was
   already running when the stop came doesn't count as giving consent again.
 
+A pause is "off the record" (#2466): a person, or the whole table, asked not to be recorded
+for a while. It is held here beside consent and subtracted from it everywhere (`has_consent`,
+`consenting`, `consenting_now`), so the audio allowlist, the transcript, the sidebar, memory and
+the recap all see a paused person exactly as one who never agreed, and every re-check after an
+await honours it with no extra code. It is kept in memory only: a pause ends with the listening
+session (`end_session`), and a restart ends the session too. Consent itself is untouched.
+
 Each consent records the wording it was given under (`TERMS_VERSION`) and how (#35).
 Only consent under the current wording counts: when what DMbot does with recordings
 changes, the version goes up, and everyone who agreed before is asked again. Until they
@@ -69,10 +76,22 @@ class ConsentStatus:
 
 
 class ConsentStore:
-    def __init__(self, db: Database, *, outside: str | None = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        outside: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         """`outside`: the outside engine (deepgram, cloud) the server sends voices to, or
-        None for local Whisper. Then only yeses given for that engine count."""
+        None for local Whisper. Then only yeses given for that engine count. `clock`: what a
+        pause counts its minutes on (monotonic seconds)."""
         self._db = db
+        self._clock = clock
+        # Off the record (#2466): server → person → when it ends (None: until they resume).
+        self._paused: dict[int, dict[int, float | None]] = {}
+        # The whole table, paused by a DM: server → (ends at or None) while it is on.
+        self._table_paused: dict[int, tuple[float | None]] = {}
         self._outside = outside
         self._cache: dict[int, frozenset[int]] = {}
         self._locks: dict[int, asyncio.Lock] = {}
@@ -171,10 +190,15 @@ class ConsentStore:
             return await _select(conn, guild_id, self._outside)
 
     def consenting_now(self, guild_id: int) -> frozenset[int]:
-        """Who the cache says is consenting here, without reading the database."""
-        return self._cache.get(guild_id, frozenset())
+        """Who the cache says is consenting here and is not off the record, without reading the
+        database."""
+        return self._recordable(guild_id, self._cache.get(guild_id, frozenset()))
 
     async def consenting(self, guild_id: int) -> frozenset[int]:
+        """Who may be recorded now: those who agreed, minus anyone off the record."""
+        return self._recordable(guild_id, await self._agreed(guild_id))
+
+    async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
             async with self._lock(guild_id):
                 if guild_id not in self._cache:
@@ -182,6 +206,78 @@ class ConsentStore:
                         users = await _select(conn, guild_id, self._outside)
                     self._store(guild_id, users)
         return self._cache[guild_id]
+
+    # ---- off the record (#2466) -----------------------------------------------------------
+
+    def _recordable(self, guild_id: int, agreed: frozenset[int]) -> frozenset[int]:
+        if self.table_paused(guild_id):
+            return frozenset()
+        gone = {u for u in self._paused.get(guild_id, {}) if self.is_paused(guild_id, u)}
+        return agreed - gone if gone else agreed
+
+    def _ends(self, seconds: float | None) -> float | None:
+        return None if seconds is None else self._clock() + seconds
+
+    def _live(self, ends: float | None) -> bool:
+        return ends is None or ends > self._clock()
+
+    def pause(self, guild_id: int, user_id: int, seconds: float | None) -> None:
+        """Take this person off the record at once, for `seconds` (None: until they resume).
+        Only someone who agreed can be paused; a pause never grants anything."""
+        if user_id in self._cache.get(guild_id, frozenset()):
+            self._paused.setdefault(guild_id, {})[user_id] = self._ends(seconds)
+
+    def resume(self, guild_id: int, user_id: int) -> bool:
+        """Back on the record; True if they were paused (and it had not already run out)."""
+        was = self.is_paused(guild_id, user_id)
+        self._paused.get(guild_id, {}).pop(user_id, None)
+        return was
+
+    def is_paused(self, guild_id: int, user_id: int) -> bool:
+        """Off the record now, by their own pause. (An ended pause is dropped as it is seen.)"""
+        held = self._paused.get(guild_id)
+        if held is None or user_id not in held:
+            return False
+        if self._live(held[user_id]):
+            return True
+        del held[user_id]
+        return False
+
+    def paused_until(self, guild_id: int, user_id: int) -> float | None:
+        """When their pause ends, on this store's clock; None if it lasts until they resume."""
+        return self._paused.get(guild_id, {}).get(user_id)
+
+    def pause_table(self, guild_id: int, seconds: float | None) -> None:
+        """The DM's pause: nobody is recorded until it ends."""
+        self._table_paused[guild_id] = (self._ends(seconds),)
+
+    def resume_table(self, guild_id: int) -> bool:
+        return self._table_paused.pop(guild_id, None) is not None
+
+    def table_paused(self, guild_id: int) -> bool:
+        held = self._table_paused.get(guild_id)
+        if held is None:
+            return False
+        if self._live(held[0]):
+            return True
+        self._table_paused.pop(guild_id, None)
+        return False
+
+    def paused_people(self, guild_id: int) -> list[int]:
+        return [u for u in list(self._paused.get(guild_id, {})) if self.is_paused(guild_id, u)]
+
+    def end_session(self, guild_id: int) -> None:
+        """The listening session is over: every pause ends with it."""
+        self._paused.pop(guild_id, None)
+        self._table_paused.pop(guild_id, None)
+
+    def agreed_set(self, guild_id: int) -> frozenset[int]:
+        """Everyone who agreed here, paused or not."""
+        return self._cache.get(guild_id, frozenset())
+
+    def agreed_now(self, guild_id: int, user_id: int) -> bool:
+        """Whether they agreed, paused or not (for what is not recording: a question to DMbot)."""
+        return user_id in self._cache.get(guild_id, frozenset())
 
     async def status(self, guild_id: int, user_ids: Iterable[int]) -> ConsentStatus:
         """For these players, in one query: when each said yes under the current wording,
@@ -233,8 +329,9 @@ class ConsentStore:
         return (await self.granted_times(guild_id, [user_id])).get(user_id)
 
     def has_consent(self, guild_id: int, user_id: int) -> bool:
-        """Fast, synchronous check for the audio path. Unknown servers deny."""
-        return user_id in self._cache.get(guild_id, frozenset())
+        """Fast, synchronous check for the audio path. Unknown servers deny, and so does anyone
+        off the record."""
+        return user_id in self.consenting_now(guild_id)
 
     def _lock(self, guild_id: int) -> asyncio.Lock:
         return self._locks.setdefault(guild_id, asyncio.Lock())

@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-23",
+    title: "Go off the record for a while",
+    what: "Press ⏸️ Pause recording me in your 🗂️ Menu (or on the reminder DMbot sends when a session starts) and choose 5 minutes, 15 minutes or until you press Resume. While you are off the record DMbot hears nothing from you, and the table is told with one plain line. The DM has a ⏸️ Pause the table button for breaks. A pause ends by itself, when you resume, or when the session ends, and it never changes your yes.",
+    reason: "In review (#2466); held until dev1 deploys it and checks it at a live table.",
+  },
+  {
     date: "2026-10-22",
     title: "Every recap says which session it is",
     what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
