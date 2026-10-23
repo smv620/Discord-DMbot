@@ -161,3 +161,13 @@ class Answering(PlotBase):
 
     async def test_nothing_else_waiting_means_nothing_is_done(self) -> None:
         self.assertEqual(await self.runner(Ai(good())).round(THURSDAY.id), 0)
+
+    async def test_an_entry_is_shown_only_when_its_name_is_a_whole_word_in_the_talk(self) -> None:
+        await self.memory.add_entity(
+            THURSDAY.id, self.one.id, type="character", name="Ann", source="dm", status=CONFIRMED
+        )
+        await self.say("The channel was quiet.")  # "Ann" is inside "channel": not a mention
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertNotIn("Ann (character)", ai.sent)
+        self.assertIn("Ulfgar (character)", ai.sent)  # (named in the issue's own sentence)

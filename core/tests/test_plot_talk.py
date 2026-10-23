@@ -115,8 +115,50 @@ class Quoting(unittest.TestCase):
             self.assertIsNone(pt.parse(raw(f'Someone said "{quote}" at the table.'), ctx()), quote)
             self.assertIsNone(pt.parse(raw(f"Someone said “{quote}” there."), ctx()), quote)
 
-    def test_a_short_quotation_is_a_name_not_a_line(self) -> None:
-        self.assertIsNotNone(pt.parse(raw('The "Silver Lock" session said so.'), ctx()))
+    def test_every_kind_of_quotation_mark_is_checked(self) -> None:
+        line = "Gorrak swung the axe at dawn"
+        for text in (
+            f"Someone said '{line}' there.",
+            f"Someone said ‘{line}’ there.",
+            f"Someone said „{line}“ there.",
+            f"Someone said «{line}» there.",
+            f"Someone said 「{line}」 there.",
+            f"Someone said `{line}` there.",
+            f"Someone said ＂{line}＂ there.",  # fullwidth marks are folded... and still not found
+        ):
+            self.assertIsNone(pt.parse(raw(text), ctx()), text)
+
+    def test_marks_that_do_not_pair_up_fail_the_answer(self) -> None:
+        # a stray mark must not shift the pairs so that a real quotation falls outside them
+        for text in (
+            'A 5" wall. "Gorrak swung the axe at dawn" he said.',
+            'He said "Gorrak swung the axe at dawn without a closing mark.',
+        ):
+            self.assertIsNone(pt.parse(raw(text), ctx()), text)
+
+    def test_a_line_strung_together_from_short_quotations_fails(self) -> None:
+        text = 'He said "Gorrak" "swung" "the" "axe" "at" "dawn" and left.'
+        self.assertIsNone(pt.parse(raw(text), ctx()))
+        text = 'He said "Gorrak swung" "the axe" "at dawn" there.'
+        self.assertIsNone(pt.parse(raw(text), ctx()))  # two-word pieces are checked too
+
+    def test_an_apostrophe_inside_a_word_is_not_a_quotation_mark(self) -> None:
+        got = pt.parse(raw("It's the party's call, and the players' too."), ctx())
+        self.assertIsNotNone(got)
+
+    def test_words_are_compared_whole_and_in_order_not_as_a_substring(self) -> None:
+        self.assertIsNone(pt.parse(raw('You said "he came back as a gho".'), ctx()))
+        self.assertIsNone(pt.parse(raw('You said "ghost a as back came he".'), ctx()))
+        self.assertIsNotNone(pt.parse(raw('You said "HE CAME  back as a ghost".'), ctx()))
+        self.assertIsNotNone(pt.parse(raw("You said “He came back as a ghost”."), ctx()))
+
+    def test_an_answer_in_a_code_fence_is_read(self) -> None:
+        fenced = "```json\n" + raw() + "\n```"
+        self.assertIsNotNone(pt.parse(fenced, ctx()))
+
+    def test_one_quoted_word_is_a_name_not_a_line(self) -> None:
+        self.assertIsNotNone(pt.parse(raw('The "Silver" session said so.'), ctx()))
+        self.assertIsNotNone(pt.parse(raw('Then "Mira laughed" in the recap.'), ctx()))
 
     def test_the_issues_own_source_may_be_quoted(self) -> None:
         self.assertIsNotNone(pt.parse(raw('It says "Ulfgar the dwarf fell in the vault".'), ctx()))

@@ -10,10 +10,11 @@ saved here, and a proposal is data until the DM presses Save.
 Code, not the model, has the last word:
 - a request to invent or build the story gets the plain no (`feedback.STORY_HELP_REPLY`) and no
   call is made;
-- any words in quotation marks in the answer must be words of the recap, the issue's own source or
-  the DM's own messages: a quotation from anywhere else (a transcript line, the model's memory) is
-  refused, so the talk can never carry a player's words (the talk is not erased with a player's
-  transcripts, which is why this is checked in code);
+- any words in quotation marks (of any kind) in the answer must be words of the recap, the issue's
+  own source or the DM's own messages: a quotation from anywhere else (a transcript line, the
+  model's memory) is refused, as are marks that do not pair up and a string of many quotations. The
+  model is not shown a transcript at all; this is the second lock, so the talk can never carry a
+  player's words (which is why it is not erased with a player's transcripts);
 - a proposal names an entry that was shown and a condition that kind of entry can have, and its
   label is written by code, not by the model.
 Nothing here touches Discord or the database.
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -37,7 +39,6 @@ MAX_ENTRIES = 12  # campaign entries shown to the call
 MAX_HISTORY = 8  # of the DM's earlier messages and PlotBot's answers shown
 HISTORY_CHARS = 500
 RECAP_BUDGET = 3000  # characters of the recap shown, a prompt size
-QUOTE_WORDS = 4  # a quotation of this many words or more must be found in the allowed text
 TOKENS = 700
 
 NEXT_WITH_PROPOSALS = "Press Save to keep that, or Not that to leave it."
@@ -154,22 +155,65 @@ def message(ctx: Context) -> str:
     )
 
 
-def _squash(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().casefold()
+_OPEN_CLOSE = '"“”„‟«»‹›「」『』`'  # marks that always quote
+_APOSTROPHES = "'‘’‚‛"  # quote only when not inside a word (it's, players')
+MAX_QUOTED_SPANS = 4  # more than this many quotations in one reply is a line strung together
 
 
-_QUOTES = re.compile(r"[\"“”«»]([^\"“”«»]+)[\"“”«»]")
+def _words(text: str) -> list[str]:
+    """Words only, one case, compatibility forms folded (fullwidth, look-alike apostrophes and
+    dashes), so a quotation is compared by its words and not its typesetting."""
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    for mark in _APOSTROPHES:
+        folded = folded.replace(mark, "'")
+    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", folded)
+
+
+def _spans(reply: str) -> list[str] | None:
+    """The quoted spans of a reply, whatever quotation marks it uses, or None when the marks do
+    not pair up (an unbalanced mark would hide a quotation from the check). An apostrophe inside
+    a word is not a mark. A closing mark may be the same character as the opening one."""
+    reply = unicodedata.normalize("NFKC", reply)  # fullwidth marks become the plain ones
+    spans: list[str] = []
+    opened: int | None = None
+    for n, ch in enumerate(reply):
+        quoting = ch in _OPEN_CLOSE
+        if ch in _APOSTROPHES:
+            before = reply[n - 1] if n else " "
+            after = reply[n + 1] if n + 1 < len(reply) else " "
+            quoting = not (before.isalnum() and after.isalnum())
+            # a possessive plural (players') ends a word: not a mark either, unless one is open
+            if quoting and opened is None and before.isalnum():
+                quoting = False
+        if not quoting:
+            continue
+        if opened is None:
+            opened = n + 1
+        else:
+            spans.append(reply[opened:n])
+            opened = None
+    return None if opened is not None else spans
+
+
+def _contains(haystack: list[str], needle: list[str]) -> bool:
+    size = len(needle)
+    return any(haystack[k : k + size] == needle for k in range(len(haystack) - size + 1))
 
 
 def quotes_ok(reply: str, allowed: Sequence[str]) -> bool:
-    """Every quotation of `QUOTE_WORDS` words or more in the reply is found in an allowed text
-    (the recap, the issue's own words, the DM's messages)."""
-    haystack = _squash("\n".join(allowed))
-    return all(
-        _squash(m.group(1)) in haystack
-        for m in _QUOTES.finditer(reply)
-        if len(m.group(1).split()) >= QUOTE_WORDS
-    )
+    """Whatever the reply puts in quotation marks (any kind of mark) must be words of an allowed
+    text (the recap, the issue's own words, the DM's messages): word for word, in order. Marks that
+    do not pair up, or more than `MAX_QUOTED_SPANS` quotations, fail it. One quoted word is a name,
+    not a line, and may be anything."""
+    spans = _spans(reply)
+    if spans is None or len(spans) > MAX_QUOTED_SPANS:
+        return False
+    texts = [_words(t) for t in allowed]
+    for span in spans:
+        words = _words(span)
+        if len(words) >= 2 and not any(_contains(t, words) for t in texts):
+            return False
+    return True
 
 
 def allowed_texts(ctx: Context) -> list[str]:
@@ -185,6 +229,9 @@ def allowed_texts(ctx: Context) -> list[str]:
 
 def parse(raw: str, ctx: Context) -> Answer | None:
     """The answer for the DM, or None when it is not in the form asked for or breaks a rule."""
+    raw = raw.strip()
+    if raw.startswith("```"):  # models often wrap JSON in a fence
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         data = json.loads(raw)
     except ValueError:

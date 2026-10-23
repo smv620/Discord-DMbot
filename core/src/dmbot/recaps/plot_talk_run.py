@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -148,7 +149,8 @@ class TalkStore:
 
 
 def _mentions(name: str, haystack: str) -> bool:
-    return name.casefold() in haystack.casefold()
+    """Is the name in the words as a whole word ("Ann" is not in "channel")?"""
+    return re.search(rf"(?<!\w){re.escape(name.casefold())}(?!\w)", haystack.casefold()) is not None
 
 
 class TalkRunner:
