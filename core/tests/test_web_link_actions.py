@@ -407,7 +407,7 @@ class TheReveal(Editing):
             self.web, who or self.session, self.cref, {"kind": kind, "id": target}
         )
 
-    async def refused(self, kind: str, target: str, who: Any = None) -> str:
+    async def refused_reveal(self, kind: str, target: str, who: Any = None) -> str:
         with self.assertRaises(RecapError) as caught:
             await self.reveal(kind, target, who)
         return caught.exception.code
@@ -450,24 +450,24 @@ class TheReveal(Editing):
     async def test_a_player_is_refused_and_nothing_is_queued(self) -> None:
         link = await self.hidden_link()
         name = await self.add("Hidden Tower", "place")
-        self.assertEqual(await self.refused("link", link, self.player), "not_allowed")
-        self.assertEqual(await self.refused("name", name, self.player), "not_allowed")
+        self.assertEqual(await self.refused_reveal("link", link, self.player), "not_allowed")
+        self.assertEqual(await self.refused_reveal("name", name, self.player), "not_allowed")
         self.assertEqual(await self.apply_all(), [])  # (so nothing reached the bot)
 
     async def test_another_campaigns_id_is_not_found_not_forbidden(self) -> None:
         elsewhere = await self.memory.add_entity(
             self.g, self.two.id, type="npc", name="Brynwater", source=DM_SOURCE, status="confirmed"
         )
-        self.assertEqual(await self.refused("name", elsewhere.value.id), "not_found")
+        self.assertEqual(await self.refused_reveal("name", elsewhere.value.id), "not_found")
         self.assertEqual(await self.apply_all(), [])
-        self.assertEqual(await self.refused("link", "f" * 32), "not_found")  # (applied: not found)
+        self.assertEqual(await self.refused_reveal("link", "f" * 32), "not_found")  # (applied: not found)
 
     async def test_the_body_is_checked(self) -> None:
         with self.assertRaises(RecapError) as caught:
             await relationships.queue_reveal(self.web, self.session, self.cref, "nope")
         self.assertEqual(caught.exception.code, "bad_action")
-        self.assertEqual(await self.refused("planet", self.mira), "not_found")
-        self.assertEqual(await self.refused("name", "not an id"), "not_found")
+        self.assertEqual(await self.refused_reveal("planet", self.mira), "not_found")
+        self.assertEqual(await self.refused_reveal("name", "not an id"), "not_found")
 
 
 class TheRoutes(Editing):
