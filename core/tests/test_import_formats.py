@@ -61,6 +61,41 @@ class Brackets(unittest.TestCase):
         )
         self.assertEqual(speakers(text), ["Rowan", "Kai", "Rowan", "Kai", "Rowan", "Kai", "Rowan"])
 
+    def test_a_bracketed_file_takes_new_turns_only_in_the_bracketed_form(self) -> None:
+        text = (
+            "[Rowan]: We open the door.\n"
+            "[Kai]: Then I listen\n"
+            "then he said: stop\n"
+            "[Rowan]: Nothing.\n"
+        )
+        got = importer.parse(text)
+        self.assertEqual([u.speaker for u in got.utterances], ["Rowan", "Kai", "Rowan"])
+        self.assertEqual(got.utterances[1].text, "Then I listen then he said: stop")
+        self.assertEqual(got.joined, 1)
+
+    def test_a_space_before_the_colon_or_none_after_it_is_still_a_bracketed_name(self) -> None:
+        got = importer.parse("[Rowan] : We open the door.\n[Kai]:Then I listen.\n")
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [("Rowan", "We open the door."), ("Kai", "Then I listen.")],
+        )
+
+    def test_a_file_that_is_mostly_bracketed_reads_its_plain_lines_as_continuations(self) -> None:
+        # three bracketed lines in five: the two `Name: words` lines are wrapped lines, which are
+        # over a quarter of the file, so it is refused rather than guessed at
+        text = "[Rowan]: One.\n[Kai]: Two.\n[Rowan]: Three.\nKai: Four.\nRowan: Five.\n"
+        with self.assertRaises(importer.TranscriptError):
+            importer.parse(text)
+
+    def test_the_no_colon_form_is_chosen_when_most_lines_are_that_form(self) -> None:
+        # one `Name: words` line in five is not most of the file, so the brackets win
+        text = (
+            "Rowan: We open the door.\n[Kai] We listen.\n[Rowan] Nothing.\n"
+            "[Kai] Onward.\n[Rowan] Agreed.\n"
+        )
+        self.assertEqual(speakers(text), ["Kai", "Rowan", "Kai", "Rowan"])
+        self.assertEqual(importer.parse(text).skipped, 1)  # the first line was a header
+
     def test_dmbots_own_download_is_not_read_as_bracketed_names(self) -> None:
         text = "DMbot transcript: T, session 1\n\n[0:00:05] (Sam) {narrating}: It begins.\n"
         self.assertEqual(importer.parse(text).format, importer.DMBOT)
@@ -85,6 +120,62 @@ class Captions(unittest.TestCase):
                 ("Kai", "Two."),
             ],
         )
+
+    def test_words_before_the_first_voice_tag_carry_on_the_cue_before(self) -> None:
+        vtt = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n<v Rowan>We open the door\n\n"
+            "00:00:03.500 --> 00:00:05.000\nand step in. <v Kai>Then I listen.</v>\n"
+        )
+        got = importer.parse(vtt)
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [("Rowan", "We open the door and step in."), ("Kai", "Then I listen.")],
+        )
+
+    def test_a_stray_unnamed_cue_is_skipped_when_most_cues_name_a_speaker(self) -> None:
+        vtt = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:02.000\n<v Rowan>We open the door.</v>\n\n"
+            "00:00:02.000 --> 00:00:03.000\n[music]\n\n"
+            "00:00:03.000 --> 00:00:04.000\n<v Kai>Then I listen.</v>\n"
+        )
+        with self.assertLogs("dmbot.transcript.importer", "INFO") as logged:
+            got = importer.parse(vtt)
+        self.assertEqual([u.speaker for u in got.utterances], ["Rowan", "Kai"])
+        self.assertIn("1 unnamed cue(s) skipped of 3", logged.output[0])
+        self.assertNotIn("music", logged.output[0])  # a count only
+
+    def test_srt_skips_a_stray_unnamed_cue_too_and_a_tie_is_refused(self) -> None:
+        srt = (
+            "1\n00:00:01,000 --> 00:00:02,000\nRowan: We open the door.\n\n"
+            "2\n00:00:02,000 --> 00:00:03,000\n[music]\n\n"
+            "3\n00:00:03,000 --> 00:00:04,000\nKai: Then I listen.\n"
+        )
+        self.assertEqual(speakers(srt), ["Rowan", "Kai"])
+        tie = srt.split("\n\n3\n")[0]  # one named cue, one unnamed
+        with self.assertRaises(importer.TranscriptError) as caught:
+            importer.parse(tie)
+        self.assertEqual(caught.exception.code, importer.NO_SPEAKER_NAMES)
+
+    def test_an_empty_voice_tag_does_not_count_as_a_named_cue(self) -> None:
+        vtt = (
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Rowan></v>\n\n"
+            "00:00:02.000 --> 00:00:03.000\n[music]\n\n"
+            "00:00:03.000 --> 00:00:04.000\n<v Kai>Then I listen.</v>\n"
+        )
+        with self.assertRaises(importer.TranscriptError):
+            importer.parse(vtt)  # one named cue against two unnamed ones
+
+    def test_mostly_unnamed_cues_are_still_refused(self) -> None:
+        vtt = (
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Rowan>One.</v>\n\n"
+            "00:00:02.000 --> 00:00:03.000\n[music]\n\n"
+            "00:00:03.000 --> 00:00:04.000\n[applause]\n"
+        )
+        with self.assertRaises(importer.TranscriptError) as caught:
+            importer.parse(vtt)
+        self.assertEqual(caught.exception.code, importer.NO_SPEAKER_NAMES)
 
     def test_a_vtt_with_a_byte_order_mark_is_still_a_vtt(self) -> None:
         vtt = BOM + "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nRowan: Hello there.\n"

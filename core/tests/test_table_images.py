@@ -12,8 +12,10 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot import images, table_chat
 from dmbot.ai import Image
+from dmbot.campaigns.models import SHARED_STORY
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
+from dmbot.map_notes import MapNoteStore
 from tests import test_table_chat as chat
 from tests.test_table_chat import EXTRA, VOICE, message
 from tests.test_timebot import DM, GUILD_A, GUILD_B, NOON4, PLAYER, Clocks
@@ -33,6 +35,23 @@ class Vision:
         self.calls += 1
         self.sent.append(system + text)
         body = {"kind": self.kind, "alt": self.alt, "text": "The key is under the stone."}
+        return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
+
+
+class MapVision(Vision):
+    """Says it is a map, and for the second, careful reading gives its places."""
+
+    def __init__(self) -> None:
+        super().__init__("A map of the coast.", "map")
+
+    async def complete(self, system: str, text: str, **kw: Any) -> Any:
+        if system != images.MAP_SYSTEM:
+            return await super().complete(system, text, **kw)
+        self.calls += 1
+        body = {
+            "places": [{"name": "Harrowmere", "where": "on the coast"}],
+            "layout": "A road runs east.",
+        }
         return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
 
 
@@ -66,6 +85,10 @@ class TableImages(chat.AtTheTableTyped):
             ai, ai, per_day=per_day, counter=ImageUseStore(self.db), fetcher=self.fetcher
         )
 
+    async def confirm_right_to_use(self) -> None:
+        """The DM's Shared story confirmation, which lets a map's places be kept (#2450)."""
+        await self.campaigns.record_confirmation(GUILD_A, self.a.id, DM, SHARED_STORY, "0" * 64)
+
     def lines(self) -> list[Any]:
         return self.live.unsaved.take(lambda _user: True)
 
@@ -82,6 +105,117 @@ class TableImages(chat.AtTheTableTyped):
         await self.hear(picture())
         self.assertEqual((self.fetched, self.vision.calls), ([], 0))
         self.assertEqual([line.text for line in self.lines()], [images.NOT_DESCRIBED])
+
+    async def test_a_map_is_also_kept_in_words_for_mapbot(self) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        await self.hear(picture())
+        [note] = await self.bot.map_notes.notes(GUILD_A, self.a.id)
+        self.assertEqual((note.user_id, note.places[0].name), (DM, "Harrowmere"))
+        [line] = self.lines()
+        self.assertTrue(line.text.startswith("a map: "))  # the transcript says it is a map
+        self.assertNotIn("Harrowmere", line.text)  # and carries no more than the short description
+
+    async def test_a_poster_who_stops_after_the_reading_but_before_the_write_leaves_no_note(
+        self,
+    ) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        desk = self.make_desk(vision=MapVision())
+        self.bot.image_desk = desk
+        agreed = {"yes": True}
+        real_describe = desk.describe
+
+        async def describe_then_stop(*args: Any) -> Any:
+            got = await real_describe(*args)
+            agreed["yes"] = False  # they pressed Stop as the reading finished
+            return got
+
+        desk.describe = describe_then_stop  # type: ignore[method-assign,assignment]
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+        self.assertEqual(self.lines(), [])
+
+    async def test_without_the_right_to_use_confirmed_a_map_gets_its_line_and_no_note(
+        self,
+    ) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+        [line] = self.lines()
+        self.assertTrue(line.text.startswith("a map: "))  # the short transcript line is there
+
+    async def test_the_confirmation_of_another_campaign_does_not_count(self) -> None:
+        other = await self.campaigns.create(GUILD_A, "Gamma", DM)
+        await self.campaigns.record_confirmation(GUILD_A, other.id, DM, SHARED_STORY, "0" * 64)
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_deleting_the_picture_deletes_its_map_note(self) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        msg = picture()
+        await self.hear(msg)
+        self.assertEqual(len(await self.bot.map_notes.notes(GUILD_A, self.a.id)), 1)
+        await self.bot.on_raw_message_delete(
+            cast(Any, SimpleNamespace(guild_id=GUILD_A, message_id=msg.id))
+        )
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_a_purge_deletes_the_notes_of_every_picture_in_it(self) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        first, second = picture(), picture()
+        await self.hear(first)
+        await self.hear(second)
+        await self.bot.on_raw_bulk_message_delete(
+            cast(Any, SimpleNamespace(guild_id=GUILD_A, message_ids={first.id, second.id}))
+        )
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_consent_is_asked_again_under_the_save_lock_just_before_the_write(self) -> None:
+        """A poster who stops while another save holds the lock gets no note (#2450)."""
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        agreed = {"yes": True}
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+        async with self.live.save_lock:  # another save is under way
+            task = asyncio.create_task(self.hear(picture()))
+            await asyncio.sleep(0.5)  # the picture is read; the note waits for the lock
+            agreed["yes"] = False  # they pressed Stop while it waited
+        await task
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_a_picture_that_is_not_a_map_keeps_no_map_note(self) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_a_map_from_someone_who_stopped_keeps_no_note(self) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        agreed = {"yes": True}
+        vision = MapVision()
+        self.bot.image_desk = self.make_desk(vision=vision)
+        real = vision.complete
+
+        async def stop_then_answer(system: str, text: str, **kw: Any) -> Any:
+            got = await real(system, text, **kw)
+            agreed["yes"] = False
+            return got
+
+        vision.complete = stop_then_answer  # type: ignore[method-assign]
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
 
     async def test_a_picture_with_words_keeps_both_in_the_same_message(self) -> None:
         await self.hear(picture("look at this"))

@@ -726,7 +726,8 @@ class TranscriptStore:
         if anything fails nothing is deleted.
 
         Goes: their lines (both versions, the sidebar questions and DMbot's replies to them,
-        which carry their id), their fix suggestions in any state, the story-memory mentions
+        which carry their id), the maps they posted, kept in words (#2450), their fix suggestions in
+        any state, the story-memory mentions
         that point at those lines (and the undo-log rows of those mentions), the name counts
         kept per speaker, and the story claims that cite them and were never confirmed. Each
         affected session's line count and speaker list are worked out again.
@@ -754,6 +755,10 @@ class TranscriptStore:
             )
             await conn.execute(  # where a fixed spelling was written into their lines (#2170)
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            await conn.execute(  # and the maps they posted, kept in words for MapBot (#2450)
+                "DELETE FROM map_notes WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
             await conn.execute(  # and the questions kept about their words (#1572)

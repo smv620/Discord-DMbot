@@ -1,0 +1,349 @@
+---
+// "How DMbot works" (#2527): the helpers, the four rules, two flow charts and who sees what, from Part 1
+// of docs/how-it-works.md. The charts are plain boxes and arrows built here at build time (no chart
+// library goes to the browser), stack top to bottom so they fit a phone, and each has its steps as an
+// ordered list for screen readers.
+import Base from "../layouts/Base.astro";
+import {
+  afterChart,
+  brains,
+  duringChart,
+  fourRules,
+  howDescription,
+  howIntro,
+  howTitle,
+  moreQuestions,
+  team,
+  whoSees,
+} from "../content/how-it-works";
+
+const charts = [duringChart, afterChart];
+---
+
+<Base title={howTitle} description={howDescription}>
+  <h1>{howTitle}</h1>
+
+  <section class="stack" aria-labelledby="big-idea">
+    <h2 id="big-idea">{howIntro.heading}</h2>
+    <p class="lead">{howIntro.lead}</p>
+    <blockquote class="surface rule">
+      <p><strong>{howIntro.rule}</strong></p>
+      <p>{howIntro.ruleMore}</p>
+    </blockquote>
+    <p>{howIntro.team}</p>
+  </section>
+
+  <section class="stack" aria-labelledby="four-rules">
+    <h2 id="four-rules">{fourRules.heading}</h2>
+    <ul class="cards">
+      {
+        fourRules.rules.map((r) => (
+          <li class="surface card">
+            <h3>
+              <span aria-hidden="true">{r.icon}</span> {r.name}
+            </h3>
+            <p>{r.text}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section class="stack" aria-labelledby="the-team">
+    <h2 id="the-team">{team.heading}</h2>
+    <p>{team.lead}</p>
+    {
+      team.groups.map((g) => (
+        <div class="stack">
+          <h3>{g.title}</h3>
+          <ul class="cards">
+            {g.helpers.map((h) => (
+              <li class="surface card">
+                <h4>
+                  <span aria-hidden="true">{h.icon}</span> {h.name}
+                  {h.aka && <span class="muted"> ({h.aka})</span>}
+                </h4>
+                <p>{h.job}</p>
+                {h.state && (
+                  <p class="state">
+                    <strong>{h.state}</strong>
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </section>
+
+  {
+    charts.map((chart) => (
+      <section class="stack" aria-labelledby={`${chart.id}-h`}>
+        <h2 id={`${chart.id}-h`}>{chart.heading}</h2>
+        <p>{chart.lead}</p>
+        <div class="chart" aria-hidden="true">
+          {chart.lanes.map((lane) => (
+            <div class="lane">
+              <p class="lane-title">{lane.title}</p>
+              {lane.stages.map((stage, i) => (
+                <>
+                  {(i > 0 || stage.arrow) && (
+                    <p class="arrow">
+                      <span class="down">↓</span>
+                      {stage.arrow && <span class="arrow-word"> {stage.arrow}</span>}
+                    </p>
+                  )}
+                  {stage.boxes.length > 1 && <p class="together">At the same time:</p>}
+                  <div class="stage">
+                    {stage.boxes.map((box) => (
+                      <p class={`box g-${box.group}`}>{box.text}</p>
+                    ))}
+                  </div>
+                </>
+              ))}
+            </div>
+          ))}
+        </div>
+        <ul class="legend" aria-hidden="true">
+          {chart.legend.map((l) => (
+            <li>
+              <span class={`swatch g-${l.group}`} />
+              {l.text}
+            </li>
+          ))}
+        </ul>
+        <p class="skip"><a href={`#${chart.id}-list`}>Skip the chart and read the steps</a></p>
+        <details class="alt" id={`${chart.id}-list`} open>
+          <summary>{chart.listHeading}</summary>
+          <ol>
+            {chart.steps.map((s) => (
+              <li>{s}</li>
+            ))}
+          </ol>
+        </details>
+      </section>
+    ))
+  }
+
+  <section class="stack" aria-labelledby="who-sees">
+    <h2 id="who-sees">{whoSees.heading}</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col"><span class="visually-hidden">What</span></th>
+            <th scope="col">{whoSees.columns[1]}</th>
+            <th scope="col">{whoSees.columns[2]}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            whoSees.rows.map((r) => (
+              <tr>
+                <th scope="row">{r.what}</th>
+                <td data-label={whoSees.columns[1]}>{r.dm}</td>
+                <td data-label={whoSees.columns[2]}>{r.players}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="stack" aria-labelledby="brains">
+    <h2 id="brains">{brains.heading}</h2>
+    <p>{brains.lead}</p>
+    <ul class="cards">
+      {
+        brains.items.map((i) => (
+          <li class="surface card">
+            <p>
+              <span aria-hidden="true">{i.icon}</span> <strong>{i.name}</strong> {i.text}
+            </p>
+          </li>
+        ))
+      }
+    </ul>
+    <p>{brains.close}</p>
+  </section>
+
+  <section class="stack" aria-labelledby="more-questions">
+    <h2 id="more-questions">{moreQuestions.heading}</h2>
+    <p>
+      {moreQuestions.textBefore}{" "}<a href="/hello">{moreQuestions.helloLink}</a>
+      {" "}{moreQuestions.textMid}{" "}<a href="/pricing#questions">{moreQuestions.qaLink}</a>,
+      {" "}{moreQuestions.textAfter}
+    </p>
+  </section>
+</Base>
+
+<style>
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  section {
+    margin-block: var(--space-6);
+  }
+  .stack {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .rule {
+    margin: 0;
+    padding: var(--space-4) var(--space-6);
+    border-left: 4px solid var(--accent);
+  }
+  .rule p {
+    margin: 0 0 var(--space-2);
+  }
+  .cards {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  }
+  .card {
+    padding: var(--space-4);
+  }
+  .card h3,
+  .card h4 {
+    font-size: var(--text-base);
+    margin: 0 0 var(--space-1);
+  }
+  .card p {
+    margin: 0;
+  }
+  .state {
+    margin-top: var(--space-2);
+  }
+
+  /* The charts: one column of boxes, so nothing scrolls sideways on a phone. Each group has a
+     colour, always mixed from the page's own colours so it follows light and dark. */
+  .chart {
+    display: grid;
+    gap: var(--space-6);
+  }
+  .lane {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .lane-title {
+    font-weight: 700;
+    margin: 0;
+  }
+  .stage {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  }
+  .together {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .skip {
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  @media (max-width: 40rem) {
+    .stage {
+      grid-template-columns: 1fr;
+    }
+  }
+  .arrow {
+    margin: 0;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .arrow-word {
+    font-size: var(--text-sm);
+  }
+  .box {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--hue);
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--hue) 18%, var(--surface));
+    color: var(--text);
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .g-table { --hue: #c9a227; }
+  .g-listen { --hue: #4a7fb5; }
+  .g-think { --hue: #7b5cc4; }
+  .g-private { --hue: #c0504d; border-style: dashed; }
+  .g-chat { --hue: #d07a2e; }
+  .g-memory { --hue: #3c9a50; }
+  .g-dm { --hue: #b8860b; font-weight: 700; border-width: 3px; }
+  .g-doc { --hue: #c9a227; }
+  .g-out { --hue: #4a7fb5; }
+  .legend {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    font-size: var(--text-sm);
+  }
+  .swatch {
+    display: inline-block;
+    width: 0.9rem;
+    height: 0.9rem;
+    margin-right: 0.4rem;
+    vertical-align: -0.1rem;
+    border: 1px solid var(--hue);
+    background: color-mix(in srgb, var(--hue) 35%, var(--surface));
+    border-radius: 0.2rem;
+  }
+  .alt ol {
+    padding-left: 1.4rem;
+  }
+
+  /* Tables: a plain table on wide screens; on a phone each row becomes a card, with each cell
+     labelled, so there is no sideways scrolling. */
+  .table-wrap table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  .table-wrap th,
+  .table-wrap td {
+    text-align: left;
+    vertical-align: top;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+  @media (max-width: 40rem) {
+    .table-wrap thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+    .table-wrap tr,
+    .table-wrap th,
+    .table-wrap td {
+      display: block;
+    }
+    .table-wrap tr {
+      margin-bottom: var(--space-3);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: var(--surface);
+    }
+    .table-wrap td::before {
+      content: attr(data-label) ": ";
+      font-weight: 700;
+    }
+  }
+</style>
