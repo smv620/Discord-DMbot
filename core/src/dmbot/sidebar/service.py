@@ -539,9 +539,7 @@ class SidebarService:
         agree button once a session, and what they typed goes nowhere."""
         if self.answerer is None or table.campaign_id is None or table.dmbchat_channel_id is None:
             return False
-        if not self.host.sidebar_has_consent(table.guild_id, user_id):
-            if self.host.sidebar_paused(table.guild_id, user_id):
-                return False  # off the record: what they type is not read, and they did agree
+        if not self._may_ask(table.guild_id, user_id):
             if user_id not in table.dmbchat_nudged:
                 table.dmbchat_nudged.add(user_id)
                 self._background(self.host.sidebar_nudge_chat(table, user_id), "sidebar-nudge")
@@ -656,7 +654,14 @@ class SidebarService:
             self.host.tables.get(table.guild_id) is table
             and table.campaign_id is not None
             and (_is_dm(table, user_id) or not dm)
-            and self.host.sidebar_has_consent(table.guild_id, user_id)
+            and self._may_ask(table.guild_id, user_id)
+        )
+
+    def _may_ask(self, guild_id: int, user_id: int) -> bool:
+        """Agreed to be recorded, which includes being off the record for a while (#2466): a
+        paused person's question is answered, only nothing of it is stored (`_save_lines`)."""
+        return self.host.sidebar_has_consent(guild_id, user_id) or self.host.sidebar_paused(
+            guild_id, user_id
         )
 
     async def _ask(

@@ -1066,6 +1066,17 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.host.chat), 1)
         self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
 
+    async def test_a_paused_players_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): they agreed, so the question gets its answer in the chat; no
+        line of it, and no agree button, reaches the transcript."""
+        self.host.paused.add(PLAYER)  # (paused: not counted as recorded)
+        self.assertTrue(
+            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        )
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertEqual((self.host.saved, self.host.nudged), ([], []))
+
     async def test_someone_who_has_not_agreed_is_shown_the_button_once_and_nothing_is_asked(
         self,
     ) -> None:

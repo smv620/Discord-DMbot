@@ -125,7 +125,7 @@ class Stopped(unittest.TestCase):
         self.assertLessEqual(len(menu.children), 5)  # a row holds five; a sixth would wrap
         # (only a test server's menu also has "Stop saving my voice": six, which Discord wraps)
         full = c.options_view(GUILD, None, recording=True, sheets=True, test_voice="saving")
-        self.assertLessEqual(len(full.children), 6)
+        self.assertLessEqual(len(full.children), 5)  # a row holds five; a sixth would wrap
 
     def test_the_buttons_are_registered_so_they_survive_a_restart(self) -> None:
         for button in (c.DeleteButton, c.DeleteYesButton, c.DeleteNoButton):

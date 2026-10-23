@@ -104,6 +104,7 @@ class OffTheRecord:
         self._save = save  # keep the pauses with the saved session, so a restart keeps them
         self._wall = wall
         self._timers: dict[tuple[int, int], asyncio.Task[None]] = {}
+        self._locks: dict[int, asyncio.Lock] = {}  # per server, see `_keep`
 
     async def _tell_ears(self, guild_id: int) -> None:
         """Send ears the allowlist again. A failure is logged, never thrown: the pause or the
@@ -125,8 +126,11 @@ class OffTheRecord:
         next change saves again."""
         if self._save is None:
             return
+        # One save at a time per server, the snapshot taken inside the lock: two changes at once
+        # (a timer and a button) could otherwise write the older state last.
         try:
-            await self._save(guild_id, self._consent.snapshot(guild_id))
+            async with self._locks.setdefault(guild_id, asyncio.Lock()):
+                await self._save(guild_id, self._consent.snapshot(guild_id))
         except Exception as exc:
             log.error("Couldn't save the pauses with the session (%s)", type(exc).__name__)
 
@@ -248,6 +252,8 @@ class OffTheRecord:
                 self._rearm((guild_id, who), max(0.0, ends - now_c))
         if back:
             log.info("Off the record: %d pause(s) kept across a restart", len(back))
+        # Saved again as they stand now: pauses that ran out while DMbot was down are gone from it.
+        await self._keep(guild_id)
 
     def _rearm(self, key: tuple[int, int], seconds: float) -> None:
         old = self._timers.pop(key, None)

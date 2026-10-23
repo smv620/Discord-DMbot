@@ -1460,8 +1460,12 @@ def options_view(
     elif test_voice == "ask" and recording:
         view.add_item(SaveVoiceButton(guild_id))
     if recording:
-        # Off the record for a while (#2466), or back on it if they already are
-        view.add_item(ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id))
+        # Off the record for a while (#2466), or back on it if they already are. Not in a test
+        # server's menu (it has no real table and a row holds five buttons: the menu stays at five).
+        if test_voice is None:
+            view.add_item(
+                ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id)
+            )
         view.add_item(StopButton(guild_id, campaign_id or "-"))
     else:
         view.add_item(StartButton(guild_id))

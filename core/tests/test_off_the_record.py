@@ -224,6 +224,21 @@ class TheService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.dropped, [(G, ALICE)])  # what she was mid-saying is thrown away
         self.assertIn("<t:5300:R>", paused_text(done.until))
 
+    async def test_two_changes_at_once_never_save_the_older_state_last(self) -> None:
+        saved: list[dict[str, Any]] = []
+        first = True
+
+        async def save(guild: int, snapshot: dict[str, Any]) -> None:
+            nonlocal first
+            if first:  # the first save is slow; the second change comes in meanwhile
+                first = False
+                await asyncio.sleep(0.05)
+            saved.append(snapshot)
+
+        self.otr._save = save
+        await asyncio.gather(self.otr.pause(G, ALICE, None), self.otr.pause(G, BOB, None))
+        self.assertEqual(set(saved[-1]["people"]), {str(ALICE), str(BOB)})
+
     async def test_resume_now_puts_them_back_and_says_so(self) -> None:
         await self.otr.pause(G, ALICE, None)
         self.assertTrue(await self.otr.resume(G, ALICE))

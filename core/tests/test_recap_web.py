@@ -1675,7 +1675,8 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         recap_secret_names=AsyncMock(return_value=[] if secrets is None else secrets),
         recap_allowed_names=AsyncMock(return_value=known or []),
         consent=SimpleNamespace(
-            consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE})
+            consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE}),
+            agreed=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE}),
         ),
     )
     bot.recap_audio_files = SimpleNamespace(present=lambda g, c, s: present or {})
@@ -1732,13 +1733,13 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
         order: list[str] = []
         bot = fake_bot(self.job())
         bot.recaps.posting_step.side_effect = lambda *a: order.append(f"step {a[-1]}")
-        real_consent = bot.consent.consenting
+        real_consent = bot.consent.agreed
 
         async def consent(*a: Any) -> Any:
             order.append("consent")
             return await real_consent(*a)
 
-        bot.consent.consenting = consent
+        bot.consent.agreed = consent
         first = SimpleNamespace(jump_url="https://discord.com/channels/1/2/3")
         later = SimpleNamespace(jump_url="https://discord.com/channels/1/2/4")
         replies = iter([first, later, later, later])
