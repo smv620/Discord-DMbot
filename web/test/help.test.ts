@@ -11,6 +11,7 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
+import { featureSteps, isLive, knownTitle, liveFeatureSteps } from "../src/content/help-features";
 import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, SECRET_REVEAL_LIVE, presessionNoteSteps, secretSaidSteps, secretRevealSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
@@ -56,7 +57,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps, ...featureSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -571,5 +572,30 @@ describe("Help: the website's read-only pages (#1588)", () => {
     const words = secretRevealSteps.map((x) => x.text).join(" ");
     for (const part of ["make it secret again from the name's card", "sent to you as a private message instead", "this session", "never when a player does", "covers every copy", "never decides for you", "Only the campaign's DMs can answer"]) expect(words).toContain(part);
     expect(secretRevealSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Yes, players know now", "No, keep it secret"]);
+  });
+});
+
+describe("Help for the features of 2026-10-22/23 (#2498)", () => {
+  it("is tied to real What's new entries, so a rename can't hide a step for ever", () => {
+    for (const s of featureSteps) expect(knownTitle(s.whatsNew), s.whatsNew).toBe(true);
+  });
+
+  it("shows a step only once its What's new entry is out of `held`", () => {
+    for (const audience of ["gameMaster", "player", "account"] as const) {
+      const shown = liveFeatureSteps(audience).map((x) => x.text);
+      for (const s of featureSteps.filter((f) => f.audience === audience))
+        expect(shown.includes(s.text), s.whatsNew).toBe(isLive(s.whatsNew));
+    }
+  });
+
+  it("says plainly that nothing is recorded while paused and that it isn't added afterwards", () => {
+    const off = featureSteps.filter((s) => s.whatsNew === "Go off the record for a while").map((s) => s.text).join(" ");
+    expect(off).toContain("records nothing");
+    expect(off).toContain("isn't added afterwards");
+    expect(off).toContain("Nothing said during the break is saved");
+  });
+
+  it("uses no technical words", () => {
+    for (const s of featureSteps) expect(s.text, s.whatsNew).not.toMatch(/entit|knowledge graph|API|queue|endpoint/i);
   });
 });
