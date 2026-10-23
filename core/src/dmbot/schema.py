@@ -11272,12 +11272,14 @@ LINK_PIN_ACTION = """
     -- Undo agree. No row changes: a wider list of actions and the door that checks it.
     ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
     ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
-        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
-         'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin'));
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin'));
 """
-_door_start = WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(")
-_door_end = WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read(")
-_pin_door = WEB_LINK_ACTIONS[_door_start:_door_end]
+# Built from the door as it stands now, with `merge-many` (0183), not from the older text: a door
+# built from before that would drop it (found in the review of #2456).
+_door_start = MERGE_MANY.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(")
+_door_end = MERGE_MANY.index("    DO $do$", _door_start)
+_pin_door = MERGE_MANY[_door_start:_door_end]
 for _old, _new, _times in (
     (
         "'link-add', 'link-words', 'link-secret', 'link-remove')",
