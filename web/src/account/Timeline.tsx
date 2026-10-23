@@ -1,7 +1,8 @@
 /** @jsxImportSource preact */
 // The Story timeline page (#2462): a campaign's sessions in order, each with its recap and the names
 // shown to the players at the table. Read-only. The API decides what each person sees: a game master
-// sees every approved recap and its page, a player only the posted ones, as plain titles.
+// sees every approved recap and its page, a player only the posted ones, as plain titles. The names
+// are only ever ones already shown to the players, the same list for everyone (the API's rule).
 import { useEffect, useState } from "preact/hooks";
 
 import { playedDay, sessionLength } from "../content/recaps";
@@ -46,7 +47,10 @@ function Entry({ s }: { s: TimelineSession }) {
         ) : (
           s.recap.title
         )}
-        {s.recap !== null && <span class="small muted"> ({s.recap.posted ? text.recapPosted : text.recapApproved})</span>}
+        {/* "Approved, not posted yet" is the game master's step: only they get a recap that is not posted. */}
+        {s.recap !== null && (s.recap.posted || s.recap.ref !== null) && (
+          <span class="small muted"> ({s.recap.posted ? text.recapPosted : text.recapApproved})</span>
+        )}
       </p>
       <p>
         <strong>{text.revealedLabel}: </strong>

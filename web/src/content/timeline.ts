@@ -3,23 +3,23 @@
 // names shown to the players at the table that session. Read-only, and for everyone in the server.
 export const text = {
   heading: "Story timeline",
-  lead: "Your campaign, session by session: what was played, the recap, and the names that came out at the table.",
+  lead: "Each session in order, with its recap and the names shown at the table.",
   loading: "Loading…",
   signedOut: "Sign in to see this campaign's timeline.",
   signIn: "Sign in with Discord",
   failed: "That didn't load. Try again in a moment.",
   notFound: "We can't find that campaign. Open it from My Account.",
-  notInPlan: "This campaign's sessions aren't kept on this plan, so there is no timeline.",
+  notInPlan: "This campaign's sessions aren't kept on its plan, so there is no timeline.",
   tooMany: "Too many tries at once. Wait a moment, then try again.",
-  none: "No sessions yet. They show up here once DMbot has listened to one.",
+  none: "No sessions yet. After your first session, it will show up here.",
   session: (n: number): string => `Session ${n}`,
   running: "Still listening",
   recapLabel: "Recap",
   recapPosted: "Posted to the table",
-  recapApproved: "Approved, not posted",
+  recapApproved: "Approved, not posted yet",
   noRecap: "No recap yet.",
   revealedLabel: "Revealed at the table",
-  revealedNone: "No new names came out.",
+  revealedNone: "No names shown yet.",
   openRecap: (title: string): string => `Open the recap: ${title}`,
 };
 
