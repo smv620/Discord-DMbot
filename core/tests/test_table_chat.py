@@ -432,6 +432,34 @@ class AtTheTableTyped(AtTheTable):
         )
         self.assertNotIn("my cat", cleaned)
 
+    async def test_putting_back_typed_chat_does_not_count_its_words_twice(self) -> None:
+        """#2447: a typed line's words reached the names scan and the word list when it was
+        typed; "Put it back" gives it its place in the cleaned transcript and nothing more."""
+        self.bot.topic_ai = cast(Any, object())
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        text = "my cat knocked a mug off the shelf yesterday"
+        with patch.object(bot_module, "classify", AsyncMock(return_value=(["off_topic"], reply))):
+            await self.hear(message(text, author=PLAYER))
+            await asyncio.gather(*list(self.live.topic_timers), *list(self.live.topic_tasks))
+        (run,) = self.live.left_out.runs
+        heard_before = len(self.live.heard)
+        self.live.dm_user_ids = frozenset({DM, OTHER_DM})
+        await self.bot.put_back(GUILD_A, run.id, DM)
+        self.assertEqual(len(self.live.heard), heard_before)  # not fed to the names scan again
+        (saved,) = [x for x in self.live.unsaved.lines() if x.typed]
+        self.assertEqual(saved.topic, "game")  # but it is in the cleaned transcript again
+
+    async def test_a_typed_and_a_spoken_line_in_one_millisecond_are_told_apart(self) -> None:
+        from dmbot.transcript.models import Line
+
+        spoken = Line(5_000, PLAYER, "hello there", "hello there", 1000)
+        typed = Line(5_000, PLAYER, "my cat", "my cat", typed=True)
+        self.live.unsaved.add(spoken)
+        self.live.unsaved.add(typed)
+        self.assertTrue(self.live.unsaved.set_topic(PLAYER, 5_000, "off_topic", typed=True))
+        by = {x.typed: x.topic for x in self.live.unsaved.lines()}
+        self.assertEqual(by, {False: "game", True: "off_topic"})
+
     async def test_typed_chat_plainly_about_the_game_is_never_held_for_a_label(self) -> None:
         self.bot.topic_ai = cast(Any, object())
         await self.hear(message("I roll a d20 for initiative", author=PLAYER))

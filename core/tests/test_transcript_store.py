@@ -118,6 +118,20 @@ class StoreTests(DatabaseTest):
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD), frozenset({11, 12, 13}))
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD + 9), frozenset())
 
+    async def test_a_topic_is_set_on_the_typed_line_or_the_spoken_one_never_both(self) -> None:
+        """#2447: typed chat and speech of one person can share a millisecond."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        ms = START * 1000 + 5000
+        spoken = Line(ms, DM, "hello there", "hello there", 1000)
+        typed = Line(ms, DM, "my cat", "my cat", typed=True)
+        await self.store.add_lines(GUILD, sid, [spoken, typed])
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, ms, "off_topic", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "off_topic"})
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [ms], "game", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "game"})
+
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")

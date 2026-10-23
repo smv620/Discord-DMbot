@@ -131,9 +131,9 @@ def _hidden_typing(line: Line) -> bool:
 
 def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     """The people a file of this version names, in the order each first speaks in it. DMbot's own
-    answers are not a person; the cleaned version leaves out typed chat and sidebar lines, so
-    someone who only typed or asked DMbot is not listed there (a gap in the numbers or a
-    "(2)" would hint at a hidden person). One order for the website and the Discord download, so
+    answers are not a person; the cleaned version leaves out sidebar lines and typing clearly not
+    about the game, so someone who only asked DMbot, or whose typing was all hidden, is not
+    listed there (a gap in the numbers or a "(2)" would hint at a hidden person). One order for the website and the Discord download, so
     a person has the same label in both."""
     order: list[int] = []
     for line in sorted(lines, key=lambda x: x.started_ms):
@@ -303,8 +303,8 @@ def render(
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
-    # Typed chat (#1118) is only in the as-heard version, tagged "(typed)"; the cleaned one is
-    # what was said.
+    # Typed chat (#1118) is in both versions, tagged "(typed)"; the cleaned one leaves out typing
+    # clearly not about the game, as it does talk (#2447, item 6).
     typed_lines = [line for line in everything if line.typed and not line.sidebar]
     table_lines = [line for line in everything if not line.sidebar and not line.typed]
     shown_typed = (

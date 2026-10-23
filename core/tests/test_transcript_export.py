@@ -357,6 +357,40 @@ REPLIED = Lineage(
 )
 
 
+class TypedInTheCleanedVersion(unittest.TestCase):
+    """#2447, item 6: typed chat is in both versions, tagged (typed); typing clearly not about the
+    game is left out of the cleaned one, as talk like it is."""
+
+    def render(self, version: str, lines: list[Line]) -> list[str]:
+        text = export.render("X", session(), lines, {MIA: "Mia", DEE: "Dee"}, version=version)
+        return text.split("\n\n", 1)[1].splitlines()
+
+    def test_typed_game_chat_is_in_both_versions_under_the_writers_name(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "we take a long rest"), typed=True),
+            line(9, DEE, "Run!"),
+        ]
+        want = ["[0:00:05] (Mia) (typed): we take a long rest", "[0:00:09] (Dee): Run!"]
+        self.assertEqual(self.render(export.AS_HEARD, lines), want)
+        self.assertEqual(self.render(export.CLEANED, lines), want)
+
+    def test_off_topic_typing_is_hidden_from_the_cleaned_version_only(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic"),
+            line(9, DEE, "Run!"),
+        ]
+        self.assertIn("(typed): my cat", "\n".join(self.render(export.AS_HEARD, lines)))
+        cleaned = "\n".join(self.render(export.CLEANED, lines))
+        self.assertNotIn("my cat", cleaned)
+        self.assertIn("Run!", cleaned)
+
+    def test_the_note_is_there_even_when_every_typed_line_is_hidden(self) -> None:
+        lines = [dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic")]
+        head = export.render("X", session(), lines, {MIA: "Mia"}, version=export.CLEANED)
+        self.assertIn("(typed) lines were typed", head.split("\n\n", 1)[0])
+        self.assertNotIn("my cat", head.split("\n\n", 1)[1])
+
+
 class DmSidebarLines(unittest.TestCase):
     """The DM's question and DMbot's answer (#935, #933): in the as-heard file for everyone
     who can read transcripts, with where each came from; never in the cleaned one."""
