@@ -3166,6 +3166,11 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
     ("dmbot_handover_shares_rules", "dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)"),  # #2532
     ("dmbot_handover_move_failed", "dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)"),  # #2532
+    # ... and approving a draft that waited 3 days for its check, as it is (#2305).
+    (
+        "dmbot_recap_approve_unchecked",
+        "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
+    ),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11334,6 +11339,24 @@ PINNED_TRUTH = """
     1,
 )
 
+# Family roles (#2457, Supervisor's ruling A): whether a family connection's detail is a role that
+# reads one way ("Mira is the niece of Aldric"). Older rows are false: their detail was stored with
+# the two names sorted by id, so its direction is arbitrary and they keep reading "is family of".
+# The column has a default and is added, not updated, so no row changes and no backfill policy.
+# The website's door sends it with each connection, built from the door as it stands now (0190).
+_DIRECTIONAL_LINK = "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,"
+_door_directional = PINNED_TRUTH[
+    PINNED_TRUTH.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_directional.count(_DIRECTIONAL_LINK) == 1
+RELATION_DIRECTIONAL = """
+    ALTER TABLE memory_relations ADD COLUMN directional BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_directional.replace(
+    _DIRECTIONAL_LINK,
+    "'detail', r.detail, 'directional', r.directional, 'secret', r.secret, 'at', r.created_at,",
+    1,
+)
+
 LINK_PIN_ACTION = """
     -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
     -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
@@ -12513,6 +12536,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
+    ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
