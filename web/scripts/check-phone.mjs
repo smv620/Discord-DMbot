@@ -208,6 +208,10 @@ const pages = [
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
   ["campaign page: the DM's links", "/account/campaigns/100.cmp1?demo=table"],
   ["campaign page: a player", "/account/campaigns/100.cmp1.cp-player?demo=table"],
+  ["campaign page: a shorter keep-time asks first", "/account/campaigns/100.cmp1?demo=table", async (page) => {
+    await page.getByRole("button", { name: "30 days" }).click();
+    await page.getByRole("button", { name: "Delete after 30 days" }).waitFor();
+  }],
   ["web: a DM in the Players View", "/account/web/100.cmp1?demo=table", async (page) => {
     await page.getByLabel("Players View").check();
     await page.getByText("Exactly what your players see.", { exact: false }).waitFor();

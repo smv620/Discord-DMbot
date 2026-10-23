@@ -9,6 +9,7 @@ import unittest
 
 from dmbot.transcript import importer
 from dmbot.web import imports
+from tests import speed
 
 BOM = "﻿"
 
@@ -120,7 +121,7 @@ class Speed(unittest.TestCase):
         start = time.perf_counter()
         with contextlib.suppress(importer.TranscriptError):
             importer.parse(vtt)
-        self.assertLess(time.perf_counter() - start, 1.0)
+        self.assertLess(time.perf_counter() - start, speed.allowed(1.0))
 
     def test_a_voice_tag_of_dots_is_read_in_linear_time(self) -> None:
         self.took_under_a_second("<v" + "." * 5000)
