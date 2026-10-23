@@ -149,6 +149,7 @@ const pages = [
   ["account, free access", "/account?demo=free-paying"],
   ["recap list", "/account/recaps?demo=table"],
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
+  ["a recap unchecked for 3 days (#2297)", "/account/recaps/200000000000000001.cmp9.1789000000?demo=table"],
   ["a recap's names, with how to say each (#2317)", `/account/recaps/${REF}?demo=table`, async (page) => {
     await page.getByText("Names in this campaign").first().click();
     await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
@@ -191,6 +192,10 @@ const pages = [
   }],
   ["names: not a DM", "/account/names/100.cmp1.names-manager?demo=table"],
   ["web: the map", "/account/web/100.cmp1?demo=table"],
+  ["web: a pinned connection (#2448)", "/account/web/100.cmp1?demo=table", async (page) => {
+    await page.getByRole("button", { name: /connections between Mira Voss and Captain Brask/ }).first().click();
+    await page.getByText("100% truth", { exact: false }).first().waitFor();
+  }],
   ["web: not a DM", "/account/web/100.cmp1.web-manager?demo=table"],
   ["campaign page: the DM's links", "/account/campaigns/100.cmp1?demo=table"],
   ["campaign page: a player", "/account/campaigns/100.cmp1.cp-player?demo=table"],

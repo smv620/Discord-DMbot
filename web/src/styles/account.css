@@ -144,6 +144,16 @@
     gap: var(--space-1) var(--space-3);
   }
 
+  /* A sentence DMbot would have looked at twice (#2297): a pale warning background with the page's
+     own text colour and an underline, so it does not depend on colour alone. */
+  .account .recap-unchecked-text mark {
+    background: var(--warn-soft);
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--warn);
+    text-underline-offset: 0.2em;
+  }
+
   .account .hello {
     display: flex;
     flex-wrap: wrap;

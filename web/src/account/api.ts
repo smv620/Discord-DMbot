@@ -295,6 +295,11 @@ export interface Recap {
    * #2305 and is not built yet. */
   uncheckedSince?: number;
   uncheckedSentences?: number[];
+  /** Once the recap has waited 3 days: its draft, a sentence at a time (the numbers above count
+   * these), for the DM to read before anything is shared (#2297). Empty or missing before that. */
+  uncheckedDraft?: string[];
+  /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
+  canApproveUnchecked?: boolean;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -817,6 +822,9 @@ export interface WebLink {
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
   belief?: WebBelief;
+  /** The DM pinned it as 100% truth (#2448, API #2447). Sent to a DM in the full view only; the page
+   * also drops it for anyone else. */
+  pinned?: boolean;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -868,6 +876,7 @@ export type WebLinkChange =
   | { action: "add"; a: string; b: string; words: string; secret: boolean }
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
+  | { action: "pin"; id: string; pinned: boolean }
   | { action: "remove"; id: string; confirm: true };
 
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
@@ -1118,6 +1127,9 @@ export interface AccountApi {
   /** `post`: approve the text-only choice and hand it to the bot to post, in one call (#2419). An
    * older API ignores it and leaves the recap approved and not posted. */
   approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
+  /** "Use this draft as it is" for a recap unchecked for 3 days (#2297, #2305): it then goes on as
+   * a finished draft for the DM to edit and approve as usual. Missing from an older API. */
+  approveUnchecked?(ref: string): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1682,6 +1694,8 @@ export function httpApi(
           ...(options?.post ? { post: true } : {}),
         }),
       ),
+    approveUnchecked: async (ref) =>
+      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, {})),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
