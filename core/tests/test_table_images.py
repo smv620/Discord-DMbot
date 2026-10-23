@@ -14,6 +14,7 @@ from dmbot import images, table_chat
 from dmbot.ai import Image
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
+from dmbot.map_notes import MapNoteStore
 from tests import test_table_chat as chat
 from tests.test_table_chat import EXTRA, VOICE, message
 from tests.test_timebot import DM, GUILD_A, GUILD_B, NOON4, PLAYER, Clocks
@@ -33,6 +34,23 @@ class Vision:
         self.calls += 1
         self.sent.append(system + text)
         body = {"kind": self.kind, "alt": self.alt, "text": "The key is under the stone."}
+        return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
+
+
+class MapVision(Vision):
+    """Says it is a map, and for the second, careful reading gives its places."""
+
+    def __init__(self) -> None:
+        super().__init__("A map of the coast.", "map")
+
+    async def complete(self, system: str, text: str, **kw: Any) -> Any:
+        if system != images.MAP_SYSTEM:
+            return await super().complete(system, text, **kw)
+        self.calls += 1
+        body = {
+            "places": [{"name": "Harrowmere", "where": "on the coast"}],
+            "layout": "A road runs east.",
+        }
         return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
 
 
@@ -82,6 +100,38 @@ class TableImages(chat.AtTheTableTyped):
         await self.hear(picture())
         self.assertEqual((self.fetched, self.vision.calls), ([], 0))
         self.assertEqual([line.text for line in self.lines()], [images.NOT_DESCRIBED])
+
+    async def test_a_map_is_also_kept_in_words_for_mapbot(self) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=MapVision())
+        await self.hear(picture())
+        [note] = await self.bot.map_notes.notes(GUILD_A, self.a.id)
+        self.assertEqual((note.user_id, note.places[0].name), (DM, "Harrowmere"))
+        [line] = self.lines()
+        self.assertTrue(line.text.startswith("a map: "))  # the transcript says it is a map
+        self.assertNotIn("Harrowmere", line.text)  # and carries no more than the short description
+
+    async def test_a_picture_that_is_not_a_map_keeps_no_map_note(self) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+
+    async def test_a_map_from_someone_who_stopped_keeps_no_note(self) -> None:
+        self.bot.map_notes = MapNoteStore(self.db)
+        agreed = {"yes": True}
+        vision = MapVision()
+        self.bot.image_desk = self.make_desk(vision=vision)
+        real = vision.complete
+
+        async def stop_then_answer(system: str, text: str, **kw: Any) -> Any:
+            got = await real(system, text, **kw)
+            agreed["yes"] = False
+            return got
+
+        vision.complete = stop_then_answer  # type: ignore[method-assign]
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
+        await self.hear(picture())
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
 
     async def test_a_picture_with_words_keeps_both_in_the_same_message(self) -> None:
         await self.hear(picture("look at this"))

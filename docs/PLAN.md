@@ -3175,7 +3175,7 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     and not from its name. `read` makes one fast call for the description; a map is read again by the careful
     model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript
     line, the day's limit and the consent terms bump, together, so nothing is read before people agree), part 3
-    (the map table for MapBot) and part 4 (the text reply and ✏️ Fix) follow.
+    (the map table for MapBot, below) and part 4 (the text reply and ✏️ Fix) follow.
   - *Built, part 2 (CloudDev, 2026-10-23, #2450): the table chat reads pictures.* Off unless the backend switch
     `DMBOT_TABLE_IMAGES` is on, 40 pictures per campaign per day (`DMBOT_TABLE_IMAGES_PER_DAY`). Only a message from
     someone who agreed, in the table's chat while listening, never a bot or webhook, has its attachments (up to 4,
@@ -3187,6 +3187,14 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     only**: its names count as said, but it never runs a clock phrase, a house rule, the sidebar or the off-topic
     filter. The day's count is a row per campaign and day in the database (`image_day_use`, a count only, deleted
     with the campaign), so the limit holds across restarts; the log holds counts only.
+  - *Built, part 3 (CloudDev, 2026-10-23, #2450): maps kept in words for MapBot.* When the picture read is a map,
+    its description (the places and where each is from the others, the layout, the short description) is also
+    kept in `map_notes` (migration 0203; `dmbot/map_notes.py`), with who posted it. **Words only, never the
+    picture.** Nothing is built on the notes yet: MapBot is a later feature. Per campaign and server (row-level
+    security), at most 200 a campaign (the oldest goes), deleted with the campaign, in its backup
+    (`MapNotesSection`, checked on restore like every section), and deleted with the poster's own lines when they
+    delete their transcripts. A poster who stops mid-reading leaves no note. Part 4 (the text reply and ✏️ Fix)
+    follows.
   - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
     that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
     yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the

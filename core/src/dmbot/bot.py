@@ -250,6 +250,7 @@ from dmbot.image_desk import ImageDesk, ImageUseStore
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
+from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import definitions, document_reader, extractor, plan_reader, web_actions
 from dmbot.memory import health as memory_health
@@ -1415,6 +1416,7 @@ class DMBot(commands.AutoShardedBot):
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
         self._deleted_messages: dict[int, float] = {}
+        self.map_notes: MapNoteStore | None = None  # set where the database is known (#2450)
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -5271,6 +5273,13 @@ class DMBot(commands.AutoShardedBot):
         reads = await desk.describe(gid, cid, links, still_ok)
         if not still_ok():
             return
+        if self.map_notes is not None:
+            for read in reads:
+                if read is not None and read.kind == images.MAP:
+                    try:
+                        await self.map_notes.add(gid, cid, user_id, read)
+                    except Exception:  # the transcript line matters more than the note
+                        log.exception("Table image: couldn't keep a map's description")
         for n, read in enumerate(reads):
             self._deliver_typed(
                 table,
@@ -12642,6 +12651,7 @@ def register_backup_sections(
     campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
     campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
     campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
+    campaigns.register_section(MapNotesSection())  # and the maps posted at its table (#2450)
     campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
@@ -12719,6 +12729,7 @@ async def run(settings: Settings) -> None:
             backstory_links=BackstoryLinks(db),
         )
         bot.house_wins = WinsStore(db)
+        bot.map_notes = MapNoteStore(db)  # maps put into words, for MapBot (#2450)
         if bot.image_desk is not None:  # the day's count lives in the database (#2450)
             bot.image_desk.counter = ImageUseStore(db)
         _close_on_sigterm(bot)

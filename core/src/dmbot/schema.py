@@ -11681,6 +11681,28 @@ IMAGE_LINES = """
     );
     """ + _isolate("image_day_use")
 
+MAP_NOTES = """
+    -- A map someone posted in the table chat, put into words for MapBot, a later feature (#2450,
+    -- docs/PLAN.md, "Images posted there"): the places on it and where each is from the others, and
+    -- the layout as a whole. Words only, never the picture. `user_id` is who posted it, so the
+    -- notes go when that person deletes their lines. Rows go with their campaign; a campaign keeps
+    -- at most 200 (the store drops the oldest). New table: no rows change, so no backfill policy.
+    CREATE TABLE map_notes (
+        id          BIGSERIAL PRIMARY KEY,
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        made_at     BIGINT NOT NULL,
+        alt         TEXT NOT NULL CHECK (char_length(alt) BETWEEN 1 AND 400),
+        layout      TEXT NOT NULL CHECK (char_length(layout) <= 2500),
+        places      JSONB NOT NULL CHECK (jsonb_typeof(places) = 'array'),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE INDEX map_notes_campaign ON map_notes (campaign_id, id);
+    CREATE INDEX map_notes_person ON map_notes (guild_id, user_id);
+    """ + _isolate("map_notes")
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11908,6 +11930,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
+    ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -11917,6 +11940,7 @@ ISOLATED_TABLES = (
     "merge_restores",
     "transcript_respells",
     "image_day_use",
+    "map_notes",
     "test_voice_consent",
     "campaigns",
     "campaign_dms",

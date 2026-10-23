@@ -725,6 +725,10 @@ class TranscriptStore:
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
+            await conn.execute(  # and the maps they posted, kept in words for MapBot (#2450)
+                "DELETE FROM map_notes WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
             await conn.execute(  # and the questions kept about their words (#1572)
                 "DELETE FROM waiting_name_questions WHERE guild_id = %s AND speaker_id = %s",
                 (guild_id, user_id),
