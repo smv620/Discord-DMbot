@@ -1869,6 +1869,19 @@ names panel nor the speech-to-text hints can be a fixed list.
       open (the change log's Undo; the question then waits again). A state ("Roan is dead") has no secret flag, so it has no 🤫.
       **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
       below 1.0 is refused.
+    - *Built (CloudDev, 2026-10-23, #2411):* **recaps rank by how connected a name is.** `importance` is the
+      number of live connections an entry has in The truth, secret ones included, plus a quarter for each
+      entry two steps out, capped at 20 (`memory/importance.py`, computed in code from the connections and
+      The truth's beliefs; an ended connection, or one The truth puts at 0.0, does not count). It is kept
+      in memory per campaign and read again after each session. It only **ranks**: when a long session has
+      more beats than the recap can tell, a beat's names add their importance after what PlotBot marked
+      (so a minor mention of a well-connected name is kept), and PlotBot's story context is recalled for
+      the names that matter most first. The writer's names and facts still come only from what the players
+      know; the scores are numbers by name and no connection or fact is ever put in a prompt through them.
+      The token budget is unchanged: it changes the order, not the size.
+      **PlotBot is DM-only, so it may read DM-only connections** (it has since #2254, and is told which
+      memory the players know); the recap **writer** and every other call never get them, and a test
+      proves it with a real store behind PlotBot's story memory.
     - *Built, slice 4 (CloudDev, 2026-10-23, #2410):* the summary also goes when no secret was said, if
       there are new names or things to check (no Recant part then). The things to check are **spelled
       out in words** (the first five, with who said each: "you" or "a player"), in the DM-only copies of
@@ -4578,6 +4591,17 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     and the step it's on (the last check, then posting). It updates by itself until it ends: "Posted to your
     table" with a link to the message in Discord, or what went wrong and what to do next. Leaving and coming
     back shows the same clock, counted from when it started.
+  - *Built on Discord (CloudDev, 2026-10-23, #2420):* a new recap line on the DM screen has the same three
+    buttons in the page's words (**✅ Approve and post text only**, **🎙️ Approve and make audio to review**,
+    **📋 Approve but don't post**), **📝 Review the recap** (the link to that recap's page, or **Read it** with
+    no website address) and **Share a recap**. They go through the same store move as the page
+    (`RecapStore.approve`, which takes `post` to approve and hand it to the bot in one statement), so a
+    recap approved on either shows as approved on the other. The audio button asks voice-over, music or
+    both (text only is the other two buttons); where audio can't be made it is greyed and the line says
+    why ("not set up" is specific; the plan and the month's allowance say "isn't available for this
+    campaign right now", because every DM sees the line and a co-DM is never told the owner's plan).
+    "Not this one" is no longer offered on a new line; it still answers on a line already sent. Cue
+    problems, secret names and who is recorded are checked on every press, as before.
 - **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
   page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
   number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21

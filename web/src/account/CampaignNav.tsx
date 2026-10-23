@@ -85,7 +85,10 @@ export default function CampaignNav({
   const here = GROUP_OF[page];
   const isDm = found?.role === "owner" || found?.role === "co-dm";
   const home = campaignHref(campaignRef);
-  const pageName = label ?? (page === "campaign" ? null : words.pages[page]);
+  const listName = page === "campaign" ? null : words.pages[page];
+  // A page inside a list (one NPC, one recap) names itself last and links the list before it.
+  const listHref = page === "names" ? `/account/names/${encodeURIComponent(campaignRef)}` : `/account/recaps?campaign=${encodeURIComponent(campaignRef)}`;
+  const pageName = label ?? listName;
   const tabs: CampaignGroup[] = isDm ? ["story", "table", "rules", "settings"] : ["story", "table", "rules"];
 
   return (
@@ -98,6 +101,11 @@ export default function CampaignNav({
           <li>
             {pageName === null ? <span aria-current="page">{campaign}</span> : <a href={home}>{campaign}</a>}
           </li>
+          {label !== undefined && listName !== null && (
+            <li>
+              <a href={listHref}>{listName}</a>
+            </li>
+          )}
           {pageName !== null && (
             <li>
               <span aria-current="page">{pageName}</span>
@@ -109,7 +117,7 @@ export default function CampaignNav({
         <ul class="tabs">
           {tabs.map((group) => (
             <li key={group}>
-              <a href={`${home}#${group}`} aria-current={here === group ? "page" : undefined}>
+              <a href={`${home}#${group}`} aria-current={here === group ? "location" : undefined}>
                 {words.groups[group]}
               </a>
             </li>

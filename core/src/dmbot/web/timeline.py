@@ -75,6 +75,7 @@ async def read_timeline(
         if number is not None:
             names = shown.setdefault(number, [])
             # A name shown twice (two scans) is listed once.
+            # A name that was renamed since shows its current name, not the one it had then.
             names.extend(n for n in (str(x) for x in reveal["names"]) if n not in names)
     out: list[dict[str, Any]] = []
     for s in sessions:

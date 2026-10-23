@@ -129,11 +129,11 @@ describe("the checks' notes", () => {
 
   it("are left out when there are none, or the API doesn't send them", async () => {
     render(<Recaps api={pageWith([{ ...base, criticNotes: [] }])} path={path} />);
-    await screen.findByText(base.title);
+    await screen.findByRole("heading", { name: base.title });
     expect(screen.queryByText(text.checksHeading)).toBeNull();
     cleanup();
     render(<Recaps api={pageWith([base])} path={path} />);
-    await screen.findByText(base.title);
+    await screen.findByRole("heading", { name: base.title });
     expect(screen.queryByText(text.checksHeading)).toBeNull();
   });
 });
