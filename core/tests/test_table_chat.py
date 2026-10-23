@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+from dmbot import bot as bot_module
 from dmbot import table_chat
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import Table
@@ -418,28 +419,23 @@ class AtTheTableTyped(AtTheTable):
     ) -> None:
         """#2447, item 6: a typed line not plainly about the game waits for a label like talk; the
         label is saved on the line, and nothing is held back from the names scan or the words."""
-        from unittest.mock import patch
-
-        from dmbot import bot as bot_module
-
         self.bot.topic_ai = cast(Any, object())
-        await self.hear(message("did you watch the football last night", author=PLAYER))
-        (waiting,) = self.live.topics.lines
-        self.assertEqual(self.live.held, {})  # (its words already reached the scan, once)
         reply = SimpleNamespace(input_tokens=0, output_tokens=0)
         with patch.object(bot_module, "classify", AsyncMock(return_value=(["off_topic"], reply))):
-            await self.bot._label_topics(self.live, self.live.topics.take())
+            await self.hear(message("my cat knocked a mug off the shelf yesterday", author=PLAYER))
+            self.assertEqual(self.live.held, {})  # (its words already reached the scan, once)
+            await asyncio.gather(*list(self.live.topic_timers), *list(self.live.topic_tasks))
         (saved,) = [x for x in self.live.unsaved.lines() if x.typed]
-        self.assertEqual((saved.topic, saved.user_id), ("off_topic", waiting.speaker))
+        self.assertEqual((saved.topic, saved.user_id), ("off_topic", PLAYER))
         cleaned = export.render(
             "Alpha", self.session(), [saved], {PLAYER: "Mia"}, version=export.CLEANED
         )
-        self.assertNotIn("football", cleaned)
+        self.assertNotIn("my cat", cleaned)
 
     async def test_typed_chat_plainly_about_the_game_is_never_held_for_a_label(self) -> None:
         self.bot.topic_ai = cast(Any, object())
-        await self.hear(message("we take a long rest", author=PLAYER))
-        self.assertEqual(list(self.live.topics.lines), [])
+        await self.hear(message("I roll a d20 for initiative", author=PLAYER))
+        self.assertEqual((list(self.live.topics.lines), len(self.live.topic_timers)), ([], 0))
 
     def session(self) -> Any:
         session = MagicMock(spec=TranscriptSession)
