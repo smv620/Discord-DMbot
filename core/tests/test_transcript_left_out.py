@@ -40,6 +40,14 @@ class RunsTest(unittest.TestCase):
         self.assertEqual(len(runs), 2)
         self.assertTrue(all(kept not in r.lines for r in runs))
 
+    def test_a_typed_line_and_a_spoken_one_at_the_same_moment_are_told_apart(self) -> None:
+        """Only the typed line is left out: the spoken line with the same start ends the run and
+        is not swept in with it (#2447)."""
+        typed = Waiting(DEE, 1000, "my boss called again", 3.0, typed=True)
+        spoken = w(DEE, 1, "I attack the goblin")
+        (run,) = left_out.LeftOut().add([typed], [spoken, typed])
+        self.assertEqual(run.lines, [typed])
+
     def test_two_people_are_two_runs_in_the_order_heard(self) -> None:
         runs = left_out.LeftOut().add([w(MIA, 2), w(DEE, 1)])
         self.assertEqual([r.speaker for r in runs], [DEE, MIA])

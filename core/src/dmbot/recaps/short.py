@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 
 from dmbot.memory.extractor import readable
-from dmbot.transcript.models import Line
+from dmbot.transcript.models import OFF_RECORD, Line
 
 RECAP_SHORT_MINUTES = 30  # a backend constant: under this, in span or in game talk, the DM is asked
 MS_PER_MINUTE = 60_000
@@ -20,6 +20,7 @@ MS_PER_MINUTE = 60_000
 
 def span_minutes(lines: Sequence[Line]) -> int:
     """From the first stored line's start to the last one's end, in whole minutes."""
+    lines = [line for line in lines if line.sidebar != OFF_RECORD]  # a marker is no speech
     if not lines:
         return 0
     first = min(line.started_ms for line in lines)

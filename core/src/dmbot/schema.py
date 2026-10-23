@@ -11143,6 +11143,18 @@ SESSION_PAUSES = """
     ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
 """
 
+OFF_RECORD_LINES = """
+    -- A stretch where a person was off the record (#2466) is one marker line in the transcript,
+    -- in both versions: "(Mia was off the record, nothing recorded, 20:14-20:19 UTC)". It is
+    -- stored as a line of its
+    -- own kind under that person (so a consent stop or "Delete my past transcripts" takes it
+    -- with their other lines) and holds no speech: when it began, how long it lasted, and the
+    -- words "off the record". The one change is the list of kinds the column accepts.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question', 'off_record'));
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11166,6 +11178,29 @@ UNREVEALED_CONNECTIONS = """
 )
 assert UNREVEALED_CONNECTIONS.count("'revealed', NOT (e.hidden") == 1
 assert UNREVEALED_CONNECTIONS.count("'revealed', EXISTS") == 1
+
+MERGE_RESTORES = f"""
+    -- Where a merge moved a name's private notes and D&D Beyond sheet (#2438). Both live outside
+    -- the change log (a note is its writer's own, a sheet is refreshed by its player), so Undo had
+    -- no way to hand them back to the name they came from. One row per merged-away name per
+    -- batch: lengths and times of the notes and the sheet row as they were before the merge, never
+    -- a note's words (a person who deletes their notes leaves no copy). Undo reads it,
+    -- puts back only what is still as the merge left it, and never refuses because of it. Kept
+    -- as long as the batch is (pruned with it), deleted with the campaign.
+    CREATE TABLE merge_restores (
+        {_memory_scope()}
+        id       BIGSERIAL,
+        batch    BIGINT NOT NULL,
+        -- 'undo': what an Undo of the batch puts back; 'redo': the batch is an Undo, and undoing
+        -- it merges these two again (the notes and sheet follow).
+        kind     TEXT NOT NULL CHECK (kind IN ('undo', 'redo')),
+        gone_id  TEXT NOT NULL,
+        keep_id  TEXT NOT NULL,
+        before   JSONB NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    CREATE INDEX merge_restores_by_batch ON merge_restores (guild_id, campaign_id, batch);
+    """ + _isolate("merge_restores")
 
 # The website's recap check agrees with the bot's (#2404, Supervisor 2026-10-22): a name the players
 # haven't been shown yet counts as secret for a recap unless the table said it in that session. The
@@ -11529,6 +11564,51 @@ STORY_TIMELINE = """
 """
 
 
+SECRET_EXPOSURES = f"""
+    -- Secrets said or typed at the table, waiting for the DM to be told (#2410, docs/PLAN.md,
+    -- "Secrets said out loud are revealed too, and the DM can recant"). One row for each secret
+    -- name or secret connection found in a session's recorded table talk. Recorded and not
+    -- applied: nothing becomes known to the players here, and the summary that tells the DM
+    -- applies it later. Holds which secret and how often, never a line or who said it. A name is
+    -- kept as its spelling key, a connection as the connection's id. 'settled' once the DM
+    -- answered it another way. Transient state, so it is left out of backups.
+    CREATE TABLE secret_exposures (
+        {_memory_scope()}
+        id                 BIGSERIAL,
+        session_started_at BIGINT NOT NULL,
+        kind               TEXT NOT NULL CHECK (kind IN ('name', 'connection')),
+        spelling           TEXT CHECK (spelling IS NULL OR char_length(spelling) BETWEEN 1 AND 400),
+        relation_id        TEXT,
+        times              INTEGER NOT NULL CHECK (times > 0),
+        status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'settled')),
+        created_at         BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK ((kind = 'name' AND spelling IS NOT NULL AND relation_id IS NULL)
+            OR (kind = 'connection' AND relation_id IS NOT NULL AND spelling IS NULL)),
+        FOREIGN KEY (guild_id, campaign_id, relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX secret_exposures_name
+        ON secret_exposures (guild_id, campaign_id, session_started_at, spelling)
+        WHERE kind = 'name';
+    CREATE UNIQUE INDEX secret_exposures_connection
+        ON secret_exposures (guild_id, campaign_id, session_started_at, relation_id)
+        WHERE kind = 'connection';
+    """ + _isolate("secret_exposures")
+
+EXPOSURE_SUMMARY = """
+    -- The after-session summary applies what a session gave away (#2410, slice 2): an exposure
+    -- becomes 'applied' (the secret was shown to the players, in the change-log batch kept here so
+    -- Recant can undo exactly that) or 'recanted' (the DM took it back). New states and a column
+    -- with no default needed: no row changes. 'applying' is a row claimed while its secret is being
+    -- shown, so a Recant pressed meanwhile cannot slip between the claim and the showing.
+    ALTER TABLE secret_exposures ADD COLUMN batch BIGINT;
+    ALTER TABLE secret_exposures ADD COLUMN claimed_at BIGINT;
+    ALTER TABLE secret_exposures DROP CONSTRAINT secret_exposures_status_check;
+    ALTER TABLE secret_exposures ADD CONSTRAINT secret_exposures_status_check
+        CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11750,11 +11830,17 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
+    ("0198_off_record_lines", OFF_RECORD_LINES),  # the "off the record" marker line (#2466)
+    ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
+    ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
+    ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "secret_exposures",
+    "merge_restores",
     "transcript_respells",
     "test_voice_consent",
     "campaigns",

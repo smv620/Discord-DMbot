@@ -14,10 +14,12 @@ from psycopg import errors, sql
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
+from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.ontology import MIGRATED_KINDS
 
 NOT_FOUND = "DMbot doesn't remember that any more."
+ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 
 
@@ -681,7 +683,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         (*ids, batch),
     )
     if await cur.fetchone() is not None:
-        raise MemoryRuleError("That was already undone.")
+        raise MemoryRuleError(ALREADY_UNDONE)
     cur = await conn.execute(
         "SELECT table_name, row_id, op, before, after FROM memory_changes"
         " WHERE guild_id = %s AND campaign_id = %s AND batch = %s ORDER BY version DESC",
@@ -700,6 +702,9 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
+    # a merge's notes and sheet live outside the log: they come back with the name (#2438)
+    await merge_restore.restore(conn, ids, batch, changes.batch)
+    await merge_restore.redo(conn, ids, batch, changes.batch)
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
