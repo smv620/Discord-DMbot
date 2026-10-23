@@ -80,6 +80,13 @@ class Brackets(unittest.TestCase):
             [("Rowan", "We open the door."), ("Kai", "Then I listen.")],
         )
 
+    def test_a_file_that_is_mostly_bracketed_reads_its_plain_lines_as_continuations(self) -> None:
+        # three bracketed lines in five: the two `Name: words` lines are wrapped lines, which are
+        # over a quarter of the file, so it is refused rather than guessed at
+        text = "[Rowan]: One.\n[Kai]: Two.\n[Rowan]: Three.\nKai: Four.\nRowan: Five.\n"
+        with self.assertRaises(importer.TranscriptError):
+            importer.parse(text)
+
     def test_the_no_colon_form_is_chosen_when_most_lines_are_that_form(self) -> None:
         # one `Name: words` line in five is not most of the file, so the brackets win
         text = (
@@ -138,6 +145,27 @@ class Captions(unittest.TestCase):
         self.assertEqual([u.speaker for u in got.utterances], ["Rowan", "Kai"])
         self.assertIn("1 unnamed cue(s) skipped of 3", logged.output[0])
         self.assertNotIn("music", logged.output[0])  # a count only
+
+    def test_srt_skips_a_stray_unnamed_cue_too_and_a_tie_is_refused(self) -> None:
+        srt = (
+            "1\n00:00:01,000 --> 00:00:02,000\nRowan: We open the door.\n\n"
+            "2\n00:00:02,000 --> 00:00:03,000\n[music]\n\n"
+            "3\n00:00:03,000 --> 00:00:04,000\nKai: Then I listen.\n"
+        )
+        self.assertEqual(speakers(srt), ["Rowan", "Kai"])
+        tie = srt.split("\n\n3\n")[0]  # one named cue, one unnamed
+        with self.assertRaises(importer.TranscriptError) as caught:
+            importer.parse(tie)
+        self.assertEqual(caught.exception.code, importer.NO_SPEAKER_NAMES)
+
+    def test_an_empty_voice_tag_does_not_count_as_a_named_cue(self) -> None:
+        vtt = (
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v Rowan></v>\n\n"
+            "00:00:02.000 --> 00:00:03.000\n[music]\n\n"
+            "00:00:03.000 --> 00:00:04.000\n<v Kai>Then I listen.</v>\n"
+        )
+        with self.assertRaises(importer.TranscriptError):
+            importer.parse(vtt)  # one named cue against two unnamed ones
 
     def test_mostly_unnamed_cues_are_still_refused(self) -> None:
         vtt = (

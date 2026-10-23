@@ -267,11 +267,12 @@ def _cues(text: str, kind: str) -> Transcript:
                 out[-1] = Utterance(
                     out[-1].speaker, out[-1].at_ms, f"{out[-1].text} {parts[0].strip()}"
                 )
+            before = len(out)
             for who, words in zip(parts[1::2], parts[2::2], strict=True):
                 spoken = re.sub(r"</?[a-z][^<>]*>", "", words, flags=re.I).strip()
                 if spoken:
                     out.append(Utterance(who.strip(), start, spoken))
-            named += 1
+            named += len(out) > before  # an empty `<v X></v>` names no one
             block = []
             return
         said = _CUE_SPEAKER.match(text)
