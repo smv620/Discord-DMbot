@@ -102,6 +102,23 @@ describe("your Discord accounts", () => {
     expect(await within(section).findByText(w.problem["last-account"] as string)).toBeTruthy();
   });
 
+  it("reads the list again when the account was already gone", async () => {
+    const api = mockApi("table");
+    const before = calls(api, "me").length;
+    api.removeDiscordAccount = async () => {
+      throw new ApiError("not-found");
+    };
+    const { section } = await show("", api);
+    const reads = calls(api, "me").length;
+    fireEvent.click(within(section).getByRole("button", { name: w.removeFor("Mira on the phone") }));
+    fireEvent.click(within(section).getByRole("button", { name: w.confirmYes }));
+    expect(await within(section).findByText(w.problem["not-found"] as string)).toBeTruthy();
+    await waitFor(() => expect(calls(api, "me").length).toBeGreaterThan(reads));
+    expect(reads).toBeGreaterThan(before - 1);
+    // the confirmation is closed, and the row's Remove button is back
+    expect(within(section).queryByRole("button", { name: w.confirmYes })).toBeNull();
+  });
+
   it("says something for a refusal it has no words for", async () => {
     const api = mockApi("table");
     api.removeDiscordAccount = async () => {

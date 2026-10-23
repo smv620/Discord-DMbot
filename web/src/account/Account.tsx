@@ -1350,7 +1350,6 @@ function CharactersSection() {
   );
 }
 
-/** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */
 /** The message for coming back from adding a Discord account (?discord=added etc.), or null (#2534). */
 function discordResult(search: string): string | null {
   const result = new URLSearchParams(search).get("discord");
@@ -1415,7 +1414,17 @@ function DiscordAccountsSection({ accounts, resultText }: { accounts: DiscordAcc
                     onClick={() =>
                       void run(
                         async () => {
-                          await api.removeDiscordAccount!(a.key);
+                          try {
+                            await api.removeDiscordAccount!(a.key);
+                          } catch (error) {
+                            // Already gone (removed in another tab): say so, and read the list again so
+                            // the page matches what is true.
+                            if (error instanceof ApiError && error.kind === "not-found") {
+                              setAsking(null);
+                              await refresh();
+                            }
+                            throw error;
+                          }
                           setAsking(null);
                           setSaid(words.removed);
                           await refresh();
@@ -1459,6 +1468,7 @@ function forgetDiscordResult(): void {
   window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
+/** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */
 function IdSection({ me }: { me: Me }) {
   return (
     <section aria-labelledby="id-heading" class="panel">
