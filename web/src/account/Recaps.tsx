@@ -35,6 +35,7 @@ import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
+import RecapNameChecks from "./RecapNameChecks";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
@@ -843,6 +844,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
+      <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}

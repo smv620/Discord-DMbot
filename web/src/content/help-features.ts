@@ -64,6 +64,11 @@ export const featureSteps: FeatureStep[] = [
     text: "When DMbot asks you to check a name, the link 📜 Open in transcript opens that session on the website at the line where the name was said, with that line marked. Anyone who can read the transcript can use the link.",
   },
   {
+    audience: "gameMaster",
+    whatsNew: "Check a recap's new names online",
+    text: "Under a recap on the website, Names to check lists the new names DMbot was not sure about. For each one, say what it is, that it is a name you already have, how it is spelled, or that it is not a name. You can also explain it in a few words. It does the same as the new names list in Discord, so answering in one place answers both. DMbot never decides what a name is.",
+  },
+  {
     audience: "player",
     whatsNew: "Go off the record for a while",
     text: "Need a break from being recorded? Press ⏸️ Pause recording me in your 🗂️ Menu, or on the reminder DMbot sends when a session starts. Pick 5 minutes, 15 minutes or Until I resume. While you are paused, nothing you say is recorded. It does not remove what you said before you paused. Press ▶️ Resume now to come back sooner. A pause ends when the session ends. Your yes stays as it was, and Stop recording me is still in the menu.",
