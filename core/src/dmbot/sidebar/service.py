@@ -66,6 +66,7 @@ RECENT_LINES = 40
 MIN_WORDS = 2  # "ok" or "thanks" is not a question
 READ_TIMEOUT_S = 30.0
 NOTE_KEEP = 1_000
+UNSTORED_KEEP = 200  # questions asked off the record and not saved yet (they finish in seconds)
 DECODE_AT_ONCE = 2
 MESSAGE_LIMIT = MESSAGE_MAX
 NOTE_EVERY_S = 30.0  # the same kind of note to the same person, at most this often
@@ -159,6 +160,7 @@ class Host(Protocol):
     @property
     def tables(self) -> Mapping[int, Table]: ...
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool: ...
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool: ...
     def name_of(self, guild_id: int, user_id: int) -> str: ...
     async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
     def sidebar_server_name(self, guild_id: int) -> str: ...
@@ -274,6 +276,8 @@ class SidebarService:
         self._decoding = asyncio.Semaphore(DECODE_AT_ONCE)
         self._known_dms: set[int] = set()  # seen as a campaign's DM since DMbot started
         self._undelivered: dict[int, str] = {}  # why the last private message failed
+        # (who, when) of questions asked while off the record: answered, never stored (#2466)
+        self._unstored: set[tuple[int, int]] = set()
         self.looked = looked.Registry()  # the lists behind "What I looked at" (#1957)
 
     # ---- the DM's chat with DMbot ---------------------------------------------------
@@ -387,6 +391,8 @@ class SidebarService:
         user_id = message.author.id
         if self.host.sidebar_has_consent(table.guild_id, user_id):
             return True
+        if self.host.sidebar_paused(table.guild_id, user_id):
+            return False  # off the record, not unagreed: no nudge to agree
         if self._note_ok(user_id, "agree"):
             text, view = self.host.consent_request(table)
             await reply(ask)
@@ -536,7 +542,7 @@ class SidebarService:
         agree button once a session, and what they typed goes nowhere."""
         if self.answerer is None or table.campaign_id is None or table.dmbchat_channel_id is None:
             return False
-        if not self.host.sidebar_has_consent(table.guild_id, user_id):
+        if not self._may_ask(table.guild_id, user_id):
             if user_id not in table.dmbchat_nudged:
                 table.dmbchat_nudged.add(user_id)
                 self._background(self.host.sidebar_nudge_chat(table, user_id), "sidebar-nudge")
@@ -651,7 +657,14 @@ class SidebarService:
             self.host.tables.get(table.guild_id) is table
             and table.campaign_id is not None
             and (_is_dm(table, user_id) or not dm)
-            and self.host.sidebar_has_consent(table.guild_id, user_id)
+            and self._may_ask(table.guild_id, user_id)
+        )
+
+    def _may_ask(self, guild_id: int, user_id: int) -> bool:
+        """Agreed to be recorded, which includes being off the record for a while (#2466): a
+        paused person's question is answered, only nothing of it is stored (`_save_lines`)."""
+        return self.host.sidebar_has_consent(guild_id, user_id) or self.host.sidebar_paused(
+            guild_id, user_id
         )
 
     async def _ask(
@@ -674,6 +687,12 @@ class SidebarService:
             return
         question = self.host.sidebar_clean(table, heard)
         asked_ms = int(self._clock() * 1000)
+        if self.host.sidebar_paused(guild_id, user_id):
+            # Off the record when it was asked: it is answered but never stored, even if the
+            # answer comes after they resume (#2466). Decided now, not when the lines are saved.
+            if len(self._unstored) > UNSTORED_KEEP:
+                self._unstored.clear()
+            self._unstored.add((user_id, asked_ms))
         campaign = await self.host.sidebar_campaign(guild_id, campaign_id)
         if campaign is None or not self._still(table, user_id, dm=dm_only):
             return
@@ -922,6 +941,11 @@ class SidebarService:
     ) -> None:
         """The question and DMbot's in-game answer, in the raw transcript only. A player's
         question is a Table Q line, the DM's a DM Sidebar line (#1187)."""
+        if (user_id, asked_ms) in self._unstored or self.host.sidebar_paused(
+            table.guild_id, user_id
+        ):
+            self._unstored.discard((user_id, asked_ms))
+            return  # off the record: the question is answered, but nothing of it is stored (#2466)
         ref = uuid.uuid4().hex[:6]  # the reply says which question it answers
         stt = self.host.sidebar_stt() if via not in (VIA_TYPED, VIA_TABLE_CHAT, VIA_CHAT) else ""
         kind = SIDEBAR_TABLE_QUESTION if not _is_dm(table, user_id) else SIDEBAR_QUESTION

@@ -208,6 +208,7 @@ from dmbot.dm_screen.story_mode import (
     StoryYesButton,
 )
 from dmbot.dm_screen.table_chat_panel import TableChatButton
+from dmbot.dm_screen.table_pause import PauseTableButton, PauseTableForButton, ResumeTableButton
 from dmbot.dm_screen.transcript_channel import (
     TranscriptChannelError,
     is_transcript_name,
@@ -282,6 +283,7 @@ from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
+from dmbot.off_the_record import OffTheRecord, Paused
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -1015,6 +1017,16 @@ class DMBot(commands.AutoShardedBot):
         # (#170). Set here, from the same settings, so the two can never disagree.
         consent.outside = settings.transcription.outside_engine
         self.consent = consent
+        # Off the record (#2466): a person's pause, or the DM's pause of the whole table.
+        self.off_the_record = OffTheRecord(
+            consent,
+            push=self.push_allowlist,
+            say=self._say_off_the_record,
+            name_of=self._off_the_record_name,
+            listening=lambda guild_id: guild_id in self.tables,
+            drop=self._drop_in_flight,
+            save=self._save_pauses,
+        )
         self.campaigns = campaigns
         self.sessions = sessions
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
@@ -1455,6 +1467,7 @@ class DMBot(commands.AutoShardedBot):
         register_commands(self.tree)
         # DM-screen buttons keep working after a restart.
         self.add_dynamic_items(PeekButton, HideButton, VisibilityButton, StopListeningButton)
+        self.add_dynamic_items(PauseTableButton, PauseTableForButton, ResumeTableButton)  # #2466
         self.add_dynamic_items(
             dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
         )  # #1666, #1691
@@ -1711,7 +1724,7 @@ class DMBot(commands.AutoShardedBot):
         `outside_to`: the outside engine the request they agreed to named, if any.
         Raises if it couldn't be saved; then nothing changed.
         """
-        already = self.consent.has_consent(guild_id, user_id)
+        already = self.consent.agreed_now(guild_id, user_id)  # (off the record is still agreed)
         recorded = await self.consent.grant(guild_id, user_id, method=method, outside_to=outside_to)
         log.info("Consent given: user %s", user_id)
         # Only from the cache: a person not in it is picked up at their next start or consent
@@ -1795,8 +1808,10 @@ class DMBot(commands.AutoShardedBot):
         the cache first (exactly who is captured now); the database only when the cache
         says no (a fresh process may not have loaded this server), and only briefly. Unsure
         counts as recorded, so the way to stop is never hidden."""
-        if self.consent.has_consent(guild_id, user_id):
-            return True
+        if self.consent.has_consent(guild_id, user_id) or self.consent.agreed_now(
+            guild_id, user_id
+        ):
+            return True  # (off the record is still recorded-with-consent: the Menu offers Resume)
         # Not wait_for: that waits for the cancelled query to clean up, which a stalled
         # database can stretch to 12 s (#834). A late lookup is cancelled but not waited
         # for: its cleanup runs alone, held in _lookups (even if this wait is cancelled)
@@ -1831,12 +1846,52 @@ class DMBot(commands.AutoShardedBot):
         if not task.cancelled():
             task.exception()  # read, so a late failure isn't reported as never retrieved
 
+    async def _save_pauses(self, guild_id: int, paused: dict[str, Any]) -> None:
+        await self.sessions.save_pauses(guild_id, paused)
+
+    def table_is_paused(self, guild_id: int) -> bool:
+        return self.consent.table_paused(guild_id)
+
+    async def _say_off_the_record(self, guild_id: int, text: str) -> bool:
+        """One plain line in the table's DMbot chat, so nobody guesses who is recorded."""
+        table = self.tables.get(guild_id)
+        return table is not None and await self.sidebar_post_chat(table, text)
+
+    def _off_the_record_name(self, guild_id: int, user_id: int) -> str:
+        guild = self.get_guild(guild_id)
+        member = guild.get_member(user_id) if guild is not None else None
+        return member.display_name if member is not None else "Someone"
+
+    def _drop_in_flight(self, guild_id: int, user_id: int | None) -> None:
+        """A pause starts: the words being said right now, and the ones not posted yet, are
+        thrown away, so the moment before the button is not kept either. Lines already in the
+        transcript stay (they were recorded while the person was on the record); words already
+        held back for a question or a spelling are not used while they are off it, because every
+        use checks consent again."""
+        table = self.tables.get(guild_id)
+        if table is None:
+            return
+        people = [user_id] if user_id is not None else list(self.consent.agreed_set(guild_id))
+        for person in people:
+            table.segmenter.drop(person)
+            table.transcript.drop_speaker(person)
+
+    async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused:
+        return await self.off_the_record.pause(guild_id, user_id, minutes)
+
+    async def resume_recording(self, guild_id: int, user_id: int) -> bool:
+        return await self.off_the_record.resume(guild_id, user_id)
+
+    def is_paused(self, guild_id: int, user_id: int) -> bool:
+        return self.consent.is_paused(guild_id, user_id)
+
     def stop_recording(self, guild_id: int, user_id: int) -> None:
         """Stop capturing this player now, without waiting for anything.
 
         Callers run this before their first await; `withdraw_consent` repeats it.
         """
         self.consent.stop_now(guild_id, user_id)
+        self.off_the_record.forget(guild_id, user_id)  # a stopped person's pause timer goes too
         self._stop_saving_now(guild_id, user_id)  # no recording means no saved voice (#1019)
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if table is None:
@@ -2071,7 +2126,7 @@ class DMBot(commands.AutoShardedBot):
     async def withdraw_consent(self, guild_id: int, user_id: int) -> bool:
         """Stop capturing at once, then save; True if they had consented. Raises if saving
         failed; the player stays stopped in this process either way."""
-        was_recorded = self.consent.has_consent(guild_id, user_id)
+        was_recorded = self.consent.agreed_now(guild_id, user_id)  # (a paused person is told too)
         self.stop_recording(guild_id, user_id)
         if was_recorded:  # stopped here at once, even if saving fails below
             self._tell_dm_about_consent(guild_id, user_id, agreed=False)
@@ -2317,6 +2372,7 @@ class DMBot(commands.AutoShardedBot):
         if table.campaign_id:
             # (Settings moved to the DM Bot channel, #1666: only the in-game control stays.)
             view = discord.ui.View(timeout=None)
+            view.add_item(PauseTableButton(table.campaign_id))  # off the record (#2466)
             view.add_item(StopListeningButton(table.campaign_id))
         message = await self.post_message(table.screen_channel_id, text, view)
         if message is None:
@@ -2372,9 +2428,12 @@ class DMBot(commands.AutoShardedBot):
         if not member.bot and table.listening:
             # Keep the DM screen's picture of who is recorded true (#107).
             recorded = self.consent.has_consent(member.guild.id, member.id)
+            off = self.consent.agreed_now(member.guild.id, member.id) and not recorded
             text = (
                 screen_messages.joined_recorded_message(member.display_name)
                 if recorded
+                else screen_messages.joined_off_the_record_message(member.display_name)
+                if off
                 else screen_messages.joined_not_recorded_message(member.display_name)
             )
             self._track(self.post(table.screen_channel_id, text), "join-note")
@@ -2648,6 +2707,7 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.pop(guild_id, None)
         if table is None:
             return None
+        self.off_the_record.end_session(guild_id)  # every pause ends with the session (#2466)
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
         if table.campaign_id:  # the moment to put the NPC list in order again (#1761)
@@ -4072,9 +4132,14 @@ class DMBot(commands.AutoShardedBot):
             await self.post(
                 screen_id, screen_messages.transcript_stopped(campaign.transcript_channel_id)
             )
+        # Off the record (#2466): a pause survives a restart. It is put back before the allowlist
+        # goes to ears, so nobody who asked not to be recorded is let in.
+        await self.consent.agreed(guild.id)  # (loaded: a pause is only for someone who agreed)
+        await self.off_the_record.restore(guild.id, saved.paused)
         # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
         # when it connects (_on_ears_link_change).
         await self.start_table(table)
+        await self.off_the_record.say_expired(guild.id, saved.paused)
         log.info("Resuming session (restart %d in a row)", streak)
         return True
 
@@ -4450,7 +4515,22 @@ class DMBot(commands.AutoShardedBot):
         )
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
-        return self.consent.has_consent(guild_id, user_id)
+        if self.consent.has_consent(guild_id, user_id):
+            return True
+        # A DM who is off the record (or whose table is) can still ask DMbot in the DM sidebar:
+        # that is a question to DMbot, not the table's speech (#2466).
+        table = self.tables.get(guild_id)
+        return (
+            table is not None
+            and (user_id == table.dm_user_id or user_id in table.dm_user_ids)
+            and self.consent.agreed_now(guild_id, user_id)
+        )
+
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool:
+        """Off the record (their own pause, or the table's): agreed, but not recorded now."""
+        return self.consent.agreed_now(guild_id, user_id) and not self.consent.has_consent(
+            guild_id, user_id
+        )
 
     async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
         return await self.campaigns.get(guild_id, campaign_id)
@@ -8737,7 +8817,7 @@ class DMBot(commands.AutoShardedBot):
             await self.recap_allowed_names(campaign, job.session_at),
         ):
             problems.append("It names something you keep secret. Change the text first.")
-        if not set(job.speakers) <= set(await self.consent.consenting(campaign.guild_id)):
+        if not set(job.speakers) <= set(await self.consent.agreed(campaign.guild_id)):
             problems.append(
                 "A player stopped being recorded since this was written, so it can't go ahead."
             )
@@ -9184,7 +9264,7 @@ class DMBot(commands.AutoShardedBot):
             log.warning("Recap: couldn't move the progress step to post", exc_info=True)
         # The audio is looked up first, so the consent read below is the last await before the send.
         audio, audio_note = await self._recap_audio_files(gid, campaign, job, channel)
-        agreed = await self.consent.consenting(gid)
+        agreed = await self.consent.agreed(gid)  # (a pause is not a stop)
         if not set(job.speakers) <= set(agreed):
             for f in audio:
                 f.close()
@@ -10093,7 +10173,7 @@ class DMBot(commands.AutoShardedBot):
         waiting = await store.waiting_plays(gid)
         if self.memory is None or not waiting:
             return
-        recorded = await self.consent.consenting(gid)
+        recorded = await self.consent.agreed(gid)  # (off the record is not a refusal)
         made = dropped = 0
         for play in waiting:
             with log_context(guild_id=gid, campaign_id=play.campaign_id):
