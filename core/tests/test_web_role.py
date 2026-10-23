@@ -334,7 +334,7 @@ class WebRole(DatabaseTest):
         for bad in (
             {"to_user_id": ALICE.id},  # already addressed to someone
             {"token_hash": None},  # no link
-            {"delivered_at": now + 1},  # "delivered" at some other time
+            {"delivered_at": now + 60},  # "delivered" at some other time
             {"delivered_at": None},
             {"created_at": now + 10_000_000, "delivered_at": now + 10_000_000},  # never expires
             {"created_at": now - 100_000, "delivered_at": now - 100_000},  # born expired

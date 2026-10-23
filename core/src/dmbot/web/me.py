@@ -118,7 +118,7 @@ async def build_me(
     incoming: list[dict[str, Any]] = []
     recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
-    emailed: dict[str, dict[str, str]] = {}  # campaign ref -> its open offer by email (#2532)
+    emailed: dict[str, dict[str, Any]] = {}  # campaign ref -> its open offer by email (#2532)
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
 
