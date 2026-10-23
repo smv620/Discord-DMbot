@@ -251,10 +251,11 @@ class SeenButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:xs:(?P<campaign>[0-9a-f]{32}):(?P<guild>[0-9]{1,20})",
 ):
-    """ "👍 Got it" on every variant of the summary (#2410). It does one small thing, taking itself
-    and the other buttons off, and it carries the summary's mark: a message with no ↩️ Recant on it
-    (only new names or things to check) is still found after a restart, and pulled back if the DM
-    screen opens up to players, because the words of what was said are in it."""
+    """ "👍 Got it" on every variant of the summary (#2410). Pressing it only greys the button and
+    relabels it "👍 Seen"; it stays on the message. It is the summary's mark: a message with no
+    ↩️ Recant on it (only new names or things to check) is found after a restart by this button's
+    id, and pulled back if the DM screen opens up to players, because the words of what was said
+    are in it. So the button must never be taken off, only closed, like Recant."""
 
     def __init__(self, campaign_id: str, guild_id: int) -> None:
         super().__init__(
@@ -289,9 +290,10 @@ class SeenButton(
             await _tell(interaction, NOT_YOURS)
             return
         view = discord.ui.View.from_message(interaction.message, timeout=None)  # type: ignore[arg-type]
-        view.remove_item(
-            next(c for c in view.children if getattr(c, "custom_id", "") == self.item.custom_id)
-        )
+        for item in view.children:
+            if getattr(item, "custom_id", None) == self.item.custom_id:
+                item.disabled = True  # type: ignore[attr-defined]
+                item.label = "👍 Seen"  # type: ignore[attr-defined]
         await interaction.edit_original_response(view=view, allowed_mentions=NO_PINGS)
 
 

@@ -550,7 +550,7 @@ class Recanting(StepBase):
         assert row is not None
         return bot, alias, row
 
-    async def test_the_got_it_button_is_for_the_dm_alone_and_takes_itself_off(self) -> None:
+    async def test_the_got_it_button_is_for_the_dm_alone_and_only_closes_itself(self) -> None:
         from dmbot.ui.exposure_summary import SeenButton
 
         bot = self.bot(campaign(id=self.c))
@@ -562,11 +562,44 @@ class Recanting(StepBase):
         with patch("discord.ui.View.from_message", return_value=view):
             await button.callback(stranger)
         stranger.edit_original_response.assert_not_awaited()
-        self.assertEqual(len(view.children), 2)  # a stranger changes nothing
+        self.assertEqual([c.label for c in view.children], ["👍 Got it", "other"])  # type: ignore[attr-defined]
         dm = self.interaction(bot)
         with patch("discord.ui.View.from_message", return_value=view):
             await button.callback(dm)
-        self.assertEqual([c.label for c in view.children], ["other"])  # type: ignore[attr-defined]
+        # still on the message (it is the summary's mark), but closed
+        self.assertEqual([c.label for c in view.children], ["👍 Seen", "other"])  # type: ignore[attr-defined]
+        self.assertTrue(view.children[0].disabled)  # type: ignore[attr-defined]
+        self.assertEqual(view.children[0].custom_id, button.item.custom_id)  # type: ignore[attr-defined]
+
+    async def test_a_summary_with_got_it_pressed_is_still_pulled_back_after_a_restart(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.dm_screen import secret_posts
+        from dmbot.ui.exposure_summary import SeenButton, summary_view
+
+        bot = self.bot(campaign(id=self.c))
+        view = summary_view([], self.c, GUILD_A, new_names=True, claims=True)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await SeenButton(self.c, GUILD_A).callback(self.interaction(bot))
+        items: list[Any] = [getattr(c, "item", c) for c in view.children]
+        buttons = [SimpleNamespace(custom_id=i.custom_id) for i in items]
+        self.assertTrue(any(b.custom_id.startswith("dmbot:xs:") for b in buttons))
+        self.assertFalse(any(b.custom_id.startswith("dmbot:xr:") for b in buttons))
+        message = SimpleNamespace(
+            id=1, author=SimpleNamespace(id=9), edit=AsyncMock(),
+            components=[SimpleNamespace(children=buttons)],
+        )  # fmt: skip
+
+        async def history(limit: int | None) -> Any:
+            yield message
+
+        secret_posts._posts.clear()  # a restart: nothing remembered
+        secret_posts._searched.clear()
+        changed = await secret_posts.hide(
+            GUILD_A, self.c, channel=SimpleNamespace(history=history), bot_id=9
+        )
+        self.assertEqual(changed, 1)
+        self.assertEqual(message.edit.await_args.kwargs["content"], secret_posts.SUMMARY_HIDDEN)
 
     async def test_recant_hides_exactly_that_one_again_and_closes_the_button(self) -> None:
         bot, alias, row = await self.shown()
