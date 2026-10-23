@@ -236,6 +236,18 @@ database.
   - **One feature per PR,** with no change in behaviour, starting with recaps.
   - **This adds no queues and no new concurrency:** it is the same process and the same event loop.
   - **One owner of session state:** the shared session state (`Table`) stays owned by one place, and features use it through small methods, never by editing each other's fields.
+  - *Built, first piece: recaps (CloudDev, 2026-10-23, #2129; Supervisor's ruling, same day).* The 65 recap methods of `DMBot`
+    (queueing and holding a recap, the plan and allowance checks, the DM-screen lines, posting, audio files, imported
+    sessions' recaps, the website's recap requests and spoken notes, and their loops) now live in `recaps/discord.py`, moved
+    unchanged (checked method by method against the old file). **It is a mixin, not a Cog yet:** `DMBot` inherits
+    `RecapFeatures`, so `DMBot.<name>` still resolves and the ~15 test files that bind these methods onto a fake bot
+    keep working; a real Cog holds its bot as `self.bot`, which would mean editing all those fakes while moving the code.
+    The Cog pass comes later, once the features are out of `bot.py`, and each next feature (memory, rules, sidebar,
+    transcript, consent, homebrew, timebot) follows the same shape. `setup(bot)` registers the recap buttons and
+    `recap_tasks()` gives the loops; `bot.py` keeps startup, the `Table`, and loading the extension. Tests changed only in
+    import and patch paths (the constants and the names the moved code reads now live in the new module) and in the
+    registered-buttons test, which also reads each feature's `setup`. The moved code's reads of the bot's fields are untyped
+    for now (a mypy override on that one module), until the Cog pass gives it a real bot to hold.
 - **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
 - **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
 - **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
