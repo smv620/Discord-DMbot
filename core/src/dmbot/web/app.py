@@ -47,8 +47,10 @@ from dmbot.web import (
     relationships,
     sessions,
     shared_recaps,
+    sharing,
     strays,
     support,
+    timeline,
     tokens,
 )
 from dmbot.web import homebrew as homebrew_pages
@@ -1440,6 +1442,19 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/timeline")
+    async def me_timeline(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's sessions in order with their recaps and the names shown at the table
+        (#2462). Anyone in the server reads it; a game master sees more recaps."""
+        session, _token = signed
+        try:
+            return await timeline.read_timeline(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/transcripts/{number}")
     async def me_transcript(
         ref: str, number: int, signed: Signed, version: str = "cleaned", offset: int = 0
@@ -1495,6 +1510,14 @@ def create_app(
         """The campaigns with a house rule or a followed set in the person's servers."""
         session, _token = signed
         return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
+
+    # The Shared rules page (#2460 part 2): what the person's campaigns publish and follow.
+    @app.get("/me/shared-rules")
+    async def me_shared_rules(signed: Signed) -> dict[str, Any]:
+        """The campaigns the person runs that publish or follow a house-rules set or homebrew
+        pack, read-only; a player of a table sees nothing here."""
+        session, _token = signed
+        return {"campaigns": await sharing.list_sharing(db, session)}
 
     @app.get("/me/campaigns/{ref}/house-rules")
     async def me_house_rules(ref: str, signed: Signed) -> dict[str, Any]:

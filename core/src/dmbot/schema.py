@@ -3189,6 +3189,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_npc_notes_delete", "dmbot_web_npc_notes_delete(BIGINT, TEXT)"),
     # A campaign's own page on the website: its name, for any member of the server (#2416).
     ("dmbot_web_campaign_card", "dmbot_web_campaign_card(BIGINT, TEXT)"),
+    # The facts on each campaign's card on My Account (#2460).
+    ("dmbot_web_campaign_facts", "dmbot_web_campaign_facts(BIGINT)"),
+    # The Shared rules page (#2460).
+    ("dmbot_web_shared_rules", "dmbot_web_shared_rules(BIGINT)"),
+    # The Story timeline page (#2462).
+    ("dmbot_web_story_timeline", "dmbot_web_story_timeline(BIGINT, TEXT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
     (
@@ -11094,6 +11100,218 @@ RECAP_HELD_NAMES = r"""
     REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
+CAMPAIGN_FACTS = """
+    -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
+    -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
+    -- plays in (claimed a player character), in one read, not one per campaign. NULL when the
+    -- caller is not in the server, like the other web doors. A non-DM's NPC count leaves out what
+    -- the players cannot see (a hidden entry, or one whose own name is secret), exactly as the
+    -- Names list does. `live` is DMbot's own record of the session it is in right now
+    -- (active_sessions), not an open transcript row: a crash leaves one of those open. The seconds
+    -- count the sessions that ended, those whose transcripts were deleted by retention included.
+    CREATE FUNCTION dmbot_web_campaign_facts(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                'id', x.id, 'name', x.name, 'dm', x.is_dm,
+                'startedAt', x.created_at, 'lastPlayedAt', x.last_played_at,
+                'live', x.live, 'sessions', x.sessions, 'secondsPlayed', x.seconds,
+                'players', x.players, 'npcs', x.npcs) ORDER BY lower(x.name), x.id)
+            FROM (
+                SELECT k.id, k.name, k.created_at, k.last_played_at, d.user_id IS NOT NULL AS is_dm,
+                    EXISTS (SELECT 1 FROM active_sessions a
+                            WHERE a.guild_id = g AND a.campaign_id = k.id) AS live,
+                    (SELECT count(*) FROM transcript_sessions t
+                      WHERE t.guild_id = g AND t.campaign_id = k.id
+                        AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) AS sessions,
+                    COALESCE((SELECT sum(GREATEST(t.ended_at - t.started_at, 0))
+                              FROM transcript_sessions t
+                              WHERE t.guild_id = g AND t.campaign_id = k.id
+                                AND t.ended_at IS NOT NULL
+                                AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)),
+                             0) AS seconds,
+                    (SELECT count(*) FROM memory_entities e
+                      WHERE e.guild_id = g AND e.campaign_id = k.id AND e.status = 'confirmed'
+                        AND e.role = 'player_character' AND e.played_by IS NOT NULL) AS players,
+                    (SELECT count(*) FROM memory_entities e
+                      WHERE e.guild_id = g AND e.campaign_id = k.id AND e.status = 'confirmed'
+                        AND e.type = 'character' AND e.role = 'npc'
+                        AND (d.user_id IS NOT NULL
+                             OR (NOT e.audience_limited AND NOT e.hidden_from_players
+                                 AND NOT EXISTS (
+                                     SELECT 1 FROM memory_aliases a
+                                     WHERE a.guild_id = g AND a.campaign_id = k.id
+                                       AND a.entity_id = e.id AND a.status <> 'rejected'
+                                       AND a.secret
+                                       AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                                         = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')
+                                 )))) AS npcs
+                FROM campaigns k
+                LEFT JOIN campaign_dms d
+                  ON d.guild_id = k.guild_id AND d.campaign_id = k.id AND d.user_id = me
+                WHERE k.guild_id = g
+                  AND (d.user_id IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM memory_entities e
+                                  WHERE e.guild_id = g AND e.campaign_id = k.id
+                                    AND e.status = 'confirmed' AND e.role = 'player_character'
+                                    AND e.played_by = me))
+            ) x), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_campaign_facts(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_campaign_facts(BIGINT) FROM PUBLIC;
+"""
+
+SHARED_RULES_PAGE = """
+    -- The Shared rules page on My Account (docs/PLAN.md, "Where everything is on the website";
+    -- #2460 part 2): for one server, each campaign the signed-in person is a DM of that publishes a
+    -- house-rules set or homebrew pack, or follows one, in one read. Only the DMs of a campaign see
+    -- its sharing (the same people who can change it in Discord); a player gets nothing. It says
+    -- whether a share code is on, never the code itself: the code is the way in to the set, so it
+    -- is read in Discord. NULL when the caller is not in the server, like the other web doors.
+    CREATE FUNCTION dmbot_web_shared_rules(g BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                'id', k.id, 'name', k.name,
+                'publishes', COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object(
+                        'kind', s.kind, 'name', s.name, 'shared', s.status = 'shared',
+                        'version', COALESCE((SELECT max(v.version) FROM rule_set_versions v
+                                             WHERE v.guild_id = g AND v.campaign_id = k.id
+                                               AND v.set_id = s.id), 1),
+                        'hasCode', EXISTS (SELECT 1 FROM rule_set_codes c
+                                           WHERE c.guild_id = g AND c.campaign_id = k.id
+                                             AND c.set_id = s.id AND c.active))
+                        ORDER BY s.kind, lower(s.name), s.id)
+                    FROM rule_sets s WHERE s.guild_id = g AND s.campaign_id = k.id), '[]'::jsonb),
+                'follows', COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object(
+                        'kind', f.kind, 'name', f.set_name, 'publisher', f.publisher,
+                        'version', f.version, 'updating', f.updating)
+                        ORDER BY f.kind, f.position, lower(f.set_name), f.set_id)
+                    FROM rule_set_follows f WHERE f.guild_id = g AND f.campaign_id = k.id),
+                    '[]'::jsonb)
+            ) ORDER BY lower(k.name), k.id)
+            FROM campaigns k
+            JOIN campaign_dms d
+              ON d.guild_id = k.guild_id AND d.campaign_id = k.id AND d.user_id = me
+            WHERE k.guild_id = g
+              AND (EXISTS (SELECT 1 FROM rule_sets s WHERE s.guild_id = g AND s.campaign_id = k.id)
+                   OR EXISTS (SELECT 1 FROM rule_set_follows f
+                              WHERE f.guild_id = g AND f.campaign_id = k.id))), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_shared_rules(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_shared_rules(BIGINT) FROM PUBLIC;
+"""
+
+STORY_TIMELINE = """
+    -- What the Story timeline page needs besides the sessions themselves (#2462): the campaign's
+    -- recaps and the names shown to the players at the table, each with the time it belongs to. The
+    -- sessions and their numbers come from the transcripts page's own door, so there is one count.
+    -- For one campaign of a server in the caller's own list, NULL otherwise (and for a campaign
+    -- that is not there). Recaps: a game master sees every one that is approved or going out or
+    -- posted; a player sees posted ones only, never a draft. Shown at the table: the names DMbot
+    -- showed the players after a session (the 'scan' writer's changes, #2404) that the players can
+    -- still see: an Undo, or the game master hiding the name again, puts the entry back to hidden,
+    -- and a redo shows it again, so the entry's own state says it (no need to follow the undo
+    -- chain). The same list for everyone: they are names the players already see. A name whose own
+    -- spelling is a secret one is left out for a player.
+    CREATE FUNCTION dmbot_web_story_timeline(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        is_dm BOOLEAN;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.guild_id = g AND k.id = c) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me);
+        RETURN jsonb_build_object(
+            'dm', is_dm,
+            'recaps', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'sessionAt', r.session_at, 'title', r.title, 'status', r.status)
+                    ORDER BY r.session_at)
+                FROM recap_jobs r
+                WHERE r.guild_id = g AND r.campaign_id = c AND r.title <> ''
+                  AND r.status <> 'dropped'
+                  AND (r.status = 'posted'
+                       OR (is_dm AND (r.status = 'posting' OR r.approved_at > 0)))
+            ), '[]'::jsonb),
+            'reveals', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('at', x.at, 'names', x.names) ORDER BY x.at)
+                FROM (
+                    SELECT min(ch.made_at) AS at,
+                           jsonb_agg(e.name ORDER BY lower(e.name), e.id) AS names
+                    FROM memory_changes ch
+                    JOIN memory_entities e
+                      ON e.guild_id = ch.guild_id AND e.campaign_id = ch.campaign_id
+                     AND e.id = ch.row_id
+                    WHERE ch.guild_id = g AND ch.campaign_id = c
+                      AND ch.table_name = 'memory_entities' AND ch.op = 'update'
+                      AND ch.source = 'scan'
+                      AND ch.before ->> 'hidden_from_players' = 'true'
+                      AND ch.after ->> 'hidden_from_players' = 'false'
+                      AND e.status = 'confirmed' AND e.type <> 'person'
+                      AND NOT e.hidden_from_players AND NOT e.audience_limited
+                      -- the DM's plot notes are not names, and a player never gets them
+                      AND (is_dm OR e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                                   'promise', 'deed'))
+                      AND (is_dm OR NOT EXISTS (
+                            SELECT 1 FROM memory_aliases a
+                            WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                              AND a.status <> 'rejected' AND a.secret
+                              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')))
+                    GROUP BY ch.batch
+                ) x
+            ), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_story_timeline(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_story_timeline(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11307,6 +11525,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
+    ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
+    ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
