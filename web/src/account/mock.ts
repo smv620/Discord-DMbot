@@ -34,6 +34,8 @@ import type {
   WebNode,
   WebQuery,
   CampaignPage,
+  CampaignSettingAnswer,
+  CampaignSettingName,
   Timeline,
   WebRevealTarget,
   MyNpcNote,
@@ -667,6 +669,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  const settingAnswers = new Map<string, { ref: string; setting: CampaignSettingName; value: string; confirm?: boolean }>();
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
   };
@@ -1006,6 +1009,35 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
               settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, gameMasters: 2 } as const,
             }),
       };
+    },
+    // The pretend settings queue (#2484): the bot answers on the next look, as the real one does within
+    // seconds. A ref ending `.cs-offline` is never answered (the bot is away), `.cs-refused` is
+    // refused by Discord's rules, `.cs-failed` goes wrong; a shorter keep-time needs `confirm`.
+    async setCampaignSetting(ref, choice): Promise<string> {
+      calls.push(`setCampaignSetting:${ref}:${choice.setting}:${choice.value}${choice.confirm ? ":confirm" : ""}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      const id = `a${settingAnswers.size + 1}`;
+      settingAnswers.set(id, { ref, ...choice });
+      return id;
+    },
+    async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
+      calls.push(`campaignSettingAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = settingAnswers.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
+      if (/\.cs-offline$/.test(ref)) return { ...base, state: "waiting" };
+      if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
+      if (/\.cs-failed$/.test(ref)) return { ...base, state: "failed", error: "failed" };
+      if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)
+        return { ...base, state: "failed", error: "needs_confirm" };
+      const note =
+        asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
+      return { ...base, state: "done", note };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
     // one the person is not in; `.npc-dm` shows a DM's own note.
