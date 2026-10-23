@@ -1196,6 +1196,7 @@ class TheProgress(WithImports):
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
                     "recap": None,
+                    "progress": got["sessions"][0]["progress"],
                 }
             ],
         )
@@ -1255,6 +1256,72 @@ class TheProgress(WithImports):
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
+
+    async def test_the_progress_shape_moves_with_the_stages_and_never_goes_back(self) -> None:
+        """#2564: stage, counts, startedAt, updatedAt and serverNow, one shape per session and for
+        the whole import."""
+        imp, _, _ = await self.one_import(False)
+        first = (await self.stage(imp))["progress"]
+        self.assertEqual(
+            sorted(first), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertEqual(
+            (first["stage"], first["state"], first["reason"]), ("cleaning", "running", None)
+        )
+        await self.set_import(step_total=900, step_done=420)
+        mid = (await self.stage(imp))["progress"]
+        self.assertEqual((mid["done"], mid["total"], mid["unit"]), (420, 900, "lines"))
+        self.assertGreaterEqual(mid["updatedAt"], first["updatedAt"])  # a step stamps it
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        end = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual(end["sessions"][0]["progress"]["state"], "done")
+        whole = end["import"]
+        self.assertEqual(
+            (whole["stage"], whole["state"], whole["done"], whole["total"], whole["unit"]),
+            ("done", "done", 1, 1, "sessions"),
+        )
+
+    async def test_a_job_that_has_not_moved_for_its_stage_limit_is_stalled(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        long_ago = int(time.time()) - 3 * 3600
+        await self.set_import(updated_at=long_ago, imported_at=long_ago)
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        part = got["sessions"][0]["progress"]
+        self.assertEqual(part["state"], "stalled")
+        self.assertTrue(part["reason"])
+        self.assertEqual(got["import"]["state"], "stalled")
+        # it can move again: the next step turns it back to running
+        await self.set_import(step_total=10, step_done=1)
+        again = (await self.stage(imp))["progress"]
+        self.assertEqual(again["state"], "running")
+
+    async def test_a_failed_job_says_why_and_a_waiting_one_never_stalls(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        await self.set_import(state="failed", reason="no names")
+        part = (await self.stage(imp))["progress"]
+        self.assertEqual((part["state"], part["reason"]), ("failed", "no names"))
+        await self.set_import(state="done", scanned=True, scan_finished=True, recap_started=True)
+        long_ago = int(time.time()) - 5 * 3600
+        await self.set_import(updated_at=long_ago)
+        from dmbot.recaps.hold import HoldStore
+
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT t.started_at FROM transcript_sessions t")
+            at = int((await cur.fetchone() or {})["started_at"])
+        await HoldStore(self.db).hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id,
+            channel_id=66, names_open=2,
+        )  # fmt: skip
+        waiting = (await self.stage(imp))["progress"]
+        self.assertEqual((waiting["stage"], waiting["state"]), ("waiting_for_names", "running"))
+
+    async def test_nothing_from_the_file_is_in_the_progress(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        text = json.dumps([got["import"], got["sessions"][0]["progress"]])
+        for line_word in ("Craig", "Cerric"):
+            self.assertNotIn(line_word, text)
+        self.assertNotIn("a.txt", text)
 
     async def listed_ref(self, at: int) -> str | None:
         """The reference the recap list gives for the session at `at` (a held recap included)."""

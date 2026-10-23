@@ -21,12 +21,14 @@ import json
 import logging
 import math
 import re
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot import fetch, plan_rules
+from dmbot import progress as progress_shape
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
@@ -723,6 +725,26 @@ RECAP_STAGES = frozenset(
 )
 
 
+def _shape_of(s: dict[str, Any], now: int) -> dict[str, Any]:
+    """One session's progress in the shared shape. Its last move is the later of the import's own
+    and, at the recap stages, the recap job's."""
+    stage = s["stage"]
+    moved = int(s["moved"])
+    if stage in RECAP_STAGES:
+        moved = max(moved, int(s["recapMoved"]))
+    cleaning = stage == "cleaning"
+    return progress_shape.shape(
+        stage,
+        started_at=int(s["imported"]),
+        updated_at=moved,
+        now=now,
+        done=int(s["stepDone"]) if cleaning else None,
+        total=int(s["stepTotal"]) if cleaning else None,
+        unit=progress_shape.UNITS.get(stage),
+        reason=s["reason"] or None,
+    )
+
+
 async def progress(
     db: Database,
     session: Session,
@@ -741,7 +763,13 @@ async def progress(
         found = (await cur.fetchone() or {}).get("r")
     if not found:
         raise RecapError("not_found")
+    now = int(time.time())
+    parts = [_shape_of(s, now) for s in found]
     return {
+        # The whole import in the one shared shape (#2564), then each session's own `progress`.
+        # A session's `state` stays the stored one (waiting, working, done, failed); the shape's
+        # `state` is running, stalled, failed or done.
+        "import": progress_shape.whole(parts, now=now),
         "sessions": [
             {
                 "file": s["file"],
@@ -755,6 +783,7 @@ async def progress(
                 "stage": s["stage"],
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
+                "progress": part,
                 # Its own recap's reference, for the stages that have a recap or a held one: the
                 # page then links the session's recap, not the list (#2240). The session time is
                 # the door's `date`; the campaign is the one opened above (never another's).
@@ -764,6 +793,6 @@ async def progress(
                     else None
                 ),
             }
-            for s in found
-        ]
+            for s, part in zip(found, parts, strict=True)
+        ],
     }
