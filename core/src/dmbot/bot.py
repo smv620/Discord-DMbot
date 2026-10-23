@@ -7126,6 +7126,7 @@ class DMBot(commands.AutoShardedBot):
                 and table.transcript_session_id == session_id
             ):
                 if image:
+                    assert self.transcripts is not None  # (checked above)
                     read = await self.transcripts.image_line(
                         guild_id, session_id, user_id, started_ms
                     )

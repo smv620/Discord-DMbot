@@ -266,6 +266,7 @@ class TableImages(chat.AtTheTableTyped):
         self.reads("text")
         await self.hear(picture(channel=EXTRA))
         said.assert_awaited_once()
+        assert said.await_args is not None
         channel, text, view = said.await_args.args
         self.assertEqual(channel, EXTRA)
         self.assertEqual(text, "Text in this image:\n> The key is under the stone.")
