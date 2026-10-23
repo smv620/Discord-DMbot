@@ -462,6 +462,7 @@ function startNames(): NameRow[] {
         others: n % 4 === 0 ? [`${name.split(" ")[0]}`, `${name} the Elder`] : n % 7 === 0 ? [`${name.split(" ").pop()}`] : [],
         secret: n % 9 === 0,
         npcId: npc ? `n${n}` : null,
+        mentions: ((n * 7) % 11) + 1,
       });
     }
   };
@@ -1130,6 +1131,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           into.others.push(row.name, ...row.others.filter((o) => !into.others.includes(o)));
           memory.splice(memory.indexOf(row), 1);
           return { ...into, others: [...into.others] };
+        }
+        case "merge-many": {
+          // The queue action of #2427: every other name goes into this one, in one change.
+          const others = [...new Set(change.others)].map((other) => memory.find((n) => n.id === other));
+          if (others.length === 0 || others.some((o) => !o)) throw new ApiError("not-found");
+          if (change.others.includes(id)) throw new ApiError("bad-target");
+          for (const other of others as NameRow[]) {
+            row.others.push(other.name, ...other.others.filter((o) => !row.others.includes(o)));
+            memory.splice(memory.indexOf(other), 1);
+          }
+          return { ...row, others: [...row.others] };
         }
         case "remove":
           memory.splice(memory.indexOf(row), 1);
