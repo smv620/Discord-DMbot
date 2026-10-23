@@ -249,3 +249,24 @@ class Running(PlotBase):
             await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1), 0
         )
         self.assertEqual(await self.rows("plot_issues"), [])
+
+    async def test_finish_waits_for_an_approval_in_flight_and_then_writes_nothing(self) -> None:
+        """Two connections: the approval's transaction holds the recap's row; the check's write
+        waits for it and then sees the approval, instead of writing issues onto approved text."""
+        await self.earlier()
+        digest = await self.hash_of()
+        await self.plots.begin(THURSDAY.id, self.one.id, 100, digest)
+        parsed = parse(Ai(self.finding()).reply, self.sentences(), [Earlier(50, "T", FELL)]) or []
+        async with self.db.guild(THURSDAY.id) as approving:
+            await approving.execute(
+                "UPDATE recap_jobs SET approved_hash = %s, approved_by = 1, approved_at = 1,"
+                " audio_choice = 'text' WHERE campaign_id = %s AND session_at = 100",
+                (digest, self.one.id),
+            )  # the approval, not yet committed
+            writing = asyncio.create_task(
+                self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1)
+            )
+            await asyncio.sleep(0.5)
+            self.assertFalse(writing.done())  # it is waiting on the approval's lock
+        self.assertEqual(await asyncio.wait_for(writing, 10), 0)  # and then it sees the approval
+        self.assertEqual(await self.rows("plot_issues"), [])
