@@ -1661,6 +1661,22 @@ into the cleaned transcript.
   transcript is working. A run of it from one person collapses into one line with the
   total time. When unsure, the line is kept. The **as heard** transcript keeps
   everything.
+  **Less strict, and always undoable (owner, 2026-10-23, after Test M lost lore lines; Supervisor's
+  details marked):** the filter was leaving out game talk, including the DM's lore, so it must lean much
+  harder to keeping.
+  - *(Supervisor:)* **A stretch between game lines stays.** A stretch of under 30 seconds with game talk
+    on both sides is kept, from anyone: it is almost always a pause, a filler ("you know") or a broken
+    sentence of the same story.
+  - *(Supervisor:)* **The DM's lines are kept** unless the filter is very sure (a clearly unrelated topic,
+    with no name, place or thing from the campaign in it); the DM narrates and gives lore.
+  - *(Supervisor:)* **A line that names something from the campaign's memory is never left out.**
+  - **The DM can put any left-out line back, at any time, on the website.** Every off-topic marker in the
+    cleaned transcript is a link: it shows that stretch **as heard**, and **Put it back** returns it to the
+    cleaned transcript for good. Discord's "🙈 Left out as off-topic" list during a session stays. *(Supervisor:)*
+    Only the campaign's DMs can put lines back. A line put back after the session is read again for names
+    and story memory, like a late line. Putting back is undoable (**Leave it out again**).
+  - *(Supervisor:)* The filter's decisions are counted per session (kept, left out, put back by the DM), so
+    a filter that is still too strict shows up in the numbers. Build: #2567 (core), #2568 (website).
 - **Players' lines:** players only speak in character, for a familiar or pet, as table
   talk, or off-topic, so the AI's best guess is used with no prompts.
 - **DM's lines:** when DMbot isn't confident who the DM is voicing (narration vs which
