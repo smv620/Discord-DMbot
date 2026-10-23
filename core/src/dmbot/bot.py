@@ -291,7 +291,7 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.inputs import load_inputs
+from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.requests import Request as RecapRequest
@@ -8604,10 +8604,13 @@ class DMBot(commands.AutoShardedBot):
         if asked is not None:
             await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
-    async def recap_secret_names(self, campaign: Campaign) -> list[str] | None:
+    async def recap_secret_names(
+        self, campaign: Campaign, session_at: int | None = None
+    ) -> list[str] | None:
         """Every secret name of the campaign, read fresh (a name may have been made secret since
         the recap was written), or None when they can't be read: then nothing is posted or
-        saved, since a secret name couldn't be kept out."""
+        saved, since a secret name couldn't be kept out. With `session_at`, a name the players
+        haven't been shown yet counts too unless the table said it in that session."""
         if self.lookup is None:
             return None
         try:
@@ -8615,9 +8618,13 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
-        return sorted({n.text for n in lookup.names if n.secret})
+        return recap_name_sets(
+            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+        )[1]
 
-    async def recap_allowed_names(self, campaign: Campaign) -> list[str]:
+    async def recap_allowed_names(
+        self, campaign: Campaign, session_at: int | None = None
+    ) -> list[str]:
         """The campaign's confirmed names that are not secret and not someone at the table, read
         fresh, for the secret check at Post (#2087): "Arcane Brotherhood" inside the confirmed
         "Arcane Brotherhood Hall" is the hall, as the draft check already reads it. Empty when they
@@ -8629,9 +8636,9 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
-        return sorted(
-            {n.text for n in lookup.names if n.confirmed and not n.secret and not n.person}
-        )
+        return recap_name_sets(
+            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+        )[0]
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
         """What the recap stages read for one job (see `dmbot.recaps.inputs`)."""
@@ -8694,11 +8701,13 @@ class DMBot(commands.AutoShardedBot):
         a secret name in it, or a player no longer recorded. The checks run again at every
         press, as at post time. Empty: the text may be approved. Counts only in the log."""
         problems = [p.words() for p in cues.cue_problems(job.summary)]
-        secrets = await self.recap_secret_names(campaign)
+        secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
             problems.append("DMbot couldn't check your secret names just now. Try again.")
         elif names_a_secret(
-            recap_post.to_the_table(job), secrets, await self.recap_allowed_names(campaign)
+            recap_post.to_the_table(job),
+            secrets,
+            await self.recap_allowed_names(campaign, job.session_at),
         ):
             problems.append("It names something you keep secret. Change the text first.")
         if not set(job.speakers) <= set(await self.consent.consenting(campaign.guild_id)):
@@ -8755,11 +8764,11 @@ class DMBot(commands.AutoShardedBot):
             return None, "You skipped this recap, so it can't be shared."
         if was_draft:  # it is posted now: the old line's Post and Skip buttons would mislead
             await self.decision_lines.close(("recap", cid, session_at), "Posted.")
-        secrets = await self.recap_secret_names(campaign)
+        secrets = await self.recap_secret_names(campaign, session_at)
         if secrets is None:
             return None, "DMbot couldn't check your secret names just now. Try again."
         text = "\n".join([job.title, strip_cues(job.summary), *job.housekeeping])
-        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
+        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign, session_at)):
             return (
                 None,
                 "This recap names a secret of yours, so it wasn't shared. "
@@ -8864,13 +8873,26 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Recap audio: couldn't load the campaign's names")
             return None
+        # The same lists as the written recap's check (#2050), so the two locks agree: a name the
+        # players haven't been shown yet is secret unless the table said it in this session.
+        _, secret = recap_name_sets(
+            lookup,
+            await recap_said(
+                getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
+            ),
+        )
+        hidden = set(secret)
         return AudioInputs(
-            secret_names=sorted({n.text for n in lookup.names if n.secret}),
+            secret_names=secret,
             # The DM's "said as" spelling (#1419); a secret name never has one, and the names are
             # read fresh all the same, so a secret one is always known to the filter.
             names=[
                 audio_names.SpokenName(
-                    n.text, n.said_as, secret=n.secret, confirmed=n.confirmed, person=n.person
+                    n.text,
+                    n.said_as,
+                    secret=n.secret or n.text in hidden,
+                    confirmed=n.confirmed,
+                    person=n.person,
                 )
                 for n in lookup.names
             ],
@@ -9122,11 +9144,11 @@ class DMBot(commands.AutoShardedBot):
                 "There's no chat channel for this campaign yet. It's made when a session starts. "
                 "Start one, then press Post."
             )
-        secrets = await self.recap_secret_names(campaign)
+        secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
             return await back("DMbot couldn't check your secret names just now. Try Post again.")
         text = recap_post.to_the_table(job)
-        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign)):
+        if names_a_secret(text, secrets, await self.recap_allowed_names(campaign, job.session_at)):
             return await back("It names something you keep secret. Change the text, then post.")
         try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits
             # between the consent read and the send, which must stay back to back)
