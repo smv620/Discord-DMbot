@@ -82,7 +82,7 @@ class Job:
     calls: int
     window_count: int  # parts the transcript is read in, and how many are done
     window_done: int
-    spent: int  # calls ever made for this session, never reset: the day's tally
+    spent: int  # calls ever made for this session, never reset (their dates are in `spent_log`)
     last_error: str
     problems: tuple[str, ...]
     beats: Any  # the stored beat sheet (dmbot.recaps.beats.from_json reads it)
@@ -194,6 +194,8 @@ _AUDIO_CLOCK_OFF = (
     " posting_step = CASE WHEN posting_step = 'audio'"
     " THEN NULLIF(posting_step, posting_step) ELSE posting_step END"
 )
+
+LOG_KEPT_S = 2 * 86400  # how long a call's date is kept (the daily tally needs only the last day)
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
 _WRITABLE = frozenset(
@@ -354,9 +356,21 @@ class RecapStore:
         """Write what a stage produced. Only the listed columns (`_WRITABLE`)."""
         if not fields or not set(fields) <= _WRITABLE:
             raise ValueError(sorted(set(fields) - _WRITABLE))
-        sets = ", ".join(f"{name} = %s" for name in fields)
+        now = int(self._now())
+        parts: list[str] = []
         values: list[Any] = []
         for name, value in fields.items():
+            if name == "spent":
+                # Each call is dated, so the day's tally counts the last 24 hours of calls and a
+                # waiting recap's lifetime spend does not stay in "today" (#2308). The new total
+                # minus the old is the calls just made; stamps older than two days are dropped.
+                parts.append(
+                    "spent = %s, spent_log = ARRAY(SELECT t FROM unnest(spent_log) AS t"
+                    " WHERE t >= %s) || array_fill(%s::bigint, ARRAY[GREATEST(%s - spent, 0)])"
+                )
+                values += [value, now - LOG_KEPT_S, now, value]
+                continue
+            parts.append(f"{name} = %s")
             if name in _LISTS:
                 values.append(list(value))
             elif name in ("beats", "grade"):
@@ -367,9 +381,9 @@ class RecapStore:
                 values.append(value)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                f"UPDATE recap_jobs SET {sets}, updated_at = %s WHERE guild_id = %s"
+                f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'",
-                (*values, int(self._now()), guild_id, campaign_id, session_at),
+                (*values, now, guild_id, campaign_id, session_at),
             )
 
     # --- the audio tracks (#1383) -------------------------------------------------------
@@ -688,12 +702,16 @@ class RecapStore:
         return None if row is None else _job(row)
 
     async def calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
-        """AI calls the campaign's recaps made since then, for the daily cap."""
+        """AI calls the campaign's recaps made since then, for the daily cap: the calls dated
+        since then, not a waiting job's whole lifetime (#2308). A job from before the calls were
+        dated is counted by its total while it was updated since then."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(sum(spent), 0) AS n FROM recap_jobs WHERE guild_id = %s"
-                " AND campaign_id = %s AND updated_at >= %s",
-                (guild_id, campaign_id, since),
+                "SELECT COALESCE(sum(CASE WHEN cardinality(spent_log) = 0"
+                " THEN (CASE WHEN updated_at >= %s THEN spent ELSE 0 END)"
+                " ELSE (SELECT count(*) FROM unnest(spent_log) AS t WHERE t >= %s) END), 0) AS n"
+                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s",
+                (since, since, guild_id, campaign_id),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
@@ -726,7 +744,8 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET state = 'queued', attempt = 0, errors = 0, restarts = 0,"
-                " next_at = 0, calls = 0, spent = 0, window_count = 0, window_done = 0,"
+                " next_at = 0, calls = 0, spent = 0, spent_log = '{}', window_count = 0,"
+                " window_done = 0,"
                 " last_error = '', problems = '{}', beats = '[]', split = NULL, critics = NULL,"
                 " tries = 0, approved_by = 0, approved_at = 0, approved_hash = '',"
                 " audio_choice = ''"

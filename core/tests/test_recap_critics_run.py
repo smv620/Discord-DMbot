@@ -820,9 +820,19 @@ class Criticising(WorkerHarness):
         first = cr.loop_from_json(job.critics)
         spent_then = job.spent
         # not told before three days: drive until just short of them
+        most = 0
         while self.clock.now - started < 2.5 * 86400:
+            before = job.spent
             job = await self.drive(job, 1)
+            most = max(most, job.spent - before)
         told.assert_not_awaited()
+        # one waiting try never spends more than `cr.wait_budget` allows (a bound the loop is built
+        # to meet: a reading's batches and PlotBot's two calls, or a revision's calls; #2308)
+        self.assertLessEqual(most, cr.wait_budget(len(mo.batches(mo.candidates(["x"] * 8)))))
+        # the day's tally counts the last 24 hours of calls, not the recap's lifetime (#2308)
+        last_day = await self.store.calls_since(1, self.one.id, int(self.clock.now) - 86400)
+        self.assertLess(last_day, job.spent)
+        self.assertLessEqual(last_day, cr.WAIT_CALLS * (86400 // 3600 + 2))
         self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))  # still waiting
         self.assertEqual(job.calls, calls_at_first_hold)  # not the job's own calls: no CAP
         loop = cr.loop_from_json(job.critics)

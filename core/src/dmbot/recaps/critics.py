@@ -74,7 +74,8 @@ def wait_budget(batches: int) -> int:
     and two for PlotBot (its second call, with more room when its answer was cut off, #2365, is
     counted). A try that revises it: `WAIT_REVISE_CALLS`. A try is one or the other, so this is
     the larger of the two, and never fewer than `WAIT_CALLS`, so a long recap is checked as surely
-    as a short one."""
+    as a short one. A documented bound, not a gate: the loop is written to stay inside it, and a
+    test (the outage one) fails if a try ever spends more (#2308)."""
     return max(WAIT_CALLS, batches + 2, WAIT_REVISE_CALLS)
 
 

@@ -11657,6 +11657,14 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+RECAP_CALL_LOG = """
+    -- When each AI call of a recap job was made (UTC seconds), kept for two days, so the campaign's
+    -- daily tally counts only the last 24 hours of calls and not a waiting recap's whole lifetime
+    -- (#2308). A job from before this has none: it is counted as it was (its `spent`, while it was
+    -- updated in the last day). The column has a default and is added, not updated: no row changes.
+    ALTER TABLE recap_jobs ADD COLUMN spent_log BIGINT[] NOT NULL DEFAULT '{}';
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11883,6 +11891,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
+    (
+        "0205_recap_call_log",
+        RECAP_CALL_LOG,
+    ),  # when each recap call was made, for the day's tally (#2308)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
