@@ -10,10 +10,11 @@ from typing import Any
 import httpx
 
 from dmbot.campaigns import CampaignStore
+from dmbot.web import grants
 from dmbot.web.discord import DiscordUser
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
-from tests.test_web_api import ALICE, THURSDAY
+from tests.test_web_api import ALICE, QUILLON, THURSDAY
 from tests.test_web_email_signin import BOB
 
 CAROL = DiscordUser(id=3003, name="Carol", email="carol@example.com")
@@ -164,6 +165,34 @@ class Opening(LinkBase):
         got = await self.post(bob, "decline")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "ended"))
 
+    async def test_a_person_outside_the_server_can_say_no_thanks_and_it_is_recorded(self) -> None:
+        # The common case: the person emailed is not in the campaign's server.
+        from dmbot.web import sessions
+
+        token = await self.link()
+        outsider = await sessions.sign_in(self.web, BOB, [QUILLON], now=self.now, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://api.dmbot.example",
+            headers=self.alice.headers,
+        )  # fmt: skip
+        client.cookies.set("__Host-dmbot_session", outsider, domain="api.dmbot.example")
+        self.addAsyncCleanup(client.aclose)
+        got = await self.post(client, "decline", token=token)
+        self.assertEqual((got.status_code, got.json()), (200, {"status": "declined"}))
+        row = await self.row()
+        self.assertEqual(
+            (row["status"], row["to_user_id"], row["to_name"]), ("declined", BOB.id, BOB.name)
+        )
+        self.assertEqual((await self.post(client, "look", token=token)).json(), {"status": "ended"})
+        again = await self.post(client, "decline", token=token)
+        self.assertEqual((again.status_code, again.json()["error"]), (409, "ended"))
+
+    async def test_the_owner_cannot_decline_their_own_offer(self) -> None:
+        token = await self.link()
+        got = await self.post(self.alice, "decline", token=token)
+        self.assertEqual(got.status_code, 409)
+        self.assertEqual((await self.row())["status"], "open")
+
 
 class Plans(LinkBase):
     """Only a paid plan with room can receive a campaign handed over by email (PLAN), whether or
@@ -241,3 +270,35 @@ class Plans(LinkBase):
         self.assertEqual(
             (await self.post(await self.bob(), "look", token=token)).json(), {"status": "ended"}
         )
+
+    async def test_try_it_and_its_trial_extension_cannot_receive_a_campaign(self) -> None:
+        token = await self.link()
+        bob = await self.bob()
+        for period_end in (
+            4_000_000_000,
+            4_100_000_000,
+        ):  # Try It, then lengthened by the extension
+            async with self.db.plan_writer(BOB.id) as conn:
+                await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (BOB.id,))
+                await conn.execute(
+                    INSERT_PLAN,
+                    {**PLAN_ROW, **WORKS, "plan": "try-it", "campaign_cap": 1,
+                     "period_end": period_end, "user_id": BOB.id},
+                )  # fmt: skip
+            look = (await self.post(bob, "look", token=token)).json()
+            self.assertEqual((look["canAccept"], look["why"]), (False, "try_it"), period_end)
+            got = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+            self.assertEqual((got.status_code, got.json()["error"]), (402, "not_on_a_paid_plan"))
+            self.assertEqual((await self.row())["to_user_id"], 0)  # nothing was claimed
+
+    async def test_a_grant_alone_cannot_but_a_priced_plan_with_a_grant_can(self) -> None:
+        token = await self.link()
+        bob = await self.bob()
+        await grants.give(
+            self.db, "admin@example.invalid", BOB.id, "guild", ends_at=None, note="", now=self.now
+        )
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (False, "no_plan"))  # a grant alone
+        await self.give_plan(BOB.id, cap=1)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (True, None))

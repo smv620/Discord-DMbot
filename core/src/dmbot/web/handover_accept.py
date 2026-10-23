@@ -23,8 +23,10 @@ from dmbot.web.sessions import Session, hash_token
 
 log = logging.getLogger(__name__)
 
-Why = Literal["no_plan", "no_slot", "owner"]
-Outcome = Literal["accepted", "declined", "ended", "no_plan", "no_slot", "owner", "bad_server"]
+Why = Literal["no_plan", "try_it", "no_slot", "owner"]
+Outcome = Literal[
+    "accepted", "declined", "ended", "no_plan", "try_it", "no_slot", "owner", "bad_server"
+]
 
 _LINK = re.compile(r"(\d{1,19})-(\d{1,19})-([A-Za-z0-9_-]{20,128})")  # BIGINT holds 19 digits
 ENDED: dict[str, Any] = {"status": "ended"}
@@ -75,12 +77,9 @@ async def _release(db: Database, session: Session, link: tuple[int, int, str]) -
         log.warning("A hand-over claim could not be given back")
 
 
-async def look(
-    db: Database, session: Session, raw: object, *, now: int, enforce_plans: bool = False
-) -> dict[str, Any]:
+async def look(db: Database, session: Session, raw: object, *, now: int) -> dict[str, Any]:
     """What the page shows. Changes nothing. `{"status": "ended"}` for every link that opens
-    nothing now. (`enforce_plans` only decides the campaign cap's source in the store; the paid
-    plan rule of a hand-over by email holds either way.)"""
+    nothing now."""
     link = parse_link(raw)
     offer = None if link is None else await _open(db, session, link, claim=False)
     if link is None or offer is None:
@@ -120,7 +119,6 @@ async def accept(
     server_id: object,
     *,
     now: int,
-    enforce_plans: bool = False,
 ) -> tuple[Outcome, str | None]:
     """Accept as the signed-in account. (outcome, the campaign's address when accepted.)
 
@@ -154,26 +152,19 @@ async def accept(
     return ("no_slot" if result == "no_free_slot" else "ended"), None
 
 
-async def decline(
-    db: Database, session: Session, raw: object, *, now: int, enforce_plans: bool = False
-) -> Outcome:
+async def decline(db: Database, session: Session, raw: object) -> Outcome:
     """Say no thanks. Whoever holds the link is its recipient (that is what an emailed one-use
-    link is), so they can end the offer; the owner is told "The person you emailed" unless the
-    person has signed in with a name. Only a person in the server can record it (the website's
-    rights are held to the session's servers); anyone else just leaves it: the offer ends by
-    itself after 7 days."""
+    link is), so they can end the offer, wherever they are: one database door records it under
+    their id and name (the website's role can write only in the servers of its session, and the
+    person emailed is often not in the campaign's server) and the bot tells the owner."""
     link = parse_link(raw)
     if link is None:
         return "ended"
-    guild_id, offer_id, _secret = link
-    offer = await _open(db, session, link, claim=False)
-    if offer is None or offer["from_user_id"] == session.user_id:
-        return "ended"
-    if guild_id not in {g.id for g in session.guilds}:
-        return "declined"
-    if await _open(db, session, link, claim=True) is None:
-        return "ended"
-    result = await _store(db, session, now).decline_handover(
-        guild_id, offer_id, session.user_id, now, announce=True
-    )
-    return "declined" if result == "declined" else "ended"
+    guild_id, offer_id, secret = link
+    async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_handover_decline(%s, %s, %s, %s) AS ok",
+            (guild_id, offer_id, hash_token(secret), session.display_name),
+        )
+        row = await cur.fetchone()
+    return "declined" if row and row["ok"] else "ended"

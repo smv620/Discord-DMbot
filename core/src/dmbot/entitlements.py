@@ -194,6 +194,12 @@ def _priced(plan: Entitlement | None, now: int) -> str | None:
     return known.name
 
 
+def has_priced_plan(plan: Entitlement | None, now: int) -> bool:
+    """A plan that works and costs money. Not Try It (or its automatic extension, which only
+    lengthens the same plan row), not a grant and not the free list on their own."""
+    return _priced(plan, now) is not None
+
+
 def _paying(plan: Entitlement | None, now: int) -> str | None:
     """The name of a plan that is still being paid for, for "you're still paying for…" under
     free access. Not one that was cancelled (it ends on its own: `_ending`), and not one with
