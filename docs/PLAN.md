@@ -4776,9 +4776,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     plain sentences, and code adds what the DM can do next ("Press Save…" or "…Leave it as is is always an answer").
     **Code has the last word:** a request to invent or build the story gets the plain no with no call; **any words in
     quotation marks must be words of the recap, the issue's own source or the DM's own messages** (a quotation from
-    anywhere else, such as a transcript line, fails the answer). The call is shown no transcript at all, so the talk carries
-    only words that are already in the recap (which is itself the DM's to approve); that is why it is not erased with a
-    player's transcripts (Supervisor, 2026-10-23). A proposal names an entry that was shown and a
+    anywhere else, such as a transcript line, fails the answer). The call is shown no transcript, only the recap, the issue
+    and its source, the campaign's entries and the DM's own messages; the quote check is a second lock, on marked quotations
+    only. That is why the talk is not erased with a player's transcripts (Supervisor, 2026-10-23). A proposal names an entry that was shown and a
     condition its kind can have (alive, dead, resolved…) and its label is written by code. A message the bot cannot answer
     is marked failed with a short code and the DM can send it again; nothing is saved to the campaign. A talk is kept for
     thirty days (the send door clears a campaign's own, and the loop sweeps the rest about hourly). A campaign's DMs may

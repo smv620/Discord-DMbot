@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 CALL_TIMEOUT_S = RETAKE_AFTER_S - 30  # the call always ends before its claim can be taken back
 PER_ROUND = 5  # messages answered in one round in one server
+GIVE_UP_S = 600  # a message older than this is not retaken: a crash costs one call, not one a pass
 KEEP_S = 30 * 24 * 3600  # a talk is kept this long, then goes
 
 
@@ -103,10 +104,11 @@ class TalkStore:
             cur = await conn.execute(
                 "UPDATE plot_chat SET state = 'working', claimed_at = %s WHERE (guild_id, id) ="
                 " (SELECT guild_id, id FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
-                " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
+                " (state = 'waiting' OR (state = 'working' AND claimed_at < %s"
+                " AND created_at > %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, session_at, issue_id, user_id, body",
-                (now, guild_id, now - RETAKE_AFTER_S * 1000),
+                (now, guild_id, now - RETAKE_AFTER_S * 1000, now // 1000 - GIVE_UP_S),
             )
             row = await cur.fetchone()
         if row is None:

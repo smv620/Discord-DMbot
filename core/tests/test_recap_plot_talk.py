@@ -13,7 +13,6 @@ from dmbot.memory.models import CONFIRMED
 from dmbot.memory.store import MemoryStore
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from tests.test_recap_plot import PlotBase
-from tests.test_recap_web import NOW
 from tests.test_web_api import THURSDAY
 
 
@@ -139,11 +138,17 @@ class Answering(TalkBase):
         [dm] = await self.messages()
         self.assertEqual((dm["state"], dm["error"]), ("failed", "stale"))
 
+    async def created_at(self) -> int:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT max(created_at) AS t FROM plot_chat")
+            return int((await cur.fetchone() or {})["t"])
+
     async def test_a_claim_taken_back_by_another_worker_writes_nothing(self) -> None:
         await self.say()
         first = await self.talk.claim_next(THURSDAY.id)
         assert first is not None
-        late = TalkStore(self.db, clock=lambda: NOW * 0 + 4_000_000_000)  # long after the claim
+        after = float(await self.created_at() + 200)  # past the claim's 120 s, inside 10 minutes
+        late = TalkStore(self.db, clock=lambda: after)
         second = await late.claim_next(THURSDAY.id)
         assert second is not None
         from dmbot.memory.plot_talk import Answer
@@ -173,6 +178,71 @@ class Answering(TalkBase):
         await self.runner(ai).round(THURSDAY.id)
         self.assertNotIn("Ann (character)", ai.sent)
         self.assertIn("Ulfgar (character)", ai.sent)  # (named in the issue's own sentence)
+
+    async def test_a_message_that_keeps_crashing_the_worker_is_given_up_on(self) -> None:
+        await self.say()
+        self.assertIsNotNone(await self.talk.claim_next(THURSDAY.id))
+        t = await self.created_at()
+        soon = TalkStore(self.db, clock=lambda: float(t + 200))
+        self.assertIsNotNone(await soon.claim_next(THURSDAY.id))  # a stalled claim is retaken
+        late = TalkStore(self.db, clock=lambda: float(t + 700))
+        self.assertIsNone(await late.claim_next(THURSDAY.id))  # but not forever
+
+    async def test_the_sweep_deletes_old_talks_in_its_own_server_only(self) -> None:
+        from dmbot.campaigns.store import CampaignStore
+        from dmbot.recaps.plot_talk_run import KEEP_S
+
+        other_guild = THURSDAY.id + 1
+        elsewhere = await CampaignStore(self.db).create(other_guild, "Else", 1)
+        await self.say("First.")
+        await self.runner(Ai(good())).round(THURSDAY.id)  # (one message waits at a time)
+        await self.say("Second.")
+        now = await self.created_at()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE plot_chat SET created_at = %s WHERE body = 'First.' AND role = 'dm'",
+                (now - KEEP_S - 86400,),  # 31 days old
+            )
+            await conn.execute(
+                "UPDATE plot_chat SET created_at = %s WHERE body = 'Second.'",
+                (now - KEEP_S + 86400,),  # 29 days old
+            )
+        async with self.db.guild(other_guild) as conn:
+            await conn.execute(
+                "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id,"
+                " role, body, state, created_at) VALUES (%s, %s, %s, 'x', 100, 1, 'dm', 'Old.',"
+                " 'done', %s)",
+                (other_guild, elsewhere.id, "a" * 32, now - KEEP_S - 86400),
+            )
+        sweeper = TalkStore(self.db, clock=lambda: float(now))
+        self.assertEqual(await sweeper.sweep(THURSDAY.id), 1)
+        self.assertEqual(
+            [m["text"] for m in await self.messages() if m["role"] == "dm"], ["Second."]
+        )
+        async with self.db.guild(other_guild) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM plot_chat")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)  # the other server's stays
+
+    async def test_a_timed_out_message_gets_no_answer_row(self) -> None:
+        await self.say()
+        m = await self.talk.claim_next(THURSDAY.id)
+        assert m is not None
+        async with self.db.guild(THURSDAY.id) as conn:  # the send door's ten minutes ran out
+            await conn.execute("UPDATE plot_chat SET state = 'failed', error = 'timed_out'")
+        from dmbot.memory.plot_talk import Answer
+
+        self.assertFalse(await self.talk.finish(THURSDAY.id, m, Answer("too late")))
+        self.assertEqual([x["role"] for x in await self.messages()], ["dm"])
+
+    async def test_another_campaigns_talk_and_entries_are_never_shown(self) -> None:
+        await self.memory.add_entity(
+            THURSDAY.id, self.two.id, type="character", name="Zed", source="dm", status=CONFIRMED
+        )
+        await self.say("Zed is mentioned here, and Ulfgar.")
+        ai = Ai(good())
+        await self.runner(ai).round(THURSDAY.id)
+        self.assertNotIn("Zed (character)", ai.sent)  # campaign two's entry
+        self.assertIn("Ulfgar (character)", ai.sent)
 
 
 class Saving(TalkBase):

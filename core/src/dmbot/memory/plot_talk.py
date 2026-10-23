@@ -45,7 +45,6 @@ NEXT_WITH_PROPOSALS = "Press Save to keep that, or Not that to leave it."
 NEXT_PLAIN = (
     'You can tell me more, or answer the point above. "Leave it as is" is always an answer.'
 )
-FAILED = "I couldn't answer that just now. Please send it again."
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +124,7 @@ def system() -> str:
         "never use anything but what is shown. Answer in at most three short, plain sentences. "
         "If asked to make up or build the story, say you only retell what happened at their "
         "table. If the Dungeon Master's explanation means an entry's condition changed (for "
-        'example "Ulfgar is alive again from session 7"), you may propose it: name the entry by '
+        "example, a character they say is alive again), you may propose it: name the entry by "
         "its number and choose one of the conditions listed for it. Propose only what the Dungeon "
         "Master said. If you quote words, quote only the recap or the Dungeon Master's own words.\n"
         'Answer with JSON only: {"reply": <text>, "proposals": [{"entry": <number>, '
@@ -156,6 +155,7 @@ def message(ctx: Context) -> str:
 
 
 _OPEN_CLOSE = '"“”„‟«»‹›「」『』`'  # marks that always quote
+_ALSO_MARKS = "″‶〝〞〟❝❞"  # quotation marks Unicode files under other categories
 _APOSTROPHES = "'‘’‚‛"  # quote only when not inside a word (it's, players')
 MAX_QUOTED_SPANS = 4  # more than this many quotations in one reply is a line strung together
 
@@ -173,11 +173,14 @@ def _spans(reply: str) -> list[str] | None:
     """The quoted spans of a reply, whatever quotation marks it uses, or None when the marks do
     not pair up (an unbalanced mark would hide a quotation from the check). An apostrophe inside
     a word is not a mark. A closing mark may be the same character as the opening one."""
+    for mark in _ALSO_MARKS:  # before NFKC, which would turn ″ into two primes
+        reply = reply.replace(mark, '"')
     reply = unicodedata.normalize("NFKC", reply)  # fullwidth marks become the plain ones
     spans: list[str] = []
     opened: int | None = None
     for n, ch in enumerate(reply):
-        quoting = ch in _OPEN_CLOSE
+        # every initial/final quotation mark (Pi, Pf) quotes, whatever script it comes from
+        quoting = ch in _OPEN_CLOSE or ch in _ALSO_MARKS or unicodedata.category(ch) in ("Pi", "Pf")
         if ch in _APOSTROPHES:
             before = reply[n - 1] if n else " "
             after = reply[n + 1] if n + 1 < len(reply) else " "
@@ -211,7 +214,12 @@ def quotes_ok(reply: str, allowed: Sequence[str]) -> bool:
     texts = [_words(t) for t in allowed]
     for span in spans:
         words = _words(span)
-        if len(words) >= 2 and not any(_contains(t, words) for t in texts):
+        # one word is a name, not a line, and may be anything: but only a short one (an
+        # apostrophe-joined run such as "a'b'c'd" is several words, not a name)
+        short_name = len(re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", span))) < 2
+        if (len(words) >= 2 or not short_name or len(span) > 30) and not any(
+            _contains(t, words) for t in texts
+        ):
             return False
     return True
 
