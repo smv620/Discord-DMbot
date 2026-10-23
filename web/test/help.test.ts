@@ -590,9 +590,11 @@ describe("Help for the features of 2026-10-22/23 (#2498)", () => {
 
   it("says plainly that nothing is recorded while paused and that it isn't added afterwards", () => {
     const off = featureSteps.filter((s) => s.whatsNew === "Go off the record for a while").map((s) => s.text).join(" ");
-    expect(off).toContain("records nothing");
-    expect(off).toContain("isn't added afterwards");
-    expect(off).toContain("Nothing said during the break is saved");
+    expect(off).toContain("nothing you say is recorded");
+    expect(off).toContain("does not remove what you said before you paused");
+    expect(off).toContain("nothing anyone says is recorded");
+    expect(off).toContain("What was said before the pause stays recorded");
+    expect(off).toContain("when the session ends");
   });
 
   it("uses no technical words", () => {

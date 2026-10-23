@@ -25,17 +25,17 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "account",
     whatsNew: "My Account shows each campaign at a glance",
-    text: "On My Account, each campaign is a card. Tap its name to open the campaign's page. The card says 🟢 Listening now while a session is running, and your part in it: You run it, You help run it or You play in it. It also shows the sessions played, hours played, players, NPCs, the day it started and the day it was last played. A fact DMbot doesn't know yet is left out.",
+    text: "On My Account, each campaign is a card. Tap its name to open its page. 🟢 Listening now means a session is running. The card also says your part: You run it, You help run it or You play in it. It shows sessions, hours, players, NPCs and when it started and was last played. Anything DMbot doesn't know yet is left out.",
   },
   {
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
-    text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. The top of every campaign page shows where you are, from My Account to the campaign to the page, and the four parts as tabs, so you can jump to another part or go back.",
+    text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part",
   },
   {
     audience: "gameMaster",
     whatsNew: "Your story timeline",
-    text: "A campaign's Story timeline lists every session in order, with the day it was played, how long it ran, its recap and the names shown to the players after it. Players see the titles of recaps that were posted, and nothing else from the recap.",
+    text: "A campaign's Story timeline lists every session in order, with the day it was played, how long it ran, its recap and the names players are shown after it. Players see only the titles of recaps you posted",
   },
   {
     audience: "gameMaster",
@@ -45,23 +45,23 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Change a campaign's settings on the website",
-    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. While DMbot saves a change the page says it is saving, and then that it is saved. If you pick a shorter time for keeping transcripts, the page shows the same warning as Discord and deletes nothing until you say yes on the page. If DMbot is away, it makes the change when it's back, as long as that is within an hour. Hand over, pause and delete are still done in Discord, and only the campaign's owner sees those steps.",
+    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. The page says it is saving, then that it is saved. If you pick a shorter time for keeping transcripts, you see a warning first, and nothing is deleted until you say yes on the page. If DMbot is away, your change waits and is made when it's back, within an hour. Hand over, pause and delete are still done in Discord, and only the campaign's owner sees them",
   },
   {
     audience: "gameMaster",
     whatsNew: "Pin a connection as 100% truth",
-    text: "The Story Graph has two views for game masters: Full View shows everything, secrets included, and Players View shows exactly what your players see, so you can check it before you share your screen. In Full View you can pin a connection you know is true, with the 📌 Pin as 100% truth button, and unpin it later. Only you see pins. A player can press Peek behind the DM screen only if you allow it, and you are told when they do.",
+    text: "The Story Graph has two views for game masters: Full View shows everything, secrets included, and Players View shows exactly what your players see, so you can check it before you share your screen. In Full View you can pin a connection you know is true, with the 📌 Pin as 100% truth button, and unpin it later. Pins are your call: DMbot never pins anything itself, and only game masters see pins. A player can press Peek behind the DM screen only if you allow it, and you are told when they do",
     names: [{ name: "Peek behind the DM screen", file: "dm_screen/messages.py" }],
   },
   {
     audience: "gameMaster",
     whatsNew: "See where a new name was said",
-    text: "When DMbot asks you to check a name, the link 📜 Open in transcript opens that session on the website at the line where the name was said, with that line marked. Links with a moment in them work for anyone who may read the transcript.",
+    text: "When DMbot asks you to check a name, the link 📜 Open in transcript opens that session on the website at the line where the name was said, with that line marked. Anyone who can read the transcript can use the link",
   },
   {
     audience: "player",
     whatsNew: "Go off the record for a while",
-    text: "To take a break from being recorded, press ⏸️ Pause recording me in your 🗂️ Menu, or on the reminder DMbot sends when a session starts, and pick 5 minutes, 15 minutes or Until I resume. While you are paused DMbot records nothing of what you say, and it isn't added afterwards. Press ▶️ Resume now to come back sooner. A pause never changes your yes, and Stop recording me is still there.",
+    text: "Need a break from being recorded? Press ⏸️ Pause recording me in your 🗂️ Menu, or on the reminder DMbot sends when a session starts. Pick 5 minutes, 15 minutes or Until I resume. While you are paused, nothing you say is recorded. It does not remove what you said before you paused. Press ▶️ Resume now to come back sooner. A pause ends when the session ends. Your yes stays as it was, and Stop recording me is still in the menu",
     names: [
       { name: "Pause recording me", file: "consent_dm.py" },
       { name: "Resume now", file: "consent_dm.py" },
@@ -71,7 +71,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Go off the record for a while",
-    text: "To give the whole table a break, press ⏸️ Pause the table on the Listening message and pick how long. Nobody is recorded until it ends or you press ▶️ Resume now. Nothing said during the break is saved, and it isn't added afterwards.",
+    text: "To take a break from recording the whole table, press ⏸️ Pause the table on the Listening message and pick how long. While the table is paused, nothing anyone says is recorded. What was said before the pause stays recorded. The break ends when the time is up, when you press ▶️ Resume now, or when the session ends",
     names: [
       { name: "Pause the table", file: "dm_screen/messages.py" },
       { name: "Resume now", file: "dm_screen/table_pause.py" },
