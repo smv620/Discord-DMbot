@@ -705,6 +705,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   ];
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const fixLooks = new Map<string, number>();
+  // The recap's names to check (#2114 part 3): an answered name shows "answering" on the next look
+  // and is gone on the one after, as the bot's queue would. `Garrick` answers with a failure.
+  const nameLooks = new Map<string, number>();
+  const nameFailed = new Set<string>();
   const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   // A recap asked to try again is "being made" for one more read, then ready (the real API takes
@@ -1453,6 +1457,43 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     // "Tell DMbot what to fix" (#2114). The note is sorted into the same points every time; the
     // first look says "working", the next says "done", as the bot's queue would.
+    async nameChecks(ref) {
+      calls.push(`nameChecks:${ref}`);
+      await reachable();
+      signedIn();
+      const names = [
+        { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch." },
+        { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
+        { id: "c".repeat(32), name: "Garrick", note: "" },
+      ].flatMap((n) => {
+        const key = `${ref}:${n.id}`;
+        const looks = nameLooks.get(key); // undefined: not answered yet
+        if (looks === undefined) return [{ ...n, answering: false, error: "" }];
+        nameLooks.set(key, looks + 1);
+        if (nameFailed.has(key)) return [{ ...n, answering: false, error: "gone" }];
+        return looks === 0 ? [{ ...n, answering: true, error: "" }] : []; // gone from the next look
+      });
+      return {
+        names,
+        known: [
+          { id: "d".repeat(32), name: "The Silver Hall", kind: "place" },
+          { id: "e".repeat(32), name: "Queen Mara", kind: "npc" },
+        ],
+        kinds: [
+          { key: "npc", label: "A person" },
+          { key: "place", label: "A place" },
+          { key: "thing", label: "A thing" },
+        ],
+      };
+    },
+    async answerNameCheck(ref, id, answer) {
+      calls.push(`answerNameCheck:${ref}:${id.slice(0, 1)}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      if (answer.action === "respell" && answer.text.trim() === "") throw new ApiError("bad-text");
+      if (id === "c".repeat(32)) nameFailed.add(`${ref}:${id}`);
+      nameLooks.set(`${ref}:${id}`, 0);
+    },
     async sendFix(ref, text) {
       calls.push(`sendFix:${ref}`);
       const r = await find(ref);

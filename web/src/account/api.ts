@@ -537,6 +537,29 @@ export interface FixPoints {
   /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
   replies: string[];
 }
+/** One new name a recap asks the DM to check (#2113). `answering` while the bot is applying an
+ * answer; `error` is the bot's word when the last answer failed. */
+export interface NameCheck {
+  id: string;
+  name: string;
+  /** What the recap says about it, in the story's words. */
+  note: string;
+  answering: boolean;
+  error: string;
+}
+export interface NameCheckList {
+  names: NameCheck[];
+  /** The known names an answer can say a name is the same as. */
+  known: { id: string; name: string; kind: string }[];
+  /** The kinds a name can be said to be. */
+  kinds: { key: string; label: string }[];
+}
+export type NameCheckAnswer =
+  | { action: "confirm"; kind: string }
+  | { action: "same"; known: string }
+  | { action: "respell"; text: string }
+  | { action: "not_a_name" }
+  | { action: "explain"; text: string };
 export interface VoiceResult {
   state: FixState;
   /** Only when `done`: what was heard. */
@@ -1311,6 +1334,10 @@ export interface AccountApi {
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
    * the DM kept. Missing from an API older than #2113. */
+  /** The recap's new names to check, and the choices for answering them (#2114 part 3). */
+  nameChecks?(ref: string): Promise<NameCheckList>;
+  /** Queue one answer for the bot; the name leaves the list once it is applied. */
+  answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
   fixResult?(ref: string, requestId: string): Promise<FixResult>;
   /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
@@ -1838,6 +1865,15 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    nameChecks: async (ref) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    answerNameCheck: async (ref, id, answer) => {
+      await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`,
+        answer,
+      );
+    },
     sendFix: async (ref, text) =>
       (await call(
         "POST",
