@@ -252,6 +252,23 @@ class Cards(base.NamesTest):
         (still,) = await self.relations()
         self.assertEqual(still.id, now.id)
 
+    async def test_a_role_typed_from_the_second_names_card_reads_as_stored(self) -> None:
+        """#2509: Belleros is the object of the stored row; "is the niece of" typed from his card
+        stores him first, and the note must say that, not the reverse."""
+        other = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, other.id, "knows", self.bell.id,
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        self.fresh()
+        (rel,) = await self.relations()
+        page = await self.page_of_relation(rel.id)
+        it = self.it()
+        await page._new_words(it, "kin_of", "niece")
+        self.assertIn("Changed to: Belleros is the niece of Kesh.", it.response.edited[0][0])
+        (now,) = await self.relations()
+        self.assertEqual((now.subject_id, now.object_id), (self.bell.id, other.id))
+
     async def test_the_same_words_change_nothing(self) -> None:
         await self.know("Kesh")
         page = await self.page()

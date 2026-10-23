@@ -51,7 +51,9 @@ async def change_words(
     the name the words are said from, who holds the role, and the connection is written in that
     order."""
     detail = detail[:100]
-    directional = predicate == "kin_of" and kin.role_of(detail) is not None
+    directional = predicate == "kin_of" and kin.directional(detail)
+    # Only a one-way role ("niece") has a side to be on; "cousin" reads the same both ways, so
+    # retyping it must write nothing.
     swap = directional and first is not None and first == link.object_id
     if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()) and not (
         directional and (not link.directional or swap)

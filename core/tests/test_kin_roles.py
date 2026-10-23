@@ -255,6 +255,17 @@ class TheStoredDirection(MemoryTest):
         live = [r for r in await self.memory.relations(GUILD_A, self.c) if r.predicate == "kin_of"]
         self.assertEqual(len(live), 2)  # each is true of a different name
 
+    async def test_retyping_a_two_way_role_from_the_second_name_writes_nothing(self) -> None:
+        from dmbot.memory import link_edits
+
+        a, b = await self.pair()
+        low, high = sorted((a, b))
+        old = (await self.relate(low, "kin_of", high, status=CONFIRMED, detail="cousin")).value[0]
+        again = await link_edits.change_words(
+            self.memory, GUILD_A, self.c, old, "kin_of", "cousin", first=high
+        )
+        self.assertIsNone(again)
+
     async def test_typing_the_role_over_an_old_row_that_says_the_word_gives_it_a_direction(
         self,
     ) -> None:
