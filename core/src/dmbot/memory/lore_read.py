@@ -408,15 +408,21 @@ async def read_lore(
     *,
     skip_name: Callable[[str], bool] | None = None,
     skip_pair: Callable[[str, str], bool] | None = None,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
 
     `skip_name` and `skip_pair` say what the campaign already has (a name's spelling; two names
     that are already connected): those lines are dropped before pass 2, so a second run of a
-    long background shapes only the rest instead of the same first slices again."""
+    long background shapes only the rest instead of the same first slices again.
+
+    `progress(stage, done, total)` is told where the read is, with counts only (never text):
+    "reading" while pass 1 runs, then "shaping" with the slices finished of all of them."""
     stats = Stats()
     started = time.monotonic()
+    if progress is not None:
+        progress("reading", 0, 0)
     listed, cut = await read_list(read_ai, text, own, gate, stats)
     if skip_name is not None:
         listed.names = [n for n in listed.names if not skip_name(line_name(n))]
@@ -437,6 +443,18 @@ async def read_lore(
     tasks = [
         asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats)) for a, b in slices
     ]
+    if progress is not None:
+        progress("shaping", 0, len(tasks))
+        finished = [0]
+
+        def _one_done(task: asyncio.Future[Any]) -> None:
+            if task.cancelled():  # cut at the time limit: not a finished slice
+                return
+            finished[0] += 1
+            progress("shaping", finished[0], len(tasks))
+
+        for task in tasks:
+            task.add_done_callback(_one_done)
     left = max(0.0, LORE_TIME_LIMIT_S - (time.monotonic() - started))
     pending: set[asyncio.Future[Any]] = set()
     try:

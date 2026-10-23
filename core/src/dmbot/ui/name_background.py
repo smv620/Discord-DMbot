@@ -64,6 +64,7 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
 
@@ -314,6 +315,10 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, "This server has used today's document reads. Try again "
                         "tomorrow.")  # fmt: skip
             return
+        reading_text = (
+            f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
+            "background."
+        )
         self.stop()
         _ai_busy.add(guild)
         for old in [k for k in _ai_reads if k[1] != day]:
@@ -321,8 +326,7 @@ class BackgroundOffer(_Menu):
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a "
-                "long background.",
+                content=reading_text,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
@@ -346,15 +350,30 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(
-                read_ai,
-                ai,
-                self.upload.text,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                skip_pair=await connected_pairs(memory, campaign),
-            )
+            skip_pair = await connected_pairs(memory, campaign)
+
+            async def show(text: str) -> None:
+                await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+
+            # The same message is kept current (#2559): the step, part n of m, then how long.
+            async with WaitingMessage(show, reading_text) as waiting:
+
+                def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "reading":
+                        waiting.step("Step 1 of 2: reading it through")
+                    else:
+                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+
+                read = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    self.upload.text,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    skip_pair=skip_pair,
+                    progress=on_step,
+                )
             found = bg.merge(
                 [read.names],
                 known,
