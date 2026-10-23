@@ -42,7 +42,7 @@ SECRET = (
 )
 SAME = "That is what it already says."
 CHANGED = "That line changed since you opened this. Press ✏️ Fix again."
-NOT_WRITTEN = "I couldn't save that. Try again in a moment."
+NOT_WRITTEN = "I couldn't save that. If your DM changed this line, ask them."
 DONE = "✅ Fixed. The transcript says what you wrote."
 UNDO_HERE = "Made a mistake? Press Undo in ✏️ Name fixes to check."
 MODAL_TITLE = "Fix the words in this picture"
@@ -189,7 +189,15 @@ async def submit(
         return
     try:
         written = await bot.apply_line_fix(
-            guild.id, campaign.id, session_id, user_id, started_ms, line, image=True
+            guild.id,
+            campaign.id,
+            session_id,
+            user_id,
+            started_ms,
+            line,
+            image=True,
+            by=who,
+            by_dm=who in campaign.dm_user_ids,
         )
     except Exception:
         log.exception("Couldn't write a fix into a picture's line")

@@ -1079,7 +1079,14 @@ class BotTests(DatabaseTest):
             for words in (first, second):
                 self.assertTrue(
                     await self.bot.apply_line_fix(
-                        GUILD, table.campaign_id or "", sid, PLAYER, started, words, image=True
+                        GUILD,
+                        table.campaign_id or "",
+                        sid,
+                        PLAYER,
+                        started,
+                        words,
+                        image=True,
+                        by=PLAYER,
                     )
                 )
             (note,) = table.fix_notes.shown()  # one note, not two: the second replaced the first
@@ -1088,6 +1095,46 @@ class BotTests(DatabaseTest):
         self.assertIn("Undone", text)
         rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
         self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))  # as first read
+
+    async def test_a_poster_cannot_replace_a_dms_pending_picture_fix_but_a_dm_can_replace_theirs(
+        self,
+    ) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        words = 'a picture: A note. Text written on it: "%s"'
+        fixes = {w: words % w for w in ("Meet at the river.", "Meet at the ford.", "Meet at dawn.")}
+        c = table.campaign_id or ""
+
+        async def fix(w: str, by: int, dm: bool) -> bool:
+            return bool(
+                await self.bot.apply_line_fix(
+                    GUILD, c, sid, PLAYER, started, fixes[w], image=True, by=by, by_dm=dm
+                )
+            )
+
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            self.assertTrue(await fix("Meet at the river.", DM, True))  # the DM fixes it
+            self.assertFalse(await fix("Meet at the ford.", PLAYER, False))  # the poster may not
+            (note,) = table.fix_notes.shown()
+            self.assertEqual((note.fix.written, note.by), (fixes["Meet at the river."], DM))
+            rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+            self.assertTrue(any("river" in t for t in rows.values()))  # the DM's words stay
+            self.assertTrue(await fix("Meet at dawn.", DM, True))  # a DM may replace a DM's own
+
+    async def test_a_note_that_is_not_a_picture_fix_is_not_replaced(self) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        from dmbot.transcript.cleaner import SPELLING, Fix
+
+        table.fix_notes.add(
+            PLAYER, started, "x", (Fix(0, 1, "x", "y", "", SPELLING, sure=False),), by=0
+        )  # a name fix on the same line
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "a picture: z",
+                image=True, by=DM, by_dm=True,
+            )  # fmt: skip
+        self.assertFalse(done)
 
     async def test_a_name_fix_on_the_same_line_is_not_replaced_by_a_picture_fix(self) -> None:
         table, sid, started = await self.image_setup()

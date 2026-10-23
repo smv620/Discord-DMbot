@@ -7132,6 +7132,8 @@ class DMBot(commands.AutoShardedBot):
         *,
         noted: bool = False,
         image: bool = False,
+        by: int = 0,
+        by_dm: bool = False,
     ) -> bool:
         """Write a fix the DM accepted into one line's cleaned words (#1491); what was heard
         never changes. `noted` (a DM's own edit, #1499): in a running session the change is listed
@@ -7142,7 +7144,9 @@ class DMBot(commands.AutoShardedBot):
         while it is recent); a finished session's saved line is changed in the database. Only
         while the speaker is still recorded. True if a line changed. `image` (#2450): the line
         describes a picture the speaker posted, which is kept apart from their speech; a correction
-        to it is always listed with Undo, and needs the speaker's yes to pictures."""
+        to it is always listed with Undo, and needs the speaker's yes to pictures. `by` and
+        `by_dm`: who made the fix and whether they are a DM: a second correction replaces the
+        earlier one only if it was theirs, or they are a DM."""
         if image:
             if not self.consent.has_image_consent(guild_id, user_id) or self.transcripts is None:
                 return False
@@ -7173,9 +7177,14 @@ class DMBot(commands.AutoShardedBot):
                     # A picture's words corrected before are replaced by the new correction (the
                     # Undo of the new one puts back the words as first read), not refused: only
                     # a DM's Undo could ever clear the old note.
-                    earlier = table.fix_notes.picture_edits(user_id, started_ms) if image else []
+                    earlier = (
+                        table.fix_notes.picture_edits(user_id, started_ms, by, by_dm)
+                        if image
+                        else []
+                    )
                     if (
                         own is None
+                        or earlier is None  # not theirs to replace
                         or (table.fix_notes.on_line(user_id, started_ms) and not earlier)
                         # An open "Did they mean…?" about this line would write over the edit
                         # from the words as heard when it is answered.
@@ -7193,16 +7202,15 @@ class DMBot(commands.AutoShardedBot):
                         0, len(base), base, text, "",
                         IMAGE_EDIT if image else DM_EDIT, sure=False,
                     )  # fmt: skip
-                    table.fix_notes.notes = [n for n in table.fix_notes.notes if n not in earlier]
-                    added = table.fix_notes.add(user_id, started_ms, base, (edit,))
+                    before = list(table.fix_notes.notes)
+                    table.fix_notes.notes = [n for n in before if n not in earlier]
+                    table.fix_notes.add(user_id, started_ms, base, (edit,), by=by)
                     words = table.fix_notes.words_now(user_id, started_ms, base, (edit,))
                     done = await self._rewrite_line(table, user_id, started_ms, words, image=image)
                     if done:
                         self._redraw_fix_notes(table)
-                    else:  # nothing changed: nothing to undo, and the earlier notes stay
-                        table.fix_notes.notes = [
-                            n for n in table.fix_notes.notes if n not in added
-                        ] + earlier
+                    else:  # nothing changed: nothing to undo; the earlier notes stay as they were
+                        table.fix_notes.notes = before
                     return done
                 if own is not None:
                     # Like an answer to "Did they mean…?": the notes know the line's words
@@ -7217,7 +7225,12 @@ class DMBot(commands.AutoShardedBot):
             return False
         return bool(
             await self.transcripts.relabel_line(
-                guild_id, session_id, user_id, started_ms, text, image=image
+                guild_id,
+                session_id,
+                user_id,
+                started_ms,
+                text,
+                **({"image": True} if image else {}),
             )
         )
 
@@ -7241,7 +7254,12 @@ class DMBot(commands.AutoShardedBot):
                     try:
                         found = bool(
                             await self.transcripts.relabel_line(
-                                guild_id, session_id, speaker, started_ms, text, image=image
+                                guild_id,
+                                session_id,
+                                speaker,
+                                started_ms,
+                                text,
+                                **({"image": True} if image else {}),
                             )
                         )
                     except Exception:
